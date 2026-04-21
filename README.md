@@ -224,7 +224,7 @@ Library packages published for TypeScript consumers:
 - `@ray/core` — shared types and errors used by the gateway and SDK
 - `@ray/sdk` — minimal HTTP client for the gateway (`RayClient`)
 
-Maintainer publishing steps and scope notes are in [docs/npm-publishing.md](docs/npm-publishing.md). Release and Phase 1 smoke checks are in [docs/release-checklist.md](docs/release-checklist.md).
+Maintainer publishing (tag + `gh release create`, same idea as the `iso` repo) and `NPM_TOKEN` setup are in [docs/npm-publishing.md](docs/npm-publishing.md). Release and Phase 1 smoke checks are in [docs/release-checklist.md](docs/release-checklist.md).
 
 ## Architecture Notes
 

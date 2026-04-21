@@ -1,0 +1,88 @@
+name: "@ray/core Release to npm"
+
+# Publish when a GitHub Release whose tag starts with `core-v` is published.
+#
+# Cutting a release (after bumping packages/core/package.json version):
+#   TAG="core-v$(node -p 'require(\"./packages/core/package.json\").version')"
+#   git tag "$TAG" && git push origin "$TAG"
+#   gh release create "$TAG" --generate-notes --title "$TAG"
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+defaults:
+  run:
+    working-directory: packages/core
+
+jobs:
+  publish:
+    if: startsWith(github.ref_name, 'core-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+          cache: pnpm
+
+      - name: Set version from release tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#core-v}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Verify CI build-test-lint passed for release commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: .
+        run: |
+          SHA=$(git rev-parse HEAD)
+          echo "Verifying CI build-test-lint check-run for $SHA"
+          DEADLINE=$(( $(date +%s) + 1800 ))
+          STATUS=""
+          CONCLUSION=""
+          while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+            read -r STATUS CONCLUSION <<<"$(gh api "repos/${{ github.repository }}/commits/$SHA/check-runs" \
+              --jq '[.check_runs[] | select(.name == "build-test-lint")] | sort_by(.started_at) | last | "\(.status // "missing") \(.conclusion // "null")"')"
+            echo "build-test-lint check-run: status=$STATUS conclusion=$CONCLUSION"
+            if [ "$STATUS" = "completed" ]; then
+              break
+            fi
+            sleep 15
+          done
+          if [ "$STATUS" != "completed" ]; then
+            echo "::error::CI build-test-lint for $SHA never completed within 30min (last status: $STATUS)."
+            exit 1
+          fi
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "::error::CI build-test-lint for $SHA did not succeed (conclusion: $CONCLUSION). Fix before re-releasing."
+            exit 1
+          fi
+          echo "CI build-test-lint succeeded for $SHA"
+
+      - name: Verify package.json version matches release tag
+        run: node ./scripts/release/check-source.mjs "$VERSION"
+
+      - name: Install (workspace root)
+        run: pnpm install --frozen-lockfile
+        working-directory: .
+
+      - name: Build
+        run: pnpm build
+        working-directory: .
+
+      - name: Publish to npm (with provenance)
+        working-directory: .
+        run: pnpm publish --filter @ray/core --access public --no-git-checks --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

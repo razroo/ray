@@ -25,6 +25,9 @@
       "default": "./dist/index.js"
     }
   },
+  "scripts": {
+    "release:check-source": "node ./scripts/release/check-source.mjs"
+  },
   "files": [
     "dist",
     "src",
