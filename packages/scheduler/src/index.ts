@@ -23,6 +23,7 @@ export class RequestScheduler<T> {
   private readonly queue: QueueItem<T>[] = [];
   private readonly dedupeMap = new Map<string, Promise<ScheduledTaskResult<T>>>();
   private inFlight = 0;
+  private drainTimer: NodeJS.Timeout | undefined;
 
   constructor(private readonly config: SchedulerConfig) {}
 
@@ -65,7 +66,7 @@ export class RequestScheduler<T> {
     }
 
     this.queue.push(item);
-    this.drain();
+    this.requestDrain();
 
     return promise;
   }
@@ -90,13 +91,34 @@ export class RequestScheduler<T> {
     }
   }
 
+  private requestDrain(): void {
+    if (this.config.batchWindowMs <= 0) {
+      this.drain();
+      return;
+    }
+
+    if (this.drainTimer) {
+      return;
+    }
+
+    this.drainTimer = setTimeout(() => {
+      this.drainTimer = undefined;
+      this.drain();
+    }, this.config.batchWindowMs);
+  }
+
   private async run(item: QueueItem<T>): Promise<void> {
     this.inFlight += 1;
     const queueTimeMs = Date.now() - item.enqueuedAt;
     const controller = new AbortController();
 
     const timeout = setTimeout(() => {
-      controller.abort();
+      controller.abort(
+        new RayError("The inference request exceeded the scheduler timeout", {
+          code: "request_timeout",
+          status: 504,
+        }),
+      );
     }, this.config.requestTimeoutMs);
 
     try {
@@ -111,7 +133,7 @@ export class RequestScheduler<T> {
     } finally {
       clearTimeout(timeout);
       this.inFlight -= 1;
-      this.drain();
+      this.requestDrain();
     }
   }
 }

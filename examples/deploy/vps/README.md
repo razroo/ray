@@ -62,6 +62,8 @@ Start from [examples/config/ray.vps.json](/Users/charlie/Razroo/ray/examples/con
 - `model.id`
 - `model.adapter.modelRef`
 - `model.adapter.baseUrl`
+- `auth.enabled`
+- `rateLimit.maxRequests`
 
 Put the final file somewhere stable, for example:
 
@@ -70,7 +72,17 @@ sudo mkdir -p /etc/ray
 sudo cp examples/config/ray.vps.json /etc/ray/ray.vps.json
 ```
 
-### 5. Install the systemd unit
+### 5. Add the environment file
+
+If you enable inference auth, populate the API keys env file before starting the gateway:
+
+```bash
+sudo tee /etc/ray/ray.env >/dev/null <<'EOF'
+RAY_API_KEYS=replace-with-comma-separated-client-api-keys
+EOF
+```
+
+### 6. Install the systemd unit
 
 Start from [examples/deploy/vps/ray-gateway.service](/Users/charlie/Razroo/ray/examples/deploy/vps/ray-gateway.service) or generate one from the deploy package.
 
@@ -80,7 +92,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now ray-gateway
 ```
 
-### 6. Install the reverse proxy
+### 7. Install the reverse proxy
 
 Start from [examples/deploy/vps/Caddyfile](/Users/charlie/Razroo/ray/examples/deploy/vps/Caddyfile).
 
@@ -89,11 +101,20 @@ sudo cp examples/deploy/vps/Caddyfile /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
 
+### 8. Run the deployment checks
+
+```bash
+pnpm validate:config
+pnpm doctor
+```
+
 ## Operational Notes
 
 - Keep the model backend bound to localhost.
 - Let Ray be the public inference surface.
+- Keep the Ray gateway bound to localhost and expose it through Caddy or nginx.
+- Enable `auth.enabled` before exposing `/v1/infer` publicly.
 - Tune `scheduler.concurrency` conservatively. Tiny hardware collapses faster from overcommit than underutilization.
+- Keep `scheduler.requestTimeoutMs` slightly above `model.adapter.timeoutMs` so provider timeouts remain visible.
 - Keep the cache bounded. Ray is designed to stay predictable under memory pressure.
 - Prefer quantized models that fit comfortably rather than models that technically boot.
-

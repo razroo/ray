@@ -44,10 +44,13 @@ Phase 1 is intentionally adapter-driven. Ray does not try to embed heavyweight i
 
 - a simple inference API
 - configuration profiles for tiny, VPS, and balanced setups
+- backend-aware health and readiness checks
 - request scheduling and backpressure
 - prompt/result caching
 - request deduplication
 - graceful degradation under tight hardware constraints
+- Bearer API key auth for inference routes
+- fixed-window rate limiting
 - JSON logging and lightweight metrics
 - deployment scaffolding for a single VPS
 
@@ -200,6 +203,13 @@ pnpm start
 ```
 
 See [examples/deploy/vps/README.md](/Users/charlie/Razroo/ray/examples/deploy/vps/README.md) for the intended single-node deployment flow.
+
+### 5. Validate the deployment shape
+
+```bash
+pnpm validate:config
+pnpm doctor
+```
 
 ## Example Config Profiles
 

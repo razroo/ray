@@ -10,7 +10,7 @@
     "family": "qwen2.5",
     "quantization": "q4_k_m",
     "contextWindow": 8192,
-    "warmOnBoot": false,
+    "warmOnBoot": true,
     "maxOutputTokens": 384,
     "adapter": {
       "kind": "openai-compatible",
@@ -22,7 +22,7 @@
   "scheduler": {
     "concurrency": 2,
     "maxQueue": 96,
-    "requestTimeoutMs": 20000,
+    "requestTimeoutMs": 24000,
     "dedupeInflight": true,
     "batchWindowMs": 0
   },
@@ -37,6 +37,16 @@
     "queueDepthThreshold": 24,
     "maxPromptChars": 8000,
     "degradeToMaxTokens": 192
+  },
+  "auth": {
+    "enabled": false,
+    "apiKeyEnv": "RAY_API_KEYS"
+  },
+  "rateLimit": {
+    "enabled": true,
+    "windowMs": 60000,
+    "maxRequests": 90,
+    "keyStrategy": "ip+api-key",
+    "trustProxyHeaders": true
   }
 }
-

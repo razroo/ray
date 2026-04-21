@@ -58,6 +58,10 @@ export class RuntimeMetrics {
     lastLatencyMs: null as number | null,
     lastCacheHitAt: null as string | null,
     lastRequestAt: null as string | null,
+    lastErrorAt: null as string | null,
+    lastDegradedAt: null as string | null,
+    lastRateLimitAt: null as string | null,
+    lastAuthRejectAt: null as string | null,
   };
 
   increment(name: string, by = 1): void {
@@ -68,13 +72,18 @@ export class RuntimeMetrics {
     this.gauges.set(name, value);
   }
 
-  recordRequest(latencyMs: number, cached: boolean): void {
+  recordRequest(latencyMs: number, options: { cached: boolean; degraded: boolean }): void {
     this.increment("requests.total");
-    if (cached) {
+    if (options.cached) {
       this.increment("cache.hits");
       this.recent.lastCacheHitAt = new Date().toISOString();
     } else {
       this.increment("cache.misses");
+    }
+
+    if (options.degraded) {
+      this.increment("requests.degraded");
+      this.recent.lastDegradedAt = new Date().toISOString();
     }
 
     this.recent.lastLatencyMs = latencyMs;
@@ -83,14 +92,41 @@ export class RuntimeMetrics {
 
   recordError(): void {
     this.increment("requests.errors");
+    this.recent.lastErrorAt = new Date().toISOString();
   }
 
-  snapshot(): RuntimeMetricsSnapshot {
-    return {
+  recordRateLimitReject(): void {
+    this.increment("requests.rate_limited");
+    this.recent.lastRateLimitAt = new Date().toISOString();
+  }
+
+  recordAuthReject(): void {
+    this.increment("requests.auth_rejected");
+    this.recent.lastAuthRejectAt = new Date().toISOString();
+  }
+
+  recordProviderHealth(status: "ready" | "warming" | "degraded" | "unavailable" | "unknown", latencyMs?: number): void {
+    this.gauge(
+      "provider.health.status",
+      status === "ready" ? 1 : status === "degraded" || status === "warming" ? 0.5 : 0,
+    );
+
+    if (typeof latencyMs === "number") {
+      this.gauge("provider.health.latency_ms", latencyMs);
+    }
+  }
+
+  snapshot(includeDebugMetrics = true): RuntimeMetricsSnapshot {
+    const snapshot: RuntimeMetricsSnapshot = {
       counters: Object.fromEntries(this.counters.entries()),
       gauges: Object.fromEntries(this.gauges.entries()),
-      recent: structuredClone(this.recent),
     };
+
+    if (includeDebugMetrics) {
+      snapshot.recent = structuredClone(this.recent);
+    }
+
+    return snapshot;
   }
 }
 

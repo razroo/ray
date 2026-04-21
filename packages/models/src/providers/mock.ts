@@ -22,13 +22,19 @@ export class MockProvider implements ModelProvider {
     const systemPrefix = request.system ? `system=${request.system.slice(0, 72)}\n` : "";
     const body = request.input.slice(0, 320);
     const seed = this.adapter.seed ?? "ray";
+    const output = `[ray:mock model=${this.model.id} profile=${context.config.profile} seed=${seed}]\n${systemPrefix}${body}`;
+    const promptChars = request.input.length + (request.system?.length ?? 0);
+    const completionChars = output.length;
 
     return {
-      output: `[ray:mock model=${this.model.id} profile=${context.config.profile} seed=${seed}]\n${systemPrefix}${body}`,
+      output,
       usage: {
-        promptChars: request.input.length + (request.system?.length ?? 0),
+        chars: {
+          prompt: promptChars,
+          completion: completionChars,
+          total: promptChars + completionChars,
+        },
       },
     };
   }
 }
-

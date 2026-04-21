@@ -17,6 +17,16 @@
       "latencyMs": 35,
       "seed": "ray-tiny"
     }
+  },
+  "auth": {
+    "enabled": false,
+    "apiKeyEnv": "RAY_API_KEYS"
+  },
+  "rateLimit": {
+    "enabled": false,
+    "windowMs": 60000,
+    "maxRequests": 120,
+    "keyStrategy": "ip",
+    "trustProxyHeaders": false
   }
 }
-

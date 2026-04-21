@@ -9,15 +9,18 @@ import {
   createRequestId,
   hashValue,
   isNonEmptyString,
+  toErrorMessage,
   type HealthSnapshot,
   type InferenceRequest,
   type InferenceResponse,
   type ModelProvider,
   type NormalizedInferenceRequest,
+  type ProviderHealthSnapshot,
   type ProviderResult,
   type RayConfig,
   type RuntimeMetricsSnapshot,
   type SchedulerSnapshot,
+  type UsageBreakdown,
   type UsageStats,
 } from "@ray/core";
 
@@ -26,6 +29,13 @@ interface CachedInferencePayload {
   output: string;
   usage: UsageStats;
   degraded: boolean;
+}
+
+type WarmState = "idle" | "warming" | "ready" | "failed";
+
+interface CachedProviderHealth {
+  checkedAtMs: number;
+  snapshot: ProviderHealthSnapshot;
 }
 
 export interface CreateRayRuntimeOptions {
@@ -124,16 +134,37 @@ function buildCacheKey(config: RayConfig, request: NormalizedInferenceRequest): 
   return hashValue(payload);
 }
 
-function computeUsage(request: NormalizedInferenceRequest, result: ProviderResult): UsageStats {
-  const promptChars = result.usage?.promptChars ?? request.input.length + (request.system?.length ?? 0);
-  const completionChars = result.usage?.completionChars ?? result.output.length;
-  const totalChars = result.usage?.totalChars ?? promptChars + completionChars;
+function buildUsageBreakdown(partial: Partial<UsageBreakdown> | undefined, fallback: UsageBreakdown): UsageBreakdown {
+  const prompt = partial?.prompt ?? fallback.prompt;
+  const completion = partial?.completion ?? fallback.completion;
 
   return {
-    promptChars,
-    completionChars,
-    totalChars,
+    prompt,
+    completion,
+    total: partial?.total ?? prompt + completion,
   };
+}
+
+function computeUsage(request: NormalizedInferenceRequest, result: ProviderResult): UsageStats {
+  const fallbackChars = {
+    prompt: request.input.length + (request.system?.length ?? 0),
+    completion: result.output.length,
+    total: request.input.length + (request.system?.length ?? 0) + result.output.length,
+  };
+
+  const usage: UsageStats = {
+    chars: buildUsageBreakdown(result.usage?.chars, fallbackChars),
+  };
+
+  if (result.usage?.tokens) {
+    usage.tokens = buildUsageBreakdown(result.usage.tokens, {
+      prompt: 0,
+      completion: 0,
+      total: 0,
+    });
+  }
+
+  return usage;
 }
 
 function buildResponse(
@@ -165,6 +196,9 @@ export class RayRuntime {
   readonly scheduler: RequestScheduler<ProviderResult>;
   readonly cache: TtlCache<CachedInferencePayload>;
   private readonly startedAt = Date.now();
+  private warmState: WarmState = "idle";
+  private lastWarmError: string | undefined;
+  private providerHealthCache: CachedProviderHealth | undefined;
 
   constructor(
     readonly config: RayConfig,
@@ -184,13 +218,46 @@ export class RayRuntime {
 
   async warm(): Promise<void> {
     if (!this.config.model.warmOnBoot || !this.provider.warm) {
+      this.warmState = "ready";
       return;
     }
 
-    await this.provider.warm();
-    this.logger.info("provider warmed", {
-      modelId: this.provider.modelId,
-    });
+    this.warmState = "warming";
+
+    try {
+      await this.provider.warm();
+      this.warmState = "ready";
+      this.lastWarmError = undefined;
+      this.providerHealthCache = {
+        checkedAtMs: Date.now(),
+        snapshot: {
+          status: "ready",
+          checkedAt: new Date().toISOString(),
+          details: {
+            source: "warm",
+          },
+        },
+      };
+
+      this.logger.info("provider warmed", {
+        modelId: this.provider.modelId,
+      });
+    } catch (error) {
+      this.warmState = "failed";
+      this.lastWarmError = toErrorMessage(error);
+      this.providerHealthCache = {
+        checkedAtMs: Date.now(),
+        snapshot: {
+          status: "unavailable",
+          checkedAt: new Date().toISOString(),
+          details: {
+            source: "warm",
+            message: this.lastWarmError,
+          },
+        },
+      };
+      throw error;
+    }
   }
 
   async infer(request: InferenceRequest): Promise<InferenceResponse> {
@@ -210,7 +277,10 @@ export class RayRuntime {
 
       if (cached) {
         const latencyMs = Date.now() - startedAt;
-        this.metrics.recordRequest(latencyMs, true);
+        this.metrics.recordRequest(latencyMs, {
+          cached: true,
+          degraded: cached.degraded,
+        });
 
         return buildResponse(cached, requestId, latencyMs, 0, true, false);
       }
@@ -243,7 +313,10 @@ export class RayRuntime {
         this.cache.set(cacheKey, payload);
       }
 
-      this.metrics.recordRequest(latencyMs, false);
+      this.metrics.recordRequest(latencyMs, {
+        cached: false,
+        degraded: prepared.degraded,
+      });
       this.metrics.gauge("queue.depth", this.scheduler.snapshot().queueDepth);
       this.metrics.gauge("inference.in_flight", this.scheduler.snapshot().inFlight);
       this.metrics.gauge("cache.entries", this.cache.size());
@@ -269,18 +342,26 @@ export class RayRuntime {
     }
   }
 
-  health(): HealthSnapshot {
+  async health(): Promise<HealthSnapshot> {
     const snapshot = this.scheduler.snapshot();
+    const provider = await this.getProviderHealth();
+    const queueDegraded = snapshot.queueDepth >= this.config.gracefulDegradation.queueDepthThreshold;
+    const status =
+      provider.status === "unavailable"
+        ? "unavailable"
+        : provider.status === "degraded" || provider.status === "warming" || queueDegraded
+          ? "degraded"
+          : "ok";
 
     return {
-      status:
-        snapshot.queueDepth >= this.config.gracefulDegradation.queueDepthThreshold ? "degraded" : "ok",
+      status,
       uptimeMs: Date.now() - this.startedAt,
       queueDepth: snapshot.queueDepth,
       inFlight: snapshot.inFlight,
       cacheEntries: this.cache.size(),
       profile: this.config.profile,
       modelId: this.provider.modelId,
+      provider,
     };
   }
 
@@ -289,11 +370,76 @@ export class RayRuntime {
   }
 
   metricsSnapshot(): RuntimeMetricsSnapshot {
-    return this.metrics.snapshot();
+    return this.metrics.snapshot(this.config.telemetry.includeDebugMetrics);
   }
 
   sanitizedConfig(): Record<string, unknown> {
     return sanitizeConfig(this.config);
+  }
+
+  private async getProviderHealth(): Promise<ProviderHealthSnapshot> {
+    const now = Date.now();
+
+    if (this.provider.health) {
+      if (this.providerHealthCache && now - this.providerHealthCache.checkedAtMs < 1_000) {
+        return this.providerHealthCache.snapshot;
+      }
+
+      try {
+        const snapshot = await this.provider.health();
+        this.providerHealthCache = {
+          checkedAtMs: now,
+          snapshot,
+        };
+        this.metrics.recordProviderHealth(snapshot.status, snapshot.latencyMs);
+        return snapshot;
+      } catch (error) {
+        const snapshot: ProviderHealthSnapshot = {
+          status: "unavailable",
+          checkedAt: new Date().toISOString(),
+          details: {
+            message: toErrorMessage(error),
+          },
+        };
+        this.providerHealthCache = {
+          checkedAtMs: now,
+          snapshot,
+        };
+        this.metrics.recordProviderHealth(snapshot.status);
+        return snapshot;
+      }
+    }
+
+    const snapshot: ProviderHealthSnapshot =
+      this.warmState === "failed"
+        ? {
+            status: "unavailable",
+            checkedAt: new Date().toISOString(),
+            ...(this.lastWarmError
+              ? {
+                  details: {
+                    message: this.lastWarmError,
+                  },
+                }
+              : {}),
+          }
+        : this.warmState === "warming"
+          ? {
+              status: "warming",
+              checkedAt: new Date().toISOString(),
+            }
+          : this.warmState === "ready"
+            ? {
+                status: "ready",
+                checkedAt: new Date().toISOString(),
+              }
+            : {
+                status: "unknown",
+                checkedAt: new Date().toISOString(),
+              };
+
+    this.metrics.recordProviderHealth(snapshot.status, snapshot.latencyMs);
+    return snapshot;
   }
 
   private toCachedPayload(

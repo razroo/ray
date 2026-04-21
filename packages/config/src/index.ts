@@ -109,9 +109,18 @@ function validateConfig(config: RayConfig): RayConfig {
   assertPositiveInteger(config.cache.ttlMs, "cache.ttlMs");
   assertPositiveInteger(config.gracefulDegradation.maxPromptChars, "gracefulDegradation.maxPromptChars");
   assertPositiveInteger(config.gracefulDegradation.degradeToMaxTokens, "gracefulDegradation.degradeToMaxTokens");
+  assertPositiveInteger(config.rateLimit.windowMs, "rateLimit.windowMs");
+  assertPositiveInteger(config.rateLimit.maxRequests, "rateLimit.maxRequests");
 
   if (!isNonEmptyString(config.model.id) || !isNonEmptyString(config.model.family)) {
     throw new RayError("model.id and model.family must be non-empty strings", {
+      code: "config_validation_error",
+      status: 500,
+    });
+  }
+
+  if (config.auth.enabled && !isNonEmptyString(config.auth.apiKeyEnv)) {
+    throw new RayError("auth.apiKeyEnv must be set when auth is enabled", {
       code: "config_validation_error",
       status: 500,
     });
@@ -133,6 +142,46 @@ function validateConfig(config: RayConfig): RayConfig {
   }
 
   return config;
+}
+
+export function resolveAuthApiKeys(config: RayConfig, env: NodeJS.ProcessEnv): Set<string> {
+  if (!config.auth.enabled) {
+    return new Set();
+  }
+
+  const envName = config.auth.apiKeyEnv;
+
+  if (!isNonEmptyString(envName)) {
+    throw new RayError("auth.apiKeyEnv must be set when auth is enabled", {
+      code: "config_validation_error",
+      status: 500,
+    });
+  }
+
+  const raw = env[envName];
+
+  if (!isNonEmptyString(raw)) {
+    throw new RayError(`Auth is enabled but ${envName} is empty`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { envName },
+    });
+  }
+
+  const keys = raw
+    .split(/[\n,]/)
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  if (keys.length === 0) {
+    throw new RayError(`Auth is enabled but ${envName} does not contain any usable API keys`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { envName },
+    });
+  }
+
+  return new Set(keys);
 }
 
 export async function loadRayConfig(options: LoadRayConfigOptions = {}): Promise<LoadedRayConfig> {

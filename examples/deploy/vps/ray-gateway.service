@@ -6,11 +6,22 @@ After=network.target
 Type=simple
 User=ray
 WorkingDirectory=/srv/ray
+EnvironmentFile=/etc/ray/ray.env
+Environment=NODE_ENV=production
 ExecStart=/usr/bin/node /srv/ray/apps/gateway/dist/index.js --config /etc/ray/ray.vps.json
 Restart=always
 RestartSec=2
-Environment=NODE_ENV=production
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictSUIDSGID=true
+UMask=027
+LimitNOFILE=4096
 
 [Install]
 WantedBy=multi-user.target
-

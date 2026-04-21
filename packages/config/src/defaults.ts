@@ -12,7 +12,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
   tiny: {
     profile: "tiny",
     server: {
-      host: "0.0.0.0",
+      host: "127.0.0.1",
       port: 3000,
       requestBodyLimitBytes: 32_000,
     },
@@ -54,6 +54,17 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       maxPromptChars: 4_000,
       degradeToMaxTokens: 96,
     },
+    auth: {
+      enabled: false,
+      apiKeyEnv: "RAY_API_KEYS",
+    },
+    rateLimit: {
+      enabled: false,
+      windowMs: 60_000,
+      maxRequests: 120,
+      keyStrategy: "ip",
+      trustProxyHeaders: false,
+    },
     tags: {
       target: "tiny",
       hosting: "cheap-vps",
@@ -62,7 +73,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
   vps: {
     profile: "vps",
     server: {
-      host: "0.0.0.0",
+      host: "127.0.0.1",
       port: 3000,
       requestBodyLimitBytes: 64_000,
     },
@@ -105,6 +116,17 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       maxPromptChars: 8_000,
       degradeToMaxTokens: 192,
     },
+    auth: {
+      enabled: false,
+      apiKeyEnv: "RAY_API_KEYS",
+    },
+    rateLimit: {
+      enabled: true,
+      windowMs: 60_000,
+      maxRequests: 90,
+      keyStrategy: "ip+api-key",
+      trustProxyHeaders: true,
+    },
     tags: {
       target: "vps",
       hosting: "single-node",
@@ -113,7 +135,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
   balanced: {
     profile: "balanced",
     server: {
-      host: "0.0.0.0",
+      host: "127.0.0.1",
       port: 3000,
       requestBodyLimitBytes: 96_000,
     },
@@ -155,6 +177,17 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       queueDepthThreshold: 40,
       maxPromptChars: 12_000,
       degradeToMaxTokens: 256,
+    },
+    auth: {
+      enabled: false,
+      apiKeyEnv: "RAY_API_KEYS",
+    },
+    rateLimit: {
+      enabled: true,
+      windowMs: 60_000,
+      maxRequests: 180,
+      keyStrategy: "ip+api-key",
+      trustProxyHeaders: true,
     },
     tags: {
       target: "balanced",

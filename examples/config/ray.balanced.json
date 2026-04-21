@@ -10,7 +10,7 @@
     "family": "mistral",
     "quantization": "q4_k_m",
     "contextWindow": 8192,
-    "warmOnBoot": false,
+    "warmOnBoot": true,
     "maxOutputTokens": 512,
     "adapter": {
       "kind": "openai-compatible",
@@ -22,7 +22,7 @@
   "scheduler": {
     "concurrency": 3,
     "maxQueue": 160,
-    "requestTimeoutMs": 25000,
+    "requestTimeoutMs": 30000,
     "dedupeInflight": true,
     "batchWindowMs": 0
   },
@@ -37,6 +37,16 @@
     "queueDepthThreshold": 40,
     "maxPromptChars": 12000,
     "degradeToMaxTokens": 256
+  },
+  "auth": {
+    "enabled": false,
+    "apiKeyEnv": "RAY_API_KEYS"
+  },
+  "rateLimit": {
+    "enabled": true,
+    "windowMs": 60000,
+    "maxRequests": 180,
+    "keyStrategy": "ip+api-key",
+    "trustProxyHeaders": true
   }
 }
-
