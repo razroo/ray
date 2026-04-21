@@ -105,7 +105,10 @@ export class RuntimeMetrics {
     this.recent.lastAuthRejectAt = new Date().toISOString();
   }
 
-  recordProviderHealth(status: "ready" | "warming" | "degraded" | "unavailable" | "unknown", latencyMs?: number): void {
+  recordProviderHealth(
+    status: "ready" | "warming" | "degraded" | "unavailable" | "unknown",
+    latencyMs?: number,
+  ): void {
     this.gauge(
       "provider.health.status",
       status === "ready" ? 1 : status === "degraded" || status === "warming" ? 0.5 : 0,

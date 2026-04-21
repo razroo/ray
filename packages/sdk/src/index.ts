@@ -1,4 +1,9 @@
-import type { HealthSnapshot, InferenceRequest, InferenceResponse, RuntimeMetricsSnapshot } from "@ray/core";
+import type {
+  HealthSnapshot,
+  InferenceRequest,
+  InferenceResponse,
+  RuntimeMetricsSnapshot,
+} from "@ray/core";
 
 export interface RayClientOptions {
   baseUrl: string;
@@ -62,4 +67,3 @@ export class RayClient {
     return (await response.json()) as T;
   }
 }
-

@@ -1,6 +1,12 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { RayError, isNonEmptyString, type LogLevel, type RayConfig, type RayProfile } from "@ray/core";
+import {
+  RayError,
+  isNonEmptyString,
+  type LogLevel,
+  type RayConfig,
+  type RayProfile,
+} from "@ray/core";
 import { createDefaultConfig, mergeConfig, type DeepPartial } from "./defaults.js";
 
 export interface LoadRayConfigOptions {
@@ -107,8 +113,14 @@ function validateConfig(config: RayConfig): RayConfig {
   assertPositiveInteger(config.scheduler.requestTimeoutMs, "scheduler.requestTimeoutMs");
   assertPositiveInteger(config.cache.maxEntries, "cache.maxEntries");
   assertPositiveInteger(config.cache.ttlMs, "cache.ttlMs");
-  assertPositiveInteger(config.gracefulDegradation.maxPromptChars, "gracefulDegradation.maxPromptChars");
-  assertPositiveInteger(config.gracefulDegradation.degradeToMaxTokens, "gracefulDegradation.degradeToMaxTokens");
+  assertPositiveInteger(
+    config.gracefulDegradation.maxPromptChars,
+    "gracefulDegradation.maxPromptChars",
+  );
+  assertPositiveInteger(
+    config.gracefulDegradation.degradeToMaxTokens,
+    "gracefulDegradation.degradeToMaxTokens",
+  );
   assertPositiveInteger(config.rateLimit.windowMs, "rateLimit.windowMs");
   assertPositiveInteger(config.rateLimit.maxRequests, "rateLimit.maxRequests");
 
@@ -127,7 +139,10 @@ function validateConfig(config: RayConfig): RayConfig {
   }
 
   if (config.model.adapter.kind === "openai-compatible") {
-    if (!isNonEmptyString(config.model.adapter.baseUrl) || !isNonEmptyString(config.model.adapter.modelRef)) {
+    if (
+      !isNonEmptyString(config.model.adapter.baseUrl) ||
+      !isNonEmptyString(config.model.adapter.modelRef)
+    ) {
       throw new RayError("openai-compatible adapters require baseUrl and modelRef", {
         code: "config_validation_error",
         status: 500,

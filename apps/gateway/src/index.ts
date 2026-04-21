@@ -90,7 +90,11 @@ async function readJsonBody(request: IncomingMessage, limitBytes: number): Promi
   }
 }
 
-function buildRateLimitHeaders(decision: { limit: number; remaining: number; resetAt: number }): Record<string, string> {
+function buildRateLimitHeaders(decision: {
+  limit: number;
+  remaining: number;
+  resetAt: number;
+}): Record<string, string> {
   return {
     "x-ratelimit-limit": decision.limit.toString(),
     "x-ratelimit-remaining": decision.remaining.toString(),
@@ -100,11 +104,16 @@ function buildRateLimitHeaders(decision: { limit: number; remaining: number; res
 
 export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions) {
   const runtime = options.runtime ?? createRayRuntime(options.config);
-  const logger = options.logger ?? new Logger(options.config.telemetry.serviceName, options.config.telemetry.logLevel);
+  const logger =
+    options.logger ??
+    new Logger(options.config.telemetry.serviceName, options.config.telemetry.logLevel);
   const env = options.env ?? process.env;
   const apiKeys = resolveAuthApiKeys(options.config, env);
   const rateLimiter =
-    options.rateLimiter ?? (options.config.rateLimit.enabled ? new FixedWindowRateLimiter(options.config.rateLimit) : undefined);
+    options.rateLimiter ??
+    (options.config.rateLimit.enabled
+      ? new FixedWindowRateLimiter(options.config.rateLimit)
+      : undefined);
 
   return async (request: IncomingMessage, response: ServerResponse) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
@@ -188,14 +197,20 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
               },
               {
                 ...rateLimitHeaders,
-                "retry-after": Math.max(Math.ceil((decision.resetAt - Date.now()) / 1_000), 1).toString(),
+                "retry-after": Math.max(
+                  Math.ceil((decision.resetAt - Date.now()) / 1_000),
+                  1,
+                ).toString(),
               },
             );
             return;
           }
         }
 
-        const body = (await readJsonBody(request, options.config.server.requestBodyLimitBytes)) as InferenceRequest;
+        const body = (await readJsonBody(
+          request,
+          options.config.server.requestBodyLimitBytes,
+        )) as InferenceRequest;
         const result = await runtime.infer(body);
         writeJson(response, 200, result, rateLimitHeaders);
         return;
@@ -236,7 +251,9 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
 
 export function createGatewayServer(options: CreateGatewayHandlerOptions): GatewayServer {
   const runtime = options.runtime ?? createRayRuntime(options.config);
-  const logger = options.logger ?? new Logger(options.config.telemetry.serviceName, options.config.telemetry.logLevel);
+  const logger =
+    options.logger ??
+    new Logger(options.config.telemetry.serviceName, options.config.telemetry.logLevel);
   const handler = createGatewayRequestHandler({
     ...options,
     runtime,

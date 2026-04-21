@@ -10,7 +10,9 @@ export function stableStringify(value: unknown): string {
   }
 
   const entries = Object.entries(value).sort(([left], [right]) => left.localeCompare(right));
-  const mapped = entries.map(([key, nested]) => `${JSON.stringify(key)}:${stableStringify(nested)}`);
+  const mapped = entries.map(
+    ([key, nested]) => `${JSON.stringify(key)}:${stableStringify(nested)}`,
+  );
 
   return `{${mapped.join(",")}}`;
 }
@@ -48,4 +50,3 @@ export function sleep(ms: number): Promise<void> {
     setTimeout(resolve, ms);
   });
 }
-

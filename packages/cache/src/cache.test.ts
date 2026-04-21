@@ -20,4 +20,3 @@ test("ttl cache evicts the oldest entry once full", () => {
   assert.equal(cache.get("b"), "two");
   assert.equal(cache.get("c"), "three");
 });
-

@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
-import { diagnoseConfig, renderCaddyfile, renderEnvironmentFileExample, renderSystemdService } from "./index.js";
+import {
+  diagnoseConfig,
+  renderCaddyfile,
+  renderEnvironmentFileExample,
+  renderSystemdService,
+} from "./index.js";
 
 test("renderSystemdService includes hardening directives", () => {
   const service = renderSystemdService({

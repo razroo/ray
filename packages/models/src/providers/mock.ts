@@ -1,4 +1,12 @@
-import { sleep, type MockProviderConfig, type ModelConfig, type ModelProvider, type NormalizedInferenceRequest, type ProviderContext, type ProviderResult } from "@ray/core";
+import {
+  sleep,
+  type MockProviderConfig,
+  type ModelConfig,
+  type ModelProvider,
+  type NormalizedInferenceRequest,
+  type ProviderContext,
+  type ProviderResult,
+} from "@ray/core";
 
 export class MockProvider implements ModelProvider {
   readonly kind = "mock";
@@ -16,7 +24,10 @@ export class MockProvider implements ModelProvider {
     this.modelId = model.id;
   }
 
-  async infer(request: NormalizedInferenceRequest, context: ProviderContext): Promise<ProviderResult> {
+  async infer(
+    request: NormalizedInferenceRequest,
+    context: ProviderContext,
+  ): Promise<ProviderResult> {
     await sleep(this.adapter.latencyMs);
 
     const systemPrefix = request.system ? `system=${request.system.slice(0, 72)}\n` : "";

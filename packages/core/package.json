@@ -1,7 +1,19 @@
 {
   "name": "@ray/core",
-  "private": true,
   "version": "0.1.0",
+  "description": "Shared types and primitives for Ray inference gateway",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/razroo/ray.git",
+    "directory": "packages/core"
+  },
+  "keywords": [
+    "ray",
+    "inference",
+    "llm",
+    "self-hosted"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -11,6 +23,11 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "src"]
+  "files": [
+    "dist",
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }
-

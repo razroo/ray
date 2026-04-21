@@ -43,4 +43,3 @@ const child = spawn(process.execPath, ["--test", ...testFiles], {
 child.on("exit", (code) => {
   process.exit(code ?? 1);
 });
-

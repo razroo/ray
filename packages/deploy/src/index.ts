@@ -93,10 +93,18 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
   return `${lines.join("\n")}\n`;
 }
 
-export function diagnoseConfig(config: RayConfig, env: NodeJS.ProcessEnv, envFile?: string): DeploymentDiagnostic[] {
+export function diagnoseConfig(
+  config: RayConfig,
+  env: NodeJS.ProcessEnv,
+  envFile?: string,
+): DeploymentDiagnostic[] {
   const diagnostics: DeploymentDiagnostic[] = [];
 
-  if (config.server.host !== "127.0.0.1" && config.server.host !== "::1" && config.server.host !== "localhost") {
+  if (
+    config.server.host !== "127.0.0.1" &&
+    config.server.host !== "::1" &&
+    config.server.host !== "localhost"
+  ) {
     diagnostics.push({
       level: "warn",
       code: "public_bind_address",
@@ -134,7 +142,8 @@ export function diagnoseConfig(config: RayConfig, env: NodeJS.ProcessEnv, envFil
     diagnostics.push({
       level: "warn",
       code: "rate_limit_disabled",
-      message: "Inference rate limiting is disabled. Public endpoints should have a bounded request budget.",
+      message:
+        "Inference rate limiting is disabled. Public endpoints should have a bounded request budget.",
     });
   }
 

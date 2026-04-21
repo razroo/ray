@@ -103,10 +103,17 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
     for (const pathname of probes) {
       try {
-        const response = await this.request(pathname, { method: "GET" }, Math.min(this.adapter.timeoutMs, 5_000));
+        const response = await this.request(
+          pathname,
+          { method: "GET" },
+          Math.min(this.adapter.timeoutMs, 5_000),
+        );
         const latencyMs = Date.now() - startedAt;
         const details =
-          pathname === "/v1/models" && response !== undefined && response !== null && typeof response === "object"
+          pathname === "/v1/models" &&
+          response !== undefined &&
+          response !== null &&
+          typeof response === "object"
             ? { probe: pathname }
             : { probe: pathname };
 
@@ -131,7 +138,10 @@ export class OpenAICompatibleProvider implements ModelProvider {
     };
   }
 
-  async infer(request: NormalizedInferenceRequest, context: ProviderContext): Promise<ProviderResult> {
+  async infer(
+    request: NormalizedInferenceRequest,
+    context: ProviderContext,
+  ): Promise<ProviderResult> {
     const payload = (await this.request(
       "/v1/chat/completions",
       {

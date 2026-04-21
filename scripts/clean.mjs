@@ -35,4 +35,3 @@ async function walk(current) {
 }
 
 await walk(root);
-

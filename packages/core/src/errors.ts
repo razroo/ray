@@ -11,4 +11,3 @@ export class RayError extends Error {
     this.details = options?.details;
   }
 }
-

@@ -46,7 +46,10 @@ export interface CreateRayRuntimeOptions {
   cache?: TtlCache<CachedInferencePayload>;
 }
 
-function normalizeRequest(config: RayConfig, request: InferenceRequest): NormalizedInferenceRequest {
+function normalizeRequest(
+  config: RayConfig,
+  request: InferenceRequest,
+): NormalizedInferenceRequest {
   if (!isNonEmptyString(request.input)) {
     throw new RayError("input must be a non-empty string", {
       code: "invalid_request",
@@ -56,7 +59,11 @@ function normalizeRequest(config: RayConfig, request: InferenceRequest): Normali
 
   const normalized: NormalizedInferenceRequest = {
     input: request.input.trim(),
-    maxTokens: clamp(Math.floor(request.maxTokens ?? config.model.maxOutputTokens), 1, config.model.maxOutputTokens),
+    maxTokens: clamp(
+      Math.floor(request.maxTokens ?? config.model.maxOutputTokens),
+      1,
+      config.model.maxOutputTokens,
+    ),
     temperature: clamp(request.temperature ?? 0.2, 0, 2),
     topP: clamp(request.topP ?? 0.95, 0.1, 1),
     cache: request.cache ?? true,
@@ -134,7 +141,10 @@ function buildCacheKey(config: RayConfig, request: NormalizedInferenceRequest): 
   return hashValue(payload);
 }
 
-function buildUsageBreakdown(partial: Partial<UsageBreakdown> | undefined, fallback: UsageBreakdown): UsageBreakdown {
+function buildUsageBreakdown(
+  partial: Partial<UsageBreakdown> | undefined,
+  fallback: UsageBreakdown,
+): UsageBreakdown {
   const prompt = partial?.prompt ?? fallback.prompt;
   const completion = partial?.completion ?? fallback.completion;
 
@@ -205,7 +215,8 @@ export class RayRuntime {
     options: CreateRayRuntimeOptions = {},
   ) {
     this.provider = options.provider ?? createModelProvider(config.model);
-    this.logger = options.logger ?? new Logger(config.telemetry.serviceName, config.telemetry.logLevel);
+    this.logger =
+      options.logger ?? new Logger(config.telemetry.serviceName, config.telemetry.logLevel);
     this.metrics = options.metrics ?? new RuntimeMetrics();
     this.scheduler = options.scheduler ?? new RequestScheduler<ProviderResult>(config.scheduler);
     this.cache =
@@ -267,7 +278,9 @@ export class RayRuntime {
     const normalized = normalizeRequest(this.config, request);
     const prepared = applyGracefulDegradation(this.config, normalized, queueSnapshot.queueDepth);
     const cacheKey =
-      this.config.cache.enabled && prepared.request.cache ? buildCacheKey(this.config, prepared.request) : undefined;
+      this.config.cache.enabled && prepared.request.cache
+        ? buildCacheKey(this.config, prepared.request)
+        : undefined;
 
     this.metrics.gauge("queue.depth", queueSnapshot.queueDepth);
     this.metrics.gauge("inference.in_flight", queueSnapshot.inFlight);
@@ -330,7 +343,14 @@ export class RayRuntime {
         });
       }
 
-      return buildResponse(payload, requestId, latencyMs, scheduled.queueTimeMs, false, scheduled.deduplicated);
+      return buildResponse(
+        payload,
+        requestId,
+        latencyMs,
+        scheduled.queueTimeMs,
+        false,
+        scheduled.deduplicated,
+      );
     } catch (error) {
       this.metrics.recordError();
       this.logger.error("inference failed", {
@@ -345,7 +365,8 @@ export class RayRuntime {
   async health(): Promise<HealthSnapshot> {
     const snapshot = this.scheduler.snapshot();
     const provider = await this.getProviderHealth();
-    const queueDegraded = snapshot.queueDepth >= this.config.gracefulDegradation.queueDepthThreshold;
+    const queueDegraded =
+      snapshot.queueDepth >= this.config.gracefulDegradation.queueDepthThreshold;
     const status =
       provider.status === "unavailable"
         ? "unavailable"

@@ -17,14 +17,22 @@
     "start": "node ./apps/gateway/dist/index.js --config ./examples/config/ray.vps.json",
     "start:tiny": "node ./apps/gateway/dist/index.js --config ./examples/config/ray.tiny.json",
     "test": "pnpm build && node ./scripts/test.mjs",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "typecheck": "tsc -b tsconfig.build.json --pretty false",
     "render:service": "node ./packages/deploy/dist/cli.js render --cwd . --config ./examples/config/ray.vps.json",
     "validate:config": "node ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.vps.json",
     "doctor": "node ./packages/deploy/dist/cli.js doctor --cwd . --config ./examples/config/ray.vps.json --env-file /etc/ray/ray.env"
   },
   "devDependencies": {
+    "@eslint/js": "^9.23.0",
     "@types/node": "^22.13.5",
+    "eslint": "^9.23.0",
+    "globals": "^17.5.0",
+    "prettier": "^3.5.3",
     "tsx": "^4.19.3",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.28.0"
   }
 }

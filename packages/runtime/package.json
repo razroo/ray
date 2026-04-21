@@ -11,7 +11,10 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "dependencies": {
     "@ray/cache": "workspace:*",
     "@ray/config": "workspace:*",
@@ -21,4 +24,3 @@
     "@ray/telemetry": "workspace:*"
   }
 }
-

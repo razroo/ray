@@ -47,7 +47,9 @@ export class FixedWindowRateLimiter {
   }
 }
 
-export function parseBearerToken(authorizationHeader: string | string[] | undefined): string | undefined {
+export function parseBearerToken(
+  authorizationHeader: string | string[] | undefined,
+): string | undefined {
   if (Array.isArray(authorizationHeader)) {
     return parseBearerToken(authorizationHeader[0]);
   }

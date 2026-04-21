@@ -57,7 +57,7 @@ pnpm build
 
 ### 4. Place the config
 
-Start from [examples/config/ray.vps.json](/Users/charlie/Razroo/ray/examples/config/ray.vps.json) and adjust:
+Start from [ray.vps.json](../../config/ray.vps.json) and adjust:
 
 - `model.id`
 - `model.adapter.modelRef`
@@ -84,7 +84,7 @@ EOF
 
 ### 6. Install the systemd unit
 
-Start from [examples/deploy/vps/ray-gateway.service](/Users/charlie/Razroo/ray/examples/deploy/vps/ray-gateway.service) or generate one from the deploy package.
+Start from [ray-gateway.service](./ray-gateway.service) or generate one from the deploy package.
 
 ```bash
 sudo cp examples/deploy/vps/ray-gateway.service /etc/systemd/system/ray-gateway.service
@@ -94,7 +94,7 @@ sudo systemctl enable --now ray-gateway
 
 ### 7. Install the reverse proxy
 
-Start from [examples/deploy/vps/Caddyfile](/Users/charlie/Razroo/ray/examples/deploy/vps/Caddyfile).
+Start from the example [Caddyfile](./Caddyfile).
 
 ```bash
 sudo cp examples/deploy/vps/Caddyfile /etc/caddy/Caddyfile

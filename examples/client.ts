@@ -10,4 +10,3 @@ const result = await client.infer({
 });
 
 console.log(result.output);
-

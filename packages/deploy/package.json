@@ -11,10 +11,12 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "dependencies": {
     "@ray/config": "workspace:*",
     "@ray/core": "workspace:*"
   }
 }
-

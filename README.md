@@ -202,7 +202,7 @@ The VPS profile expects an OpenAI-compatible local backend on `127.0.0.1:8081`:
 pnpm start
 ```
 
-See [examples/deploy/vps/README.md](/Users/charlie/Razroo/ray/examples/deploy/vps/README.md) for the intended single-node deployment flow.
+See [examples/deploy/vps/README.md](examples/deploy/vps/README.md) for the intended single-node deployment flow.
 
 ### 5. Validate the deployment shape
 
@@ -213,17 +213,26 @@ pnpm doctor
 
 ## Example Config Profiles
 
-- [examples/config/ray.tiny.json](/Users/charlie/Razroo/ray/examples/config/ray.tiny.json): boots immediately with the mock provider
-- [examples/config/ray.vps.json](/Users/charlie/Razroo/ray/examples/config/ray.vps.json): tuned for a cheap VPS with a local OpenAI-compatible backend
-- [examples/config/ray.balanced.json](/Users/charlie/Razroo/ray/examples/config/ray.balanced.json): slightly roomier settings for a stronger single node
+- [examples/config/ray.tiny.json](examples/config/ray.tiny.json): boots immediately with the mock provider
+- [examples/config/ray.vps.json](examples/config/ray.vps.json): tuned for a cheap VPS with a local OpenAI-compatible backend
+- [examples/config/ray.balanced.json](examples/config/ray.balanced.json): slightly roomier settings for a stronger single node
+
+## npm packages
+
+Library packages published for TypeScript consumers:
+
+- `@ray/core` — shared types and errors used by the gateway and SDK
+- `@ray/sdk` — minimal HTTP client for the gateway (`RayClient`)
+
+Maintainer publishing steps and scope notes are in [docs/npm-publishing.md](docs/npm-publishing.md). Release and Phase 1 smoke checks are in [docs/release-checklist.md](docs/release-checklist.md).
 
 ## Architecture Notes
 
 Read:
 
-- [docs/architecture.md](/Users/charlie/Razroo/ray/docs/architecture.md)
-- [docs/principles.md](/Users/charlie/Razroo/ray/docs/principles.md)
-- [docs/roadmap.md](/Users/charlie/Razroo/ray/docs/roadmap.md)
+- [docs/architecture.md](docs/architecture.md)
+- [docs/principles.md](docs/principles.md)
+- [docs/roadmap.md](docs/roadmap.md)
 
 ## What Comes Next
 

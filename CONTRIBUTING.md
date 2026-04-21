@@ -23,6 +23,7 @@ Ray is being built as a lean inference runtime for cheap VPS hardware. Contribut
 3. Start the gateway with `pnpm dev`.
 4. Build with `pnpm build`.
 5. Run tests with `pnpm test`.
+6. Run `pnpm lint` and `pnpm format:check` before opening a PR (CI enforces both).
 
 ## Engineering bar
 
@@ -38,4 +39,3 @@ Ray is being built as a lean inference runtime for cheap VPS hardware. Contribut
 - Include doc updates when architecture or operator-facing behavior changes.
 - Add or extend tests when changing scheduler, cache, config, or transport behavior.
 - Call out memory, cold-start, or deployment tradeoffs in the PR description.
-

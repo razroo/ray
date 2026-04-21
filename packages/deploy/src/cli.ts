@@ -86,15 +86,17 @@ if (options.command === "render") {
   const inspected = await loadAndDiagnoseDeployment(options);
   const hasErrors = inspected.diagnostics.some((diagnostic) => diagnostic.level === "error");
 
-  console.log(JSON.stringify(
-    {
-      configPath: inspected.configPath,
-      profile: inspected.config.profile,
-      diagnostics: inspected.diagnostics,
-    },
-    null,
-    2,
-  ));
+  console.log(
+    JSON.stringify(
+      {
+        configPath: inspected.configPath,
+        profile: inspected.config.profile,
+        diagnostics: inspected.diagnostics,
+      },
+      null,
+      2,
+    ),
+  );
 
   if (options.command === "doctor" && hasErrors) {
     process.exit(1);
