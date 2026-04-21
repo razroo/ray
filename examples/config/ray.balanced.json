@@ -1,0 +1,42 @@
+{
+  "profile": "balanced",
+  "server": {
+    "host": "127.0.0.1",
+    "port": 3000,
+    "requestBodyLimitBytes": 96000
+  },
+  "model": {
+    "id": "mistral-7b-instruct-q4",
+    "family": "mistral",
+    "quantization": "q4_k_m",
+    "contextWindow": 8192,
+    "warmOnBoot": false,
+    "maxOutputTokens": 512,
+    "adapter": {
+      "kind": "openai-compatible",
+      "baseUrl": "http://127.0.0.1:8081",
+      "modelRef": "mistral-7b-instruct-q4_k_m",
+      "timeoutMs": 25000
+    }
+  },
+  "scheduler": {
+    "concurrency": 3,
+    "maxQueue": 160,
+    "requestTimeoutMs": 25000,
+    "dedupeInflight": true,
+    "batchWindowMs": 0
+  },
+  "cache": {
+    "enabled": true,
+    "maxEntries": 1024,
+    "ttlMs": 180000,
+    "keyStrategy": "input+params"
+  },
+  "gracefulDegradation": {
+    "enabled": true,
+    "queueDepthThreshold": 40,
+    "maxPromptChars": 12000,
+    "degradeToMaxTokens": 256
+  }
+}
+

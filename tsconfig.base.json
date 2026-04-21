@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "composite": true,
+    "incremental": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "useUnknownInCatchVariables": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "verbatimModuleSyntax": true,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@ray/cache": ["packages/cache/src/index.ts"],
+      "@ray/config": ["packages/config/src/index.ts"],
+      "@ray/core": ["packages/core/src/index.ts"],
+      "@ray/deploy": ["packages/deploy/src/index.ts"],
+      "@ray/models": ["packages/models/src/index.ts"],
+      "@ray/runtime": ["packages/runtime/src/index.ts"],
+      "@ray/scheduler": ["packages/scheduler/src/index.ts"],
+      "@ray/sdk": ["packages/sdk/src/index.ts"],
+      "@ray/telemetry": ["packages/telemetry/src/index.ts"]
+    }
+  }
+}
+

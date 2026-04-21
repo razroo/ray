@@ -1,0 +1,16 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/config" },
+    { "path": "./packages/cache" },
+    { "path": "./packages/telemetry" },
+    { "path": "./packages/scheduler" },
+    { "path": "./packages/models" },
+    { "path": "./packages/runtime" },
+    { "path": "./packages/deploy" },
+    { "path": "./packages/sdk" },
+    { "path": "./apps/gateway" }
+  ]
+}
+

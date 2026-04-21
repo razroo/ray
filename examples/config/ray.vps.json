@@ -1,0 +1,42 @@
+{
+  "profile": "vps",
+  "server": {
+    "host": "127.0.0.1",
+    "port": 3000,
+    "requestBodyLimitBytes": 64000
+  },
+  "model": {
+    "id": "qwen2.5-3b-instruct-q4",
+    "family": "qwen2.5",
+    "quantization": "q4_k_m",
+    "contextWindow": 8192,
+    "warmOnBoot": false,
+    "maxOutputTokens": 384,
+    "adapter": {
+      "kind": "openai-compatible",
+      "baseUrl": "http://127.0.0.1:8081",
+      "modelRef": "qwen2.5-3b-instruct-q4_k_m",
+      "timeoutMs": 20000
+    }
+  },
+  "scheduler": {
+    "concurrency": 2,
+    "maxQueue": 96,
+    "requestTimeoutMs": 20000,
+    "dedupeInflight": true,
+    "batchWindowMs": 0
+  },
+  "cache": {
+    "enabled": true,
+    "maxEntries": 512,
+    "ttlMs": 120000,
+    "keyStrategy": "input+params"
+  },
+  "gracefulDegradation": {
+    "enabled": true,
+    "queueDepthThreshold": 24,
+    "maxPromptChars": 8000,
+    "degradeToMaxTokens": 192
+  }
+}
+

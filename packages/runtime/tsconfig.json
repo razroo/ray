@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../cache" },
+    { "path": "../config" },
+    { "path": "../core" },
+    { "path": "../models" },
+    { "path": "../scheduler" },
+    { "path": "../telemetry" }
+  ]
+}
+

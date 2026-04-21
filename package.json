@@ -1,0 +1,29 @@
+{
+  "name": "ray",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Shrink AI to run on cheap VPS infrastructure.",
+  "license": "MIT",
+  "packageManager": "pnpm@9.12.3",
+  "engines": {
+    "node": ">=20.11.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "clean": "node ./scripts/clean.mjs",
+    "dev": "node --conditions=development --import tsx ./apps/gateway/src/index.ts --config ./examples/config/ray.vps.json",
+    "dev:tiny": "node --conditions=development --import tsx ./apps/gateway/src/index.ts --config ./examples/config/ray.tiny.json",
+    "start": "node ./apps/gateway/dist/index.js --config ./examples/config/ray.vps.json",
+    "start:tiny": "node ./apps/gateway/dist/index.js --config ./examples/config/ray.tiny.json",
+    "test": "pnpm build && node ./scripts/test.mjs",
+    "typecheck": "tsc -b --pretty false",
+    "render:service": "node ./packages/deploy/dist/cli.js --cwd . --config ./examples/config/ray.vps.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3"
+  }
+}
+

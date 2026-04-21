@@ -1,0 +1,20 @@
+{
+  "name": "@ray/gateway",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "dev": "node --conditions=development --import tsx ./src/index.ts --config ../../examples/config/ray.vps.json",
+    "build": "tsc -b",
+    "start": "node ./dist/index.js --config ../../examples/config/ray.vps.json"
+  },
+  "dependencies": {
+    "@ray/config": "workspace:*",
+    "@ray/core": "workspace:*",
+    "@ray/runtime": "workspace:*",
+    "@ray/telemetry": "workspace:*"
+  }
+}
+
