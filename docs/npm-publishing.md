@@ -2,7 +2,7 @@
 
 Ray publishes **library** packages from this monorepo for TypeScript consumers. The gateway app (`apps/gateway`) stays source-first in the repo and is not published as an npm CLI in this layout.
 
-This mirrors the **`iso`** repo: [**CI**](../.github/workflows/ci.yml) runs a single job named **`build-test-lint`** on pushes and PRs to `main`. Publishing uses [**ray-core-release.yml**](../.github/workflows/ray-core-release.yml) and [**ray-sdk-release.yml**](../.github/workflows/ray-sdk-release.yml), triggered when you **publish a GitHub Release** for tags starting with `core-v` or `sdk-v`.
+Push-time automation follows [**geometra**](https://github.com/razroo/geometra)-style naming: [**Quality checks**](../.github/workflows/quality.yml) runs a single job **`quality`** that executes **`pnpm release:gate`** (lint, format check, full test build). Tags and **`gh release create`** follow the **`iso`** pattern ([**ray-core-release.yml**](../.github/workflows/ray-core-release.yml), [**ray-sdk-release.yml**](../.github/workflows/ray-sdk-release.yml)); publish workflows poll for the **`quality`** check run before `npm publish`, same idea as geometra’s release workflow waiting on **`quality`**.
 
 ## Packages
 
@@ -64,7 +64,7 @@ Publish **`@ray/core`** before **`@ray/sdk`** when both change, so the SDK tarba
    ```
 
    Workflow behavior:
-   - Uses **`gh api`** to confirm the **`build-test-lint`** check run on the tagged commit succeeded (same pattern as **`iso`**).
+   - Uses **`gh api`** to confirm the **`quality`** check run on the tagged commit succeeded (geometra-style gate before npm).
    - Runs **`packages/*/scripts/release/check-source.mjs`** so the tag matches `package.json`.
    - **`pnpm build`** then **`pnpm publish --filter … --provenance`** with OIDC provenance (`id-token: write`).
 
@@ -72,13 +72,17 @@ Publish **`@ray/core`** before **`@ray/sdk`** when both change, so the SDK tarba
 
 ## Verify locally before tagging
 
-From the repo root:
+From the repo root (mirrors CI’s **`release:gate`**):
 
 ```bash
 pnpm install
-pnpm build
-pnpm test
-pnpm lint && pnpm format:check
+pnpm run release:gate
+```
+
+After a successful publish, confirm **`latest`** on npm (optional smoke, like geometra’s **`verify-npm`**):
+
+```bash
+pnpm run release:verify-npm -- <version-you-just-published>
 ```
 
 Sanity-check `package.json` matches the semver you intend for the tag:

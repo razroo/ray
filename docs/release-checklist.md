@@ -48,7 +48,7 @@ Aligned with [roadmap Phase 1 exit criteria](roadmap.md) and day-one operator ex
 
 ## npm packages
 
-Published libraries are `@ray/core` and `@ray/sdk`. Use **GitHub Releases** on tags `core-v…` and `sdk-v…` (see [npm-publishing.md](npm-publishing.md)); CI must be green: the **build-test-lint** job on the release commit is checked before `npm publish` (with provenance), and the tag is checked against `package.json` via `release:check-source`. Add the **`NPM_TOKEN`** repository secret for the publish step.
+Published libraries are `@ray/core` and `@ray/sdk`. Use **GitHub Releases** on tags `core-v…` and `sdk-v…` (see [npm-publishing.md](npm-publishing.md)); **[Quality checks](../.github/workflows/quality.yml)** must succeed (job **`quality`** / `pnpm release:gate`) — release workflows poll for that check-run before `npm publish` (with provenance). The tag is validated with **`release:check-source`**. Add repository secret **`NPM_TOKEN`** for the publish step.
 
 ## Docs
 

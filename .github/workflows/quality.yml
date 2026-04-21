@@ -1,4 +1,4 @@
-name: CI
+name: Quality checks
 
 on:
   pull_request:
@@ -10,8 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  build-test-lint:
-    name: build-test-lint
+  quality:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -25,14 +24,8 @@ jobs:
           node-version: "22"
           cache: pnpm
 
-      - name: Install
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Lint
-        run: pnpm lint
-
-      - name: Format check
-        run: pnpm format:check
-
-      - name: Test
-        run: pnpm test
+      - name: Release readiness gate
+        run: pnpm run release:gate

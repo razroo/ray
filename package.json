@@ -17,6 +17,8 @@
     "start": "node ./apps/gateway/dist/index.js --config ./examples/config/ray.vps.json",
     "start:tiny": "node ./apps/gateway/dist/index.js --config ./examples/config/ray.tiny.json",
     "test": "pnpm build && node ./scripts/test.mjs",
+    "release:gate": "pnpm lint && pnpm format:check && pnpm test",
+    "release:verify-npm": "node ./scripts/release/verify-npm.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
