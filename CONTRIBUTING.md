@@ -38,4 +38,5 @@ Ray is being built as a lean inference runtime for cheap VPS hardware. Contribut
 - Keep changes scoped.
 - Include doc updates when architecture or operator-facing behavior changes.
 - Add or extend tests when changing scheduler, cache, config, or transport behavior.
+- For user-visible or API changes in **`@ray/core`** or **`@ray/sdk`**, add a [Changeset](https://github.com/changesets/changesets) (`pnpm run changeset`). For repo-only or private-package work, add an empty changeset if `pnpm run changeset:status` requires it: `pnpm exec changeset add --empty`.
 - Call out memory, cold-start, or deployment tradeoffs in the PR description.

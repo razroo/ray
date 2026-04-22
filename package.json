@@ -19,6 +19,9 @@
     "test": "pnpm build && node ./scripts/test.mjs",
     "release:gate": "pnpm lint && pnpm format:check && pnpm test",
     "release:verify-npm": "node ./scripts/release/verify-npm.mjs",
+    "changeset": "changeset",
+    "changeset:status": "changeset status --verbose",
+    "version": "changeset version && pnpm install",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -28,6 +31,7 @@
     "doctor": "node ./packages/deploy/dist/cli.js doctor --cwd . --config ./examples/config/ray.vps.json --env-file /etc/ray/ray.env"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.0",
     "@eslint/js": "^9.23.0",
     "@types/node": "^22.13.5",
     "eslint": "^9.23.0",

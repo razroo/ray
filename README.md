@@ -224,7 +224,12 @@ Library packages published for TypeScript consumers:
 - `@ray/core` — shared types and errors used by the gateway and SDK
 - `@ray/sdk` — minimal HTTP client for the gateway (`RayClient`)
 
-Maintainer publishing (tag + `gh release create`, `iso`-style packages) and `NPM_TOKEN` setup are in [docs/npm-publishing.md](docs/npm-publishing.md). Push-time **[Quality checks](.github/workflows/quality.yml)** follows the **`geometra`** pattern (`release:gate`; publish workflows wait on the **`quality`** check-run). Release and Phase 1 smoke checks are in [docs/release-checklist.md](docs/release-checklist.md).
+- **Versioning:** [Changesets](https://github.com/changesets/changesets) on `main` — `pnpm run changeset` in PRs, `pnpm run version` to apply (same idea as **`iso`**; `@ray/core` and `@ray/sdk` are **linked** in [`.changeset/config.json`](.changeset/config.json)).
+- **Publish:** Tags `core-v…` / `sdk-v…`, `gh release create`, and **`NPM_TOKEN`** — see [docs/npm-publishing.md](docs/npm-publishing.md).
+- **Security:** [SECURITY.md](SECURITY.md).
+- **Branch rules:** Prefer [branch protection](docs/branch-protection.md) so **`main`** requires **Quality checks**.
+- **CI:** **[Quality checks](.github/workflows/quality.yml)** (`pnpm release:gate`; publish workflows wait on the **`quality`** check run, **`geometra`**-style).
+- **Smoke before release:** [docs/release-checklist.md](docs/release-checklist.md).
 
 ## Architecture Notes
 

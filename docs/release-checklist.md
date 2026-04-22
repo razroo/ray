@@ -48,7 +48,7 @@ Aligned with [roadmap Phase 1 exit criteria](roadmap.md) and day-one operator ex
 
 ## npm packages
 
-Published libraries are `@ray/core` and `@ray/sdk`. Use **GitHub Releases** on tags `core-v…` and `sdk-v…` (see [npm-publishing.md](npm-publishing.md)); **[Quality checks](../.github/workflows/quality.yml)** must succeed (job **`quality`** / `pnpm release:gate`) — release workflows poll for that check-run before `npm publish` (with provenance). The tag is validated with **`release:check-source`**. Add repository secret **`NPM_TOKEN`** for the publish step.
+Use [Changesets](https://github.com/changesets/changesets) on `main` (`pnpm run version`) to bump **linked** `@ray/core` and `@ray/sdk` and update their `CHANGELOG.md` files, then tag and use **GitHub Releases** on `core-v…` and `sdk-v…` (see [npm-publishing.md](npm-publishing.md)). **[Quality checks](../.github/workflows/quality.yml)** must succeed (job **`quality`** / `pnpm release:gate`); release workflows poll for that check run before `npm publish` (with provenance). The tag is validated with **`release:check-source`**. Add repository secret **`NPM_TOKEN`**. [Branch protection for `main`](branch-protection.md) is recommended in GitHub settings.
 
 ## Docs
 

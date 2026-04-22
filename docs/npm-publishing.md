@@ -38,13 +38,37 @@ The **`v` is literal** (`core-v` then semver). Strip logic in workflows turns `c
 
 Publish **`@ray/core`** before **`@ray/sdk`** when both change, so the SDK tarball can resolve the correct core range on npm.
 
+## Versioning with Changesets (same idea as **`iso`**)
+
+`@ray/core` and `@ray/sdk` are **linked** in [`.changeset/config.json`](../.changeset/config.json): one release line keeps both on the **same semver**.
+
+During development, when a PR changes publishable APIs or behavior, add a changeset:
+
+```bash
+pnpm run changeset
+```
+
+Inspect what the next merge would release:
+
+```bash
+pnpm run changeset:status
+```
+
+On **`main`**, when you are ready to apply pending changesets and refresh **CHANGELOG.md** files:
+
+```bash
+pnpm run version
+```
+
+That runs `changeset version` and then **`pnpm install`** to sync the lockfile (like `iso` runs `npm install --package-lock-only` after versioning). Commit the result (version bumps + changelogs + `pnpm-lock.yaml`).
+
+Infrastructure-only PRs can add an empty changeset: `pnpm exec changeset add --empty`.
+
 ## Cut a release (GH + npm)
 
-1. Bump **`version`** in **`packages/core/package.json`** and/or **`packages/sdk/package.json`** on `main`.
+1. Ensure **`pnpm run version`** has been run and the version bump is committed on **`main`**.
 
-2. Commit and push those bumps.
-
-3. Create **annotated tags** pointing at that commit:
+2. Create **annotated tags** pointing at that commit:
 
    ```bash
    TAG_CORE="core-v$(node -p 'require("./packages/core/package.json").version')"
@@ -56,14 +80,14 @@ Publish **`@ray/core`** before **`@ray/sdk`** when both change, so the SDK tarba
 
    Only push the tag(s) you are releasing in this pass.
 
-4. Create GitHub Releases (fires the npm workflows):
+3. Create GitHub Releases (fires the npm workflows):
 
    ```bash
    gh release create "$TAG_CORE" --generate-notes --title "$TAG_CORE"
    gh release create "$TAG_SDK" --generate-notes --title "$TAG_SDK"
    ```
 
-   Workflow behavior:
+4. Workflow behavior:
    - Uses **`gh api`** to confirm the **`quality`** check run on the tagged commit succeeded (geometra-style gate before npm).
    - Runs **`packages/*/scripts/release/check-source.mjs`** so the tag matches `package.json`.
    - **`pnpm build`** then **`pnpm publish --filter … --provenance`** with OIDC provenance (`id-token: write`).

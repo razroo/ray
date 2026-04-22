@@ -31,7 +31,8 @@
   "files": [
     "dist",
     "src",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "dependencies": {
     "@ray/core": "workspace:*"
