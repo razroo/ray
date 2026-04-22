@@ -6,7 +6,7 @@ import {
   type LogLevel,
   type RayConfig,
   type RayProfile,
-} from "@ray/core";
+} from "@razroo/ray-core";
 import { createDefaultConfig, mergeConfig, type DeepPartial } from "./defaults.js";
 
 export interface LoadRayConfigOptions {

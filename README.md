@@ -120,7 +120,7 @@ apps/
   gateway/
   control-panel/        # deferred workspace placeholder (no UI yet)
 packages/
-  core/                 # shared types (published as @ray/core)
+  core/                 # shared types (published as @razroo/ray-core)
   runtime/
   models/
   scheduler/
@@ -128,7 +128,7 @@ packages/
   deploy/
   config/
   telemetry/
-  sdk/                  # HTTP client (published as @ray/sdk)
+  sdk/                  # HTTP client (published as @razroo/ray-sdk)
 .changeset/             # Changesets config + pending release notes
 docs/
 examples/
@@ -147,7 +147,7 @@ The scaffold targets a credible first version:
 - `packages/config`: profile defaults and JSON config loading
 - `packages/telemetry`: JSON logger and lightweight in-memory metrics
 - `packages/deploy`: systemd and Caddy scaffolding for cheap VPS deployment
-- `packages/sdk`: minimal TypeScript client (`RayClient`), published as **`@ray/sdk`**
+- `packages/sdk`: minimal TypeScript client (`RayClient`), published as **`@razroo/ray-sdk`**
 
 Deliberate omissions in the MVP:
 
@@ -224,17 +224,17 @@ That runs lint, Prettier `--check`, and tests (`pnpm test` builds then runs the 
 
 TypeScript libraries for integrating with the gateway:
 
-| Package         | Role                         |
-| --------------- | ---------------------------- |
-| **`@ray/core`** | Shared types and errors      |
-| **`@ray/sdk`**  | `RayClient` for the HTTP API |
+| Package                | Role                         |
+| ---------------------- | ---------------------------- |
+| **`@razroo/ray-core`** | Shared types and errors      |
+| **`@razroo/ray-sdk`**  | `RayClient` for the HTTP API |
 
-Install: `npm install @ray/sdk` (pulls **`@ray/core`**).
+Install: `npm install @razroo/ray-sdk` (pulls **`@razroo/ray-core`**).
 
 ### Versioning and releases
 
 - **Changesets** — [`iso`](https://github.com/razroo/iso)-style workflow: `pnpm run changeset` on PRs that affect publishable APIs, then `pnpm run version` on `main` to bump linked packages and **`CHANGELOG.md`** ([`.changeset/config.json`](.changeset/config.json)).
-- **GitHub Releases** — tags `core-v…` and `sdk-v…`, then `gh release create …`; workflows publish with provenance. Details: [docs/npm-publishing.md](docs/npm-publishing.md).
+- **GitHub Releases** — tags `core-v…` and `sdk-v…`, then **`gh release create`** (shortcut: **`pnpm run release:github -- --yes`** after `pnpm run version` is on `main`); workflows publish with provenance. Details: [docs/npm-publishing.md](docs/npm-publishing.md).
 - **Post-publish check** — `pnpm run release:verify-npm -- <version>` against the npm registry.
 
 ### Security and repository hygiene
@@ -244,7 +244,7 @@ Install: `npm install @ray/sdk` (pulls **`@ray/core`**).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Short version: keep changes scoped, run **`pnpm run release:gate`** before pushing, add a **changeset** when **`@ray/core`** or **`@ray/sdk`** behavior changes.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Short version: keep changes scoped, run **`pnpm run release:gate`** before pushing, add a **changeset** when **`@razroo/ray-core`** or **`@razroo/ray-sdk`** behavior changes.
 
 ## Architecture notes
 

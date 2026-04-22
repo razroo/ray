@@ -1,4 +1,4 @@
-import { RayClient } from "@ray/sdk";
+import { RayClient } from "@razroo/ray-sdk";
 
 const client = new RayClient({
   baseUrl: "http://127.0.0.1:3000",

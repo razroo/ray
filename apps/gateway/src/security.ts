@@ -1,5 +1,5 @@
 import type { IncomingMessage } from "node:http";
-import type { RateLimitConfig } from "@ray/core";
+import type { RateLimitConfig } from "@razroo/ray-core";
 
 interface FixedWindowEntry {
   count: number;

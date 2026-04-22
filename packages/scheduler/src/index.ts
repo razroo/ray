@@ -1,4 +1,4 @@
-import { RayError, type SchedulerConfig, type SchedulerSnapshot } from "@ray/core";
+import { RayError, type SchedulerConfig, type SchedulerSnapshot } from "@razroo/ray-core";
 
 interface QueueItem<T> {
   key?: string;

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createDefaultConfig } from "@ray/config";
-import type { ModelProvider } from "@ray/core";
+import type { ModelProvider } from "@razroo/ray-core";
 import { createRayRuntime } from "./index.js";
 
 test("runtime returns chars and provider token usage explicitly", async () => {

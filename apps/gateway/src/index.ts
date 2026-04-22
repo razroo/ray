@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
 import { loadRayConfig, resolveAuthApiKeys } from "@ray/config";
-import { RayError, toErrorMessage, type InferenceRequest, type RayConfig } from "@ray/core";
+import { RayError, toErrorMessage, type InferenceRequest, type RayConfig } from "@razroo/ray-core";
 import { RayRuntime, createRayRuntime } from "@ray/runtime";
 import { Logger, serializeError } from "@ray/telemetry";
 import { FixedWindowRateLimiter, buildRateLimitKey, parseBearerToken } from "./security.js";

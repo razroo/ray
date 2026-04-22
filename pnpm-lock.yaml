@@ -43,25 +43,25 @@ importers:
       '@ray/config':
         specifier: workspace:*
         version: link:../../packages/config
-      '@ray/core':
-        specifier: workspace:*
-        version: link:../../packages/core
       '@ray/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
       '@ray/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
+      '@razroo/ray-core':
+        specifier: workspace:*
+        version: link:../../packages/core
 
   packages/cache:
     dependencies:
-      '@ray/core':
+      '@razroo/ray-core':
         specifier: workspace:*
         version: link:../core
 
   packages/config:
     dependencies:
-      '@ray/core':
+      '@razroo/ray-core':
         specifier: workspace:*
         version: link:../core
 
@@ -72,13 +72,13 @@ importers:
       '@ray/config':
         specifier: workspace:*
         version: link:../config
-      '@ray/core':
+      '@razroo/ray-core':
         specifier: workspace:*
         version: link:../core
 
   packages/models:
     dependencies:
-      '@ray/core':
+      '@razroo/ray-core':
         specifier: workspace:*
         version: link:../core
 
@@ -90,9 +90,6 @@ importers:
       '@ray/config':
         specifier: workspace:*
         version: link:../config
-      '@ray/core':
-        specifier: workspace:*
-        version: link:../core
       '@ray/models':
         specifier: workspace:*
         version: link:../models
@@ -102,22 +99,25 @@ importers:
       '@ray/telemetry':
         specifier: workspace:*
         version: link:../telemetry
+      '@razroo/ray-core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/scheduler:
     dependencies:
-      '@ray/core':
+      '@razroo/ray-core':
         specifier: workspace:*
         version: link:../core
 
   packages/sdk:
     dependencies:
-      '@ray/core':
+      '@razroo/ray-core':
         specifier: workspace:*
         version: link:../core
 
   packages/telemetry:
     dependencies:
-      '@ray/core':
+      '@razroo/ray-core':
         specifier: workspace:*
         version: link:../core
 

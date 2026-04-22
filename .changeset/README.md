@@ -1,6 +1,6 @@
 # Changesets
 
-Version bumps and `CHANGELOG.md` updates for publishable packages (`@ray/core`, `@ray/sdk`) are driven by [@changesets/cli](https://github.com/changesets/changesets).
+Version bumps and `CHANGELOG.md` updates for publishable packages (`@razroo/ray-core`, `@razroo/ray-sdk`) are driven by [@changesets/cli](https://github.com/changesets/changesets).
 
 Quick reference:
 

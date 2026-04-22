@@ -6,7 +6,7 @@ import {
   type NormalizedInferenceRequest,
   type ProviderContext,
   type ProviderResult,
-} from "@ray/core";
+} from "@razroo/ray-core";
 
 export class MockProvider implements ModelProvider {
   readonly kind = "mock";

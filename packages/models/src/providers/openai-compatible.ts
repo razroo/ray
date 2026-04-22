@@ -8,7 +8,7 @@ import {
   type ProviderContext,
   type ProviderHealthSnapshot,
   type ProviderResult,
-} from "@ray/core";
+} from "@razroo/ray-core";
 
 interface OpenAICompatibleResponse {
   choices?: Array<{

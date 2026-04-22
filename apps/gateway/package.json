@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@ray/config": "workspace:*",
-    "@ray/core": "workspace:*",
+    "@razroo/ray-core": "workspace:*",
     "@ray/runtime": "workspace:*",
     "@ray/telemetry": "workspace:*"
   }

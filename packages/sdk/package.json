@@ -1,6 +1,6 @@
 {
-  "name": "@ray/sdk",
-  "version": "0.1.0",
+  "name": "@razroo/ray-sdk",
+  "version": "0.2.0",
   "description": "TypeScript client for the Ray inference gateway HTTP API",
   "license": "MIT",
   "repository": {
@@ -10,6 +10,7 @@
   },
   "keywords": [
     "ray",
+    "razroo",
     "inference",
     "llm",
     "gateway",
@@ -35,7 +36,7 @@
     "CHANGELOG.md"
   ],
   "dependencies": {
-    "@ray/core": "workspace:*"
+    "@razroo/ray-core": "workspace:*"
   },
   "publishConfig": {
     "access": "public"

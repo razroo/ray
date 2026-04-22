@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import type { ModelConfig, ProviderContext } from "@ray/core";
+import type { ModelConfig, ProviderContext } from "@razroo/ray-core";
 import { OpenAICompatibleProvider } from "./providers/openai-compatible.js";
 
 function createModel(baseUrl: string, timeoutMs: number): ModelConfig {

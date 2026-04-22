@@ -3,9 +3,13 @@
   "changelog": "@changesets/cli/changelog",
   "commit": false,
   "fixed": [],
-  "linked": [["@ray/core", "@ray/sdk"]],
+  "linked": [["@razroo/ray-core", "@razroo/ray-sdk"]],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": []
+  "ignore": [],
+  "privatePackages": {
+    "version": false,
+    "tag": false
+  }
 }

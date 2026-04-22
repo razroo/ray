@@ -1,7 +1,7 @@
-name: "@ray/sdk Release to npm"
+name: "@razroo/ray-sdk Release to npm"
 
 # Publish when a GitHub Release whose tag starts with `sdk-v` is published.
-# Publish @ray/core first if its version changed; SDK releases often follow core.
+# Publish @razroo/ray-core first if its version changed; SDK releases often follow core.
 #
 # Cutting a release (after bumping packages/sdk/package.json version):
 #   TAG="sdk-v$(node -p 'require(\"./packages/sdk/package.json\").version')"
@@ -85,6 +85,6 @@ jobs:
 
       - name: Publish to npm (with provenance)
         working-directory: .
-        run: pnpm publish --filter @ray/sdk --access public --no-git-checks --provenance
+        run: pnpm publish --filter @razroo/ray-sdk --access public --no-git-checks --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

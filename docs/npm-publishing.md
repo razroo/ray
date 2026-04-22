@@ -6,12 +6,12 @@ Push-time automation follows [**geometra**](https://github.com/razroo/geometra)-
 
 ## Packages
 
-| Package     | Purpose                                                         |
-| ----------- | --------------------------------------------------------------- |
-| `@ray/core` | Shared types, errors, and utilities used by the SDK and gateway |
-| `@ray/sdk`  | Minimal HTTP client for the gateway API (`RayClient`)           |
+| Package            | Purpose                                                         |
+| ------------------ | --------------------------------------------------------------- |
+| `@razroo/ray-core` | Shared types, errors, and utilities used by the SDK and gateway |
+| `@razroo/ray-sdk`  | Minimal HTTP client for the gateway API (`RayClient`)           |
 
-Both are **scoped** packages. Publishing requires an npm organization or account that owns the **`@ray`** scope on [npm](https://www.npmjs.com/).
+Both are **scoped** packages under **`@razroo`**. Publishing requires an npm org or user that can publish **`@razroo/*`** on [npm](https://www.npmjs.com/) (create the **`razroo`** org or use an npm account with that scope).
 
 ## Prerequisites
 
@@ -29,18 +29,18 @@ Configure **`NPM_TOKEN`** on the GitHub repo (fine-grained or classic token allo
 
 Releases use **distinct tags per package**, like `iso`:
 
-| Workflow              | Tag prefix | Example tag   |
-| --------------------- | ---------- | ------------- |
-| `@ray/core` publishes | `core-v`   | `core-v0.2.0` |
-| `@ray/sdk` publishes  | `sdk-v`    | `sdk-v0.2.0`  |
+| Workflow                     | Tag prefix | Example tag   |
+| ---------------------------- | ---------- | ------------- |
+| `@razroo/ray-core` publishes | `core-v`   | `core-v0.2.0` |
+| `@razroo/ray-sdk` publishes  | `sdk-v`    | `sdk-v0.2.0`  |
 
 The **`v` is literal** (`core-v` then semver). Strip logic in workflows turns `core-v1.2.3` → version `1.2.3` checked against `packages/*/package.json`.
 
-Publish **`@ray/core`** before **`@ray/sdk`** when both change, so the SDK tarball can resolve the correct core range on npm.
+Publish **`@razroo/ray-core`** before **`@razroo/ray-sdk`** when both change, so the SDK tarball can resolve the correct core range on npm.
 
 ## Versioning with Changesets (same idea as **`iso`**)
 
-`@ray/core` and `@ray/sdk` are **linked** in [`.changeset/config.json`](../.changeset/config.json): one release line keeps both on the **same semver**.
+`@razroo/ray-core` and `@razroo/ray-sdk` are **linked** in [`.changeset/config.json`](../.changeset/config.json): one release line keeps both on the **same semver**.
 
 During development, when a PR changes publishable APIs or behavior, add a changeset:
 
@@ -94,6 +94,17 @@ Infrastructure-only PRs can add an empty changeset: `pnpm exec changeset add --e
 
 5. Omit or delete a faulty GitHub Release and tag before re-cutting; avoid amending published tags.
 
+### One-command tags + GitHub Releases (`gh`)
+
+After **`pnpm run version`** is committed on **`main`** and pushed (`git push origin main`), you can create both tags and GitHub Releases with:
+
+```bash
+pnpm run release:github -- --dry-run   # plan only
+pnpm run release:github -- --yes     # tag, git push tags, gh release create ×2
+```
+
+Requires [**GitHub CLI**](https://cli.github.com/) (`gh`) authenticated (`gh auth login`). NPM publish still runs in Actions when each release is **published**.
+
 ## Verify locally before tagging
 
 From the repo root (mirrors CI’s **`release:gate`**):
@@ -112,14 +123,14 @@ pnpm run release:verify-npm -- <version-you-just-published>
 Sanity-check `package.json` matches the semver you intend for the tag:
 
 ```bash
-pnpm --filter @ray/core run release:check-source -- "$(node -p 'require("./packages/core/package.json").version')"
-pnpm --filter @ray/sdk run release:check-source -- "$(node -p 'require("./packages/sdk/package.json").version')"
+pnpm --filter @razroo/ray-core run release:check-source -- "$(node -p 'require("./packages/core/package.json").version')"
+pnpm --filter @razroo/ray-sdk run release:check-source -- "$(node -p 'require("./packages/sdk/package.json").version')"
 ```
 
 ## Consumers
 
 ```bash
-npm install @ray/sdk
+npm install @razroo/ray-sdk
 ```
 
-The SDK lists `@ray/core` as a dependency; npm installs both.
+The SDK lists `@razroo/ray-core` as a dependency; npm installs both.

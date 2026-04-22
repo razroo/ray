@@ -1,4 +1,4 @@
-name: "@ray/core Release to npm"
+name: "@razroo/ray-core Release to npm"
 
 # Publish when a GitHub Release whose tag starts with `core-v` is published.
 #
@@ -86,6 +86,6 @@ jobs:
 
       - name: Publish to npm (with provenance)
         working-directory: .
-        run: pnpm publish --filter @ray/core --access public --no-git-checks --provenance
+        run: pnpm publish --filter @razroo/ray-core --access public --no-git-checks --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

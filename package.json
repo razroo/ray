@@ -19,6 +19,7 @@
     "test": "pnpm build && node ./scripts/test.mjs",
     "release:gate": "pnpm lint && pnpm format:check && pnpm test",
     "release:verify-npm": "node ./scripts/release/verify-npm.mjs",
+    "release:github": "bash scripts/release/gh-release.sh",
     "changeset": "changeset",
     "changeset:status": "changeset status --verbose",
     "version": "changeset version && pnpm install",

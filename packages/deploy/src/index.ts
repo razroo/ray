@@ -1,6 +1,6 @@
 import path from "node:path";
 import { loadRayConfig, resolveAuthApiKeys } from "@ray/config";
-import { type RayConfig } from "@ray/core";
+import { type RayConfig } from "@razroo/ray-core";
 
 export interface SystemdServiceOptions {
   workingDirectory: string;

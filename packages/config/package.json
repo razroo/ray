@@ -16,6 +16,6 @@
     "src"
   ],
   "dependencies": {
-    "@ray/core": "workspace:*"
+    "@razroo/ray-core": "workspace:*"
   }
 }

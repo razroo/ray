@@ -1,4 +1,4 @@
-import type { RayConfig, RayProfile } from "@ray/core";
+import type { RayConfig, RayProfile } from "@razroo/ray-core";
 
 export type DeepPartial<T> = {
   [Key in keyof T]?: T[Key] extends object

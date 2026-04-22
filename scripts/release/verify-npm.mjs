@@ -9,7 +9,7 @@ if (!version) {
   process.exit(1);
 }
 
-const packages = ["@ray/core", "@ray/sdk"];
+const packages = ["@razroo/ray-core", "@razroo/ray-sdk"];
 
 async function run() {
   for (const pkg of packages) {

@@ -22,7 +22,7 @@ import {
   type SchedulerSnapshot,
   type UsageBreakdown,
   type UsageStats,
-} from "@ray/core";
+} from "@razroo/ray-core";
 
 interface CachedInferencePayload {
   model: string;

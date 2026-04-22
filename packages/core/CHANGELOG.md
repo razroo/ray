@@ -1,4 +1,10 @@
-# @ray/core
+# @razroo/ray-core
+
+## 0.2.0
+
+### Minor Changes
+
+- Publish libraries on npm under `@razroo/ray-core` and `@razroo/ray-sdk` (replacing the previous `@ray/*` package names). Update imports to the new scope.
 
 ## 0.1.0
 

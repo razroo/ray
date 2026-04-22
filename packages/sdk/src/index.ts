@@ -3,7 +3,7 @@ import type {
   InferenceRequest,
   InferenceResponse,
   RuntimeMetricsSnapshot,
-} from "@ray/core";
+} from "@razroo/ray-core";
 
 export interface RayClientOptions {
   baseUrl: string;

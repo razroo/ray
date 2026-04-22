@@ -1,4 +1,4 @@
-import { toErrorMessage, type LogLevel, type RuntimeMetricsSnapshot } from "@ray/core";
+import { toErrorMessage, type LogLevel, type RuntimeMetricsSnapshot } from "@razroo/ray-core";
 
 const logOrder: Record<LogLevel, number> = {
   debug: 10,

@@ -1,4 +1,4 @@
-import { RayError, type ModelConfig, type ModelProvider } from "@ray/core";
+import { RayError, type ModelConfig, type ModelProvider } from "@razroo/ray-core";
 import { MockProvider } from "./providers/mock.js";
 import { OpenAICompatibleProvider } from "./providers/openai-compatible.js";
 
