@@ -102,33 +102,25 @@ That means some features are deliberately not the priority in the first versions
 - agent orchestration
 - generalized enterprise control-plane features
 
-## Stack Choice
+## Stack choice
 
-The current stack is intentionally pragmatic:
+The stack is intentionally pragmatic:
 
-- TypeScript workspace
-- Node 20+
-- bare `http` server for the gateway
-- no required runtime framework dependencies
-- adapter-based model provider layer
+- **pnpm** workspace (`pnpm` 9+, Node **20.11+** per `engines`; GitHub Actions uses Node 22 for CI parity)
+- TypeScript with a project reference build (`pnpm build` / `pnpm typecheck`)
+- Bare `http` gateway — no mandatory web framework on the hot path
+- ESLint + Prettier + Changesets at the repo root
 
-Why this choice:
+Adapter-based providers keep inference outside the gateway process where possible; heavier cores can land later without rewriting the whole product boundary.
 
-- TypeScript keeps iteration speed high for an OSS monorepo.
-- Bare Node keeps memory overhead and dependency count low.
-- Adapter-based providers let Ray stay lean while backends like `llama.cpp` or other OpenAI-compatible local servers do the heavy inference work.
-- The repo is structured so performance-critical pieces can move to Go or native code later without rewriting the product boundary first.
-
-This is a deliberate MVP tradeoff. It optimizes for maintainability, fast iteration, and a credible single-node product surface instead of premature systems maximalism.
-
-## Monorepo Layout
+## Monorepo layout
 
 ```text
 apps/
   gateway/
-  control-panel/        # intentionally deferred placeholder
+  control-panel/        # deferred workspace placeholder (no UI yet)
 packages/
-  core/
+  core/                 # shared types (published as @ray/core)
   runtime/
   models/
   scheduler/
@@ -136,15 +128,16 @@ packages/
   deploy/
   config/
   telemetry/
-  sdk/
+  sdk/                  # HTTP client (published as @ray/sdk)
+.changeset/             # Changesets config + pending release notes
 docs/
 examples/
 scripts/
 ```
 
-## MVP Scope
+## MVP scope
 
-The current scaffold is aimed at a serious first version:
+The scaffold targets a credible first version:
 
 - `apps/gateway`: HTTP inference gateway with `/v1/infer`, `/health`, `/metrics`, and `/v1/config`
 - `packages/runtime`: request normalization, degradation policy, cache integration, and provider orchestration
@@ -154,7 +147,7 @@ The current scaffold is aimed at a serious first version:
 - `packages/config`: profile defaults and JSON config loading
 - `packages/telemetry`: JSON logger and lightweight in-memory metrics
 - `packages/deploy`: systemd and Caddy scaffolding for cheap VPS deployment
-- `packages/sdk`: minimal TypeScript client
+- `packages/sdk`: minimal TypeScript client (`RayClient`), published as **`@ray/sdk`**
 
 Deliberate omissions in the MVP:
 
@@ -164,17 +157,17 @@ Deliberate omissions in the MVP:
 - no database requirement
 - no mandatory control plane
 
-## Quick Start
+## Quick start
 
-### 1. Install
+### Install
 
 ```bash
 pnpm install
 ```
 
-### 2. Boot the scaffold locally
+### Run locally (tiny profile — mock provider)
 
-The default `tiny` profile uses the built-in mock provider so the repo starts without external model infrastructure:
+No external model server required:
 
 ```bash
 pnpm dev:tiny
@@ -188,58 +181,80 @@ curl -s http://127.0.0.1:3000/v1/infer \
   -d '{"input":"Explain why cheap VPS inference matters."}'
 ```
 
-### 3. Build
+### Build
 
 ```bash
 pnpm build
 ```
 
-### 4. Run the VPS profile
+### VPS profile (OpenAI-compatible backend)
 
-The VPS profile expects an OpenAI-compatible local backend on `127.0.0.1:8081`:
+Expects an OpenAI-compatible server on `127.0.0.1:8081` (see example configs):
 
 ```bash
 pnpm start
 ```
 
-See [examples/deploy/vps/README.md](examples/deploy/vps/README.md) for the intended single-node deployment flow.
+Deployment walkthrough: [examples/deploy/vps/README.md](examples/deploy/vps/README.md).
 
-### 5. Validate the deployment shape
+### Validate config / doctor
 
 ```bash
 pnpm validate:config
 pnpm doctor
 ```
 
-## Example Config Profiles
+### Quality gate (matches CI)
 
-- [examples/config/ray.tiny.json](examples/config/ray.tiny.json): boots immediately with the mock provider
-- [examples/config/ray.vps.json](examples/config/ray.vps.json): tuned for a cheap VPS with a local OpenAI-compatible backend
-- [examples/config/ray.balanced.json](examples/config/ray.balanced.json): slightly roomier settings for a stronger single node
+Same command **[Quality checks](.github/workflows/quality.yml)** runs on **`main`**:
 
-## npm packages
+```bash
+pnpm run release:gate
+```
 
-Library packages published for TypeScript consumers:
+That runs lint, Prettier `--check`, and tests (`pnpm test` builds then runs the Tap suite).
 
-- `@ray/core` — shared types and errors used by the gateway and SDK
-- `@ray/sdk` — minimal HTTP client for the gateway (`RayClient`)
+## Example config profiles
 
-- **Versioning:** [Changesets](https://github.com/changesets/changesets) on `main` — `pnpm run changeset` in PRs, `pnpm run version` to apply (same idea as **`iso`**; `@ray/core` and `@ray/sdk` are **linked** in [`.changeset/config.json`](.changeset/config.json)).
-- **Publish:** Tags `core-v…` / `sdk-v…`, `gh release create`, and **`NPM_TOKEN`** — see [docs/npm-publishing.md](docs/npm-publishing.md).
-- **Security:** [SECURITY.md](SECURITY.md).
-- **Branch rules:** Prefer [branch protection](docs/branch-protection.md) so **`main`** requires **Quality checks**.
-- **CI:** **[Quality checks](.github/workflows/quality.yml)** (`pnpm release:gate`; publish workflows wait on the **`quality`** check run, **`geometra`**-style).
-- **Smoke before release:** [docs/release-checklist.md](docs/release-checklist.md).
+- [examples/config/ray.tiny.json](examples/config/ray.tiny.json) — mock provider; boots immediately
+- [examples/config/ray.vps.json](examples/config/ray.vps.json) — tuned for a cheap VPS + local OpenAI-compatible backend
+- [examples/config/ray.balanced.json](examples/config/ray.balanced.json) — slightly roomier single-node defaults
 
-## Architecture Notes
+## Published npm packages
 
-Read:
+TypeScript libraries for integrating with the gateway:
+
+| Package         | Role                         |
+| --------------- | ---------------------------- |
+| **`@ray/core`** | Shared types and errors      |
+| **`@ray/sdk`**  | `RayClient` for the HTTP API |
+
+Install: `npm install @ray/sdk` (pulls **`@ray/core`**).
+
+### Versioning and releases
+
+- **Changesets** — [`iso`](https://github.com/razroo/iso)-style workflow: `pnpm run changeset` on PRs that affect publishable APIs, then `pnpm run version` on `main` to bump linked packages and **`CHANGELOG.md`** ([`.changeset/config.json`](.changeset/config.json)).
+- **GitHub Releases** — tags `core-v…` and `sdk-v…`, then `gh release create …`; workflows publish with provenance. Details: [docs/npm-publishing.md](docs/npm-publishing.md).
+- **Post-publish check** — `pnpm run release:verify-npm -- <version>` against the npm registry.
+
+### Security and repository hygiene
+
+- Vulnerability reports: [SECURITY.md](SECURITY.md).
+- Recommend **branch protection** so `main` requires **Quality checks**: [docs/branch-protection.md](docs/branch-protection.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Short version: keep changes scoped, run **`pnpm run release:gate`** before pushing, add a **changeset** when **`@ray/core`** or **`@ray/sdk`** behavior changes.
+
+## Architecture notes
 
 - [docs/architecture.md](docs/architecture.md)
 - [docs/principles.md](docs/principles.md)
 - [docs/roadmap.md](docs/roadmap.md)
 
-## What Comes Next
+Release smoke checklist: [docs/release-checklist.md](docs/release-checklist.md).
+
+## What comes next
 
 The roadmap is staged:
 
