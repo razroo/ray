@@ -10,6 +10,7 @@ import {
   type ProviderResult,
   type WarmupInferenceRequest,
 } from "@razroo/ray-core";
+import { resolvePromptTemplateRequest } from "@ray/prompts";
 import { adapterRequest, extractAssistantText } from "./http.js";
 
 interface OpenAICompatibleResponse {
@@ -100,19 +101,20 @@ export class OpenAICompatibleProvider implements ModelProvider {
         : [{ input: "ping" } satisfies WarmupInferenceRequest];
 
     for (const request of warmupRequests) {
+      const resolved = resolvePromptTemplateRequest(request);
       await this.request("/v1/chat/completions", {
         method: "POST",
         body: JSON.stringify(
           buildChatCompletionPayload({
             modelRef: this.adapter.modelRef,
-            input: request.input,
-            ...(request.system ? { system: request.system } : {}),
-            maxTokens: request.maxTokens ?? 1,
+            input: resolved.input ?? "ping",
+            ...(resolved.system ? { system: resolved.system } : {}),
+            maxTokens: resolved.maxTokens ?? 1,
             temperature: 0,
             topP: 1,
             ...(request.seed !== undefined ? { seed: request.seed } : {}),
             ...(request.stop ? { stop: request.stop } : {}),
-            ...(request.responseFormat ? { responseFormat: request.responseFormat } : {}),
+            ...(resolved.responseFormat ? { responseFormat: resolved.responseFormat } : {}),
             user: "ray_warmup",
           }),
         ),

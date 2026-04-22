@@ -7,6 +7,9 @@ export type RateLimitKeyStrategy = "ip" | "api-key" | "ip+api-key";
 export type ResponseFormatType = "text" | "json_object";
 export type InferenceJobStatus = "queued" | "running" | "succeeded" | "failed";
 export type InferenceJobCallbackStatus = "pending" | "delivered" | "failed";
+export type ScheduleLane = "short" | "draft";
+export type PromptTemplateVariableValue = string | number | boolean;
+export type PromptTemplateVariables = Record<string, PromptTemplateVariableValue>;
 
 export interface ServerConfig {
   host: string;
@@ -15,12 +18,14 @@ export interface ServerConfig {
 }
 
 export interface WarmupInferenceRequest {
-  input: string;
+  input?: string;
   system?: string;
   maxTokens?: number;
   seed?: number;
   stop?: string[];
   responseFormat?: InferenceResponseFormat;
+  templateId?: string;
+  templateVariables?: PromptTemplateVariables;
 }
 
 export interface InferenceResponseFormat {
@@ -47,6 +52,35 @@ export interface LlamaCppProviderConfig {
   warmupRequests?: WarmupInferenceRequest[];
   cachePrompt?: boolean;
   slotId?: number;
+  slotStateTtlMs?: number;
+  promptScaffoldCacheEntries?: number;
+  launchProfile?: LlamaCppLaunchProfile;
+}
+
+export interface LlamaCppLaunchProfile {
+  preset: "single-vps-sub1b" | "single-vps-balanced";
+  binaryPath: string;
+  modelPath: string;
+  host: string;
+  port: number;
+  alias?: string;
+  ctxSize: number;
+  parallel: number;
+  threads: number;
+  threadsBatch?: number;
+  threadsHttp: number;
+  batchSize: number;
+  ubatchSize: number;
+  cachePrompt: boolean;
+  cacheReuse: number;
+  continuousBatching: boolean;
+  enableMetrics: boolean;
+  exposeSlots: boolean;
+  warmup: boolean;
+  enableUnifiedKv: boolean;
+  cacheIdleSlots: boolean;
+  contextShift: boolean;
+  extraArgs?: string[];
 }
 
 export interface MockProviderConfig {
@@ -79,6 +113,7 @@ export interface SchedulerConfig {
   dedupeInflight: boolean;
   batchWindowMs: number;
   affinityLookahead: number;
+  shortJobMaxTokens: number;
 }
 
 export interface AsyncQueueConfig {
@@ -126,6 +161,12 @@ export interface AdaptiveTuningConfig {
   minCompletionTokensPerSecond: number;
   maxOutputReductionRatio: number;
   minOutputTokens: number;
+  learnedFamilyCapEnabled: boolean;
+  familyHistorySize: number;
+  learnedCapMinSamples: number;
+  draftPercentile: number;
+  shortPercentile: number;
+  learnedCapHeadroomTokens: number;
 }
 
 export interface AuthConfig {
@@ -158,7 +199,7 @@ export interface RayConfig {
 }
 
 export interface InferenceRequest {
-  input: string;
+  input?: string;
   system?: string;
   maxTokens?: number;
   temperature?: number;
@@ -169,6 +210,8 @@ export interface InferenceRequest {
   cache?: boolean;
   dedupeKey?: string;
   metadata?: Record<string, string>;
+  templateId?: string;
+  templateVariables?: PromptTemplateVariables;
 }
 
 export interface NormalizedInferenceRequest {
@@ -183,6 +226,10 @@ export interface NormalizedInferenceRequest {
   cache: boolean;
   dedupeKey?: string;
   metadata: Record<string, string>;
+  promptTemplateId?: string;
+  templateVariables?: Record<string, string>;
+  promptLane?: ScheduleLane;
+  promptFamily?: string;
 }
 
 export interface CreateInferenceJobRequest extends InferenceRequest {
@@ -267,13 +314,25 @@ export interface ProviderTimings {
   completionTokensPerSecond?: number;
 }
 
+export interface SchedulerSlotSnapshot {
+  id: number;
+  taskId?: number;
+  isProcessing: boolean;
+  contextWindow?: number;
+  promptTokens?: number;
+  cacheTokens?: number;
+  updatedAt: string;
+}
+
 export interface ProviderDiagnostics {
   requestShape?: "openai-chat" | "llama.cpp-completion";
   slotId?: number;
+  preferredSlot?: number;
   tokensCached?: number;
   tokensEvaluated?: number;
   truncated?: boolean;
   contextWindow?: number;
+  slotRouteReason?: string;
   timings?: ProviderTimings;
 }
 
@@ -281,6 +340,9 @@ export interface ProviderRequestPreparation {
   request: NormalizedInferenceRequest;
   promptTokens?: number;
   affinityKey?: string;
+  lane?: ScheduleLane;
+  preferredSlot?: number;
+  slotSnapshots?: SchedulerSlotSnapshot[];
   providerState?: unknown;
   diagnostics?: ProviderDiagnostics;
 }
@@ -303,6 +365,8 @@ export interface ProviderContext {
   requestId: string;
   config: RayConfig;
   startedAt: number;
+  affinityKey?: string;
+  lane?: ScheduleLane;
   preparation?: ProviderRequestPreparation;
 }
 
@@ -321,6 +385,8 @@ export interface ModelProvider {
 
 export interface PromptCompilerDiagnostics {
   familyKey: string;
+  lane: ScheduleLane;
+  templateId?: string;
   charsBefore: number;
   charsAfter: number;
   charsSaved: number;
@@ -334,8 +400,20 @@ export interface AdaptiveTuningDiagnostics {
   reason?: string;
 }
 
+export interface LearnedOutputCapDiagnostics {
+  applied: boolean;
+  familyKey: string;
+  lane: ScheduleLane;
+  requestedMaxTokens: number;
+  appliedMaxTokens: number;
+  learnedCapTokens?: number;
+  sampleCount: number;
+  percentile: number;
+}
+
 export interface InferenceDiagnostics {
   promptCompiler?: PromptCompilerDiagnostics;
+  learnedOutputCap?: LearnedOutputCapDiagnostics;
   adaptiveTuning?: AdaptiveTuningDiagnostics;
   provider?: ProviderDiagnostics;
 }
@@ -368,6 +446,8 @@ export interface HealthSnapshot {
 
 export interface SchedulerSnapshot {
   queueDepth: number;
+  shortQueueDepth: number;
+  draftQueueDepth: number;
   inFlight: number;
   maxQueue: number;
   concurrency: number;

@@ -1,6 +1,7 @@
 import { sanitizeConfig } from "@ray/config";
 import { TtlCache } from "@ray/cache";
 import { createModelProvider } from "@ray/models";
+import { resolvePromptTemplateRequest } from "@ray/prompts";
 import { RequestScheduler, type ScheduledTaskResult } from "@ray/scheduler";
 import { Logger, RuntimeMetrics, serializeError } from "@ray/telemetry";
 import {
@@ -15,6 +16,7 @@ import {
   type InferenceDiagnostics,
   type InferenceRequest,
   type InferenceResponse,
+  type LearnedOutputCapDiagnostics,
   type ModelProvider,
   type NormalizedInferenceRequest,
   type PromptCompilerDiagnostics,
@@ -24,6 +26,7 @@ import {
   type ProviderResult,
   type RayConfig,
   type RuntimeMetricsSnapshot,
+  type ScheduleLane,
   type SchedulerSnapshot,
   type UsageBreakdown,
   type UsageStats,
@@ -47,12 +50,18 @@ interface CachedProviderHealth {
 interface CompiledPrompt {
   request: NormalizedInferenceRequest;
   affinityKey: string;
+  lane: ScheduleLane;
   diagnostics: PromptCompilerDiagnostics;
 }
 
 interface AdaptiveSample {
   queueTimeMs: number;
   completionTokensPerSecond?: number;
+}
+
+interface FamilyCompletionHistory {
+  lane: ScheduleLane;
+  completionTokens: number[];
 }
 
 export interface CreateRayRuntimeOptions {
@@ -67,7 +76,9 @@ export function normalizeInferenceRequest(
   config: RayConfig,
   request: InferenceRequest,
 ): NormalizedInferenceRequest {
-  if (!isNonEmptyString(request.input)) {
+  const resolvedRequest = resolvePromptTemplateRequest(request);
+
+  if (!isNonEmptyString(resolvedRequest.input)) {
     throw new RayError("input must be a non-empty string", {
       code: "invalid_request",
       status: 400,
@@ -75,20 +86,20 @@ export function normalizeInferenceRequest(
   }
 
   const normalized: NormalizedInferenceRequest = {
-    input: request.input.trim(),
+    input: resolvedRequest.input.trim(),
     maxTokens: clamp(
-      Math.floor(request.maxTokens ?? config.model.maxOutputTokens),
+      Math.floor(resolvedRequest.maxTokens ?? config.model.maxOutputTokens),
       1,
       config.model.maxOutputTokens,
     ),
     temperature: clamp(request.temperature ?? 0.2, 0, 2),
     topP: clamp(request.topP ?? 0.95, 0.1, 1),
     cache: request.cache ?? true,
-    metadata: request.metadata ?? {},
+    metadata: resolvedRequest.metadata,
   };
 
-  if (isNonEmptyString(request.system)) {
-    normalized.system = request.system.trim();
+  if (isNonEmptyString(resolvedRequest.system)) {
+    normalized.system = resolvedRequest.system.trim();
   }
 
   if (request.seed !== undefined) {
@@ -122,11 +133,12 @@ export function normalizeInferenceRequest(
     });
   }
 
-  if (request.responseFormat !== undefined) {
+  if (resolvedRequest.responseFormat !== undefined) {
     if (
-      request.responseFormat === null ||
-      typeof request.responseFormat !== "object" ||
-      (request.responseFormat.type !== "text" && request.responseFormat.type !== "json_object")
+      resolvedRequest.responseFormat === null ||
+      typeof resolvedRequest.responseFormat !== "object" ||
+      (resolvedRequest.responseFormat.type !== "text" &&
+        resolvedRequest.responseFormat.type !== "json_object")
     ) {
       throw new RayError("responseFormat.type must be 'text' or 'json_object' when provided", {
         code: "invalid_request",
@@ -134,11 +146,30 @@ export function normalizeInferenceRequest(
       });
     }
 
-    normalized.responseFormat = request.responseFormat;
+    normalized.responseFormat = resolvedRequest.responseFormat;
   }
 
   if (isNonEmptyString(request.dedupeKey)) {
     normalized.dedupeKey = request.dedupeKey;
+  }
+
+  if (isNonEmptyString(resolvedRequest.promptTemplateId)) {
+    normalized.promptTemplateId = resolvedRequest.promptTemplateId;
+  }
+
+  if (
+    resolvedRequest.templateVariables &&
+    Object.keys(resolvedRequest.templateVariables).length > 0
+  ) {
+    normalized.templateVariables = resolvedRequest.templateVariables;
+  }
+
+  if (resolvedRequest.promptLane === "short" || resolvedRequest.promptLane === "draft") {
+    normalized.promptLane = resolvedRequest.promptLane;
+  }
+
+  if (isNonEmptyString(resolvedRequest.promptFamily)) {
+    normalized.promptFamily = resolvedRequest.promptFamily;
   }
 
   return normalized;
@@ -211,28 +242,51 @@ function derivePromptTemplate(value: string): string {
     .slice(0, 240);
 }
 
+function resolveScheduleLane(config: RayConfig, request: NormalizedInferenceRequest): ScheduleLane {
+  if (request.promptLane === "short" || request.promptLane === "draft") {
+    return request.promptLane;
+  }
+
+  const metadataLane = request.metadata.promptLane;
+  if (metadataLane === "short" || metadataLane === "draft") {
+    return metadataLane;
+  }
+
+  if (
+    request.responseFormat?.type === "json_object" ||
+    request.maxTokens <= config.scheduler.shortJobMaxTokens
+  ) {
+    return "short";
+  }
+
+  return "draft";
+}
+
 function compilePrompt(config: RayConfig, request: NormalizedInferenceRequest): CompiledPrompt {
   const charsBefore = request.input.length + (request.system?.length ?? 0);
+  const lane = resolveScheduleLane(config, request);
 
   if (!config.promptCompiler.enabled) {
     const familyHint = config.promptCompiler.familyMetadataKeys.find((key) =>
       isNonEmptyString(request.metadata[key]),
     );
     const familySeed =
+      request.promptFamily ??
       (familyHint ? request.metadata[familyHint] : undefined) ??
       derivePromptTemplate(request.input);
+    const familyKey = hashValue({
+      system: request.system ?? "",
+      template: familySeed,
+    });
 
     return {
       request,
-      affinityKey: hashValue({
-        system: request.system ?? "",
-        template: familySeed,
-      }),
+      affinityKey: familyKey,
+      lane,
       diagnostics: {
-        familyKey: hashValue({
-          system: request.system ?? "",
-          template: familySeed,
-        }),
+        familyKey,
+        lane,
+        ...(request.promptTemplateId ? { templateId: request.promptTemplateId } : {}),
         charsBefore,
         charsAfter: charsBefore,
         charsSaved: 0,
@@ -266,6 +320,7 @@ function compilePrompt(config: RayConfig, request: NormalizedInferenceRequest): 
     isNonEmptyString(compiledRequest.metadata[key]),
   );
   const familySeed =
+    compiledRequest.promptFamily ??
     (familyMetadataKey ? compiledRequest.metadata[familyMetadataKey] : undefined) ??
     derivePromptTemplate(compiledRequest.input);
   const familyKey = hashValue({
@@ -277,8 +332,11 @@ function compilePrompt(config: RayConfig, request: NormalizedInferenceRequest): 
   return {
     request: compiledRequest,
     affinityKey: familyKey,
+    lane,
     diagnostics: {
       familyKey,
+      lane,
+      ...(compiledRequest.promptTemplateId ? { templateId: compiledRequest.promptTemplateId } : {}),
       charsBefore,
       charsAfter,
       charsSaved: Math.max(0, charsBefore - charsAfter),
@@ -462,6 +520,88 @@ function applyAdaptiveTuning(
   };
 }
 
+function applyLearnedOutputCap(
+  config: RayConfig,
+  request: NormalizedInferenceRequest,
+  familyKey: string,
+  lane: ScheduleLane,
+  familyHistory: FamilyCompletionHistory | undefined,
+): {
+  request: NormalizedInferenceRequest;
+  diagnostics: LearnedOutputCapDiagnostics;
+} {
+  const sampleCount = familyHistory?.completionTokens.length ?? 0;
+  const percentile =
+    lane === "short"
+      ? config.adaptiveTuning.shortPercentile
+      : config.adaptiveTuning.draftPercentile;
+
+  if (
+    !config.adaptiveTuning.learnedFamilyCapEnabled ||
+    !familyHistory ||
+    sampleCount < config.adaptiveTuning.learnedCapMinSamples
+  ) {
+    return {
+      request,
+      diagnostics: {
+        applied: false,
+        familyKey,
+        lane,
+        requestedMaxTokens: request.maxTokens,
+        appliedMaxTokens: request.maxTokens,
+        sampleCount,
+        percentile,
+      },
+    };
+  }
+
+  const ordered = [...familyHistory.completionTokens].sort((left, right) => left - right);
+  const index = Math.max(
+    0,
+    Math.min(ordered.length - 1, Math.floor((ordered.length - 1) * percentile)),
+  );
+  const learnedCapTokens =
+    (ordered[index] ?? request.maxTokens) + config.adaptiveTuning.learnedCapHeadroomTokens;
+  const appliedMaxTokens = clamp(
+    learnedCapTokens,
+    config.adaptiveTuning.minOutputTokens,
+    request.maxTokens,
+  );
+
+  if (appliedMaxTokens >= request.maxTokens) {
+    return {
+      request,
+      diagnostics: {
+        applied: false,
+        familyKey,
+        lane,
+        requestedMaxTokens: request.maxTokens,
+        appliedMaxTokens: request.maxTokens,
+        learnedCapTokens,
+        sampleCount,
+        percentile,
+      },
+    };
+  }
+
+  return {
+    request: {
+      ...request,
+      maxTokens: appliedMaxTokens,
+    },
+    diagnostics: {
+      applied: true,
+      familyKey,
+      lane,
+      requestedMaxTokens: request.maxTokens,
+      appliedMaxTokens,
+      learnedCapTokens,
+      sampleCount,
+      percentile,
+    },
+  };
+}
+
 function buildUsageBreakdown(
   partial: Partial<UsageBreakdown> | undefined,
   fallback: UsageBreakdown,
@@ -539,6 +679,7 @@ export class RayRuntime {
   readonly scheduler: RequestScheduler<ProviderResult>;
   readonly cache: TtlCache<CachedInferencePayload>;
   private readonly recentAdaptiveSamples: AdaptiveSample[] = [];
+  private readonly familyCompletionHistory = new Map<string, FamilyCompletionHistory>();
   private readonly startedAt = Date.now();
   private warmState: WarmState = "idle";
   private lastWarmError: string | undefined;
@@ -611,14 +752,22 @@ export class RayRuntime {
     const queueSnapshot = this.scheduler.snapshot();
     const normalized = normalizeInferenceRequest(this.config, request);
     const compiled = compilePrompt(this.config, normalized);
-    const degraded = applyGracefulDegradation(
+    const learnedCap = applyLearnedOutputCap(
       this.config,
       compiled.request,
+      compiled.affinityKey,
+      compiled.lane,
+      this.familyCompletionHistory.get(compiled.affinityKey),
+    );
+    const degraded = applyGracefulDegradation(
+      this.config,
+      learnedCap.request,
       queueSnapshot.queueDepth,
     );
     const tuned = applyAdaptiveTuning(this.config, degraded.request, this.recentAdaptiveSamples);
     const runtimeDiagnostics: InferenceDiagnostics = {
       promptCompiler: compiled.diagnostics,
+      learnedOutputCap: learnedCap.diagnostics,
       adaptiveTuning: tuned.diagnostics,
     };
     const cacheKey =
@@ -627,10 +776,16 @@ export class RayRuntime {
         : undefined;
 
     this.metrics.gauge("queue.depth", queueSnapshot.queueDepth);
+    this.metrics.gauge("queue.short_depth", queueSnapshot.shortQueueDepth);
+    this.metrics.gauge("queue.draft_depth", queueSnapshot.draftQueueDepth);
     this.metrics.gauge("inference.in_flight", queueSnapshot.inFlight);
     this.metrics.gauge("queue.tokens", queueSnapshot.queuedTokens);
     this.metrics.gauge("inference.in_flight_tokens", queueSnapshot.inFlightTokens);
     this.metrics.gauge("prompt.compiler.chars_saved", compiled.diagnostics.charsSaved);
+    this.metrics.gauge(
+      "learned_output_cap.max_tokens_ratio",
+      learnedCap.request.maxTokens / Math.max(1, learnedCap.diagnostics.requestedMaxTokens),
+    );
     this.metrics.gauge(
       "adaptive.max_tokens_ratio",
       tuned.request.maxTokens / Math.max(1, tuned.diagnostics.requestedMaxTokens),
@@ -654,12 +809,25 @@ export class RayRuntime {
     }
 
     try {
-      const preparation = await this.prepareRequest(tuned.request, requestId, startedAt);
+      const preparation = await this.prepareRequest(
+        tuned.request,
+        requestId,
+        startedAt,
+        compiled.affinityKey,
+        compiled.lane,
+      );
+
+      if (preparation?.slotSnapshots) {
+        this.scheduler.updateBackendSlots(preparation.slotSnapshots);
+      }
+
       const requestForProvider = preparation?.request ?? tuned.request;
       const providerContextBase = {
         requestId,
         config: this.config,
         startedAt,
+        affinityKey: compiled.affinityKey,
+        lane: preparation?.lane ?? compiled.lane,
         ...(preparation ? { preparation } : {}),
       };
       const handler = (signal: AbortSignal) =>
@@ -677,13 +845,21 @@ export class RayRuntime {
           ? {
               key: dedupeKey,
               affinityKey: preparation?.affinityKey ?? compiled.affinityKey,
+              lane: preparation?.lane ?? compiled.lane,
               costTokens: requestCostTokens,
               handler,
+              ...(preparation?.preferredSlot !== undefined
+                ? { preferredSlot: preparation.preferredSlot }
+                : {}),
             }
           : {
               affinityKey: preparation?.affinityKey ?? compiled.affinityKey,
+              lane: preparation?.lane ?? compiled.lane,
               costTokens: requestCostTokens,
               handler,
+              ...(preparation?.preferredSlot !== undefined
+                ? { preferredSlot: preparation.preferredSlot }
+                : {}),
             },
       );
 
@@ -703,10 +879,13 @@ export class RayRuntime {
         cached: false,
         degraded: degraded.degraded,
       });
-      this.metrics.gauge("queue.depth", this.scheduler.snapshot().queueDepth);
-      this.metrics.gauge("inference.in_flight", this.scheduler.snapshot().inFlight);
-      this.metrics.gauge("queue.tokens", this.scheduler.snapshot().queuedTokens);
-      this.metrics.gauge("inference.in_flight_tokens", this.scheduler.snapshot().inFlightTokens);
+      const currentSnapshot = this.scheduler.snapshot();
+      this.metrics.gauge("queue.depth", currentSnapshot.queueDepth);
+      this.metrics.gauge("queue.short_depth", currentSnapshot.shortQueueDepth);
+      this.metrics.gauge("queue.draft_depth", currentSnapshot.draftQueueDepth);
+      this.metrics.gauge("inference.in_flight", currentSnapshot.inFlight);
+      this.metrics.gauge("queue.tokens", currentSnapshot.queuedTokens);
+      this.metrics.gauge("inference.in_flight_tokens", currentSnapshot.inFlightTokens);
       this.metrics.gauge("cache.entries", this.cache.size());
       this.metrics.gauge(
         "provider.completion_tps",
@@ -715,6 +894,11 @@ export class RayRuntime {
       this.metrics.gauge("queue.last_delay_ms", scheduled.queueTimeMs);
 
       this.recordAdaptiveSample(scheduled.queueTimeMs, scheduled.value.diagnostics);
+      this.recordFamilyCompletion(
+        compiled.affinityKey,
+        compiled.lane,
+        this.resolveCompletionTokens(payload.usage),
+      );
 
       if (latencyMs >= this.config.telemetry.slowRequestThresholdMs) {
         this.logger.warn("slow inference request", {
@@ -868,6 +1052,8 @@ export class RayRuntime {
     request: NormalizedInferenceRequest,
     requestId: string,
     startedAt: number,
+    affinityKey: string,
+    lane: ScheduleLane,
   ): Promise<ProviderRequestPreparation | undefined> {
     if (!this.provider.prepare) {
       return undefined;
@@ -879,6 +1065,8 @@ export class RayRuntime {
       requestId,
       config: this.config,
       startedAt,
+      affinityKey,
+      lane,
     });
   }
 
@@ -896,6 +1084,37 @@ export class RayRuntime {
     while (this.recentAdaptiveSamples.length > this.config.adaptiveTuning.sampleSize) {
       this.recentAdaptiveSamples.shift();
     }
+  }
+
+  private recordFamilyCompletion(
+    familyKey: string,
+    lane: ScheduleLane,
+    completionTokens: number,
+  ): void {
+    if (!Number.isFinite(completionTokens) || completionTokens <= 0) {
+      return;
+    }
+
+    const existing = this.familyCompletionHistory.get(familyKey) ?? {
+      lane,
+      completionTokens: [],
+    };
+    existing.lane = lane;
+    existing.completionTokens.push(completionTokens);
+
+    while (existing.completionTokens.length > this.config.adaptiveTuning.familyHistorySize) {
+      existing.completionTokens.shift();
+    }
+
+    this.familyCompletionHistory.set(familyKey, existing);
+  }
+
+  private resolveCompletionTokens(usage: UsageStats): number {
+    if (typeof usage.tokens?.completion === "number" && usage.tokens.completion > 0) {
+      return usage.tokens.completion;
+    }
+
+    return Math.max(1, Math.ceil(usage.chars.completion / 4));
   }
 }
 

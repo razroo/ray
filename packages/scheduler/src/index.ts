@@ -1,8 +1,23 @@
-import { RayError, type SchedulerConfig, type SchedulerSnapshot } from "@razroo/ray-core";
+import {
+  RayError,
+  type ScheduleLane,
+  type SchedulerConfig,
+  type SchedulerSlotSnapshot,
+  type SchedulerSnapshot,
+} from "@razroo/ray-core";
+
+const SHORT_LANE_BONUS = 120;
+const SLOT_IDLE_BONUS = 220;
+const SLOT_BUSY_PENALTY = 180;
+const RECENT_AFFINITY_BONUS = 80;
+const DOMINANT_AFFINITY_BONUS = 40;
+const WAIT_SCORE_DIVISOR = 25;
 
 interface QueueItem<T> {
   key?: string;
   affinityKey?: string;
+  preferredSlot?: number;
+  lane: ScheduleLane;
   costTokens: number;
   enqueuedAt: number;
   handler: (signal: AbortSignal) => Promise<T>;
@@ -10,9 +25,18 @@ interface QueueItem<T> {
   reject: (reason?: unknown) => void;
 }
 
+interface QueueCandidate<T> {
+  index: number;
+  lane: ScheduleLane;
+  item: QueueItem<T>;
+  score: number;
+}
+
 export interface ScheduleTaskOptions<T> {
   key?: string;
   affinityKey?: string;
+  preferredSlot?: number;
+  lane?: ScheduleLane;
   costTokens?: number;
   handler: (signal: AbortSignal) => Promise<T>;
 }
@@ -24,8 +48,13 @@ export interface ScheduledTaskResult<T> {
 }
 
 export class RequestScheduler<T> {
-  private readonly queue: QueueItem<T>[] = [];
+  private readonly queues: Record<ScheduleLane, QueueItem<T>[]> = {
+    short: [],
+    draft: [],
+  };
   private readonly dedupeMap = new Map<string, Promise<ScheduledTaskResult<T>>>();
+  private readonly backendSlots = new Map<number, SchedulerSlotSnapshot>();
+  private readonly inFlightSlots = new Map<number, number>();
   private inFlight = 0;
   private queuedTokens = 0;
   private inFlightTokens = 0;
@@ -59,7 +88,7 @@ export class RequestScheduler<T> {
     }
 
     if (
-      this.queue.length >= this.config.maxQueue ||
+      this.snapshot().queueDepth >= this.config.maxQueue ||
       this.queuedTokens + costTokens > this.config.maxQueuedTokens
     ) {
       throw new RayError("The request queue is full", {
@@ -70,9 +99,11 @@ export class RequestScheduler<T> {
     }
 
     let item!: QueueItem<T>;
+    const lane = options.lane ?? "draft";
 
     const promise = new Promise<ScheduledTaskResult<T>>((resolve, reject) => {
       item = {
+        lane,
         costTokens,
         enqueuedAt: Date.now(),
         handler: options.handler,
@@ -80,6 +111,7 @@ export class RequestScheduler<T> {
         reject,
         ...(options.key ? { key: options.key } : {}),
         ...(options.affinityKey ? { affinityKey: options.affinityKey } : {}),
+        ...(options.preferredSlot !== undefined ? { preferredSlot: options.preferredSlot } : {}),
       };
     });
 
@@ -90,16 +122,29 @@ export class RequestScheduler<T> {
       });
     }
 
-    this.queue.push(item);
+    this.queues[lane].push(item);
     this.queuedTokens += costTokens;
     this.requestDrain();
 
     return promise;
   }
 
+  updateBackendSlots(slots: SchedulerSlotSnapshot[]): void {
+    this.backendSlots.clear();
+
+    for (const slot of slots) {
+      this.backendSlots.set(slot.id, slot);
+    }
+  }
+
   snapshot(): SchedulerSnapshot {
+    const shortQueueDepth = this.queues.short.length;
+    const draftQueueDepth = this.queues.draft.length;
+
     return {
-      queueDepth: this.queue.length,
+      queueDepth: shortQueueDepth + draftQueueDepth,
+      shortQueueDepth,
+      draftQueueDepth,
       inFlight: this.inFlight,
       maxQueue: this.config.maxQueue,
       concurrency: this.config.concurrency,
@@ -111,13 +156,13 @@ export class RequestScheduler<T> {
   }
 
   private drain(): void {
-    while (this.inFlight < this.config.concurrency && this.queue.length > 0) {
-      const nextIndex = this.selectNextIndex();
-      if (nextIndex === -1) {
+    while (this.inFlight < this.config.concurrency && this.snapshot().queueDepth > 0) {
+      const candidate = this.selectNextCandidate();
+      if (!candidate) {
         break;
       }
 
-      const [item] = this.queue.splice(nextIndex, 1);
+      const [item] = this.queues[candidate.lane].splice(candidate.index, 1);
       if (!item) {
         break;
       }
@@ -128,37 +173,93 @@ export class RequestScheduler<T> {
     }
   }
 
-  private selectNextIndex(): number {
-    const fitting = this.queue
+  private selectNextCandidate(): QueueCandidate<T> | undefined {
+    const shortCandidate = this.selectBestCandidateFromLane("short");
+    const draftCandidate = this.selectBestCandidateFromLane("draft");
+
+    if (!shortCandidate) {
+      return draftCandidate;
+    }
+
+    if (!draftCandidate) {
+      return shortCandidate;
+    }
+
+    return shortCandidate.score >= draftCandidate.score ? shortCandidate : draftCandidate;
+  }
+
+  private selectBestCandidateFromLane(lane: ScheduleLane): QueueCandidate<T> | undefined {
+    const queue = this.queues[lane];
+    if (queue.length === 0) {
+      return undefined;
+    }
+
+    const fitting = queue
       .map((item, index) => ({ item, index }))
       .filter(({ item }) => this.inFlightTokens + item.costTokens <= this.config.maxInflightTokens);
 
     if (fitting.length === 0) {
-      return -1;
+      return undefined;
     }
 
     const lookahead = Math.max(1, this.config.affinityLookahead);
     const fittingWithinLookahead = fitting.filter(({ index }) => index < lookahead);
     const candidatePool = fittingWithinLookahead.length > 0 ? fittingWithinLookahead : fitting;
-
-    if (this.lastAffinityKey) {
-      const affinityMatch = candidatePool.find(
-        ({ item }) => item.affinityKey === this.lastAffinityKey,
-      );
-      if (affinityMatch) {
-        return affinityMatch.index;
-      }
-    }
-
     const dominantAffinity = this.findDominantAffinity(candidatePool);
-    if (dominantAffinity) {
-      const affinityMatch = candidatePool.find(({ item }) => item.affinityKey === dominantAffinity);
-      if (affinityMatch) {
-        return affinityMatch.index;
+    const now = Date.now();
+
+    let bestCandidate: QueueCandidate<T> | undefined;
+
+    for (const { item, index } of candidatePool) {
+      const score = this.scoreCandidate(item, dominantAffinity, now);
+      if (!bestCandidate || score > bestCandidate.score) {
+        bestCandidate = {
+          index,
+          lane,
+          item,
+          score,
+        };
       }
     }
 
-    return candidatePool[0]?.index ?? -1;
+    return bestCandidate;
+  }
+
+  private scoreCandidate(
+    item: QueueItem<T>,
+    dominantAffinity: string | undefined,
+    now: number,
+  ): number {
+    let score = (now - item.enqueuedAt) / WAIT_SCORE_DIVISOR;
+
+    if (item.lane === "short") {
+      score += SHORT_LANE_BONUS;
+    }
+
+    if (this.lastAffinityKey && item.affinityKey === this.lastAffinityKey) {
+      score += RECENT_AFFINITY_BONUS;
+    }
+
+    if (dominantAffinity && item.affinityKey === dominantAffinity) {
+      score += DOMINANT_AFFINITY_BONUS;
+    }
+
+    if (item.preferredSlot !== undefined) {
+      const backendSlot = this.backendSlots.get(item.preferredSlot);
+      const inFlightOnSlot = this.inFlightSlots.get(item.preferredSlot) ?? 0;
+
+      if (backendSlot && !backendSlot.isProcessing && inFlightOnSlot === 0) {
+        score += SLOT_IDLE_BONUS;
+      } else if (backendSlot && (backendSlot.isProcessing || inFlightOnSlot > 0)) {
+        score -= SLOT_BUSY_PENALTY;
+      } else if (inFlightOnSlot === 0) {
+        score += SLOT_IDLE_BONUS / 3;
+      } else {
+        score -= SLOT_BUSY_PENALTY / 2;
+      }
+    }
+
+    return score;
   }
 
   private findDominantAffinity(
@@ -206,6 +307,14 @@ export class RequestScheduler<T> {
   private async run(item: QueueItem<T>): Promise<void> {
     this.inFlight += 1;
     this.inFlightTokens += item.costTokens;
+
+    if (item.preferredSlot !== undefined) {
+      this.inFlightSlots.set(
+        item.preferredSlot,
+        (this.inFlightSlots.get(item.preferredSlot) ?? 0) + 1,
+      );
+    }
+
     const queueTimeMs = Date.now() - item.enqueuedAt;
     const controller = new AbortController();
 
@@ -231,6 +340,16 @@ export class RequestScheduler<T> {
       clearTimeout(timeout);
       this.inFlight -= 1;
       this.inFlightTokens -= item.costTokens;
+
+      if (item.preferredSlot !== undefined) {
+        const remaining = (this.inFlightSlots.get(item.preferredSlot) ?? 1) - 1;
+        if (remaining <= 0) {
+          this.inFlightSlots.delete(item.preferredSlot);
+        } else {
+          this.inFlightSlots.set(item.preferredSlot, remaining);
+        }
+      }
+
       this.requestDrain();
     }
   }

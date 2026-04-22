@@ -18,19 +18,46 @@
       "modelRef": "qwen2.5-0.6b-razroo-email-ai",
       "timeoutMs": 18000,
       "cachePrompt": true,
+      "slotStateTtlMs": 200,
+      "promptScaffoldCacheEntries": 256,
+      "launchProfile": {
+        "preset": "single-vps-sub1b",
+        "binaryPath": "/usr/local/bin/llama-server",
+        "modelPath": "/var/lib/ray/models/qwen2.5-0.6b-razroo-email-ai.q4_k_m.gguf",
+        "host": "127.0.0.1",
+        "port": 8081,
+        "alias": "qwen2.5-0.6b-razroo-email-ai",
+        "ctxSize": 3072,
+        "parallel": 2,
+        "threads": 2,
+        "threadsHttp": 2,
+        "batchSize": 256,
+        "ubatchSize": 128,
+        "cachePrompt": true,
+        "cacheReuse": 256,
+        "continuousBatching": true,
+        "enableMetrics": true,
+        "exposeSlots": true,
+        "warmup": true,
+        "enableUnifiedKv": true,
+        "cacheIdleSlots": true,
+        "contextShift": true
+      },
       "warmupRequests": [
         {
-          "system": "You are an email writing assistant. Write only the email body. Keep it concise and grounded in the prompt.",
-          "input": "Draft a short cold outreach email body for a CTO about developer tooling.",
-          "maxTokens": 1,
-          "stop": ["\n\n"]
+          "templateId": "email.cold_outreach.v1",
+          "templateVariables": {
+            "recipientRole": "CTO",
+            "topic": "developer tooling",
+            "valueProp": "less build waste and faster feedback loops",
+            "companyContext": "startup engineering team shipping multiple times a day"
+          },
+          "maxTokens": 1
         },
         {
-          "system": "You classify email replies. Return only a compact JSON object.",
-          "input": "Classify this reply: \"Sounds interesting, send details.\"",
-          "maxTokens": 1,
-          "responseFormat": {
-            "type": "json_object"
+          "templateId": "email.reply_classification.v1",
+          "templateVariables": {
+            "replyText": "Sounds interesting, send details."
           }
         }
       ]
@@ -44,7 +71,8 @@
     "requestTimeoutMs": 20000,
     "dedupeInflight": true,
     "batchWindowMs": 10,
-    "affinityLookahead": 24
+    "affinityLookahead": 24,
+    "shortJobMaxTokens": 96
   },
   "asyncQueue": {
     "enabled": true,
@@ -79,7 +107,13 @@
     "queueLatencyThresholdMs": 350,
     "minCompletionTokensPerSecond": 14,
     "maxOutputReductionRatio": 0.5,
-    "minOutputTokens": 64
+    "minOutputTokens": 64,
+    "learnedFamilyCapEnabled": true,
+    "familyHistorySize": 64,
+    "learnedCapMinSamples": 8,
+    "draftPercentile": 0.95,
+    "shortPercentile": 0.9,
+    "learnedCapHeadroomTokens": 24
   },
   "auth": {
     "enabled": false,

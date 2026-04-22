@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@ray/config':
+        specifier: workspace:*
+        version: link:packages/config
     devDependencies:
       '@changesets/cli':
         specifier: ^2.31.0
@@ -78,6 +82,15 @@ importers:
 
   packages/models:
     dependencies:
+      '@ray/prompts':
+        specifier: workspace:*
+        version: link:../prompts
+      '@razroo/ray-core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/prompts:
+    dependencies:
       '@razroo/ray-core':
         specifier: workspace:*
         version: link:../core
@@ -93,6 +106,9 @@ importers:
       '@ray/models':
         specifier: workspace:*
         version: link:../models
+      '@ray/prompts':
+        specifier: workspace:*
+        version: link:../prompts
       '@ray/scheduler':
         specifier: workspace:*
         version: link:../scheduler

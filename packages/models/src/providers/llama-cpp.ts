@@ -10,8 +10,14 @@ import {
   type ProviderHealthSnapshot,
   type ProviderRequestPreparation,
   type ProviderResult,
+  type SchedulerSlotSnapshot,
   type WarmupInferenceRequest,
 } from "@razroo/ray-core";
+import {
+  renderPromptTemplate,
+  requirePromptTemplate,
+  resolvePromptTemplateRequest,
+} from "@ray/prompts";
 import {
   adapterRequest,
   buildAdapterHeaders,
@@ -77,8 +83,32 @@ interface OpenAICompatibleResponse {
   };
 }
 
+interface LlamaCppSlotResponse {
+  id?: number;
+  id_slot?: number;
+  task_id?: number;
+  id_task?: number;
+  is_processing?: boolean;
+  n_ctx?: number;
+  n_keep?: number;
+  next_token?: {
+    n_past?: number;
+    n_decoded?: number;
+  };
+}
+
+interface PromptScaffold {
+  segments: string[];
+  variableOrder: string[];
+}
+
 interface PreparedPromptState {
   prompt: string;
+}
+
+interface CachedSlotState {
+  checkedAtMs: number;
+  slots: SchedulerSlotSnapshot[];
 }
 
 function buildChatMessages(
@@ -162,6 +192,52 @@ function buildCompletionTimings(
   };
 }
 
+function parseSlotSnapshots(payload: unknown): SchedulerSlotSnapshot[] {
+  const list = Array.isArray(payload)
+    ? payload
+    : payload !== null &&
+        typeof payload === "object" &&
+        Array.isArray((payload as { slots?: unknown[] }).slots)
+      ? (payload as { slots: unknown[] }).slots
+      : [];
+
+  const snapshots: SchedulerSlotSnapshot[] = [];
+
+  for (const rawSlot of list) {
+    if (rawSlot === null || typeof rawSlot !== "object") {
+      continue;
+    }
+
+    const slot = rawSlot as LlamaCppSlotResponse;
+    const id = slot.id ?? slot.id_slot;
+    if (typeof id !== "number") {
+      continue;
+    }
+
+    snapshots.push({
+      id,
+      ...(typeof (slot.task_id ?? slot.id_task) === "number"
+        ? { taskId: slot.task_id ?? slot.id_task }
+        : {}),
+      isProcessing: slot.is_processing === true,
+      ...(typeof slot.n_ctx === "number" ? { contextWindow: slot.n_ctx } : {}),
+      ...(typeof slot.next_token?.n_past === "number"
+        ? { promptTokens: slot.next_token.n_past }
+        : {}),
+      ...(typeof slot.n_keep === "number" ? { cacheTokens: slot.n_keep } : {}),
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  return snapshots;
+}
+
+function normalizeVariableOrder(request: NormalizedInferenceRequest): string[] {
+  return Object.keys(request.templateVariables ?? {}).sort((left, right) =>
+    left.localeCompare(right),
+  );
+}
+
 export class LlamaCppProvider implements ModelProvider {
   readonly kind = "llama.cpp";
   readonly modelId: string;
@@ -171,13 +247,21 @@ export class LlamaCppProvider implements ModelProvider {
     localBackend: true,
   } as const;
   private readonly preparationCache = new Map<string, ProviderRequestPreparation>();
+  private readonly promptTokenCache = new Map<string, number>();
+  private readonly promptScaffolds = new Map<string, PromptScaffold>();
+  private readonly familyPreferredSlots = new Map<string, number>();
+  private readonly slotFamilyAssignments = new Map<number, string>();
   private readonly maxPreparationCacheEntries = 256;
+  private readonly maxPromptTokenCacheEntries = 1024;
+  private readonly maxPromptScaffoldEntries: number;
+  private slotStateCache: CachedSlotState | undefined;
 
   constructor(
     private readonly model: ModelConfig,
     private readonly adapter: LlamaCppProviderConfig,
   ) {
     this.modelId = model.id;
+    this.maxPromptScaffoldEntries = adapter.promptScaffoldCacheEntries ?? 128;
   }
 
   async warm(): Promise<void> {
@@ -187,21 +271,28 @@ export class LlamaCppProvider implements ModelProvider {
         : [{ input: "ping" } satisfies WarmupInferenceRequest];
 
     for (const request of warmupRequests) {
+      const resolved = resolvePromptTemplateRequest(request);
       const normalized: NormalizedInferenceRequest = {
-        input: request.input,
-        ...(request.system ? { system: request.system } : {}),
-        maxTokens: request.maxTokens ?? 1,
+        input: resolved.input ?? "ping",
+        ...(resolved.system ? { system: resolved.system } : {}),
+        maxTokens: resolved.maxTokens ?? 1,
         temperature: 0,
         topP: 1,
         cache: false,
-        metadata: {},
+        metadata: resolved.metadata,
+        ...(resolved.promptTemplateId ? { promptTemplateId: resolved.promptTemplateId } : {}),
+        ...(resolved.templateVariables ? { templateVariables: resolved.templateVariables } : {}),
+        ...(resolved.promptLane ? { promptLane: resolved.promptLane } : {}),
+        ...(resolved.promptFamily ? { promptFamily: resolved.promptFamily } : {}),
         ...(request.seed !== undefined ? { seed: request.seed } : {}),
         ...(request.stop ? { stop: request.stop } : {}),
-        ...(request.responseFormat ? { responseFormat: request.responseFormat } : {}),
+        ...(resolved.responseFormat ? { responseFormat: resolved.responseFormat } : {}),
       };
       const preparation = await this.prepare(normalized, this.createWarmContext());
       await this.infer(normalized, {
         ...this.createWarmContext(),
+        ...(preparation.affinityKey ? { affinityKey: preparation.affinityKey } : {}),
+        ...(preparation.lane ? { lane: preparation.lane } : {}),
         preparation,
       });
     }
@@ -211,9 +302,10 @@ export class LlamaCppProvider implements ModelProvider {
     const startedAt = Date.now();
 
     try {
-      const [healthProbe, propsProbe] = await Promise.allSettled([
+      const [healthProbe, propsProbe, slotProbe] = await Promise.allSettled([
         this.fetchHealthPayload(),
         this.request("/props", { method: "GET" }, Math.min(this.adapter.timeoutMs, 5_000)),
+        this.getSlotSnapshots(),
       ]);
 
       const checkedAt = new Date().toISOString();
@@ -222,6 +314,7 @@ export class LlamaCppProvider implements ModelProvider {
         healthProbe.status === "fulfilled" ? healthProbe.value.payload : undefined;
       const propsPayload =
         propsProbe.status === "fulfilled" ? (propsProbe.value as LlamaCppPropsResponse) : undefined;
+      const slotSnapshots = slotProbe.status === "fulfilled" ? slotProbe.value : undefined;
       const healthStatus = healthPayload?.status?.toLowerCase() ?? "unknown";
       let status: ProviderHealthSnapshot["status"] = "unknown";
 
@@ -231,7 +324,11 @@ export class LlamaCppProvider implements ModelProvider {
         status = "degraded";
       } else if (healthStatus.includes("ok")) {
         status = "ready";
-      } else if (healthProbe.status === "fulfilled" || propsProbe.status === "fulfilled") {
+      } else if (
+        healthProbe.status === "fulfilled" ||
+        propsProbe.status === "fulfilled" ||
+        slotProbe.status === "fulfilled"
+      ) {
         status = "ready";
       } else {
         status = "unavailable";
@@ -242,11 +339,11 @@ export class LlamaCppProvider implements ModelProvider {
         checkedAt,
         latencyMs,
         details: {
-          probe: "/health + /props",
+          probe: "/health + /props + /slots",
           modelRef: this.adapter.modelRef,
           slotsIdle: healthPayload?.slots_idle,
           slotsProcessing: healthPayload?.slots_processing,
-          slots: healthPayload?.slots,
+          slots: slotSnapshots,
           totalSlots: propsPayload?.total_slots,
           chatTemplate:
             typeof propsPayload?.chat_template === "string"
@@ -255,6 +352,7 @@ export class LlamaCppProvider implements ModelProvider {
           contextWindow:
             propsPayload?.default_generation_settings?.n_ctx ?? this.model.contextWindow,
           backendModel: propsPayload?.default_generation_settings?.model,
+          familyPreferredSlots: Object.fromEntries(this.familyPreferredSlots.entries()),
           ...(healthProbe.status === "rejected"
             ? {
                 healthError: toErrorMessage(healthProbe.reason),
@@ -263,6 +361,11 @@ export class LlamaCppProvider implements ModelProvider {
           ...(propsProbe.status === "rejected"
             ? {
                 propsError: toErrorMessage(propsProbe.reason),
+              }
+            : {}),
+          ...(slotProbe.status === "rejected"
+            ? {
+                slotsError: toErrorMessage(slotProbe.reason),
               }
             : {}),
         },
@@ -289,20 +392,35 @@ export class LlamaCppProvider implements ModelProvider {
       return {
         ...cached,
         request,
+        ...(context.affinityKey ? { affinityKey: context.affinityKey } : {}),
+        ...(context.lane ? { lane: context.lane } : {}),
       };
     }
 
-    const prompt = await this.applyTemplate(request, context.signal);
-    const promptTokens = await this.tokenize(prompt, context.signal);
+    const slots = await this.getSlotSnapshots(context.signal);
+    const prompt = await this.preparePrompt(request, context.signal);
+    const promptTokens = await this.countPromptTokens(prompt, context.signal);
+    const slotSelection = this.selectPreferredSlot(context.affinityKey, slots);
+    const requestShape =
+      request.responseFormat?.type === "json_object" ? "openai-chat" : "llama.cpp-completion";
     const preparation: ProviderRequestPreparation = {
       request,
       promptTokens,
+      ...(context.affinityKey ? { affinityKey: context.affinityKey } : {}),
+      ...(context.lane ? { lane: context.lane } : {}),
+      ...(slotSelection.preferredSlot !== undefined
+        ? { preferredSlot: slotSelection.preferredSlot }
+        : {}),
+      ...(slots.length > 0 ? { slotSnapshots: slots } : {}),
       providerState: {
         prompt,
       } satisfies PreparedPromptState,
       diagnostics: {
-        requestShape:
-          request.responseFormat?.type === "json_object" ? "openai-chat" : "llama.cpp-completion",
+        requestShape,
+        ...(slotSelection.preferredSlot !== undefined
+          ? { preferredSlot: slotSelection.preferredSlot }
+          : {}),
+        ...(slotSelection.routeReason ? { slotRouteReason: slotSelection.routeReason } : {}),
         contextWindow: this.model.contextWindow,
       },
     };
@@ -368,6 +486,12 @@ export class LlamaCppProvider implements ModelProvider {
       ...(usage ? { usage } : {}),
       diagnostics: {
         requestShape: "openai-chat",
+        ...(preparation.preferredSlot !== undefined
+          ? { preferredSlot: preparation.preferredSlot }
+          : {}),
+        ...(preparation.diagnostics?.slotRouteReason
+          ? { slotRouteReason: preparation.diagnostics.slotRouteReason }
+          : {}),
         ...(typeof preparation.diagnostics?.contextWindow === "number"
           ? { contextWindow: preparation.diagnostics.contextWindow }
           : {}),
@@ -391,6 +515,7 @@ export class LlamaCppProvider implements ModelProvider {
       });
     }
 
+    const requestedSlot = preparation.preferredSlot ?? this.adapter.slotId ?? -1;
     const payload = (await this.request(
       "/completion",
       {
@@ -402,7 +527,7 @@ export class LlamaCppProvider implements ModelProvider {
           n_predict: request.maxTokens,
           stream: false,
           cache_prompt: this.adapter.cachePrompt ?? true,
-          id_slot: this.adapter.slotId ?? -1,
+          id_slot: requestedSlot,
           ...(request.seed !== undefined ? { seed: request.seed } : {}),
           ...(request.stop ? { stop: request.stop } : {}),
         }),
@@ -423,6 +548,12 @@ export class LlamaCppProvider implements ModelProvider {
     const completionTokens = payload.timings?.predicted_n ?? 0;
     const timingDiagnostics = buildCompletionTimings(payload.timings);
     const tokensEvaluated = payload.tokens_evaluated ?? payload.timings?.prompt_n;
+    const slotId = payload.generation_settings?.id_slot ?? preparation.preferredSlot;
+
+    if (typeof slotId === "number" && context.affinityKey) {
+      this.familyPreferredSlots.set(context.affinityKey, slotId);
+      this.slotFamilyAssignments.set(slotId, context.affinityKey);
+    }
 
     return {
       output: payload.content,
@@ -435,17 +566,52 @@ export class LlamaCppProvider implements ModelProvider {
       },
       diagnostics: {
         requestShape: "llama.cpp-completion",
-        ...((payload.generation_settings?.id_slot ?? this.adapter.slotId) !== undefined
-          ? { slotId: payload.generation_settings?.id_slot ?? this.adapter.slotId }
+        ...(slotId !== undefined ? { slotId } : {}),
+        ...(preparation.preferredSlot !== undefined
+          ? { preferredSlot: preparation.preferredSlot }
           : {}),
         ...(payload.tokens_cached !== undefined ? { tokensCached: payload.tokens_cached } : {}),
         ...(typeof tokensEvaluated === "number" ? { tokensEvaluated } : {}),
         ...(payload.truncated !== undefined ? { truncated: payload.truncated } : {}),
+        ...(preparation.diagnostics?.slotRouteReason
+          ? { slotRouteReason: preparation.diagnostics.slotRouteReason }
+          : {}),
         contextWindow: payload.generation_settings?.n_ctx ?? this.model.contextWindow,
         ...timingDiagnostics,
       },
       raw: payload,
     };
+  }
+
+  private async preparePrompt(
+    request: NormalizedInferenceRequest,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    if (request.promptTemplateId && request.templateVariables) {
+      const scaffold = await this.getPromptScaffold(
+        request.promptTemplateId,
+        request.responseFormat?.type ?? "text",
+        signal,
+      );
+      return this.renderPromptFromScaffold(scaffold, request.templateVariables);
+    }
+
+    return this.applyTemplate(request, signal);
+  }
+
+  private async countPromptTokens(prompt: string, signal?: AbortSignal): Promise<number> {
+    const cacheKey = hashValue({
+      model: this.adapter.modelRef,
+      prompt,
+    });
+    const cached = this.promptTokenCache.get(cacheKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const promptTokens = await this.tokenize(prompt, signal);
+    this.setPromptTokenCache(cacheKey, promptTokens);
+    return promptTokens;
   }
 
   private async applyTemplate(
@@ -498,12 +664,211 @@ export class LlamaCppProvider implements ModelProvider {
     return payload.tokens.length;
   }
 
+  private async getPromptScaffold(
+    templateId: string,
+    responseFormatType: "text" | "json_object",
+    signal?: AbortSignal,
+  ): Promise<PromptScaffold> {
+    const cacheKey = hashValue({
+      model: this.adapter.modelRef,
+      templateId,
+      responseFormatType,
+    });
+    const cached = this.promptScaffolds.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const template = requirePromptTemplate(templateId);
+    const sentinelVariables = Object.fromEntries(
+      template.variables.map((variable: string, index: number) => [
+        variable,
+        `__RAY_PROMPT_VAR_${index}__`,
+      ]),
+    );
+    const rendered = renderPromptTemplate(template.id, sentinelVariables);
+    const prompt = await this.applyTemplate(
+      {
+        input: rendered.input,
+        ...(rendered.system ? { system: rendered.system } : {}),
+        maxTokens: rendered.maxTokens ?? 1,
+        temperature: 0,
+        topP: 1,
+        cache: false,
+        metadata: rendered.metadata,
+        promptTemplateId: rendered.id,
+        templateVariables: rendered.templateVariables,
+        promptLane: rendered.lane,
+        promptFamily: rendered.family,
+        ...(rendered.responseFormat ? { responseFormat: rendered.responseFormat } : {}),
+      },
+      signal,
+    );
+    const segments: string[] = [];
+    let cursor = 0;
+
+    for (const variable of template.variables) {
+      const sentinel = sentinelVariables[variable];
+      if (!sentinel) {
+        throw new RayError(`Prompt scaffold marker "${variable}" is missing`, {
+          code: "provider_invalid_response",
+          status: 500,
+        });
+      }
+      const position = prompt.indexOf(sentinel, cursor);
+
+      if (position === -1) {
+        throw new RayError(
+          `Prompt scaffold marker "${variable}" was not found in rendered prompt`,
+          {
+            code: "provider_invalid_response",
+            status: 500,
+          },
+        );
+      }
+
+      segments.push(prompt.slice(cursor, position));
+      cursor = position + sentinel.length;
+    }
+
+    segments.push(prompt.slice(cursor));
+    const scaffold: PromptScaffold = {
+      segments,
+      variableOrder: [...template.variables],
+    };
+    this.setPromptScaffold(cacheKey, scaffold);
+    return scaffold;
+  }
+
+  private renderPromptFromScaffold(
+    scaffold: PromptScaffold,
+    templateVariables: Record<string, string>,
+  ): string {
+    let prompt = scaffold.segments[0] ?? "";
+
+    for (let index = 0; index < scaffold.variableOrder.length; index += 1) {
+      const variableName = scaffold.variableOrder[index];
+      if (!variableName) {
+        continue;
+      }
+      const value = templateVariables[variableName];
+      if (value === undefined) {
+        throw new RayError(`Missing template variable "${variableName}" for prompt scaffold`, {
+          code: "invalid_request",
+          status: 400,
+        });
+      }
+
+      prompt += value;
+      prompt += scaffold.segments[index + 1] ?? "";
+    }
+
+    return prompt;
+  }
+
+  private async getSlotSnapshots(signal?: AbortSignal): Promise<SchedulerSlotSnapshot[]> {
+    const now = Date.now();
+    const ttlMs = this.adapter.slotStateTtlMs ?? 250;
+
+    if (this.slotStateCache && now - this.slotStateCache.checkedAtMs < ttlMs) {
+      return this.slotStateCache.slots;
+    }
+
+    let snapshots: SchedulerSlotSnapshot[] = [];
+
+    try {
+      const payload = await this.request(
+        "/slots",
+        { method: "GET" },
+        Math.min(this.adapter.timeoutMs, 5_000),
+        signal,
+      );
+      snapshots = parseSlotSnapshots(payload);
+    } catch (error) {
+      if (
+        error instanceof RayError &&
+        error.code === "provider_upstream_error" &&
+        /\b404\b/.test(error.message)
+      ) {
+        this.slotStateCache = {
+          checkedAtMs: now,
+          slots: [],
+        };
+        return [];
+      }
+      throw error;
+    }
+
+    this.slotStateCache = {
+      checkedAtMs: now,
+      slots: snapshots,
+    };
+    return snapshots;
+  }
+
+  private selectPreferredSlot(
+    affinityKey: string | undefined,
+    slots: SchedulerSlotSnapshot[],
+  ): { preferredSlot?: number; routeReason?: string } {
+    if (!affinityKey || slots.length === 0) {
+      return {};
+    }
+
+    const mappedSlotId = this.familyPreferredSlots.get(affinityKey);
+    if (mappedSlotId !== undefined) {
+      const mappedSlot = slots.find((slot) => slot.id === mappedSlotId);
+      if (mappedSlot) {
+        return {
+          preferredSlot: mappedSlot.id,
+          routeReason: mappedSlot.isProcessing ? "family_hot_busy" : "family_hot_idle",
+        };
+      }
+    }
+
+    const assignedIdleSlot = slots.find(
+      (slot) => !slot.isProcessing && this.slotFamilyAssignments.get(slot.id) === affinityKey,
+    );
+    if (assignedIdleSlot) {
+      return {
+        preferredSlot: assignedIdleSlot.id,
+        routeReason: "family_recent_idle",
+      };
+    }
+
+    const idleUnassignedSlot = slots.find(
+      (slot) => !slot.isProcessing && !this.slotFamilyAssignments.has(slot.id),
+    );
+    if (idleUnassignedSlot) {
+      return {
+        preferredSlot: idleUnassignedSlot.id,
+        routeReason: "idle_slot",
+      };
+    }
+
+    const firstIdleSlot = slots.find((slot) => !slot.isProcessing);
+    if (firstIdleSlot) {
+      return {
+        preferredSlot: firstIdleSlot.id,
+        routeReason: "idle_fallback",
+      };
+    }
+
+    return mappedSlotId !== undefined
+      ? {
+          preferredSlot: mappedSlotId,
+          routeReason: "family_hot_busy",
+        }
+      : {};
+  }
+
   private buildPreparationCacheKey(request: NormalizedInferenceRequest): string {
     return hashValue({
       model: this.adapter.modelRef,
       input: request.input,
       system: request.system ?? "",
       responseFormat: request.responseFormat?.type ?? "text",
+      promptTemplateId: request.promptTemplateId ?? "",
+      templateVariables: request.templateVariables ?? {},
     });
   }
 
@@ -520,6 +885,38 @@ export class LlamaCppProvider implements ModelProvider {
         break;
       }
       this.preparationCache.delete(oldestKey);
+    }
+  }
+
+  private setPromptTokenCache(key: string, tokenCount: number): void {
+    if (this.promptTokenCache.has(key)) {
+      this.promptTokenCache.delete(key);
+    }
+
+    this.promptTokenCache.set(key, tokenCount);
+
+    while (this.promptTokenCache.size > this.maxPromptTokenCacheEntries) {
+      const oldestKey = this.promptTokenCache.keys().next().value;
+      if (!oldestKey) {
+        break;
+      }
+      this.promptTokenCache.delete(oldestKey);
+    }
+  }
+
+  private setPromptScaffold(key: string, scaffold: PromptScaffold): void {
+    if (this.promptScaffolds.has(key)) {
+      this.promptScaffolds.delete(key);
+    }
+
+    this.promptScaffolds.set(key, scaffold);
+
+    while (this.promptScaffolds.size > this.maxPromptScaffoldEntries) {
+      const oldestKey = this.promptScaffolds.keys().next().value;
+      if (!oldestKey) {
+        break;
+      }
+      this.promptScaffolds.delete(oldestKey);
     }
   }
 
@@ -573,6 +970,7 @@ export class LlamaCppProvider implements ModelProvider {
           dedupeInflight: false,
           batchWindowMs: 0,
           affinityLookahead: 1,
+          shortJobMaxTokens: 1,
         },
         asyncQueue: {
           enabled: false,
@@ -614,6 +1012,12 @@ export class LlamaCppProvider implements ModelProvider {
           minCompletionTokensPerSecond: 1,
           maxOutputReductionRatio: 0,
           minOutputTokens: 1,
+          learnedFamilyCapEnabled: false,
+          familyHistorySize: 1,
+          learnedCapMinSamples: 1,
+          draftPercentile: 1,
+          shortPercentile: 1,
+          learnedCapHeadroomTokens: 1,
         },
         auth: {
           enabled: false,

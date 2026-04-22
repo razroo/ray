@@ -18,6 +18,7 @@
   "dependencies": {
     "@ray/cache": "workspace:*",
     "@ray/config": "workspace:*",
+    "@ray/prompts": "workspace:*",
     "@razroo/ray-core": "workspace:*",
     "@ray/models": "workspace:*",
     "@ray/scheduler": "workspace:*",

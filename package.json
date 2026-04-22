@@ -20,6 +20,7 @@
     "start:hetzner-email-ai": "node ./apps/gateway/dist/index.js --config ./examples/config/ray.hetzner-cx23-qwen0.6b.json",
     "benchmark": "node --import tsx ./scripts/benchmark.ts",
     "benchmark:email": "node --import tsx ./scripts/benchmark.ts --base-url http://127.0.0.1:3000 --workload ./examples/workloads/email-workload.jsonl --concurrency 2",
+    "autotune:hetzner-email-ai": "node --import tsx ./scripts/benchmark.ts --autotune --config ./examples/config/ray.hetzner-cx23-qwen0.6b.json --workload ./examples/workloads/email-workload.jsonl --concurrency 2 --requests 16",
     "test": "pnpm build && node ./scripts/test.mjs",
     "release:gate": "pnpm lint && pnpm format:check && pnpm test",
     "release:verify-npm": "node ./scripts/release/verify-npm.mjs",
@@ -35,6 +36,9 @@
     "validate:config": "node ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.vps.json",
     "validate:config:hetzner": "node ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.hetzner-cx23-qwen0.6b.json",
     "doctor": "node ./packages/deploy/dist/cli.js doctor --cwd . --config ./examples/config/ray.vps.json --env-file /etc/ray/ray.env"
+  },
+  "dependencies": {
+    "@ray/config": "workspace:*"
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.0",

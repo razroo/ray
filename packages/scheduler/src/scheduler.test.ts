@@ -13,6 +13,7 @@ test("scheduler deduplicates matching inflight work", async () => {
     dedupeInflight: true,
     batchWindowMs: 0,
     affinityLookahead: 8,
+    shortJobMaxTokens: 96,
   });
 
   const first = scheduler.schedule({
@@ -48,6 +49,7 @@ test("scheduler honors batchWindowMs before starting work", async () => {
     dedupeInflight: true,
     batchWindowMs: 25,
     affinityLookahead: 8,
+    shortJobMaxTokens: 96,
   });
 
   const pending = scheduler.schedule({
@@ -75,6 +77,7 @@ test("scheduler rejects work that exceeds token budgets", async () => {
     dedupeInflight: true,
     batchWindowMs: 0,
     affinityLookahead: 8,
+    shortJobMaxTokens: 96,
   });
 
   assert.throws(
@@ -103,6 +106,7 @@ test("scheduler allows smaller queued work to bypass an oversized inflight wait"
     dedupeInflight: true,
     batchWindowMs: 0,
     affinityLookahead: 8,
+    shortJobMaxTokens: 96,
   });
 
   const first = scheduler.schedule({
@@ -156,6 +160,7 @@ test("scheduler prefers matching prompt affinity when capacity allows", async ()
     dedupeInflight: true,
     batchWindowMs: 0,
     affinityLookahead: 8,
+    shortJobMaxTokens: 96,
   });
 
   const first = scheduler.schedule({
@@ -193,5 +198,134 @@ test("scheduler prefers matching prompt affinity when capacity allows", async ()
   assert.deepEqual(
     results.map((result) => result.value),
     ["first", "second", "third"],
+  );
+});
+
+test("scheduler prefers short-lane work over draft-lane work", async () => {
+  const started: string[] = [];
+  let releaseFirst!: () => void;
+
+  const scheduler = new RequestScheduler<string>({
+    concurrency: 1,
+    maxQueue: 8,
+    maxQueuedTokens: 256,
+    maxInflightTokens: 128,
+    requestTimeoutMs: 1_000,
+    dedupeInflight: true,
+    batchWindowMs: 0,
+    affinityLookahead: 8,
+    shortJobMaxTokens: 96,
+  });
+
+  const first = scheduler.schedule({
+    lane: "draft",
+    handler: async () => {
+      started.push("first");
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      return "first";
+    },
+  });
+
+  const draft = scheduler.schedule({
+    lane: "draft",
+    handler: async () => {
+      started.push("draft");
+      return "draft";
+    },
+  });
+
+  const short = scheduler.schedule({
+    lane: "short",
+    handler: async () => {
+      started.push("short");
+      return "short";
+    },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  releaseFirst();
+
+  const results = await Promise.all([first, draft, short]);
+  assert.deepEqual(started, ["first", "short", "draft"]);
+  assert.deepEqual(
+    results.map((result) => result.value),
+    ["first", "draft", "short"],
+  );
+});
+
+test("scheduler prefers work that can reuse an idle preferred slot", async () => {
+  const started: string[] = [];
+  let releaseFirst!: () => void;
+  let releaseIdle!: () => void;
+  let releaseBusy!: () => void;
+
+  const scheduler = new RequestScheduler<string>({
+    concurrency: 1,
+    maxQueue: 8,
+    maxQueuedTokens: 256,
+    maxInflightTokens: 128,
+    requestTimeoutMs: 1_000,
+    dedupeInflight: true,
+    batchWindowMs: 0,
+    affinityLookahead: 8,
+    shortJobMaxTokens: 96,
+  });
+
+  scheduler.updateBackendSlots([
+    { id: 0, isProcessing: false, updatedAt: new Date().toISOString() },
+    { id: 1, isProcessing: true, updatedAt: new Date().toISOString() },
+  ]);
+
+  const first = scheduler.schedule({
+    preferredSlot: 1,
+    handler: async () => {
+      started.push("first");
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      return "first";
+    },
+  });
+
+  const hotBusy = scheduler.schedule({
+    preferredSlot: 1,
+    handler: async () => {
+      started.push("busy");
+      await new Promise<void>((resolve) => {
+        releaseBusy = resolve;
+      });
+      return "busy";
+    },
+  });
+
+  const hotIdle = scheduler.schedule({
+    preferredSlot: 0,
+    handler: async () => {
+      started.push("idle");
+      await new Promise<void>((resolve) => {
+        releaseIdle = resolve;
+      });
+      return "idle";
+    },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(started, ["first"]);
+
+  releaseFirst();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(started, ["first", "idle"]);
+
+  releaseIdle();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(started, ["first", "idle", "busy"]);
+
+  releaseBusy();
+  const results = await Promise.all([first, hotBusy, hotIdle]);
+  assert.deepEqual(
+    results.map((result) => result.value),
+    ["first", "busy", "idle"],
   );
 });

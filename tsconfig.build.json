@@ -5,6 +5,7 @@
     { "path": "./packages/config" },
     { "path": "./packages/cache" },
     { "path": "./packages/telemetry" },
+    { "path": "./packages/prompts" },
     { "path": "./packages/scheduler" },
     { "path": "./packages/models" },
     { "path": "./packages/runtime" },

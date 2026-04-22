@@ -24,6 +24,7 @@
       "@razroo/ray-core": ["packages/core/src/index.ts"],
       "@ray/deploy": ["packages/deploy/src/index.ts"],
       "@ray/models": ["packages/models/src/index.ts"],
+      "@ray/prompts": ["packages/prompts/src/index.ts"],
       "@ray/runtime": ["packages/runtime/src/index.ts"],
       "@ray/scheduler": ["packages/scheduler/src/index.ts"],
       "@razroo/ray-sdk": ["packages/sdk/src/index.ts"],

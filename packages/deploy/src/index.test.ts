@@ -5,6 +5,7 @@ import {
   diagnoseConfig,
   renderCaddyfile,
   renderEnvironmentFileExample,
+  renderLlamaCppService,
   renderSystemdService,
 } from "./index.js";
 
@@ -58,4 +59,96 @@ test("renderEnvironmentFileExample includes auth env placeholders", () => {
 
   const envFile = renderEnvironmentFileExample(config);
   assert.match(envFile, /RAY_API_KEYS=/);
+});
+
+test("renderLlamaCppService emits a single-vps launch profile", () => {
+  const config = mergeConfig(createDefaultConfig("vps"), {
+    model: {
+      adapter: {
+        kind: "llama.cpp",
+        baseUrl: "http://127.0.0.1:8081",
+        modelRef: "qwen2.5-0.6b-test",
+        timeoutMs: 20_000,
+        launchProfile: {
+          preset: "single-vps-sub1b",
+          binaryPath: "/usr/local/bin/llama-server",
+          modelPath: "/models/qwen.gguf",
+          host: "127.0.0.1",
+          port: 8081,
+          ctxSize: 3072,
+          parallel: 2,
+          threads: 2,
+          threadsHttp: 2,
+          batchSize: 256,
+          ubatchSize: 128,
+          cachePrompt: true,
+          cacheReuse: 256,
+          continuousBatching: true,
+          enableMetrics: true,
+          exposeSlots: true,
+          warmup: true,
+          enableUnifiedKv: true,
+          cacheIdleSlots: true,
+          contextShift: true,
+        },
+      },
+    },
+  });
+
+  if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
+    throw new Error("Expected llama.cpp launch profile");
+  }
+
+  const service = renderLlamaCppService({
+    user: "ray",
+    launchProfile: config.model.adapter.launchProfile,
+  });
+  assert.match(service, /LLAMA_ARG_CTX_SIZE=3072/);
+  assert.match(service, /LLAMA_ARG_N_PARALLEL=2/);
+  assert.match(service, /ExecStart=\/usr\/local\/bin\/llama-server/);
+});
+
+test("diagnoseConfig flags missing or mismatched llama.cpp launch settings", () => {
+  const config = mergeConfig(createDefaultConfig("vps"), {
+    scheduler: {
+      concurrency: 3,
+    },
+    model: {
+      adapter: {
+        kind: "llama.cpp",
+        baseUrl: "http://127.0.0.1:8081",
+        modelRef: "qwen2.5-0.6b-test",
+        timeoutMs: 20_000,
+        cachePrompt: false,
+        launchProfile: {
+          preset: "single-vps-sub1b",
+          binaryPath: "/usr/local/bin/llama-server",
+          modelPath: "/models/qwen.gguf",
+          host: "127.0.0.1",
+          port: 8081,
+          ctxSize: 8192,
+          parallel: 2,
+          threads: 2,
+          threadsHttp: 2,
+          batchSize: 256,
+          ubatchSize: 128,
+          cachePrompt: false,
+          cacheReuse: 64,
+          continuousBatching: true,
+          enableMetrics: false,
+          exposeSlots: false,
+          warmup: true,
+          enableUnifiedKv: true,
+          cacheIdleSlots: true,
+          contextShift: true,
+        },
+      },
+    },
+  });
+
+  const diagnostics = diagnoseConfig(config, process.env);
+
+  assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "cache_prompt_disabled"));
+  assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "scheduler_exceeds_parallel"));
+  assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "ctx_per_slot_high"));
 });

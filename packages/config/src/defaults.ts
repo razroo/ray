@@ -38,6 +38,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       dedupeInflight: true,
       batchWindowMs: 0,
       affinityLookahead: 8,
+      shortJobMaxTokens: 96,
     },
     asyncQueue: {
       enabled: false,
@@ -79,6 +80,12 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       minCompletionTokensPerSecond: 18,
       maxOutputReductionRatio: 0.5,
       minOutputTokens: 48,
+      learnedFamilyCapEnabled: true,
+      familyHistorySize: 48,
+      learnedCapMinSamples: 6,
+      draftPercentile: 0.95,
+      shortPercentile: 0.9,
+      learnedCapHeadroomTokens: 24,
     },
     auth: {
       enabled: false,
@@ -126,6 +133,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       dedupeInflight: true,
       batchWindowMs: 0,
       affinityLookahead: 12,
+      shortJobMaxTokens: 96,
     },
     asyncQueue: {
       enabled: false,
@@ -167,6 +175,12 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       minCompletionTokensPerSecond: 18,
       maxOutputReductionRatio: 0.5,
       minOutputTokens: 64,
+      learnedFamilyCapEnabled: true,
+      familyHistorySize: 64,
+      learnedCapMinSamples: 8,
+      draftPercentile: 0.95,
+      shortPercentile: 0.9,
+      learnedCapHeadroomTokens: 24,
     },
     auth: {
       enabled: false,
@@ -214,6 +228,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       dedupeInflight: true,
       batchWindowMs: 0,
       affinityLookahead: 16,
+      shortJobMaxTokens: 96,
     },
     asyncQueue: {
       enabled: false,
@@ -255,6 +270,12 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       minCompletionTokensPerSecond: 18,
       maxOutputReductionRatio: 0.4,
       minOutputTokens: 96,
+      learnedFamilyCapEnabled: true,
+      familyHistorySize: 96,
+      learnedCapMinSamples: 10,
+      draftPercentile: 0.95,
+      shortPercentile: 0.9,
+      learnedCapHeadroomTokens: 32,
     },
     auth: {
       enabled: false,

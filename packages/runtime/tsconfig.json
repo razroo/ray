@@ -10,6 +10,7 @@
     { "path": "../config" },
     { "path": "../core" },
     { "path": "../models" },
+    { "path": "../prompts" },
     { "path": "../scheduler" },
     { "path": "../telemetry" }
   ]

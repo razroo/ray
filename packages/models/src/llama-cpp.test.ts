@@ -48,6 +48,7 @@ function createContext(model: ModelConfig, signal: AbortSignal): ProviderContext
         dedupeInflight: true,
         batchWindowMs: 0,
         affinityLookahead: 8,
+        shortJobMaxTokens: 96,
       },
       asyncQueue: {
         enabled: false,
@@ -89,6 +90,12 @@ function createContext(model: ModelConfig, signal: AbortSignal): ProviderContext
         minCompletionTokensPerSecond: 16,
         maxOutputReductionRatio: 0.5,
         minOutputTokens: 32,
+        learnedFamilyCapEnabled: true,
+        familyHistorySize: 16,
+        learnedCapMinSamples: 4,
+        draftPercentile: 0.95,
+        shortPercentile: 0.9,
+        learnedCapHeadroomTokens: 16,
       },
       auth: {
         enabled: false,

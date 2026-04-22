@@ -102,6 +102,16 @@ function assertPositiveInteger(value: number, label: string): void {
   }
 }
 
+function assertNonNegativeInteger(value: number, label: string): void {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new RayError(`${label} must be a non-negative integer`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { value },
+    });
+  }
+}
+
 function assertUnitInterval(value: number, label: string): void {
   if (!Number.isFinite(value) || value < 0 || value > 1) {
     throw new RayError(`${label} must be between 0 and 1`, {
@@ -160,6 +170,92 @@ function assertStopSequences(value: string[] | undefined, label: string): void {
   }
 }
 
+function assertTemplateVariables(value: Record<string, unknown> | undefined, label: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new RayError(`${label} must be an object of template variable values`, {
+      code: "config_validation_error",
+      status: 500,
+      details: value,
+    });
+  }
+
+  for (const [key, entry] of Object.entries(value)) {
+    if (!isNonEmptyString(key)) {
+      throw new RayError(`${label} keys must be non-empty strings`, {
+        code: "config_validation_error",
+        status: 500,
+        details: value,
+      });
+    }
+
+    if (typeof entry !== "string" && typeof entry !== "number" && typeof entry !== "boolean") {
+      throw new RayError(`${label}.${key} must be a string, number, or boolean`, {
+        code: "config_validation_error",
+        status: 500,
+        details: entry,
+      });
+    }
+  }
+}
+
+function assertWarmupRequest(
+  request: {
+    input?: string;
+    maxTokens?: number;
+    seed?: number;
+    stop?: string[];
+    responseFormat?: { type: string };
+    templateId?: string;
+    templateVariables?: Record<string, unknown>;
+  },
+  label: string,
+): void {
+  if (isNonEmptyString(request.templateId)) {
+    if (request.input !== undefined) {
+      throw new RayError(`${label}.input must be omitted when templateId is provided`, {
+        code: "config_validation_error",
+        status: 500,
+      });
+    }
+
+    assertTemplateVariables(request.templateVariables, `${label}.templateVariables`);
+  } else if (!isNonEmptyString(request.input)) {
+    throw new RayError(`${label}.input must be a non-empty string`, {
+      code: "config_validation_error",
+      status: 500,
+    });
+  }
+
+  if (request.maxTokens !== undefined) {
+    assertPositiveInteger(request.maxTokens, `${label}.maxTokens`);
+  }
+
+  if (request.seed !== undefined) {
+    assertSafeInteger(request.seed, `${label}.seed`);
+  }
+
+  assertStopSequences(request.stop, `${label}.stop`);
+  assertResponseFormat(request.responseFormat, `${label}.responseFormat`);
+}
+
+function assertStringArray(value: string[] | undefined, label: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!Array.isArray(value) || value.some((entry) => !isNonEmptyString(entry))) {
+    throw new RayError(`${label} must be an array of non-empty strings`, {
+      code: "config_validation_error",
+      status: 500,
+      details: value,
+    });
+  }
+}
+
 function validateConfig(config: RayConfig): RayConfig {
   if (!isNonEmptyString(config.server.host)) {
     throw new RayError("server.host must be a non-empty string", {
@@ -178,6 +274,7 @@ function validateConfig(config: RayConfig): RayConfig {
   assertPositiveInteger(config.scheduler.maxInflightTokens, "scheduler.maxInflightTokens");
   assertPositiveInteger(config.scheduler.requestTimeoutMs, "scheduler.requestTimeoutMs");
   assertPositiveInteger(config.scheduler.affinityLookahead, "scheduler.affinityLookahead");
+  assertPositiveInteger(config.scheduler.shortJobMaxTokens, "scheduler.shortJobMaxTokens");
   assertPositiveInteger(config.asyncQueue.pollIntervalMs, "asyncQueue.pollIntervalMs");
   assertPositiveInteger(config.asyncQueue.dispatchConcurrency, "asyncQueue.dispatchConcurrency");
   assertPositiveInteger(config.asyncQueue.maxAttempts, "asyncQueue.maxAttempts");
@@ -195,16 +292,30 @@ function validateConfig(config: RayConfig): RayConfig {
   );
   assertPositiveInteger(config.adaptiveTuning.sampleSize, "adaptiveTuning.sampleSize");
   assertPositiveInteger(
+    config.adaptiveTuning.familyHistorySize,
+    "adaptiveTuning.familyHistorySize",
+  );
+  assertPositiveInteger(
+    config.adaptiveTuning.learnedCapMinSamples,
+    "adaptiveTuning.learnedCapMinSamples",
+  );
+  assertPositiveInteger(
     config.adaptiveTuning.queueLatencyThresholdMs,
     "adaptiveTuning.queueLatencyThresholdMs",
   );
   assertPositiveInteger(config.adaptiveTuning.minOutputTokens, "adaptiveTuning.minOutputTokens");
+  assertPositiveInteger(
+    config.adaptiveTuning.learnedCapHeadroomTokens,
+    "adaptiveTuning.learnedCapHeadroomTokens",
+  );
   assertPositiveInteger(config.rateLimit.windowMs, "rateLimit.windowMs");
   assertPositiveInteger(config.rateLimit.maxRequests, "rateLimit.maxRequests");
   assertUnitInterval(
     config.adaptiveTuning.maxOutputReductionRatio,
     "adaptiveTuning.maxOutputReductionRatio",
   );
+  assertUnitInterval(config.adaptiveTuning.draftPercentile, "adaptiveTuning.draftPercentile");
+  assertUnitInterval(config.adaptiveTuning.shortPercentile, "adaptiveTuning.shortPercentile");
 
   if (!isNonEmptyString(config.model.id) || !isNonEmptyString(config.model.family)) {
     throw new RayError("model.id and model.family must be non-empty strings", {
@@ -252,31 +363,17 @@ function validateConfig(config: RayConfig): RayConfig {
     assertPositiveInteger(config.model.adapter.timeoutMs, "model.adapter.timeoutMs");
 
     for (const [index, request] of (config.model.adapter.warmupRequests ?? []).entries()) {
-      if (!isNonEmptyString(request.input)) {
-        throw new RayError(
-          `model.adapter.warmupRequests[${index}].input must be a non-empty string`,
-          {
-            code: "config_validation_error",
-            status: 500,
-          },
-        );
-      }
-
-      if (request.maxTokens !== undefined) {
-        assertPositiveInteger(
-          request.maxTokens,
-          `model.adapter.warmupRequests[${index}].maxTokens`,
-        );
-      }
-
-      if (request.seed !== undefined) {
-        assertSafeInteger(request.seed, `model.adapter.warmupRequests[${index}].seed`);
-      }
-
-      assertStopSequences(request.stop, `model.adapter.warmupRequests[${index}].stop`);
-      assertResponseFormat(
-        request.responseFormat as { type: string } | undefined,
-        `model.adapter.warmupRequests[${index}].responseFormat`,
+      assertWarmupRequest(
+        request as {
+          input?: string;
+          maxTokens?: number;
+          seed?: number;
+          stop?: string[];
+          responseFormat?: { type: string };
+          templateId?: string;
+          templateVariables?: Record<string, unknown>;
+        },
+        `model.adapter.warmupRequests[${index}]`,
       );
     }
   }
@@ -306,33 +403,73 @@ function validateConfig(config: RayConfig): RayConfig {
       });
     }
 
+    if (
+      config.model.adapter.slotStateTtlMs !== undefined &&
+      (!Number.isInteger(config.model.adapter.slotStateTtlMs) ||
+        config.model.adapter.slotStateTtlMs <= 0)
+    ) {
+      throw new RayError("model.adapter.slotStateTtlMs must be a positive integer", {
+        code: "config_validation_error",
+        status: 500,
+        details: config.model.adapter.slotStateTtlMs,
+      });
+    }
+
+    if (
+      config.model.adapter.promptScaffoldCacheEntries !== undefined &&
+      (!Number.isInteger(config.model.adapter.promptScaffoldCacheEntries) ||
+        config.model.adapter.promptScaffoldCacheEntries <= 0)
+    ) {
+      throw new RayError("model.adapter.promptScaffoldCacheEntries must be a positive integer", {
+        code: "config_validation_error",
+        status: 500,
+        details: config.model.adapter.promptScaffoldCacheEntries,
+      });
+    }
+
     for (const [index, request] of (config.model.adapter.warmupRequests ?? []).entries()) {
-      if (!isNonEmptyString(request.input)) {
-        throw new RayError(
-          `model.adapter.warmupRequests[${index}].input must be a non-empty string`,
-          {
-            code: "config_validation_error",
-            status: 500,
-          },
-        );
-      }
-
-      if (request.maxTokens !== undefined) {
-        assertPositiveInteger(
-          request.maxTokens,
-          `model.adapter.warmupRequests[${index}].maxTokens`,
-        );
-      }
-
-      if (request.seed !== undefined) {
-        assertSafeInteger(request.seed, `model.adapter.warmupRequests[${index}].seed`);
-      }
-
-      assertStopSequences(request.stop, `model.adapter.warmupRequests[${index}].stop`);
-      assertResponseFormat(
-        request.responseFormat as { type: string } | undefined,
-        `model.adapter.warmupRequests[${index}].responseFormat`,
+      assertWarmupRequest(
+        request as {
+          input?: string;
+          maxTokens?: number;
+          seed?: number;
+          stop?: string[];
+          responseFormat?: { type: string };
+          templateId?: string;
+          templateVariables?: Record<string, unknown>;
+        },
+        `model.adapter.warmupRequests[${index}]`,
       );
+    }
+
+    if (config.model.adapter.launchProfile) {
+      const profile = config.model.adapter.launchProfile;
+      if (
+        !isNonEmptyString(profile.binaryPath) ||
+        !isNonEmptyString(profile.modelPath) ||
+        !isNonEmptyString(profile.host)
+      ) {
+        throw new RayError("model.adapter.launchProfile requires binaryPath, modelPath, and host", {
+          code: "config_validation_error",
+          status: 500,
+          details: profile,
+        });
+      }
+
+      assertPositiveInteger(profile.port, "model.adapter.launchProfile.port");
+      assertPositiveInteger(profile.ctxSize, "model.adapter.launchProfile.ctxSize");
+      assertPositiveInteger(profile.parallel, "model.adapter.launchProfile.parallel");
+      assertPositiveInteger(profile.threads, "model.adapter.launchProfile.threads");
+      assertPositiveInteger(profile.threadsHttp, "model.adapter.launchProfile.threadsHttp");
+      assertPositiveInteger(profile.batchSize, "model.adapter.launchProfile.batchSize");
+      assertPositiveInteger(profile.ubatchSize, "model.adapter.launchProfile.ubatchSize");
+      assertNonNegativeInteger(profile.cacheReuse, "model.adapter.launchProfile.cacheReuse");
+
+      if (profile.threadsBatch !== undefined) {
+        assertPositiveInteger(profile.threadsBatch, "model.adapter.launchProfile.threadsBatch");
+      }
+
+      assertStringArray(profile.extraArgs, "model.adapter.launchProfile.extraArgs");
     }
   }
 
