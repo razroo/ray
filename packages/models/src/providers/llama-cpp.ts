@@ -232,12 +232,6 @@ function parseSlotSnapshots(payload: unknown): SchedulerSlotSnapshot[] {
   return snapshots;
 }
 
-function normalizeVariableOrder(request: NormalizedInferenceRequest): string[] {
-  return Object.keys(request.templateVariables ?? {}).sort((left, right) =>
-    left.localeCompare(right),
-  );
-}
-
 export class LlamaCppProvider implements ModelProvider {
   readonly kind = "llama.cpp";
   readonly modelId: string;
