@@ -73,6 +73,7 @@ export interface LlamaCppLaunchProfile {
   ubatchSize: number;
   cachePrompt: boolean;
   cacheReuse: number;
+  cacheRamMiB?: number;
   continuousBatching: boolean;
   enableMetrics: boolean;
   exposeSlots: boolean;

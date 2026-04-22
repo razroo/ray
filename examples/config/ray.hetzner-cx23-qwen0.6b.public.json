@@ -117,7 +117,7 @@
     "learnedCapHeadroomTokens": 24
   },
   "auth": {
-    "enabled": false,
+    "enabled": true,
     "apiKeyEnv": "RAY_API_KEYS"
   },
   "rateLimit": {
@@ -131,6 +131,6 @@
     "integration": "razroo-email-ai",
     "hardware": "hetzner-cx23",
     "engine": "llama.cpp",
-    "exposure": "private-local"
+    "exposure": "public"
   }
 }

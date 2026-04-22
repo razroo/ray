@@ -112,6 +112,16 @@ function assertNonNegativeInteger(value: number, label: string): void {
   }
 }
 
+function assertIntegerAtLeast(value: number, minimum: number, label: string): void {
+  if (!Number.isInteger(value) || value < minimum) {
+    throw new RayError(`${label} must be an integer greater than or equal to ${minimum}`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { value, minimum },
+    });
+  }
+}
+
 function assertUnitInterval(value: number, label: string): void {
   if (!Number.isFinite(value) || value < 0 || value > 1) {
     throw new RayError(`${label} must be between 0 and 1`, {
@@ -464,6 +474,9 @@ function validateConfig(config: RayConfig): RayConfig {
       assertPositiveInteger(profile.batchSize, "model.adapter.launchProfile.batchSize");
       assertPositiveInteger(profile.ubatchSize, "model.adapter.launchProfile.ubatchSize");
       assertNonNegativeInteger(profile.cacheReuse, "model.adapter.launchProfile.cacheReuse");
+      if (profile.cacheRamMiB !== undefined) {
+        assertIntegerAtLeast(profile.cacheRamMiB, -1, "model.adapter.launchProfile.cacheRamMiB");
+      }
 
       if (profile.threadsBatch !== undefined) {
         assertPositiveInteger(profile.threadsBatch, "model.adapter.launchProfile.threadsBatch");

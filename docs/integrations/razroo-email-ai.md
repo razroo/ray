@@ -8,12 +8,14 @@ Typical match: **Hetzner CX23** (2 vCPU, 4 GB RAM) or **CAX11** (2 vCPU, 4 GB). 
 
 ## Example config
 
-Use [ray.hetzner-cx23-qwen0.6b.json](../../examples/config/ray.hetzner-cx23-qwen0.6b.json) as a starting point. Copy it to the server (e.g. `/etc/ray/ray.json`) and adjust:
+Use [ray.hetzner-cx23-qwen0.6b.public.json](../../examples/config/ray.hetzner-cx23-qwen0.6b.public.json) as the starting point for a public VPS. Keep [ray.hetzner-cx23-qwen0.6b.json](../../examples/config/ray.hetzner-cx23-qwen0.6b.json) for local or private-loopback development inside this repo. Copy the public profile to the server (e.g. `/etc/ray/ray.json`) and adjust:
 
 - **`model.adapter.baseUrl`** — where your OpenAI-compatible server listens (often `http://127.0.0.1:8081`).
 - **`model.adapter.modelRef`** — must match the model name exposed by llama.cpp (often the GGUF stem or `--model` label you use at startup).
 - **`server.port`** — Ray’s listen port; set **`RAY_PORT`** in the environment if you prefer not to edit JSON.
 - **`asyncQueue.storageDir`** — durable on-disk queue location. On a real VPS, keep it on persistent local storage such as `/var/lib/ray/async-queue`.
+- **`model.adapter.launchProfile.cacheRamMiB`** — pinned prompt-cache RAM budget for llama.cpp. The example sets **`512` MiB** instead of inheriting the upstream `8192` MiB default, which is a better fit for a 4 GB VPS.
+- **`auth.apiKeyEnv`** — public profile auth is enabled by default. Populate **`RAY_API_KEYS`** before starting the gateway.
 
 ## Local development (this repo)
 
@@ -34,15 +36,16 @@ The gateway exposes:
 - `GET /health` — liveness and queue/provider snapshot, plus `asyncQueue` when enabled.
 - `GET /v1/config` — non-secret config (sanitized).
 
-With auth disabled (default in the example), a minimal `curl` check:
+With the public profile, a minimal `curl` check is:
 
 ```bash
 curl -sS http://127.0.0.1:3000/v1/infer \
+  -H 'authorization: Bearer replace-with-real-key' \
   -H 'content-type: application/json' \
   -d '{"input":"Hello"}'
 ```
 
-Enable API keys by setting `auth.enabled` to `true` and populating `RAY_API_KEYS` (or the env name in `apiKeyEnv`) with comma-separated keys; send `Authorization: Bearer <key>`.
+If you use the local profile for private-only development, auth stays disabled there for convenience.
 
 For `razroo-email-ai`, pass a deterministic `seed` per lead or per variant. That preserves the repo's current "stable for the same lead, different across leads" inference behavior instead of collapsing every repeated prompt onto the same sampling path.
 

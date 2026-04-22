@@ -1,9 +1,12 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadRayConfig, mergeConfig, type DeepPartial } from "@ray/config";
 import type { LlamaCppLaunchProfile, RayConfig } from "@razroo/ray-core";
+import { buildLlamaCppEnvironment } from "../packages/deploy/src/index.ts";
+
+type AutotuneScope = "auto" | "gateway" | "full";
 
 interface BenchmarkArgs {
   baseUrl: string;
@@ -12,7 +15,9 @@ interface BenchmarkArgs {
   requests?: number;
   label?: string;
   configPath?: string;
+  apiKey?: string;
   autotune: boolean;
+  autotuneScope: AutotuneScope;
   help: boolean;
 }
 
@@ -89,6 +94,22 @@ interface AutotuneCandidate {
   override: DeepPartial<RayConfig>;
 }
 
+interface LaunchProfileCandidate {
+  label: string;
+  profile: LlamaCppLaunchProfile;
+  perSlotContext: number;
+}
+
+interface LaunchProfileBenchmarkResult {
+  candidate: LaunchProfileCandidate;
+  summary: BenchmarkSummary;
+}
+
+interface SchedulerBenchmarkResult {
+  candidate: AutotuneCandidate;
+  summary: BenchmarkSummary;
+}
+
 const defaultWorkload: InferenceRequest[] = [
   {
     templateId: "email.cold_outreach.v1",
@@ -128,6 +149,7 @@ function parseArgs(argv: string[]): BenchmarkArgs {
     baseUrl: "http://127.0.0.1:3000",
     concurrency: 1,
     autotune: false,
+    autotuneScope: "auto",
     help: false,
   };
 
@@ -183,8 +205,23 @@ function parseArgs(argv: string[]): BenchmarkArgs {
       continue;
     }
 
+    if (current === "--api-key") {
+      result.apiKey = next;
+      index += 1;
+      continue;
+    }
+
     if (current === "--config") {
       result.configPath = next;
+      index += 1;
+      continue;
+    }
+
+    if (
+      current === "--autotune-scope" &&
+      (next === "auto" || next === "gateway" || next === "full")
+    ) {
+      result.autotuneScope = next;
       index += 1;
     }
   }
@@ -202,7 +239,9 @@ function printUsage(): void {
   console.log("  --requests <n>          Total requests to replay.");
   console.log("  --label <name>          Label shown in benchmark output.");
   console.log("  --config <path>         Ray config path for autotune mode.");
+  console.log("  --api-key <key>         Bearer API key used for auth-enabled gateways.");
   console.log("  --autotune              Sweep scheduler settings using the supplied config.");
+  console.log("  --autotune-scope <mode> Autotune scope: auto, gateway, or full. Default: auto.");
   console.log("  --help, -h              Show this help text.");
 }
 
@@ -264,12 +303,55 @@ function scoreSummary(summary: BenchmarkSummary): number {
   return emailsPerHour / Math.max(1, 1 + latencyPenalty + queuePenalty) + throughputBonus;
 }
 
-async function invoke(baseUrl: string, request: InferenceRequest): Promise<BenchmarkSample> {
+function resolveBenchmarkApiKey(args: BenchmarkArgs, config?: RayConfig): string | undefined {
+  if (args.apiKey) {
+    return args.apiKey;
+  }
+
+  if (!config?.auth.enabled || !config.auth.apiKeyEnv) {
+    return undefined;
+  }
+
+  const raw = process.env[config.auth.apiKeyEnv];
+  if (!raw) {
+    return undefined;
+  }
+
+  return raw
+    .split(/[\n,]/)
+    .map((value) => value.trim())
+    .find((value) => value.length > 0);
+}
+
+function resolveAutotuneScope(args: BenchmarkArgs, config: RayConfig): "gateway" | "full" {
+  if (args.autotuneScope === "gateway" || args.autotuneScope === "full") {
+    return args.autotuneScope;
+  }
+
+  return config.model.adapter.kind === "llama.cpp" && config.model.adapter.launchProfile
+    ? "full"
+    : "gateway";
+}
+
+function buildBaseUrl(host: string, port: number): string {
+  return `http://${host}:${port}`;
+}
+
+function getPortOffset(basePort: number, index: number): number {
+  return basePort + index + 1;
+}
+
+async function invoke(
+  baseUrl: string,
+  request: InferenceRequest,
+  apiKey?: string,
+): Promise<BenchmarkSample> {
   const startedAt = Date.now();
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/infer`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
+      ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
     },
     body: JSON.stringify(request),
   });
@@ -291,6 +373,7 @@ async function runBenchmark(options: {
   concurrency: number;
   requests: number;
   label: string;
+  apiKey?: string;
 }): Promise<BenchmarkSummary> {
   const queue = Array.from(
     { length: options.requests },
@@ -309,7 +392,7 @@ async function runBenchmark(options: {
         break;
       }
 
-      const sample = await invoke(options.baseUrl, request);
+      const sample = await invoke(options.baseUrl, request, options.apiKey);
       results.push(sample);
     }
   });
@@ -447,15 +530,11 @@ function buildAutotuneCandidates(config: RayConfig): AutotuneCandidate[] {
 
 function buildLaunchProfileRecommendations(
   launchProfile: LlamaCppLaunchProfile,
-): Array<{ label: string; profile: LlamaCppLaunchProfile; perSlotContext: number }> {
+): LaunchProfileCandidate[] {
   const ctxSizes = uniqueIntegers([2048, 3072, launchProfile.ctxSize, 4096]);
   const parallels = uniqueIntegers([1, launchProfile.parallel, 2]);
   const batchSizes = uniqueIntegers([128, launchProfile.batchSize, 256]);
-  const recommendations: Array<{
-    label: string;
-    profile: LlamaCppLaunchProfile;
-    perSlotContext: number;
-  }> = [];
+  const recommendations: LaunchProfileCandidate[] = [];
 
   for (const ctxSize of ctxSizes) {
     for (const parallel of parallels) {
@@ -498,7 +577,7 @@ async function waitForHealth(baseUrl: string, timeoutMs = 15_000): Promise<void>
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
 
-  throw new Error(`Timed out waiting for gateway health at ${baseUrl}`);
+  throw new Error(`Timed out waiting for health at ${baseUrl}`);
 }
 
 async function startGateway(configPath: string): Promise<ChildProcess> {
@@ -521,7 +600,33 @@ async function startGateway(configPath: string): Promise<ChildProcess> {
   return child;
 }
 
-async function stopGateway(child: ChildProcess): Promise<void> {
+async function startLlamaCppServer(launchProfile: LlamaCppLaunchProfile): Promise<ChildProcess> {
+  await access(launchProfile.binaryPath);
+  await access(launchProfile.modelPath);
+
+  return await new Promise<ChildProcess>((resolve, reject) => {
+    const child = spawn(launchProfile.binaryPath, launchProfile.extraArgs ?? [], {
+      cwd: process.cwd(),
+      stdio: "ignore",
+      env: {
+        ...process.env,
+        ...buildLlamaCppEnvironment(launchProfile),
+      },
+    });
+
+    const onError = (error: Error) => {
+      reject(error);
+    };
+
+    child.once("error", onError);
+    child.once("spawn", () => {
+      child.off("error", onError);
+      resolve(child);
+    });
+  });
+}
+
+async function stopChildProcess(child: ChildProcess): Promise<void> {
   if (child.killed || child.exitCode !== null) {
     return;
   }
@@ -538,6 +643,181 @@ async function stopGateway(child: ChildProcess): Promise<void> {
   });
 }
 
+async function benchmarkGatewayConfig(options: {
+  config: RayConfig;
+  configPath: string;
+  workload: InferenceRequest[];
+  concurrency: number;
+  requests: number;
+  label: string;
+  apiKey?: string;
+}): Promise<BenchmarkSummary> {
+  await writeFile(options.configPath, JSON.stringify(options.config, null, 2));
+  const gateway = await startGateway(options.configPath);
+
+  try {
+    const baseUrl = buildBaseUrl(options.config.server.host, options.config.server.port);
+    await waitForHealth(baseUrl);
+    return await runBenchmark({
+      baseUrl,
+      workload: options.workload,
+      concurrency: options.concurrency,
+      requests: options.requests,
+      label: options.label,
+      apiKey: options.apiKey,
+    });
+  } finally {
+    await stopChildProcess(gateway);
+  }
+}
+
+async function runSchedulerSweep(options: {
+  config: RayConfig;
+  workload: InferenceRequest[];
+  clientConcurrency: number;
+  requests: number;
+  tempDir: string;
+  apiKey?: string;
+}): Promise<SchedulerBenchmarkResult[]> {
+  const candidates = buildAutotuneCandidates(options.config);
+  const results: SchedulerBenchmarkResult[] = [];
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    if (!candidate) {
+      continue;
+    }
+
+    const candidateConfig = mergeConfig(options.config, {
+      ...candidate.override,
+      server: {
+        port: getPortOffset(options.config.server.port, index),
+      },
+    });
+    const candidatePath = path.join(options.tempDir, `${candidate.label}.json`);
+    const summary = await benchmarkGatewayConfig({
+      config: candidateConfig,
+      configPath: candidatePath,
+      workload: options.workload,
+      concurrency: options.clientConcurrency,
+      requests: options.requests,
+      label: candidate.label,
+      apiKey: options.apiKey,
+    });
+    results.push({
+      candidate,
+      summary,
+    });
+  }
+
+  return results;
+}
+
+async function runLaunchProfileSweep(options: {
+  config: RayConfig;
+  workload: InferenceRequest[];
+  clientConcurrency: number;
+  requests: number;
+  tempDir: string;
+  apiKey?: string;
+}): Promise<LaunchProfileBenchmarkResult[]> {
+  if (
+    options.config.model.adapter.kind !== "llama.cpp" ||
+    !options.config.model.adapter.launchProfile
+  ) {
+    return [];
+  }
+
+  const baseLaunchProfile = options.config.model.adapter.launchProfile;
+  const candidates = buildLaunchProfileRecommendations(baseLaunchProfile);
+  const results: LaunchProfileBenchmarkResult[] = [];
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    if (!candidate) {
+      continue;
+    }
+
+    const launchedProfile: LlamaCppLaunchProfile = {
+      ...candidate.profile,
+      port: getPortOffset(baseLaunchProfile.port, index),
+    };
+    const backend = await startLlamaCppServer(launchedProfile);
+
+    try {
+      await waitForHealth(buildBaseUrl(launchedProfile.host, launchedProfile.port), 60_000);
+      const candidateConfig = mergeConfig(options.config, {
+        server: {
+          port: getPortOffset(options.config.server.port, index),
+        },
+        model: {
+          adapter: {
+            kind: "llama.cpp",
+            baseUrl: buildBaseUrl(launchedProfile.host, launchedProfile.port),
+            launchProfile: launchedProfile,
+          },
+        },
+      });
+      const summary = await benchmarkGatewayConfig({
+        config: candidateConfig,
+        configPath: path.join(options.tempDir, `launch-${candidate.label}.json`),
+        workload: options.workload,
+        concurrency: options.clientConcurrency,
+        requests: options.requests,
+        label: `llama-${candidate.label}`,
+        apiKey: options.apiKey,
+      });
+      results.push({
+        candidate,
+        summary,
+      });
+    } finally {
+      await stopChildProcess(backend);
+    }
+  }
+
+  return results;
+}
+
+function printTopSchedulerResults(results: SchedulerBenchmarkResult[]): void {
+  const sorted = [...results].sort(
+    (left, right) => (right.summary.score ?? 0) - (left.summary.score ?? 0),
+  );
+  const top = sorted.slice(0, 5);
+
+  console.log(`Autotune scheduler candidates: ${results.length}`);
+  for (const result of top) {
+    const summary = result.summary;
+    console.log(
+      `${summary.label}: score=${formatNumber(summary.score, 2)} emails/hour=${formatNumber(
+        summary.emailsPerHour,
+      )} latencyP95=${formatNumber(summary.latencyP95Ms)}ms queueP95=${formatNumber(
+        summary.queueDelayP95Ms,
+      )}ms tok/s=${formatNumber(summary.completionTokensPerSecondAvg)}`,
+    );
+  }
+}
+
+function printTopLaunchProfileResults(results: LaunchProfileBenchmarkResult[]): void {
+  const sorted = [...results].sort(
+    (left, right) => (right.summary.score ?? 0) - (left.summary.score ?? 0),
+  );
+  const top = sorted.slice(0, 5);
+
+  console.log(`Launch profile candidates: ${results.length}`);
+  for (const result of top) {
+    const summary = result.summary;
+    const profile = result.candidate.profile;
+    console.log(
+      `${result.candidate.label}: score=${formatNumber(summary.score, 2)} emails/hour=${formatNumber(
+        summary.emailsPerHour,
+      )} latencyP95=${formatNumber(summary.latencyP95Ms)}ms tok/s=${formatNumber(
+        summary.completionTokensPerSecondAvg,
+      )} ctx=${profile.ctxSize} parallel=${profile.parallel} batch=${profile.batchSize} cacheRam=${profile.cacheRamMiB ?? "default"}`,
+    );
+  }
+}
+
 async function runAutotune(args: BenchmarkArgs, workload: InferenceRequest[]): Promise<void> {
   if (!args.configPath) {
     throw new Error("--autotune requires --config");
@@ -548,74 +828,136 @@ async function runAutotune(args: BenchmarkArgs, workload: InferenceRequest[]): P
     configPath: args.configPath,
   });
   const config = loaded.config;
+  const apiKey = resolveBenchmarkApiKey(args, config);
+  if (config.auth.enabled && !apiKey) {
+    throw new Error(
+      `Auth is enabled in ${args.configPath}. Supply --api-key or populate ${config.auth.apiKeyEnv}.`,
+    );
+  }
+
+  const scope = resolveAutotuneScope(args, config);
+  if (
+    scope === "full" &&
+    (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile)
+  ) {
+    throw new Error("Full autotune requires a llama.cpp adapter with a launchProfile.");
+  }
+
   const baseRequests = args.requests ?? Math.max(workload.length * 3, 12);
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-autotune-"));
 
   try {
-    const candidates = buildAutotuneCandidates(config);
-    const summaries: BenchmarkSummary[] = [];
+    let schedulerBaseConfig = config;
+    let bestLaunchProfile: LlamaCppLaunchProfile | undefined;
 
-    for (let index = 0; index < candidates.length; index += 1) {
-      const candidate = candidates[index];
-      if (!candidate) {
-        continue;
+    if (
+      scope === "full" &&
+      config.model.adapter.kind === "llama.cpp" &&
+      config.model.adapter.launchProfile
+    ) {
+      const launchResults = await runLaunchProfileSweep({
+        config,
+        workload,
+        clientConcurrency: args.concurrency,
+        requests: baseRequests,
+        tempDir,
+        apiKey,
+      });
+      if (launchResults.length === 0) {
+        throw new Error("No llama.cpp launch profile candidates were benchmarked.");
       }
 
-      const port = config.server.port + index + 1;
-      const candidateConfig = mergeConfig(config, {
-        ...candidate.override,
-        server: {
-          port,
-        },
-      });
-      const candidatePath = path.join(tempDir, `${candidate.label}.json`);
-      await writeFile(candidatePath, JSON.stringify(candidateConfig, null, 2));
+      printTopLaunchProfileResults(launchResults);
+      const bestLaunchResult = [...launchResults].sort(
+        (left, right) => (right.summary.score ?? 0) - (left.summary.score ?? 0),
+      )[0];
+      if (!bestLaunchResult) {
+        throw new Error("Unable to resolve a winning llama.cpp launch profile candidate.");
+      }
 
-      const gateway = await startGateway(candidatePath);
+      bestLaunchProfile = bestLaunchResult.candidate.profile;
+      const launchedProfile: LlamaCppLaunchProfile = {
+        ...bestLaunchProfile,
+        port: getPortOffset(config.model.adapter.launchProfile.port, 100),
+      };
+      const backend = await startLlamaCppServer(launchedProfile);
 
       try {
-        const baseUrl = `http://${candidateConfig.server.host}:${candidateConfig.server.port}`;
-        await waitForHealth(baseUrl);
-        const summary = await runBenchmark({
-          baseUrl,
-          workload,
-          concurrency: args.concurrency,
-          requests: baseRequests,
-          label: candidate.label,
+        await waitForHealth(buildBaseUrl(launchedProfile.host, launchedProfile.port), 60_000);
+        schedulerBaseConfig = mergeConfig(config, {
+          model: {
+            adapter: {
+              kind: "llama.cpp",
+              baseUrl: buildBaseUrl(launchedProfile.host, launchedProfile.port),
+              launchProfile: launchedProfile,
+            },
+          },
         });
-        summaries.push(summary);
-      } finally {
-        await stopGateway(gateway);
-      }
-    }
 
-    summaries.sort((left, right) => (right.score ?? 0) - (left.score ?? 0));
-    const top = summaries.slice(0, 5);
+        const schedulerResults = await runSchedulerSweep({
+          config: schedulerBaseConfig,
+          workload,
+          clientConcurrency: args.concurrency,
+          requests: baseRequests,
+          tempDir,
+          apiKey,
+        });
 
-    console.log(`Autotune candidates: ${summaries.length}`);
-    for (const summary of top) {
-      console.log(
-        `${summary.label}: score=${formatNumber(summary.score, 2)} emails/hour=${formatNumber(
-          summary.emailsPerHour,
-        )} latencyP95=${formatNumber(summary.latencyP95Ms)}ms queueP95=${formatNumber(
-          summary.queueDelayP95Ms,
-        )}ms tok/s=${formatNumber(summary.completionTokensPerSecondAvg)}`,
-      );
-    }
+        printTopSchedulerResults(schedulerResults);
+        const bestSchedulerResult = [...schedulerResults].sort(
+          (left, right) => (right.summary.score ?? 0) - (left.summary.score ?? 0),
+        )[0];
+        if (!bestSchedulerResult) {
+          throw new Error("No scheduler candidates were benchmarked.");
+        }
 
-    if (config.model.adapter.kind === "llama.cpp" && config.model.adapter.launchProfile) {
-      console.log("\nllama.cpp launch profile recommendations:");
-      for (const recommendation of buildLaunchProfileRecommendations(
-        config.model.adapter.launchProfile,
-      )) {
+        console.log("\nRecommended autotune patch:");
         console.log(
-          `${recommendation.label}: ctx=${recommendation.profile.ctxSize} parallel=${recommendation.profile.parallel} per-slot-ctx=${recommendation.perSlotContext} batch=${recommendation.profile.batchSize} ubatch=${recommendation.profile.ubatchSize}`,
+          JSON.stringify(
+            {
+              model: {
+                adapter: {
+                  launchProfile: bestLaunchProfile,
+                },
+              },
+              scheduler: bestSchedulerResult.candidate.override.scheduler,
+            },
+            null,
+            2,
+          ),
         );
+      } finally {
+        await stopChildProcess(backend);
       }
-      console.log(
-        "These launch profile variants require restarting llama.cpp separately; the autotune sweep above measures gateway-side settings.",
-      );
+      return;
     }
+
+    const schedulerResults = await runSchedulerSweep({
+      config: schedulerBaseConfig,
+      workload,
+      clientConcurrency: args.concurrency,
+      requests: baseRequests,
+      tempDir,
+      apiKey,
+    });
+    printTopSchedulerResults(schedulerResults);
+    const bestSchedulerResult = [...schedulerResults].sort(
+      (left, right) => (right.summary.score ?? 0) - (left.summary.score ?? 0),
+    )[0];
+    if (!bestSchedulerResult) {
+      throw new Error("No scheduler candidates were benchmarked.");
+    }
+
+    console.log("\nRecommended autotune patch:");
+    console.log(
+      JSON.stringify(
+        {
+          scheduler: bestSchedulerResult.candidate.override.scheduler,
+        },
+        null,
+        2,
+      ),
+    );
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
@@ -642,6 +984,7 @@ async function main(): Promise<void> {
     concurrency: args.concurrency,
     requests: args.requests ?? workload.length,
     label: args.label ?? args.workloadPath ?? "default-workload",
+    apiKey: args.apiKey,
   });
   printSummary(summary);
 }

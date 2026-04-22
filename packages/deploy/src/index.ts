@@ -36,6 +36,36 @@ function boolToEnv(value: boolean): "1" | "0" {
   return value ? "1" : "0";
 }
 
+export function buildLlamaCppEnvironment(profile: LlamaCppLaunchProfile): Record<string, string> {
+  return {
+    LLAMA_ARG_MODEL: profile.modelPath,
+    ...(profile.alias ? { LLAMA_ARG_ALIAS: profile.alias } : {}),
+    LLAMA_ARG_HOST: profile.host,
+    LLAMA_ARG_PORT: profile.port.toString(),
+    LLAMA_ARG_CTX_SIZE: profile.ctxSize.toString(),
+    LLAMA_ARG_N_PARALLEL: profile.parallel.toString(),
+    LLAMA_ARG_THREADS: profile.threads.toString(),
+    ...(profile.threadsBatch !== undefined
+      ? { LLAMA_ARG_THREADS_BATCH: profile.threadsBatch.toString() }
+      : {}),
+    LLAMA_ARG_THREADS_HTTP: profile.threadsHttp.toString(),
+    LLAMA_ARG_BATCH_SIZE: profile.batchSize.toString(),
+    LLAMA_ARG_UBATCH_SIZE: profile.ubatchSize.toString(),
+    LLAMA_ARG_CACHE_PROMPT: boolToEnv(profile.cachePrompt),
+    LLAMA_ARG_CACHE_REUSE: profile.cacheReuse.toString(),
+    ...(profile.cacheRamMiB !== undefined
+      ? { LLAMA_ARG_CACHE_RAM: profile.cacheRamMiB.toString() }
+      : {}),
+    LLAMA_ARG_CONT_BATCHING: boolToEnv(profile.continuousBatching),
+    LLAMA_ARG_ENDPOINT_METRICS: boolToEnv(profile.enableMetrics),
+    LLAMA_ARG_ENDPOINT_SLOTS: boolToEnv(profile.exposeSlots),
+    LLAMA_ARG_WARMUP: boolToEnv(profile.warmup),
+    LLAMA_ARG_KV_UNIFIED: boolToEnv(profile.enableUnifiedKv),
+    LLAMA_ARG_CACHE_IDLE_SLOTS: boolToEnv(profile.cacheIdleSlots),
+    LLAMA_ARG_CONTEXT_SHIFT: boolToEnv(profile.contextShift),
+  };
+}
+
 export function renderSystemdService(options: SystemdServiceOptions): string {
   const nodeBinary = options.nodeBinary ?? "/usr/bin/node";
   const envFileLine = options.envFile ? `EnvironmentFile=${options.envFile}\n` : "";
@@ -92,30 +122,8 @@ export function renderCaddyfile(options: ReverseProxyOptions): string {
 export function renderLlamaCppService(options: LlamaCppServiceOptions): string {
   const envFileLine = options.envFile ? `EnvironmentFile=${options.envFile}\n` : "";
   const profile = options.launchProfile;
-  const environmentLines = [
-    formatSystemdEnvironmentLine("LLAMA_ARG_MODEL", profile.modelPath),
-    ...(profile.alias ? [formatSystemdEnvironmentLine("LLAMA_ARG_ALIAS", profile.alias)] : []),
-    formatSystemdEnvironmentLine("LLAMA_ARG_HOST", profile.host),
-    formatSystemdEnvironmentLine("LLAMA_ARG_PORT", profile.port),
-    formatSystemdEnvironmentLine("LLAMA_ARG_CTX_SIZE", profile.ctxSize),
-    formatSystemdEnvironmentLine("LLAMA_ARG_N_PARALLEL", profile.parallel),
-    formatSystemdEnvironmentLine("LLAMA_ARG_THREADS", profile.threads),
-    ...(profile.threadsBatch !== undefined
-      ? [formatSystemdEnvironmentLine("LLAMA_ARG_THREADS_BATCH", profile.threadsBatch)]
-      : []),
-    formatSystemdEnvironmentLine("LLAMA_ARG_THREADS_HTTP", profile.threadsHttp),
-    formatSystemdEnvironmentLine("LLAMA_ARG_BATCH_SIZE", profile.batchSize),
-    formatSystemdEnvironmentLine("LLAMA_ARG_UBATCH_SIZE", profile.ubatchSize),
-    formatSystemdEnvironmentLine("LLAMA_ARG_CACHE_PROMPT", boolToEnv(profile.cachePrompt)),
-    formatSystemdEnvironmentLine("LLAMA_ARG_CACHE_REUSE", profile.cacheReuse),
-    formatSystemdEnvironmentLine("LLAMA_ARG_CONT_BATCHING", boolToEnv(profile.continuousBatching)),
-    formatSystemdEnvironmentLine("LLAMA_ARG_ENDPOINT_METRICS", boolToEnv(profile.enableMetrics)),
-    formatSystemdEnvironmentLine("LLAMA_ARG_ENDPOINT_SLOTS", boolToEnv(profile.exposeSlots)),
-    ...(profile.warmup ? [] : [formatSystemdEnvironmentLine("LLAMA_ARG_NO_WARMUP", 1)]),
-    ...(profile.contextShift
-      ? []
-      : [formatSystemdEnvironmentLine("LLAMA_ARG_NO_CONTEXT_SHIFT", 1)]),
-  ]
+  const environmentLines = Object.entries(buildLlamaCppEnvironment(profile))
+    .map(([name, value]) => formatSystemdEnvironmentLine(name, value))
     .map((line) => `${line}\n`)
     .join("");
   const extraArgs =
@@ -271,6 +279,51 @@ export function diagnoseConfig(
           level: "warn",
           code: "cache_prompt_disabled",
           message: "llama.cpp cachePrompt is disabled. Prompt reuse and TTFT will be worse.",
+        });
+      }
+
+      if (launchProfile.cacheRamMiB === undefined) {
+        diagnostics.push({
+          level: "warn",
+          code: "cache_ram_implicit",
+          message:
+            "llama.cpp cacheRamMiB is not pinned. The upstream cache-ram default is much larger than a 4 GB VPS target, so Ray should set an explicit budget.",
+        });
+      } else {
+        if (launchProfile.cacheRamMiB === -1) {
+          diagnostics.push({
+            level: "warn",
+            code: "cache_ram_unbounded",
+            message:
+              "llama.cpp cacheRamMiB is unlimited. Cheap VPS deployments should bound prompt cache RAM explicitly.",
+          });
+        }
+
+        if (launchProfile.cacheRamMiB === 0 && launchProfile.cacheIdleSlots) {
+          diagnostics.push({
+            level: "warn",
+            code: "cache_idle_slots_without_cache_ram",
+            message:
+              "cacheIdleSlots is enabled but cacheRamMiB is 0. llama.cpp idle-slot caching needs cache RAM to be enabled.",
+          });
+        }
+
+        if (launchProfile.preset === "single-vps-sub1b" && launchProfile.cacheRamMiB > 1024) {
+          diagnostics.push({
+            level: "warn",
+            code: "cache_ram_high_for_small_vps",
+            message:
+              "cacheRamMiB is high for a 4 GB VPS target. Sub-1B single-node profiles should keep prompt cache RAM tightly bounded.",
+          });
+        }
+      }
+
+      if (launchProfile.cacheIdleSlots && !launchProfile.enableUnifiedKv) {
+        diagnostics.push({
+          level: "warn",
+          code: "cache_idle_slots_without_unified_kv",
+          message:
+            "cacheIdleSlots is enabled without unified KV. llama.cpp idle-slot caching expects unified KV to stay on.",
         });
       }
 

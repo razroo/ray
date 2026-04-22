@@ -15,9 +15,11 @@
     "dev": "node --conditions=development --import tsx ./apps/gateway/src/index.ts --config ./examples/config/ray.vps.json",
     "dev:tiny": "node --conditions=development --import tsx ./apps/gateway/src/index.ts --config ./examples/config/ray.tiny.json",
     "dev:hetzner-email-ai": "node --conditions=development --import tsx ./apps/gateway/src/index.ts --config ./examples/config/ray.hetzner-cx23-qwen0.6b.json",
+    "dev:hetzner-email-ai:public": "node --conditions=development --import tsx ./apps/gateway/src/index.ts --config ./examples/config/ray.hetzner-cx23-qwen0.6b.public.json",
     "start": "node ./apps/gateway/dist/index.js --config ./examples/config/ray.vps.json",
     "start:tiny": "node ./apps/gateway/dist/index.js --config ./examples/config/ray.tiny.json",
     "start:hetzner-email-ai": "node ./apps/gateway/dist/index.js --config ./examples/config/ray.hetzner-cx23-qwen0.6b.json",
+    "start:hetzner-email-ai:public": "node ./apps/gateway/dist/index.js --config ./examples/config/ray.hetzner-cx23-qwen0.6b.public.json",
     "benchmark": "node --import tsx ./scripts/benchmark.ts",
     "benchmark:email": "node --import tsx ./scripts/benchmark.ts --base-url http://127.0.0.1:3000 --workload ./examples/workloads/email-workload.jsonl --concurrency 2",
     "autotune:hetzner-email-ai": "node --import tsx ./scripts/benchmark.ts --autotune --config ./examples/config/ray.hetzner-cx23-qwen0.6b.json --workload ./examples/workloads/email-workload.jsonl --concurrency 2 --requests 16",
@@ -35,6 +37,7 @@
     "render:service": "node ./packages/deploy/dist/cli.js render --cwd . --config ./examples/config/ray.vps.json",
     "validate:config": "node ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.vps.json",
     "validate:config:hetzner": "node ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.hetzner-cx23-qwen0.6b.json",
+    "validate:config:hetzner:public": "node ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.hetzner-cx23-qwen0.6b.public.json",
     "doctor": "node ./packages/deploy/dist/cli.js doctor --cwd . --config ./examples/config/ray.vps.json --env-file /etc/ray/ray.env"
   },
   "dependencies": {

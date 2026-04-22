@@ -227,7 +227,8 @@ That runs lint, Prettier `--check`, and tests (`pnpm test` builds then runs the 
 - [examples/config/ray.tiny.json](examples/config/ray.tiny.json) — mock provider; boots immediately
 - [examples/config/ray.vps.json](examples/config/ray.vps.json) — tuned for a cheap VPS + local OpenAI-compatible backend
 - [examples/config/ray.balanced.json](examples/config/ray.balanced.json) — slightly roomier single-node defaults
-- [examples/config/ray.hetzner-cx23-qwen0.6b.json](examples/config/ray.hetzner-cx23-qwen0.6b.json) — Hetzner CX23-class (2 vCPU / 4 GB) + small Qwen (~0.6B) in front of llama.cpp; see [docs/integrations/razroo-email-ai.md](docs/integrations/razroo-email-ai.md)
+- [examples/config/ray.hetzner-cx23-qwen0.6b.public.json](examples/config/ray.hetzner-cx23-qwen0.6b.public.json) — public-safe Hetzner CX23-class (2 vCPU / 4 GB) deployment profile with auth enabled and llama.cpp cache RAM pinned
+- [examples/config/ray.hetzner-cx23-qwen0.6b.json](examples/config/ray.hetzner-cx23-qwen0.6b.json) — local/private Hetzner CX23-class dev profile for the same ~0.6B Qwen workload; see [docs/integrations/razroo-email-ai.md](docs/integrations/razroo-email-ai.md)
 
 ## Published npm packages
 
