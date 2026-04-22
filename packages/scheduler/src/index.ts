@@ -2,6 +2,7 @@ import { RayError, type SchedulerConfig, type SchedulerSnapshot } from "@razroo/
 
 interface QueueItem<T> {
   key?: string;
+  affinityKey?: string;
   costTokens: number;
   enqueuedAt: number;
   handler: (signal: AbortSignal) => Promise<T>;
@@ -11,6 +12,7 @@ interface QueueItem<T> {
 
 export interface ScheduleTaskOptions<T> {
   key?: string;
+  affinityKey?: string;
   costTokens?: number;
   handler: (signal: AbortSignal) => Promise<T>;
 }
@@ -28,6 +30,7 @@ export class RequestScheduler<T> {
   private queuedTokens = 0;
   private inFlightTokens = 0;
   private drainTimer: NodeJS.Timeout | undefined;
+  private lastAffinityKey: string | undefined;
 
   constructor(private readonly config: SchedulerConfig) {}
 
@@ -76,6 +79,7 @@ export class RequestScheduler<T> {
         resolve,
         reject,
         ...(options.key ? { key: options.key } : {}),
+        ...(options.affinityKey ? { affinityKey: options.affinityKey } : {}),
       };
     });
 
@@ -108,9 +112,7 @@ export class RequestScheduler<T> {
 
   private drain(): void {
     while (this.inFlight < this.config.concurrency && this.queue.length > 0) {
-      const nextIndex = this.queue.findIndex(
-        (item) => this.inFlightTokens + item.costTokens <= this.config.maxInflightTokens,
-      );
+      const nextIndex = this.selectNextIndex();
       if (nextIndex === -1) {
         break;
       }
@@ -121,8 +123,68 @@ export class RequestScheduler<T> {
       }
 
       this.queuedTokens -= item.costTokens;
+      this.lastAffinityKey = item.affinityKey ?? this.lastAffinityKey;
       void this.run(item);
     }
+  }
+
+  private selectNextIndex(): number {
+    const fitting = this.queue
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => this.inFlightTokens + item.costTokens <= this.config.maxInflightTokens);
+
+    if (fitting.length === 0) {
+      return -1;
+    }
+
+    const lookahead = Math.max(1, this.config.affinityLookahead);
+    const fittingWithinLookahead = fitting.filter(({ index }) => index < lookahead);
+    const candidatePool = fittingWithinLookahead.length > 0 ? fittingWithinLookahead : fitting;
+
+    if (this.lastAffinityKey) {
+      const affinityMatch = candidatePool.find(
+        ({ item }) => item.affinityKey === this.lastAffinityKey,
+      );
+      if (affinityMatch) {
+        return affinityMatch.index;
+      }
+    }
+
+    const dominantAffinity = this.findDominantAffinity(candidatePool);
+    if (dominantAffinity) {
+      const affinityMatch = candidatePool.find(({ item }) => item.affinityKey === dominantAffinity);
+      if (affinityMatch) {
+        return affinityMatch.index;
+      }
+    }
+
+    return candidatePool[0]?.index ?? -1;
+  }
+
+  private findDominantAffinity(
+    candidates: Array<{ item: QueueItem<T>; index: number }>,
+  ): string | undefined {
+    const counts = new Map<string, number>();
+
+    for (const { item } of candidates) {
+      if (!item.affinityKey) {
+        continue;
+      }
+
+      counts.set(item.affinityKey, (counts.get(item.affinityKey) ?? 0) + 1);
+    }
+
+    let bestKey: string | undefined;
+    let bestCount = 1;
+
+    for (const [key, count] of counts.entries()) {
+      if (count > bestCount) {
+        bestKey = key;
+        bestCount = count;
+      }
+    }
+
+    return bestKey;
   }
 
   private requestDrain(): void {

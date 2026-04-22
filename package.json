@@ -18,6 +18,8 @@
     "start": "node ./apps/gateway/dist/index.js --config ./examples/config/ray.vps.json",
     "start:tiny": "node ./apps/gateway/dist/index.js --config ./examples/config/ray.tiny.json",
     "start:hetzner-email-ai": "node ./apps/gateway/dist/index.js --config ./examples/config/ray.hetzner-cx23-qwen0.6b.json",
+    "benchmark": "node --import tsx ./scripts/benchmark.ts",
+    "benchmark:email": "node --import tsx ./scripts/benchmark.ts --base-url http://127.0.0.1:3000 --workload ./examples/workloads/email-workload.jsonl --concurrency 2",
     "test": "pnpm build && node ./scripts/test.mjs",
     "release:gate": "pnpm lint && pnpm format:check && pnpm test",
     "release:verify-npm": "node ./scripts/release/verify-npm.mjs",

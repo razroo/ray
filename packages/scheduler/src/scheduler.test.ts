@@ -12,6 +12,7 @@ test("scheduler deduplicates matching inflight work", async () => {
     requestTimeoutMs: 1_000,
     dedupeInflight: true,
     batchWindowMs: 0,
+    affinityLookahead: 8,
   });
 
   const first = scheduler.schedule({
@@ -46,6 +47,7 @@ test("scheduler honors batchWindowMs before starting work", async () => {
     requestTimeoutMs: 1_000,
     dedupeInflight: true,
     batchWindowMs: 25,
+    affinityLookahead: 8,
   });
 
   const pending = scheduler.schedule({
@@ -72,6 +74,7 @@ test("scheduler rejects work that exceeds token budgets", async () => {
     requestTimeoutMs: 1_000,
     dedupeInflight: true,
     batchWindowMs: 0,
+    affinityLookahead: 8,
   });
 
   assert.throws(
@@ -99,6 +102,7 @@ test("scheduler allows smaller queued work to bypass an oversized inflight wait"
     requestTimeoutMs: 1_000,
     dedupeInflight: true,
     batchWindowMs: 0,
+    affinityLookahead: 8,
   });
 
   const first = scheduler.schedule({
@@ -133,6 +137,59 @@ test("scheduler allows smaller queued work to bypass an oversized inflight wait"
 
   releaseFirst();
   const results = await Promise.all([first, second, third]);
+  assert.deepEqual(
+    results.map((result) => result.value),
+    ["first", "second", "third"],
+  );
+});
+
+test("scheduler prefers matching prompt affinity when capacity allows", async () => {
+  const started: string[] = [];
+  let releaseFirst!: () => void;
+
+  const scheduler = new RequestScheduler<string>({
+    concurrency: 1,
+    maxQueue: 8,
+    maxQueuedTokens: 256,
+    maxInflightTokens: 128,
+    requestTimeoutMs: 1_000,
+    dedupeInflight: true,
+    batchWindowMs: 0,
+    affinityLookahead: 8,
+  });
+
+  const first = scheduler.schedule({
+    affinityKey: "email:cold_outreach",
+    handler: async () => {
+      started.push("first");
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      return "first";
+    },
+  });
+
+  const second = scheduler.schedule({
+    affinityKey: "classification",
+    handler: async () => {
+      started.push("second");
+      return "second";
+    },
+  });
+
+  const third = scheduler.schedule({
+    affinityKey: "email:cold_outreach",
+    handler: async () => {
+      started.push("third");
+      return "third";
+    },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  releaseFirst();
+
+  const results = await Promise.all([first, second, third]);
+  assert.deepEqual(started, ["first", "third", "second"]);
   assert.deepEqual(
     results.map((result) => result.value),
     ["first", "second", "third"],

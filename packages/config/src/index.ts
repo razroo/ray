@@ -102,6 +102,16 @@ function assertPositiveInteger(value: number, label: string): void {
   }
 }
 
+function assertUnitInterval(value: number, label: string): void {
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new RayError(`${label} must be between 0 and 1`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { value },
+    });
+  }
+}
+
 function assertSafeInteger(value: number, label: string): void {
   if (!Number.isSafeInteger(value)) {
     throw new RayError(`${label} must be a safe integer`, {
@@ -167,6 +177,7 @@ function validateConfig(config: RayConfig): RayConfig {
   assertPositiveInteger(config.scheduler.maxQueuedTokens, "scheduler.maxQueuedTokens");
   assertPositiveInteger(config.scheduler.maxInflightTokens, "scheduler.maxInflightTokens");
   assertPositiveInteger(config.scheduler.requestTimeoutMs, "scheduler.requestTimeoutMs");
+  assertPositiveInteger(config.scheduler.affinityLookahead, "scheduler.affinityLookahead");
   assertPositiveInteger(config.asyncQueue.pollIntervalMs, "asyncQueue.pollIntervalMs");
   assertPositiveInteger(config.asyncQueue.dispatchConcurrency, "asyncQueue.dispatchConcurrency");
   assertPositiveInteger(config.asyncQueue.maxAttempts, "asyncQueue.maxAttempts");
@@ -182,8 +193,18 @@ function validateConfig(config: RayConfig): RayConfig {
     config.gracefulDegradation.degradeToMaxTokens,
     "gracefulDegradation.degradeToMaxTokens",
   );
+  assertPositiveInteger(config.adaptiveTuning.sampleSize, "adaptiveTuning.sampleSize");
+  assertPositiveInteger(
+    config.adaptiveTuning.queueLatencyThresholdMs,
+    "adaptiveTuning.queueLatencyThresholdMs",
+  );
+  assertPositiveInteger(config.adaptiveTuning.minOutputTokens, "adaptiveTuning.minOutputTokens");
   assertPositiveInteger(config.rateLimit.windowMs, "rateLimit.windowMs");
   assertPositiveInteger(config.rateLimit.maxRequests, "rateLimit.maxRequests");
+  assertUnitInterval(
+    config.adaptiveTuning.maxOutputReductionRatio,
+    "adaptiveTuning.maxOutputReductionRatio",
+  );
 
   if (!isNonEmptyString(config.model.id) || !isNonEmptyString(config.model.family)) {
     throw new RayError("model.id and model.family must be non-empty strings", {
@@ -196,6 +217,17 @@ function validateConfig(config: RayConfig): RayConfig {
     throw new RayError("asyncQueue.storageDir must be a non-empty string", {
       code: "config_validation_error",
       status: 500,
+    });
+  }
+
+  if (
+    !Array.isArray(config.promptCompiler.familyMetadataKeys) ||
+    config.promptCompiler.familyMetadataKeys.some((value) => !isNonEmptyString(value))
+  ) {
+    throw new RayError("promptCompiler.familyMetadataKeys must be an array of non-empty strings", {
+      code: "config_validation_error",
+      status: 500,
+      details: config.promptCompiler.familyMetadataKeys,
     });
   }
 
@@ -251,6 +283,57 @@ function validateConfig(config: RayConfig): RayConfig {
 
   if (config.model.adapter.kind === "mock") {
     assertPositiveInteger(config.model.adapter.latencyMs, "model.adapter.latencyMs");
+  }
+
+  if (config.model.adapter.kind === "llama.cpp") {
+    if (
+      !isNonEmptyString(config.model.adapter.baseUrl) ||
+      !isNonEmptyString(config.model.adapter.modelRef)
+    ) {
+      throw new RayError("llama.cpp adapters require baseUrl and modelRef", {
+        code: "config_validation_error",
+        status: 500,
+      });
+    }
+
+    assertPositiveInteger(config.model.adapter.timeoutMs, "model.adapter.timeoutMs");
+
+    if (config.model.adapter.slotId !== undefined && config.model.adapter.slotId < 0) {
+      throw new RayError("model.adapter.slotId must be zero or greater when provided", {
+        code: "config_validation_error",
+        status: 500,
+        details: config.model.adapter.slotId,
+      });
+    }
+
+    for (const [index, request] of (config.model.adapter.warmupRequests ?? []).entries()) {
+      if (!isNonEmptyString(request.input)) {
+        throw new RayError(
+          `model.adapter.warmupRequests[${index}].input must be a non-empty string`,
+          {
+            code: "config_validation_error",
+            status: 500,
+          },
+        );
+      }
+
+      if (request.maxTokens !== undefined) {
+        assertPositiveInteger(
+          request.maxTokens,
+          `model.adapter.warmupRequests[${index}].maxTokens`,
+        );
+      }
+
+      if (request.seed !== undefined) {
+        assertSafeInteger(request.seed, `model.adapter.warmupRequests[${index}].seed`);
+      }
+
+      assertStopSequences(request.stop, `model.adapter.warmupRequests[${index}].stop`);
+      assertResponseFormat(
+        request.responseFormat as { type: string } | undefined,
+        `model.adapter.warmupRequests[${index}].responseFormat`,
+      );
+    }
   }
 
   return config;
@@ -326,7 +409,10 @@ export async function loadRayConfig(options: LoadRayConfigOptions = {}): Promise
 export function sanitizeConfig(config: RayConfig): Record<string, unknown> {
   const safe = structuredClone(config) as RayConfig;
 
-  if (safe.model.adapter.kind === "openai-compatible" && safe.model.adapter.headers) {
+  if (
+    (safe.model.adapter.kind === "openai-compatible" || safe.model.adapter.kind === "llama.cpp") &&
+    safe.model.adapter.headers
+  ) {
     safe.model.adapter.headers = Object.fromEntries(
       Object.keys(safe.model.adapter.headers).map((key) => [key, "[redacted]"]),
     );

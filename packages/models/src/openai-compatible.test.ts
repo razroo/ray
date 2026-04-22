@@ -50,6 +50,7 @@ function createContext(signal: AbortSignal): ProviderContext {
         requestTimeoutMs: 500,
         dedupeInflight: true,
         batchWindowMs: 0,
+        affinityLookahead: 8,
       },
       asyncQueue: {
         enabled: false,
@@ -77,6 +78,20 @@ function createContext(signal: AbortSignal): ProviderContext {
         queueDepthThreshold: 4,
         maxPromptChars: 2_000,
         degradeToMaxTokens: 64,
+      },
+      promptCompiler: {
+        enabled: true,
+        collapseWhitespace: true,
+        dedupeRepeatedLines: true,
+        familyMetadataKeys: ["promptFamily", "taskTemplate"],
+      },
+      adaptiveTuning: {
+        enabled: false,
+        sampleSize: 8,
+        queueLatencyThresholdMs: 250,
+        minCompletionTokensPerSecond: 16,
+        maxOutputReductionRatio: 0.5,
+        minOutputTokens: 32,
       },
       auth: {
         enabled: false,

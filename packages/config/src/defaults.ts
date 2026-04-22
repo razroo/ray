@@ -37,6 +37,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       requestTimeoutMs: 8_000,
       dedupeInflight: true,
       batchWindowMs: 0,
+      affinityLookahead: 8,
     },
     asyncQueue: {
       enabled: false,
@@ -64,6 +65,20 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       queueDepthThreshold: 8,
       maxPromptChars: 4_000,
       degradeToMaxTokens: 96,
+    },
+    promptCompiler: {
+      enabled: true,
+      collapseWhitespace: true,
+      dedupeRepeatedLines: true,
+      familyMetadataKeys: ["promptFamily", "taskTemplate", "template", "useCase"],
+    },
+    adaptiveTuning: {
+      enabled: false,
+      sampleSize: 24,
+      queueLatencyThresholdMs: 250,
+      minCompletionTokensPerSecond: 18,
+      maxOutputReductionRatio: 0.5,
+      minOutputTokens: 48,
     },
     auth: {
       enabled: false,
@@ -110,6 +125,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       requestTimeoutMs: 20_000,
       dedupeInflight: true,
       batchWindowMs: 0,
+      affinityLookahead: 12,
     },
     asyncQueue: {
       enabled: false,
@@ -137,6 +153,20 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       queueDepthThreshold: 24,
       maxPromptChars: 8_000,
       degradeToMaxTokens: 192,
+    },
+    promptCompiler: {
+      enabled: true,
+      collapseWhitespace: true,
+      dedupeRepeatedLines: true,
+      familyMetadataKeys: ["promptFamily", "taskTemplate", "template", "useCase"],
+    },
+    adaptiveTuning: {
+      enabled: false,
+      sampleSize: 32,
+      queueLatencyThresholdMs: 400,
+      minCompletionTokensPerSecond: 18,
+      maxOutputReductionRatio: 0.5,
+      minOutputTokens: 64,
     },
     auth: {
       enabled: false,
@@ -183,6 +213,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       requestTimeoutMs: 25_000,
       dedupeInflight: true,
       batchWindowMs: 0,
+      affinityLookahead: 16,
     },
     asyncQueue: {
       enabled: false,
@@ -210,6 +241,20 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       queueDepthThreshold: 40,
       maxPromptChars: 12_000,
       degradeToMaxTokens: 256,
+    },
+    promptCompiler: {
+      enabled: true,
+      collapseWhitespace: true,
+      dedupeRepeatedLines: true,
+      familyMetadataKeys: ["promptFamily", "taskTemplate", "template", "useCase"],
+    },
+    adaptiveTuning: {
+      enabled: false,
+      sampleSize: 48,
+      queueLatencyThresholdMs: 500,
+      minCompletionTokensPerSecond: 18,
+      maxOutputReductionRatio: 0.4,
+      minOutputTokens: 96,
     },
     auth: {
       enabled: false,

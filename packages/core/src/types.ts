@@ -1,6 +1,6 @@
 export type RayProfile = "tiny" | "vps" | "balanced";
 export type LogLevel = "debug" | "info" | "warn" | "error";
-export type ProviderKind = "mock" | "openai-compatible";
+export type ProviderKind = "mock" | "openai-compatible" | "llama.cpp";
 export type Quantization = "q4_0" | "q4_k_m" | "q5_k_m" | "q8_0" | "fp16" | "unknown";
 export type ProviderHealthStatus = "unknown" | "ready" | "warming" | "degraded" | "unavailable";
 export type RateLimitKeyStrategy = "ip" | "api-key" | "ip+api-key";
@@ -37,13 +37,28 @@ export interface OpenAICompatibleProviderConfig {
   warmupRequests?: WarmupInferenceRequest[];
 }
 
+export interface LlamaCppProviderConfig {
+  kind: "llama.cpp";
+  baseUrl: string;
+  modelRef: string;
+  apiKeyEnv?: string;
+  timeoutMs: number;
+  headers?: Record<string, string>;
+  warmupRequests?: WarmupInferenceRequest[];
+  cachePrompt?: boolean;
+  slotId?: number;
+}
+
 export interface MockProviderConfig {
   kind: "mock";
   seed?: string;
   latencyMs: number;
 }
 
-export type ProviderConfig = OpenAICompatibleProviderConfig | MockProviderConfig;
+export type ProviderConfig =
+  | OpenAICompatibleProviderConfig
+  | LlamaCppProviderConfig
+  | MockProviderConfig;
 
 export interface ModelConfig {
   id: string;
@@ -63,6 +78,7 @@ export interface SchedulerConfig {
   requestTimeoutMs: number;
   dedupeInflight: boolean;
   batchWindowMs: number;
+  affinityLookahead: number;
 }
 
 export interface AsyncQueueConfig {
@@ -96,6 +112,22 @@ export interface GracefulDegradationConfig {
   degradeToMaxTokens: number;
 }
 
+export interface PromptCompilerConfig {
+  enabled: boolean;
+  collapseWhitespace: boolean;
+  dedupeRepeatedLines: boolean;
+  familyMetadataKeys: string[];
+}
+
+export interface AdaptiveTuningConfig {
+  enabled: boolean;
+  sampleSize: number;
+  queueLatencyThresholdMs: number;
+  minCompletionTokensPerSecond: number;
+  maxOutputReductionRatio: number;
+  minOutputTokens: number;
+}
+
 export interface AuthConfig {
   enabled: boolean;
   apiKeyEnv?: string;
@@ -118,6 +150,8 @@ export interface RayConfig {
   cache: CacheConfig;
   telemetry: TelemetryConfig;
   gracefulDegradation: GracefulDegradationConfig;
+  promptCompiler: PromptCompilerConfig;
+  adaptiveTuning: AdaptiveTuningConfig;
   auth: AuthConfig;
   rateLimit: RateLimitConfig;
   tags: Record<string, string>;
@@ -224,9 +258,37 @@ export interface ProviderHealthSnapshot {
   details?: Record<string, unknown>;
 }
 
+export interface ProviderTimings {
+  ttftMs?: number;
+  totalMs?: number;
+  promptMs?: number;
+  completionMs?: number;
+  promptTokensPerSecond?: number;
+  completionTokensPerSecond?: number;
+}
+
+export interface ProviderDiagnostics {
+  requestShape?: "openai-chat" | "llama.cpp-completion";
+  slotId?: number;
+  tokensCached?: number;
+  tokensEvaluated?: number;
+  truncated?: boolean;
+  contextWindow?: number;
+  timings?: ProviderTimings;
+}
+
+export interface ProviderRequestPreparation {
+  request: NormalizedInferenceRequest;
+  promptTokens?: number;
+  affinityKey?: string;
+  providerState?: unknown;
+  diagnostics?: ProviderDiagnostics;
+}
+
 export interface ProviderResult {
   output: string;
   usage?: PartialUsageStats;
+  diagnostics?: ProviderDiagnostics;
   raw?: unknown;
 }
 
@@ -241,6 +303,7 @@ export interface ProviderContext {
   requestId: string;
   config: RayConfig;
   startedAt: number;
+  preparation?: ProviderRequestPreparation;
 }
 
 export interface ModelProvider {
@@ -249,7 +312,32 @@ export interface ModelProvider {
   readonly capabilities: ProviderCapabilities;
   warm?(): Promise<void>;
   health?(): Promise<ProviderHealthSnapshot>;
+  prepare?(
+    request: NormalizedInferenceRequest,
+    context: ProviderContext,
+  ): Promise<ProviderRequestPreparation>;
   infer(request: NormalizedInferenceRequest, context: ProviderContext): Promise<ProviderResult>;
+}
+
+export interface PromptCompilerDiagnostics {
+  familyKey: string;
+  charsBefore: number;
+  charsAfter: number;
+  charsSaved: number;
+}
+
+export interface AdaptiveTuningDiagnostics {
+  reduced: boolean;
+  requestedMaxTokens: number;
+  appliedMaxTokens: number;
+  reductionRatio: number;
+  reason?: string;
+}
+
+export interface InferenceDiagnostics {
+  promptCompiler?: PromptCompilerDiagnostics;
+  adaptiveTuning?: AdaptiveTuningDiagnostics;
+  provider?: ProviderDiagnostics;
 }
 
 export interface InferenceResponse {
@@ -262,6 +350,7 @@ export interface InferenceResponse {
   queueTimeMs: number;
   latencyMs: number;
   degraded: boolean;
+  diagnostics?: InferenceDiagnostics;
   createdAt: string;
 }
 

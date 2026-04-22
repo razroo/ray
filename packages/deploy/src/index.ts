@@ -82,7 +82,11 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
     lines.push(`${config.auth.apiKeyEnv}=replace-with-comma-separated-client-api-keys`);
   }
 
-  if (config.model.adapter.kind === "openai-compatible" && config.model.adapter.apiKeyEnv) {
+  if (
+    (config.model.adapter.kind === "openai-compatible" ||
+      config.model.adapter.kind === "llama.cpp") &&
+    config.model.adapter.apiKeyEnv
+  ) {
     lines.push(`${config.model.adapter.apiKeyEnv}=replace-with-upstream-api-key`);
   }
 
@@ -147,7 +151,10 @@ export function diagnoseConfig(
     });
   }
 
-  if (config.model.adapter.kind === "openai-compatible") {
+  if (
+    config.model.adapter.kind === "openai-compatible" ||
+    config.model.adapter.kind === "llama.cpp"
+  ) {
     if (config.scheduler.requestTimeoutMs <= config.model.adapter.timeoutMs) {
       diagnostics.push({
         level: "warn",

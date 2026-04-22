@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createDefaultConfig } from "@ray/config";
+import { createDefaultConfig, mergeConfig } from "@ray/config";
 import type { ModelProvider } from "@razroo/ray-core";
 import { createRayRuntime } from "./index.js";
 
@@ -116,4 +116,97 @@ test("runtime keeps seeded variants isolated in cache keys", async () => {
   assert.equal(third.output, "seed:12:call:2");
   assert.equal(third.cached, false);
   assert.deepEqual(calls, [11, 12]);
+});
+
+test("runtime uses provider token preparation and exposes compiler diagnostics", async () => {
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "prepared-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async prepare(request) {
+      return {
+        request,
+        promptTokens: 77,
+      };
+    },
+    async infer() {
+      return {
+        output: "prepared",
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+  const result = await runtime.infer({
+    system: "Write only the email body.\nWrite only the email body.",
+    input: "Write only the email body.\nDraft a short reply.",
+    maxTokens: 96,
+  });
+
+  assert.equal(result.usage.tokens?.prompt, 77);
+  assert.ok((result.diagnostics?.promptCompiler?.charsSaved ?? 0) > 0);
+  assert.ok(typeof result.diagnostics?.promptCompiler?.familyKey === "string");
+});
+
+test("runtime adaptively reduces maxTokens when observed throughput drops", async () => {
+  const observedMaxTokens: number[] = [];
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "adaptive-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async prepare(request) {
+      return {
+        request,
+        promptTokens: 24,
+      };
+    },
+    async infer(request) {
+      observedMaxTokens.push(request.maxTokens);
+      return {
+        output: "ok",
+        diagnostics: {
+          requestShape: "llama.cpp-completion",
+          timings: {
+            completionTokensPerSecond: 5,
+          },
+        },
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(
+    mergeConfig(createDefaultConfig("tiny"), {
+      adaptiveTuning: {
+        enabled: true,
+        sampleSize: 4,
+        queueLatencyThresholdMs: 1_000,
+        minCompletionTokensPerSecond: 10,
+        maxOutputReductionRatio: 0.5,
+        minOutputTokens: 32,
+      },
+    }),
+    { provider },
+  );
+
+  const first = await runtime.infer({
+    input: "hello world",
+    maxTokens: 128,
+  });
+  const second = await runtime.infer({
+    input: "hello world again",
+    maxTokens: 128,
+  });
+
+  assert.equal(first.diagnostics?.adaptiveTuning?.reduced, false);
+  assert.equal(second.diagnostics?.adaptiveTuning?.reduced, true);
+  assert.ok((second.diagnostics?.adaptiveTuning?.appliedMaxTokens ?? 128) < 128);
+  assert.deepEqual(observedMaxTokens, [128, 96]);
 });
