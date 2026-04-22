@@ -1,6 +1,6 @@
 # Changesets
 
-Version bumps and `CHANGELOG.md` updates for publishable packages (`@razroo/ray-core`, `@razroo/ray-sdk`) are driven by [@changesets/cli](https://github.com/changesets/changesets).
+Version bumps and `CHANGELOG.md` updates for publishable packages (**`@razroo/ray-core`**, **`@razroo/ray-sdk`**) are driven by [@changesets/cli](https://github.com/changesets/changesets). Private workspace packages are **not** versioned (`privatePackages.version: false` in `config.json`).
 
 Quick reference:
 

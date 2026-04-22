@@ -4,11 +4,27 @@ export type ProviderKind = "mock" | "openai-compatible";
 export type Quantization = "q4_0" | "q4_k_m" | "q5_k_m" | "q8_0" | "fp16" | "unknown";
 export type ProviderHealthStatus = "unknown" | "ready" | "warming" | "degraded" | "unavailable";
 export type RateLimitKeyStrategy = "ip" | "api-key" | "ip+api-key";
+export type ResponseFormatType = "text" | "json_object";
+export type InferenceJobStatus = "queued" | "running" | "succeeded" | "failed";
+export type InferenceJobCallbackStatus = "pending" | "delivered" | "failed";
 
 export interface ServerConfig {
   host: string;
   port: number;
   requestBodyLimitBytes: number;
+}
+
+export interface WarmupInferenceRequest {
+  input: string;
+  system?: string;
+  maxTokens?: number;
+  seed?: number;
+  stop?: string[];
+  responseFormat?: InferenceResponseFormat;
+}
+
+export interface InferenceResponseFormat {
+  type: ResponseFormatType;
 }
 
 export interface OpenAICompatibleProviderConfig {
@@ -18,6 +34,7 @@ export interface OpenAICompatibleProviderConfig {
   apiKeyEnv?: string;
   timeoutMs: number;
   headers?: Record<string, string>;
+  warmupRequests?: WarmupInferenceRequest[];
 }
 
 export interface MockProviderConfig {
@@ -41,9 +58,21 @@ export interface ModelConfig {
 export interface SchedulerConfig {
   concurrency: number;
   maxQueue: number;
+  maxQueuedTokens: number;
+  maxInflightTokens: number;
   requestTimeoutMs: number;
   dedupeInflight: boolean;
   batchWindowMs: number;
+}
+
+export interface AsyncQueueConfig {
+  enabled: boolean;
+  storageDir: string;
+  pollIntervalMs: number;
+  dispatchConcurrency: number;
+  maxAttempts: number;
+  callbackTimeoutMs: number;
+  maxCallbackAttempts: number;
 }
 
 export interface CacheConfig {
@@ -85,6 +114,7 @@ export interface RayConfig {
   server: ServerConfig;
   model: ModelConfig;
   scheduler: SchedulerConfig;
+  asyncQueue: AsyncQueueConfig;
   cache: CacheConfig;
   telemetry: TelemetryConfig;
   gracefulDegradation: GracefulDegradationConfig;
@@ -99,6 +129,9 @@ export interface InferenceRequest {
   maxTokens?: number;
   temperature?: number;
   topP?: number;
+  seed?: number;
+  stop?: string[];
+  responseFormat?: InferenceResponseFormat;
   cache?: boolean;
   dedupeKey?: string;
   metadata?: Record<string, string>;
@@ -110,9 +143,62 @@ export interface NormalizedInferenceRequest {
   maxTokens: number;
   temperature: number;
   topP: number;
+  seed?: number;
+  stop?: string[];
+  responseFormat?: InferenceResponseFormat;
   cache: boolean;
   dedupeKey?: string;
   metadata: Record<string, string>;
+}
+
+export interface CreateInferenceJobRequest extends InferenceRequest {
+  callbackUrl?: string;
+}
+
+export interface InferenceJobError {
+  message: string;
+  code?: string;
+  details?: unknown;
+}
+
+export interface InferenceJobCallbackState {
+  url: string;
+  status: InferenceJobCallbackStatus;
+  attempts: number;
+  lastAttemptAt?: string;
+  deliveredAt?: string;
+  lastError?: string;
+}
+
+export interface InferenceJobRecord {
+  id: string;
+  status: InferenceJobStatus;
+  request: InferenceRequest;
+  createdAt: string;
+  updatedAt: string;
+  attempts: number;
+  maxAttempts: number;
+  startedAt?: string;
+  completedAt?: string;
+  result?: InferenceResponse;
+  error?: InferenceJobError;
+  callback?: InferenceJobCallbackState;
+}
+
+export interface InferenceJobAcceptedResponse {
+  id: string;
+  status: InferenceJobStatus;
+  createdAt: string;
+  location: string;
+}
+
+export interface AsyncQueueSnapshot {
+  enabled: boolean;
+  queued: number;
+  running: number;
+  callbackPending: number;
+  totalJobs: number;
+  dispatchConcurrency: number;
 }
 
 export interface UsageBreakdown {
@@ -188,6 +274,7 @@ export interface HealthSnapshot {
   profile: RayProfile;
   modelId: string;
   provider: ProviderHealthSnapshot;
+  asyncQueue?: AsyncQueueSnapshot;
 }
 
 export interface SchedulerSnapshot {
@@ -195,6 +282,10 @@ export interface SchedulerSnapshot {
   inFlight: number;
   maxQueue: number;
   concurrency: number;
+  queuedTokens: number;
+  inFlightTokens: number;
+  maxQueuedTokens: number;
+  maxInflightTokens: number;
 }
 
 export interface RuntimeMetricsSnapshot {

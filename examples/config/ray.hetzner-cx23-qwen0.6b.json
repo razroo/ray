@@ -1,0 +1,84 @@
+{
+  "profile": "vps",
+  "server": {
+    "host": "127.0.0.1",
+    "port": 3000,
+    "requestBodyLimitBytes": 48000
+  },
+  "model": {
+    "id": "razroo-email-ai-qwen0.6b",
+    "family": "qwen2.5",
+    "quantization": "q4_k_m",
+    "contextWindow": 8192,
+    "warmOnBoot": true,
+    "maxOutputTokens": 256,
+    "adapter": {
+      "kind": "openai-compatible",
+      "baseUrl": "http://127.0.0.1:8081",
+      "modelRef": "qwen2.5-0.6b-razroo-email-ai",
+      "timeoutMs": 18000,
+      "warmupRequests": [
+        {
+          "system": "You are an email writing assistant. Write only the email body. Keep it concise and grounded in the prompt.",
+          "input": "Draft a short cold outreach email body for a CTO about developer tooling.",
+          "maxTokens": 1,
+          "stop": ["\n\n"]
+        },
+        {
+          "system": "You classify email replies. Return only a compact JSON object.",
+          "input": "Classify this reply: \"Sounds interesting, send details.\"",
+          "maxTokens": 1,
+          "responseFormat": {
+            "type": "json_object"
+          }
+        }
+      ]
+    }
+  },
+  "scheduler": {
+    "concurrency": 2,
+    "maxQueue": 64,
+    "maxQueuedTokens": 24000,
+    "maxInflightTokens": 4096,
+    "requestTimeoutMs": 20000,
+    "dedupeInflight": true,
+    "batchWindowMs": 0
+  },
+  "asyncQueue": {
+    "enabled": true,
+    "storageDir": "/var/lib/ray/async-queue",
+    "pollIntervalMs": 1000,
+    "dispatchConcurrency": 1,
+    "maxAttempts": 3,
+    "callbackTimeoutMs": 5000,
+    "maxCallbackAttempts": 5
+  },
+  "cache": {
+    "enabled": true,
+    "maxEntries": 256,
+    "ttlMs": 90000,
+    "keyStrategy": "input+params"
+  },
+  "gracefulDegradation": {
+    "enabled": true,
+    "queueDepthThreshold": 16,
+    "maxPromptChars": 6000,
+    "degradeToMaxTokens": 128
+  },
+  "auth": {
+    "enabled": false,
+    "apiKeyEnv": "RAY_API_KEYS"
+  },
+  "rateLimit": {
+    "enabled": true,
+    "windowMs": 60000,
+    "maxRequests": 120,
+    "keyStrategy": "ip+api-key",
+    "trustProxyHeaders": true
+  },
+  "tags": {
+    "integration": "razroo-email-ai",
+    "hardware": "hetzner-cx23",
+    "engine": "llama.cpp"
+  }
+}

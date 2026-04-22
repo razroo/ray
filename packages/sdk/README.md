@@ -20,7 +20,19 @@ const client = new RayClient({
   apiKey: process.env.RAY_API_KEY,
 });
 
-const result = await client.infer({ input: "Hello." });
+const result = await client.infer({
+  input: "Hello.",
+  seed: 17,
+});
+
+const job = await client.createJob({
+  input: "Draft a short follow-up email body.",
+  seed: 17,
+  stop: ["\n\n"],
+  callbackUrl: "https://example.com/ray-callback",
+});
+
+const finalJob = await client.job(job.id);
 ```
 
 See the gateway routes under `apps/gateway` and shared types in `@razroo/ray-core` for request and response shapes.

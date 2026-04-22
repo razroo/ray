@@ -75,3 +75,45 @@ test("runtime health reports upstream unavailability", async () => {
   assert.equal(health.status, "unavailable");
   assert.equal(health.provider.status, "unavailable");
 });
+
+test("runtime keeps seeded variants isolated in cache keys", async () => {
+  const calls: Array<number | undefined> = [];
+  const provider: ModelProvider = {
+    kind: "openai-compatible",
+    modelId: "seeded-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async infer(request) {
+      calls.push(request.seed);
+      return {
+        output: `seed:${request.seed ?? "none"}:call:${calls.length}`,
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+
+  const first = await runtime.infer({
+    input: "hello world",
+    seed: 11,
+  });
+  const second = await runtime.infer({
+    input: "hello world",
+    seed: 11,
+  });
+  const third = await runtime.infer({
+    input: "hello world",
+    seed: 12,
+  });
+
+  assert.equal(first.output, "seed:11:call:1");
+  assert.equal(first.cached, false);
+  assert.equal(second.output, "seed:11:call:1");
+  assert.equal(second.cached, true);
+  assert.equal(third.output, "seed:12:call:2");
+  assert.equal(third.cached, false);
+  assert.deepEqual(calls, [11, 12]);
+});

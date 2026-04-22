@@ -139,10 +139,10 @@ scripts/
 
 The scaffold targets a credible first version:
 
-- `apps/gateway`: HTTP inference gateway with `/v1/infer`, `/health`, `/metrics`, and `/v1/config`
+- `apps/gateway`: HTTP inference gateway with `/v1/infer`, `/v1/jobs`, `/health`, `/metrics`, and `/v1/config`
 - `packages/runtime`: request normalization, degradation policy, cache integration, and provider orchestration
 - `packages/models`: provider abstraction with `mock` and `openai-compatible` adapters
-- `packages/scheduler`: lightweight queueing, concurrency limits, and in-flight deduplication
+- `packages/scheduler`: lightweight queueing, token-aware admission, concurrency limits, and in-flight deduplication
 - `packages/cache`: TTL cache for prompt/result reuse
 - `packages/config`: profile defaults and JSON config loading
 - `packages/telemetry`: JSON logger and lightweight in-memory metrics
@@ -179,6 +179,14 @@ In another terminal:
 curl -s http://127.0.0.1:3000/v1/infer \
   -H 'content-type: application/json' \
   -d '{"input":"Explain why cheap VPS inference matters."}'
+```
+
+Async durable queue on the same gateway:
+
+```bash
+curl -s http://127.0.0.1:3000/v1/jobs \
+  -H 'content-type: application/json' \
+  -d '{"input":"Draft a follow-up email body.","callbackUrl":"https://example.com/ray-callback"}'
 ```
 
 ### Build
@@ -219,6 +227,7 @@ That runs lint, Prettier `--check`, and tests (`pnpm test` builds then runs the 
 - [examples/config/ray.tiny.json](examples/config/ray.tiny.json) — mock provider; boots immediately
 - [examples/config/ray.vps.json](examples/config/ray.vps.json) — tuned for a cheap VPS + local OpenAI-compatible backend
 - [examples/config/ray.balanced.json](examples/config/ray.balanced.json) — slightly roomier single-node defaults
+- [examples/config/ray.hetzner-cx23-qwen0.6b.json](examples/config/ray.hetzner-cx23-qwen0.6b.json) — Hetzner CX23-class (2 vCPU / 4 GB) + small Qwen (~0.6B) in front of llama.cpp; see [docs/integrations/razroo-email-ai.md](docs/integrations/razroo-email-ai.md)
 
 ## Published npm packages
 

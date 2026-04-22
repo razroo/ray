@@ -1,3 +1,7 @@
+import { createServer } from "node:http";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
@@ -94,4 +98,132 @@ test("gateway rate limits repeated inference requests", async (t) => {
   assert.equal(second.headers.get("x-ratelimit-limit"), "1");
   const body = (await second.json()) as { error: { code: string } };
   assert.equal(body.error.code, "rate_limited");
+});
+
+test("gateway accepts async inference jobs and exposes status retrieval", async (t) => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-gateway-jobs-"));
+  t.after(async () => {
+    await rm(storageDir, { recursive: true, force: true });
+  });
+
+  let callbackPayload: unknown;
+  const callbackServer = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+
+    callbackPayload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+    response.writeHead(204);
+    response.end();
+  });
+  await new Promise<void>((resolve) => callbackServer.listen(0, "127.0.0.1", resolve));
+  t.after(() => callbackServer.close());
+
+  const callbackAddress = callbackServer.address();
+  if (!callbackAddress || typeof callbackAddress === "string") {
+    throw new Error("Expected a TCP callback server address");
+  }
+
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir,
+      pollIntervalMs: 20,
+      dispatchConcurrency: 1,
+      maxAttempts: 2,
+      callbackTimeoutMs: 500,
+      maxCallbackAttempts: 2,
+    },
+    model: {
+      adapter: {
+        kind: "mock",
+        latencyMs: 5,
+      },
+    },
+  });
+  const gateway = createGatewayServer({ config });
+  await gateway.jobQueue?.start();
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    await gateway.jobQueue?.stop();
+    gateway.server.close();
+  });
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const createResponse = await fetch(`http://127.0.0.1:${address.port}/v1/jobs`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      input: "hello async queue",
+      callbackUrl: `http://127.0.0.1:${callbackAddress.port}/callback`,
+    }),
+  });
+
+  assert.equal(createResponse.status, 202);
+  const accepted = (await createResponse.json()) as {
+    id: string;
+    status: string;
+    location: string;
+  };
+  assert.ok(accepted.status === "queued" || accepted.status === "running");
+  assert.equal(createResponse.headers.get("location"), accepted.location);
+
+  let completedJob:
+    | {
+        status: string;
+        result?: {
+          output: string;
+        };
+      }
+    | undefined;
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 2_000) {
+    const jobResponse = await fetch(`http://127.0.0.1:${address.port}${accepted.location}`);
+    assert.equal(jobResponse.status, 200);
+    const job = (await jobResponse.json()) as {
+      status: string;
+      result?: {
+        output: string;
+      };
+    };
+
+    if (job.status === "succeeded") {
+      completedJob = job;
+      break;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  assert.ok(completedJob);
+  assert.equal(completedJob.status, "succeeded");
+  assert.match(completedJob.result?.output ?? "", /hello async queue/);
+
+  const callbackStartedAt = Date.now();
+  while (!callbackPayload && Date.now() - callbackStartedAt < 2_000) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  const callback = callbackPayload as {
+    job?: {
+      id: string;
+      status: string;
+      result?: {
+        output: string;
+      };
+    };
+  };
+  assert.equal(callback.job?.id, accepted.id);
+  assert.equal(callback.job?.status, "succeeded");
+  assert.match(callback.job?.result?.output ?? "", /hello async queue/);
 });

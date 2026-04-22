@@ -86,6 +86,12 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
   return next;
 }
 
+function resolveConfigPaths(config: RayConfig, cwd: string): RayConfig {
+  const next = structuredClone(config);
+  next.asyncQueue.storageDir = path.resolve(cwd, next.asyncQueue.storageDir);
+  return next;
+}
+
 function assertPositiveInteger(value: number, label: string): void {
   if (!Number.isInteger(value) || value <= 0) {
     throw new RayError(`${label} must be a positive integer`, {
@@ -93,6 +99,54 @@ function assertPositiveInteger(value: number, label: string): void {
       status: 500,
       details: { value },
     });
+  }
+}
+
+function assertSafeInteger(value: number, label: string): void {
+  if (!Number.isSafeInteger(value)) {
+    throw new RayError(`${label} must be a safe integer`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { value },
+    });
+  }
+}
+
+function assertResponseFormat(value: { type: string } | undefined, label: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (value.type !== "text" && value.type !== "json_object") {
+    throw new RayError(`${label}.type must be 'text' or 'json_object'`, {
+      code: "config_validation_error",
+      status: 500,
+      details: value,
+    });
+  }
+}
+
+function assertStopSequences(value: string[] | undefined, label: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new RayError(`${label} must be a non-empty array of strings`, {
+      code: "config_validation_error",
+      status: 500,
+      details: value,
+    });
+  }
+
+  for (const entry of value) {
+    if (!isNonEmptyString(entry)) {
+      throw new RayError(`${label} entries must be non-empty strings`, {
+        code: "config_validation_error",
+        status: 500,
+        details: value,
+      });
+    }
   }
 }
 
@@ -110,7 +164,14 @@ function validateConfig(config: RayConfig): RayConfig {
   assertPositiveInteger(config.model.maxOutputTokens, "model.maxOutputTokens");
   assertPositiveInteger(config.scheduler.concurrency, "scheduler.concurrency");
   assertPositiveInteger(config.scheduler.maxQueue, "scheduler.maxQueue");
+  assertPositiveInteger(config.scheduler.maxQueuedTokens, "scheduler.maxQueuedTokens");
+  assertPositiveInteger(config.scheduler.maxInflightTokens, "scheduler.maxInflightTokens");
   assertPositiveInteger(config.scheduler.requestTimeoutMs, "scheduler.requestTimeoutMs");
+  assertPositiveInteger(config.asyncQueue.pollIntervalMs, "asyncQueue.pollIntervalMs");
+  assertPositiveInteger(config.asyncQueue.dispatchConcurrency, "asyncQueue.dispatchConcurrency");
+  assertPositiveInteger(config.asyncQueue.maxAttempts, "asyncQueue.maxAttempts");
+  assertPositiveInteger(config.asyncQueue.callbackTimeoutMs, "asyncQueue.callbackTimeoutMs");
+  assertPositiveInteger(config.asyncQueue.maxCallbackAttempts, "asyncQueue.maxCallbackAttempts");
   assertPositiveInteger(config.cache.maxEntries, "cache.maxEntries");
   assertPositiveInteger(config.cache.ttlMs, "cache.ttlMs");
   assertPositiveInteger(
@@ -126,6 +187,13 @@ function validateConfig(config: RayConfig): RayConfig {
 
   if (!isNonEmptyString(config.model.id) || !isNonEmptyString(config.model.family)) {
     throw new RayError("model.id and model.family must be non-empty strings", {
+      code: "config_validation_error",
+      status: 500,
+    });
+  }
+
+  if (!isNonEmptyString(config.asyncQueue.storageDir)) {
+    throw new RayError("asyncQueue.storageDir must be a non-empty string", {
       code: "config_validation_error",
       status: 500,
     });
@@ -150,6 +218,35 @@ function validateConfig(config: RayConfig): RayConfig {
     }
 
     assertPositiveInteger(config.model.adapter.timeoutMs, "model.adapter.timeoutMs");
+
+    for (const [index, request] of (config.model.adapter.warmupRequests ?? []).entries()) {
+      if (!isNonEmptyString(request.input)) {
+        throw new RayError(
+          `model.adapter.warmupRequests[${index}].input must be a non-empty string`,
+          {
+            code: "config_validation_error",
+            status: 500,
+          },
+        );
+      }
+
+      if (request.maxTokens !== undefined) {
+        assertPositiveInteger(
+          request.maxTokens,
+          `model.adapter.warmupRequests[${index}].maxTokens`,
+        );
+      }
+
+      if (request.seed !== undefined) {
+        assertSafeInteger(request.seed, `model.adapter.warmupRequests[${index}].seed`);
+      }
+
+      assertStopSequences(request.stop, `model.adapter.warmupRequests[${index}].stop`);
+      assertResponseFormat(
+        request.responseFormat as { type: string } | undefined,
+        `model.adapter.warmupRequests[${index}].responseFormat`,
+      );
+    }
   }
 
   if (config.model.adapter.kind === "mock") {
@@ -214,7 +311,7 @@ export async function loadRayConfig(options: LoadRayConfigOptions = {}): Promise
   const selectedProfile = fileConfig?.profile ?? parseProfile(env.RAY_PROFILE) ?? "vps";
   const defaultConfig = createDefaultConfig(selectedProfile);
   const mergedConfig = mergeConfig(defaultConfig, fileConfig);
-  const config = validateConfig(applyEnvOverrides(mergedConfig, env));
+  const config = validateConfig(resolveConfigPaths(applyEnvOverrides(mergedConfig, env), cwd));
 
   if (absoluteConfigPath) {
     return {

@@ -32,9 +32,20 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
     scheduler: {
       concurrency: 1,
       maxQueue: 32,
+      maxQueuedTokens: 12_000,
+      maxInflightTokens: 2_500,
       requestTimeoutMs: 8_000,
       dedupeInflight: true,
       batchWindowMs: 0,
+    },
+    asyncQueue: {
+      enabled: false,
+      storageDir: ".ray/async-queue",
+      pollIntervalMs: 500,
+      dispatchConcurrency: 1,
+      maxAttempts: 3,
+      callbackTimeoutMs: 5_000,
+      maxCallbackAttempts: 5,
     },
     cache: {
       enabled: true,
@@ -94,9 +105,20 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
     scheduler: {
       concurrency: 2,
       maxQueue: 96,
+      maxQueuedTokens: 48_000,
+      maxInflightTokens: 8_000,
       requestTimeoutMs: 20_000,
       dedupeInflight: true,
       batchWindowMs: 0,
+    },
+    asyncQueue: {
+      enabled: false,
+      storageDir: ".ray/async-queue",
+      pollIntervalMs: 1_000,
+      dispatchConcurrency: 1,
+      maxAttempts: 3,
+      callbackTimeoutMs: 7_500,
+      maxCallbackAttempts: 5,
     },
     cache: {
       enabled: true,
@@ -156,9 +178,20 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
     scheduler: {
       concurrency: 3,
       maxQueue: 160,
+      maxQueuedTokens: 96_000,
+      maxInflightTokens: 16_000,
       requestTimeoutMs: 25_000,
       dedupeInflight: true,
       batchWindowMs: 0,
+    },
+    asyncQueue: {
+      enabled: false,
+      storageDir: ".ray/async-queue",
+      pollIntervalMs: 1_000,
+      dispatchConcurrency: 2,
+      maxAttempts: 3,
+      callbackTimeoutMs: 7_500,
+      maxCallbackAttempts: 5,
     },
     cache: {
       enabled: true,

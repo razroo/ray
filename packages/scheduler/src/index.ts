@@ -2,6 +2,7 @@ import { RayError, type SchedulerConfig, type SchedulerSnapshot } from "@razroo/
 
 interface QueueItem<T> {
   key?: string;
+  costTokens: number;
   enqueuedAt: number;
   handler: (signal: AbortSignal) => Promise<T>;
   resolve: (value: ScheduledTaskResult<T>) => void;
@@ -10,6 +11,7 @@ interface QueueItem<T> {
 
 export interface ScheduleTaskOptions<T> {
   key?: string;
+  costTokens?: number;
   handler: (signal: AbortSignal) => Promise<T>;
 }
 
@@ -23,6 +25,8 @@ export class RequestScheduler<T> {
   private readonly queue: QueueItem<T>[] = [];
   private readonly dedupeMap = new Map<string, Promise<ScheduledTaskResult<T>>>();
   private inFlight = 0;
+  private queuedTokens = 0;
+  private inFlightTokens = 0;
   private drainTimer: NodeJS.Timeout | undefined;
 
   constructor(private readonly config: SchedulerConfig) {}
@@ -38,7 +42,23 @@ export class RequestScheduler<T> {
       }
     }
 
-    if (this.queue.length >= this.config.maxQueue) {
+    const costTokens = Math.max(1, Math.floor(options.costTokens ?? 1));
+
+    if (costTokens > this.config.maxInflightTokens || costTokens > this.config.maxQueuedTokens) {
+      throw new RayError("The request exceeds the scheduler token budget", {
+        code: "request_token_budget_exceeded",
+        status: 413,
+        details: {
+          requestedTokens: costTokens,
+          ...this.snapshot(),
+        },
+      });
+    }
+
+    if (
+      this.queue.length >= this.config.maxQueue ||
+      this.queuedTokens + costTokens > this.config.maxQueuedTokens
+    ) {
       throw new RayError("The request queue is full", {
         code: "queue_full",
         status: 503,
@@ -50,6 +70,7 @@ export class RequestScheduler<T> {
 
     const promise = new Promise<ScheduledTaskResult<T>>((resolve, reject) => {
       item = {
+        costTokens,
         enqueuedAt: Date.now(),
         handler: options.handler,
         resolve,
@@ -66,6 +87,7 @@ export class RequestScheduler<T> {
     }
 
     this.queue.push(item);
+    this.queuedTokens += costTokens;
     this.requestDrain();
 
     return promise;
@@ -77,16 +99,28 @@ export class RequestScheduler<T> {
       inFlight: this.inFlight,
       maxQueue: this.config.maxQueue,
       concurrency: this.config.concurrency,
+      queuedTokens: this.queuedTokens,
+      inFlightTokens: this.inFlightTokens,
+      maxQueuedTokens: this.config.maxQueuedTokens,
+      maxInflightTokens: this.config.maxInflightTokens,
     };
   }
 
   private drain(): void {
     while (this.inFlight < this.config.concurrency && this.queue.length > 0) {
-      const item = this.queue.shift();
+      const nextIndex = this.queue.findIndex(
+        (item) => this.inFlightTokens + item.costTokens <= this.config.maxInflightTokens,
+      );
+      if (nextIndex === -1) {
+        break;
+      }
+
+      const [item] = this.queue.splice(nextIndex, 1);
       if (!item) {
         break;
       }
 
+      this.queuedTokens -= item.costTokens;
       void this.run(item);
     }
   }
@@ -109,6 +143,7 @@ export class RequestScheduler<T> {
 
   private async run(item: QueueItem<T>): Promise<void> {
     this.inFlight += 1;
+    this.inFlightTokens += item.costTokens;
     const queueTimeMs = Date.now() - item.enqueuedAt;
     const controller = new AbortController();
 
@@ -133,6 +168,7 @@ export class RequestScheduler<T> {
     } finally {
       clearTimeout(timeout);
       this.inFlight -= 1;
+      this.inFlightTokens -= item.costTokens;
       this.requestDrain();
     }
   }

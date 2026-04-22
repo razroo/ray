@@ -1,5 +1,8 @@
 import type {
+  CreateInferenceJobRequest,
   HealthSnapshot,
+  InferenceJobAcceptedResponse,
+  InferenceJobRecord,
   InferenceRequest,
   InferenceResponse,
   RuntimeMetricsSnapshot,
@@ -36,6 +39,17 @@ export class RayClient {
       method: "POST",
       body: JSON.stringify(request),
     });
+  }
+
+  createJob(request: CreateInferenceJobRequest): Promise<InferenceJobAcceptedResponse> {
+    return this.request<InferenceJobAcceptedResponse>("/v1/jobs", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  job(jobId: string): Promise<InferenceJobRecord> {
+    return this.request<InferenceJobRecord>(`/v1/jobs/${jobId}`);
   }
 
   health(): Promise<HealthSnapshot> {

@@ -46,7 +46,7 @@ export interface CreateRayRuntimeOptions {
   cache?: TtlCache<CachedInferencePayload>;
 }
 
-function normalizeRequest(
+export function normalizeInferenceRequest(
   config: RayConfig,
   request: InferenceRequest,
 ): NormalizedInferenceRequest {
@@ -72,6 +72,52 @@ function normalizeRequest(
 
   if (isNonEmptyString(request.system)) {
     normalized.system = request.system.trim();
+  }
+
+  if (request.seed !== undefined) {
+    if (!Number.isSafeInteger(request.seed)) {
+      throw new RayError("seed must be a safe integer when provided", {
+        code: "invalid_request",
+        status: 400,
+      });
+    }
+
+    normalized.seed = request.seed;
+  }
+
+  if (request.stop !== undefined) {
+    if (!Array.isArray(request.stop) || request.stop.length === 0) {
+      throw new RayError("stop must be a non-empty array of strings when provided", {
+        code: "invalid_request",
+        status: 400,
+      });
+    }
+
+    normalized.stop = request.stop.map((value) => {
+      if (!isNonEmptyString(value)) {
+        throw new RayError("stop entries must be non-empty strings", {
+          code: "invalid_request",
+          status: 400,
+        });
+      }
+
+      return value;
+    });
+  }
+
+  if (request.responseFormat !== undefined) {
+    if (
+      request.responseFormat === null ||
+      typeof request.responseFormat !== "object" ||
+      (request.responseFormat.type !== "text" && request.responseFormat.type !== "json_object")
+    ) {
+      throw new RayError("responseFormat.type must be 'text' or 'json_object' when provided", {
+        code: "invalid_request",
+        status: 400,
+      });
+    }
+
+    normalized.responseFormat = request.responseFormat;
   }
 
   if (isNonEmptyString(request.dedupeKey)) {
@@ -128,6 +174,9 @@ function buildCacheKey(config: RayConfig, request: NormalizedInferenceRequest): 
           model: config.model.id,
           input: request.input,
           system: request.system ?? "",
+          ...(request.seed !== undefined ? { seed: request.seed } : {}),
+          ...(request.stop ? { stop: request.stop } : {}),
+          ...(request.responseFormat ? { responseFormat: request.responseFormat } : {}),
         }
       : {
           model: config.model.id,
@@ -136,9 +185,18 @@ function buildCacheKey(config: RayConfig, request: NormalizedInferenceRequest): 
           maxTokens: request.maxTokens,
           temperature: request.temperature,
           topP: request.topP,
+          ...(request.seed !== undefined ? { seed: request.seed } : {}),
+          ...(request.stop ? { stop: request.stop } : {}),
+          ...(request.responseFormat ? { responseFormat: request.responseFormat } : {}),
         };
 
   return hashValue(payload);
+}
+
+function estimateRequestTokens(request: NormalizedInferenceRequest): number {
+  const promptChars = request.input.length + (request.system?.length ?? 0);
+  const promptTokensEstimate = Math.max(1, Math.ceil(promptChars / 4));
+  return promptTokensEstimate + request.maxTokens;
 }
 
 function buildUsageBreakdown(
@@ -275,7 +333,7 @@ export class RayRuntime {
     const startedAt = Date.now();
     const requestId = createRequestId("req");
     const queueSnapshot = this.scheduler.snapshot();
-    const normalized = normalizeRequest(this.config, request);
+    const normalized = normalizeInferenceRequest(this.config, request);
     const prepared = applyGracefulDegradation(this.config, normalized, queueSnapshot.queueDepth);
     const cacheKey =
       this.config.cache.enabled && prepared.request.cache
@@ -284,6 +342,8 @@ export class RayRuntime {
 
     this.metrics.gauge("queue.depth", queueSnapshot.queueDepth);
     this.metrics.gauge("inference.in_flight", queueSnapshot.inFlight);
+    this.metrics.gauge("queue.tokens", queueSnapshot.queuedTokens);
+    this.metrics.gauge("inference.in_flight_tokens", queueSnapshot.inFlightTokens);
 
     if (cacheKey) {
       const cached = this.cache.get(cacheKey);
@@ -312,9 +372,11 @@ export class RayRuntime {
         dedupeKey
           ? {
               key: dedupeKey,
+              costTokens: estimateRequestTokens(prepared.request),
               handler,
             }
           : {
+              costTokens: estimateRequestTokens(prepared.request),
               handler,
             },
       );
@@ -332,6 +394,8 @@ export class RayRuntime {
       });
       this.metrics.gauge("queue.depth", this.scheduler.snapshot().queueDepth);
       this.metrics.gauge("inference.in_flight", this.scheduler.snapshot().inFlight);
+      this.metrics.gauge("queue.tokens", this.scheduler.snapshot().queuedTokens);
+      this.metrics.gauge("inference.in_flight_tokens", this.scheduler.snapshot().inFlightTokens);
       this.metrics.gauge("cache.entries", this.cache.size());
 
       if (latencyMs >= this.config.telemetry.slowRequestThresholdMs) {

@@ -8,6 +8,7 @@ import {
   type ProviderContext,
   type ProviderHealthSnapshot,
   type ProviderResult,
+  type WarmupInferenceRequest,
 } from "@razroo/ray-core";
 
 interface OpenAICompatibleResponse {
@@ -22,6 +23,12 @@ interface OpenAICompatibleResponse {
     completion_tokens?: number;
     total_tokens?: number;
   };
+}
+
+interface OpenAICompatibleModelsResponse {
+  data?: Array<{
+    id?: string;
+  }>;
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -65,6 +72,51 @@ function extractAssistantText(payload: OpenAICompatibleResponse): string {
   });
 }
 
+function buildChatCompletionPayload(options: {
+  modelRef: string;
+  input: string;
+  system?: string;
+  maxTokens: number;
+  temperature: number;
+  topP: number;
+  seed?: number;
+  stop?: string[];
+  responseFormat?: WarmupInferenceRequest["responseFormat"];
+  user: string;
+}): Record<string, unknown> {
+  return {
+    model: options.modelRef,
+    stream: false,
+    temperature: options.temperature,
+    top_p: options.topP,
+    max_tokens: options.maxTokens,
+    messages: [
+      ...(options.system ? [{ role: "system", content: options.system }] : []),
+      { role: "user", content: options.input },
+    ],
+    ...(options.seed !== undefined ? { seed: options.seed } : {}),
+    ...(options.stop ? { stop: options.stop } : {}),
+    ...(options.responseFormat ? { response_format: options.responseFormat } : {}),
+    user: options.user,
+  };
+}
+
+function extractModelIds(payload: unknown): string[] | undefined {
+  if (payload === null || typeof payload !== "object") {
+    return undefined;
+  }
+
+  const data = (payload as OpenAICompatibleModelsResponse).data;
+
+  if (!Array.isArray(data)) {
+    return undefined;
+  }
+
+  return data
+    .map((entry) => (typeof entry?.id === "string" ? entry.id : undefined))
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+}
+
 export class OpenAICompatibleProvider implements ModelProvider {
   readonly kind = "openai-compatible";
   readonly modelId: string;
@@ -82,50 +134,85 @@ export class OpenAICompatibleProvider implements ModelProvider {
   }
 
   async warm(): Promise<void> {
-    await this.request("/v1/chat/completions", {
-      method: "POST",
-      body: JSON.stringify({
-        model: this.adapter.modelRef,
-        stream: false,
-        temperature: 0,
-        top_p: 1,
-        max_tokens: 1,
-        messages: [{ role: "user", content: "ping" }],
-        user: "ray_warmup",
-      }),
-    });
+    const warmupRequests =
+      this.adapter.warmupRequests && this.adapter.warmupRequests.length > 0
+        ? this.adapter.warmupRequests
+        : [{ input: "ping" } satisfies WarmupInferenceRequest];
+
+    for (const request of warmupRequests) {
+      await this.request("/v1/chat/completions", {
+        method: "POST",
+        body: JSON.stringify(
+          buildChatCompletionPayload({
+            modelRef: this.adapter.modelRef,
+            input: request.input,
+            ...(request.system ? { system: request.system } : {}),
+            maxTokens: request.maxTokens ?? 1,
+            temperature: 0,
+            topP: 1,
+            ...(request.seed !== undefined ? { seed: request.seed } : {}),
+            ...(request.stop ? { stop: request.stop } : {}),
+            ...(request.responseFormat ? { responseFormat: request.responseFormat } : {}),
+            user: "ray_warmup",
+          }),
+        ),
+      });
+    }
   }
 
   async health(): Promise<ProviderHealthSnapshot> {
     const startedAt = Date.now();
-    const probes = ["/health", "/v1/models"];
     let lastFailure: unknown;
 
-    for (const pathname of probes) {
-      try {
-        const response = await this.request(
-          pathname,
-          { method: "GET" },
-          Math.min(this.adapter.timeoutMs, 5_000),
-        );
-        const latencyMs = Date.now() - startedAt;
-        const details =
-          pathname === "/v1/models" &&
-          response !== undefined &&
-          response !== null &&
-          typeof response === "object"
-            ? { probe: pathname }
-            : { probe: pathname };
+    try {
+      const response = await this.request(
+        "/v1/models",
+        { method: "GET" },
+        Math.min(this.adapter.timeoutMs, 5_000),
+      );
+      const modelIds = extractModelIds(response);
+      const latencyMs = Date.now() - startedAt;
+
+      if (modelIds && modelIds.length > 0) {
+        if (!modelIds.includes(this.adapter.modelRef)) {
+          return {
+            status: "unavailable",
+            checkedAt: new Date().toISOString(),
+            latencyMs,
+            details: {
+              probe: "/v1/models",
+              message: `Configured modelRef "${this.adapter.modelRef}" is not exposed by the backend`,
+              availableModels: modelIds.slice(0, 10),
+            },
+          };
+        }
 
         return {
           status: "ready",
           checkedAt: new Date().toISOString(),
           latencyMs,
-          details,
+          details: {
+            probe: "/v1/models",
+            modelRef: this.adapter.modelRef,
+          },
         };
-      } catch (error) {
-        lastFailure = error;
       }
+    } catch (error) {
+      lastFailure = error;
+    }
+
+    try {
+      await this.request("/health", { method: "GET" }, Math.min(this.adapter.timeoutMs, 5_000));
+      return {
+        status: "ready",
+        checkedAt: new Date().toISOString(),
+        latencyMs: Date.now() - startedAt,
+        details: {
+          probe: "/health",
+        },
+      };
+    } catch (error) {
+      lastFailure = error;
     }
 
     return {
@@ -146,18 +233,20 @@ export class OpenAICompatibleProvider implements ModelProvider {
       "/v1/chat/completions",
       {
         method: "POST",
-        body: JSON.stringify({
-          model: this.adapter.modelRef,
-          stream: false,
-          temperature: request.temperature,
-          top_p: request.topP,
-          max_tokens: request.maxTokens,
-          messages: [
-            ...(request.system ? [{ role: "system", content: request.system }] : []),
-            { role: "user", content: request.input },
-          ],
-          user: context.requestId,
-        }),
+        body: JSON.stringify(
+          buildChatCompletionPayload({
+            modelRef: this.adapter.modelRef,
+            input: request.input,
+            ...(request.system ? { system: request.system } : {}),
+            maxTokens: request.maxTokens,
+            temperature: request.temperature,
+            topP: request.topP,
+            ...(request.seed !== undefined ? { seed: request.seed } : {}),
+            ...(request.stop ? { stop: request.stop } : {}),
+            ...(request.responseFormat ? { responseFormat: request.responseFormat } : {}),
+            user: context.requestId,
+          }),
+        ),
       },
       this.adapter.timeoutMs,
       context.signal,
