@@ -1,9 +1,13 @@
+import { mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
 import {
   buildLlamaCppEnvironment,
   diagnoseConfig,
+  loadAndDiagnoseDeployment,
   renderCaddyfile,
   renderEnvironmentFileExample,
   renderLlamaCppService,
@@ -234,4 +238,118 @@ test("diagnoseConfig warns when cache RAM is left implicit on a small VPS launch
   const diagnostics = diagnoseConfig(config, process.env);
 
   assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "cache_ram_implicit"));
+});
+
+test("loadAndDiagnoseDeployment errors when the projected memory fit exceeds a 4 GB target", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-memory-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const modelPath = join(tempDir, "oversized.gguf");
+  await writeFile(modelPath, "");
+  await truncate(modelPath, 2_500 * 1_024 * 1_024);
+
+  const config = mergeConfig(createDefaultConfig("vps"), {
+    model: {
+      maxOutputTokens: 256,
+      adapter: {
+        kind: "llama.cpp",
+        baseUrl: "http://127.0.0.1:8081",
+        modelRef: "qwen2.5-1b-test",
+        timeoutMs: 20_000,
+        launchProfile: {
+          preset: "single-vps-sub1b",
+          binaryPath: "/usr/local/bin/llama-server",
+          modelPath,
+          host: "127.0.0.1",
+          port: 8081,
+          ctxSize: 3072,
+          parallel: 2,
+          threads: 2,
+          threadsHttp: 2,
+          batchSize: 256,
+          ubatchSize: 128,
+          cachePrompt: true,
+          cacheReuse: 256,
+          cacheRamMiB: 512,
+          continuousBatching: true,
+          enableMetrics: true,
+          exposeSlots: true,
+          warmup: true,
+          enableUnifiedKv: true,
+          cacheIdleSlots: true,
+          contextShift: true,
+        },
+      },
+    },
+  });
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    strictFilesystem: true,
+    memoryBudgetMiB: 4_096,
+  });
+
+  const diagnostic = inspected.diagnostics.find((entry) => entry.code === "memory_fit_exceeded");
+  assert.ok(diagnostic);
+  assert.match(diagnostic.message, /Projected llama\.cpp working set is about/);
+  assert.match(diagnostic.message, /safe budget of 3,276 MiB/);
+});
+
+test("loadAndDiagnoseDeployment errors when the configured model file is missing in strict mode", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-model-missing-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = mergeConfig(createDefaultConfig("vps"), {
+    model: {
+      adapter: {
+        kind: "llama.cpp",
+        baseUrl: "http://127.0.0.1:8081",
+        modelRef: "qwen2.5-0.6b-test",
+        timeoutMs: 20_000,
+        launchProfile: {
+          preset: "single-vps-sub1b",
+          binaryPath: "/usr/local/bin/llama-server",
+          modelPath: join(tempDir, "missing.gguf"),
+          host: "127.0.0.1",
+          port: 8081,
+          ctxSize: 3072,
+          parallel: 2,
+          threads: 2,
+          threadsHttp: 2,
+          batchSize: 256,
+          ubatchSize: 128,
+          cachePrompt: true,
+          cacheReuse: 256,
+          cacheRamMiB: 512,
+          continuousBatching: true,
+          enableMetrics: true,
+          exposeSlots: true,
+          warmup: true,
+          enableUnifiedKv: true,
+          cacheIdleSlots: true,
+          contextShift: true,
+        },
+      },
+    },
+  });
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    strictFilesystem: true,
+    memoryBudgetMiB: 4_096,
+  });
+
+  const diagnostic = inspected.diagnostics.find((entry) => entry.code === "model_file_missing");
+  assert.ok(diagnostic);
+  assert.match(diagnostic.message, /was not found/);
 });

@@ -9,6 +9,7 @@ interface CliOptions {
   user: string;
   domain: string;
   envFile?: string;
+  memoryBudgetMiB?: number;
 }
 
 function parseCliArgs(argv: string[]): CliOptions {
@@ -63,6 +64,15 @@ function parseCliArgs(argv: string[]): CliOptions {
     if (current === "--env-file") {
       options.envFile = next;
       index += 1;
+      continue;
+    }
+
+    if (current === "--memory-mib") {
+      const parsed = Number.parseInt(next, 10);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        options.memoryBudgetMiB = parsed;
+      }
+      index += 1;
     }
   }
 
@@ -83,7 +93,10 @@ if (options.command === "render") {
   console.log("\n# Summary\n");
   console.log(JSON.stringify(bundle.summary, null, 2));
 } else {
-  const inspected = await loadAndDiagnoseDeployment(options);
+  const inspected = await loadAndDiagnoseDeployment({
+    ...options,
+    strictFilesystem: options.command === "doctor",
+  });
   const hasErrors = inspected.diagnostics.some((diagnostic) => diagnostic.level === "error");
 
   console.log(

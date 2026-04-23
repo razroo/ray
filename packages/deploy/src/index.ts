@@ -1,3 +1,5 @@
+import { stat } from "node:fs/promises";
+import { totalmem } from "node:os";
 import path from "node:path";
 import { loadRayConfig, resolveAuthApiKeys } from "@ray/config";
 import { type LlamaCppLaunchProfile, type RayConfig } from "@razroo/ray-core";
@@ -28,12 +30,170 @@ export interface DeploymentDiagnostic {
   message: string;
 }
 
+type MemoryBudgetSource = "override" | "preset" | "host";
+
+export interface DeploymentPreflight {
+  hostMemoryMiB?: number;
+  memoryBudgetMiB?: number;
+  memoryBudgetSource?: MemoryBudgetSource;
+  modelFileBytes?: number;
+  modelFilePath?: string;
+  modelFileStatus?: "found" | "missing" | "unreadable";
+  modelFileError?: string;
+}
+
+export interface LlamaCppMemoryEstimate {
+  memoryBudgetMiB: number;
+  memoryBudgetSource: MemoryBudgetSource;
+  modelFileMiB: number;
+  promptCacheMiB: number;
+  kvCacheMiB: number;
+  runtimeMiB: number;
+  schedulerBufferMiB: number;
+  reserveMiB: number;
+  safeBudgetMiB: number;
+  projectedWorkingSetMiB: number;
+}
+
+export interface DiagnoseConfigOptions {
+  preflight?: DeploymentPreflight;
+  strictFilesystem?: boolean;
+}
+
+const BYTES_PER_MIB = 1024 * 1024;
+const DEFAULT_CACHE_RAM_MIB = 8_192;
+const RAY_RUNTIME_RESERVE_MIB = 192;
+const LLAMA_CPP_RUNTIME_RESERVE_MIB = 160;
+const MIN_SYSTEM_RESERVE_MIB = 768;
+const SYSTEM_RESERVE_RATIO = 0.2;
+const SCHEDULER_BYTES_PER_TOKEN = 768;
+const TIGHT_MEMORY_RATIO = 0.9;
+
 function formatSystemdEnvironmentLine(name: string, value: string | number): string {
   return `Environment=${name}=${value}`;
 }
 
 function boolToEnv(value: boolean): "1" | "0" {
   return value ? "1" : "0";
+}
+
+function bytesToMiBRoundedUp(value: number): number {
+  return Math.ceil(value / BYTES_PER_MIB);
+}
+
+function formatMiB(value: number): string {
+  return `${value.toLocaleString("en-US")} MiB`;
+}
+
+function getPresetMemoryBudgetMiB(preset: LlamaCppLaunchProfile["preset"]): number {
+  return preset === "single-vps-sub1b" ? 4_096 : 8_192;
+}
+
+function estimateKvBytesPerToken(preset: LlamaCppLaunchProfile["preset"]): number {
+  return preset === "single-vps-sub1b" ? 128 * 1_024 : 320 * 1_024;
+}
+
+function formatMemoryEstimateMessage(estimate: LlamaCppMemoryEstimate): string {
+  return `Projected llama.cpp working set is about ${formatMiB(
+    estimate.projectedWorkingSetMiB,
+  )} against a safe budget of ${formatMiB(estimate.safeBudgetMiB)} on a ${formatMiB(
+    estimate.memoryBudgetMiB,
+  )} ${estimate.memoryBudgetSource} target. Components: model=${formatMiB(
+    estimate.modelFileMiB,
+  )}, cache-ram=${formatMiB(estimate.promptCacheMiB)}, kv=${formatMiB(
+    estimate.kvCacheMiB,
+  )}, runtime=${formatMiB(estimate.runtimeMiB)}, scheduler=${formatMiB(
+    estimate.schedulerBufferMiB,
+  )}, reserve=${formatMiB(estimate.reserveMiB)}.`;
+}
+
+function resolveMemoryBudget(options: {
+  preset: LlamaCppLaunchProfile["preset"];
+  overrideMemoryBudgetMiB?: number;
+  hostMemoryMiB?: number;
+}): { memoryBudgetMiB: number; memoryBudgetSource: MemoryBudgetSource } {
+  if (options.overrideMemoryBudgetMiB !== undefined) {
+    return {
+      memoryBudgetMiB: options.overrideMemoryBudgetMiB,
+      memoryBudgetSource: "override",
+    };
+  }
+
+  const presetBudgetMiB = getPresetMemoryBudgetMiB(options.preset);
+  const hostMemoryMiB = options.hostMemoryMiB;
+
+  if (hostMemoryMiB !== undefined && hostMemoryMiB > 0) {
+    if (hostMemoryMiB < presetBudgetMiB) {
+      return {
+        memoryBudgetMiB: hostMemoryMiB,
+        memoryBudgetSource: "host",
+      };
+    }
+
+    return {
+      memoryBudgetMiB: presetBudgetMiB,
+      memoryBudgetSource: "preset",
+    };
+  }
+
+  return {
+    memoryBudgetMiB: presetBudgetMiB,
+    memoryBudgetSource: "preset",
+  };
+}
+
+export function estimateLlamaCppMemoryFit(
+  config: RayConfig,
+  launchProfile: LlamaCppLaunchProfile,
+  preflight: DeploymentPreflight,
+): LlamaCppMemoryEstimate | undefined {
+  if (
+    preflight.memoryBudgetMiB === undefined ||
+    preflight.memoryBudgetSource === undefined ||
+    preflight.modelFileBytes === undefined
+  ) {
+    return undefined;
+  }
+
+  if (launchProfile.cacheRamMiB === -1) {
+    return undefined;
+  }
+
+  const promptCacheMiB =
+    launchProfile.cacheRamMiB === undefined
+      ? DEFAULT_CACHE_RAM_MIB
+      : Math.max(0, launchProfile.cacheRamMiB);
+  const kvCacheMiB = bytesToMiBRoundedUp(
+    launchProfile.ctxSize *
+      Math.max(1, launchProfile.parallel) *
+      estimateKvBytesPerToken(launchProfile.preset),
+  );
+  const schedulerBufferMiB = bytesToMiBRoundedUp(
+    (config.scheduler.maxQueuedTokens + config.scheduler.maxInflightTokens) *
+      SCHEDULER_BYTES_PER_TOKEN,
+  );
+  const runtimeMiB = RAY_RUNTIME_RESERVE_MIB + LLAMA_CPP_RUNTIME_RESERVE_MIB;
+  const reserveMiB = Math.max(
+    MIN_SYSTEM_RESERVE_MIB,
+    Math.ceil(preflight.memoryBudgetMiB * SYSTEM_RESERVE_RATIO),
+  );
+  const safeBudgetMiB = Math.max(0, preflight.memoryBudgetMiB - reserveMiB);
+  const modelFileMiB = bytesToMiBRoundedUp(preflight.modelFileBytes);
+  const projectedWorkingSetMiB =
+    modelFileMiB + promptCacheMiB + kvCacheMiB + runtimeMiB + schedulerBufferMiB;
+
+  return {
+    memoryBudgetMiB: preflight.memoryBudgetMiB,
+    memoryBudgetSource: preflight.memoryBudgetSource,
+    modelFileMiB,
+    promptCacheMiB,
+    kvCacheMiB,
+    runtimeMiB,
+    schedulerBufferMiB,
+    reserveMiB,
+    safeBudgetMiB,
+    projectedWorkingSetMiB,
+  };
 }
 
 export function buildLlamaCppEnvironment(profile: LlamaCppLaunchProfile): Record<string, string> {
@@ -188,8 +348,11 @@ export function diagnoseConfig(
   config: RayConfig,
   env: NodeJS.ProcessEnv,
   envFile?: string,
+  options: DiagnoseConfigOptions = {},
 ): DeploymentDiagnostic[] {
   const diagnostics: DeploymentDiagnostic[] = [];
+  const strictFilesystem = options.strictFilesystem === true;
+  const preflight = options.preflight;
 
   if (
     config.server.host !== "127.0.0.1" &&
@@ -362,6 +525,57 @@ export function diagnoseConfig(
             "The effective ctx-size per slot is close to the configured output budget. Longer prompts may be rejected or truncated sooner than expected.",
         });
       }
+
+      if (strictFilesystem && preflight?.modelFileStatus === "missing") {
+        diagnostics.push({
+          level: "error",
+          code: "model_file_missing",
+          message: `The configured GGUF model file was not found at ${preflight.modelFilePath}. Doctor cannot estimate memory fit without the real model file.`,
+        });
+      } else if (strictFilesystem && preflight?.modelFileStatus === "unreadable") {
+        diagnostics.push({
+          level: "error",
+          code: "model_file_unreadable",
+          message: `The configured GGUF model file at ${preflight.modelFilePath} could not be read${preflight.modelFileError ? ` (${preflight.modelFileError})` : ""}. Doctor cannot estimate memory fit without the real model file.`,
+        });
+      }
+
+      if (launchProfile.cacheRamMiB === -1 && preflight?.memoryBudgetMiB !== undefined) {
+        diagnostics.push({
+          level: "error",
+          code: "memory_fit_unbounded",
+          message:
+            "cacheRamMiB is unlimited, so Ray cannot guarantee that the llama.cpp working set will fit within the target memory budget.",
+        });
+      }
+
+      const memoryEstimate = estimateLlamaCppMemoryFit(config, launchProfile, preflight ?? {});
+      if (memoryEstimate) {
+        const message = formatMemoryEstimateMessage(memoryEstimate);
+
+        if (memoryEstimate.projectedWorkingSetMiB > memoryEstimate.safeBudgetMiB) {
+          diagnostics.push({
+            level: "error",
+            code: "memory_fit_exceeded",
+            message,
+          });
+        } else if (
+          memoryEstimate.projectedWorkingSetMiB >
+          Math.floor(memoryEstimate.safeBudgetMiB * TIGHT_MEMORY_RATIO)
+        ) {
+          diagnostics.push({
+            level: "warn",
+            code: "memory_fit_tight",
+            message,
+          });
+        } else {
+          diagnostics.push({
+            level: "info",
+            code: "memory_fit_ok",
+            message,
+          });
+        }
+      }
     }
   }
 
@@ -381,6 +595,8 @@ export async function loadAndDiagnoseDeployment(options: {
   configPath: string;
   env?: NodeJS.ProcessEnv;
   envFile?: string;
+  memoryBudgetMiB?: number;
+  strictFilesystem?: boolean;
 }): Promise<{
   config: RayConfig;
   configPath?: string;
@@ -391,10 +607,21 @@ export async function loadAndDiagnoseDeployment(options: {
     configPath: options.configPath,
     ...(options.env ? { env: options.env } : {}),
   });
+  const preflight = await collectDeploymentPreflight(loaded.config, {
+    ...(options.memoryBudgetMiB !== undefined ? { memoryBudgetMiB: options.memoryBudgetMiB } : {}),
+    ...(options.strictFilesystem !== undefined
+      ? { strictFilesystem: options.strictFilesystem }
+      : {}),
+  });
 
   return {
     config: loaded.config,
-    diagnostics: diagnoseConfig(loaded.config, options.env ?? process.env, options.envFile),
+    diagnostics: diagnoseConfig(loaded.config, options.env ?? process.env, options.envFile, {
+      preflight,
+      ...(options.strictFilesystem !== undefined
+        ? { strictFilesystem: options.strictFilesystem }
+        : {}),
+    }),
     ...(loaded.configPath ? { configPath: loaded.configPath } : {}),
   };
 }
@@ -406,6 +633,7 @@ export async function renderDeploymentBundle(options: {
   domain: string;
   envFile?: string;
   env?: NodeJS.ProcessEnv;
+  memoryBudgetMiB?: number;
 }): Promise<{
   service: string;
   caddyfile: string;
@@ -445,4 +673,69 @@ export async function renderDeploymentBundle(options: {
       diagnostics: inspected.diagnostics,
     },
   };
+}
+
+async function collectDeploymentPreflight(
+  config: RayConfig,
+  options: {
+    memoryBudgetMiB?: number;
+    strictFilesystem?: boolean;
+  },
+): Promise<DeploymentPreflight> {
+  const hostMemoryMiB = Math.max(1, Math.floor(totalmem() / BYTES_PER_MIB));
+
+  if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
+    return {
+      hostMemoryMiB,
+    };
+  }
+
+  const launchProfile = config.model.adapter.launchProfile;
+  const budget = resolveMemoryBudget({
+    preset: launchProfile.preset,
+    ...(options.memoryBudgetMiB !== undefined
+      ? { overrideMemoryBudgetMiB: options.memoryBudgetMiB }
+      : {}),
+    hostMemoryMiB,
+  });
+  const preflight: DeploymentPreflight = {
+    hostMemoryMiB,
+    memoryBudgetMiB: budget.memoryBudgetMiB,
+    memoryBudgetSource: budget.memoryBudgetSource,
+    modelFilePath: launchProfile.modelPath,
+  };
+
+  try {
+    const fileStat = await stat(launchProfile.modelPath);
+    if (!fileStat.isFile()) {
+      return {
+        ...preflight,
+        modelFileStatus: "unreadable",
+        modelFileError: "not a regular file",
+      };
+    }
+
+    return {
+      ...preflight,
+      modelFileBytes: fileStat.size,
+      modelFileStatus: "found",
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const isMissing =
+      error !== null &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: string }).code === "ENOENT";
+
+    if (!options.strictFilesystem) {
+      return preflight;
+    }
+
+    return {
+      ...preflight,
+      modelFileStatus: isMissing ? "missing" : "unreadable",
+      modelFileError: message,
+    };
+  }
 }
