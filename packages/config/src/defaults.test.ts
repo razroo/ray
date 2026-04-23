@@ -27,6 +27,21 @@ test("mergeConfig preserves nested defaults while applying overrides", () => {
   assert.equal(merged.cache.enabled, true);
 });
 
+test("sub1b profile defaults to a bounded llama.cpp launch profile", () => {
+  const config = createDefaultConfig("sub1b");
+
+  assert.equal(config.profile, "sub1b");
+  assert.equal(config.model.adapter.kind, "llama.cpp");
+
+  if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
+    throw new Error("Expected a llama.cpp launch profile");
+  }
+
+  assert.equal(config.model.adapter.launchProfile.preset, "single-vps-sub1b-cx23");
+  assert.equal(config.model.adapter.launchProfile.cacheRamMiB, 512);
+  assert.equal(config.auth.enabled, false);
+});
+
 test("resolveAuthApiKeys parses comma and newline separated values", () => {
   const config = mergeConfig(createDefaultConfig("tiny"), {
     auth: {

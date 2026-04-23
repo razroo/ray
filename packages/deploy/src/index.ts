@@ -69,6 +69,18 @@ const SYSTEM_RESERVE_RATIO = 0.2;
 const SCHEDULER_BYTES_PER_TOKEN = 768;
 const TIGHT_MEMORY_RATIO = 0.9;
 
+function isSub1bPreset(preset: LlamaCppLaunchProfile["preset"]): boolean {
+  return (
+    preset === "single-vps-sub1b" ||
+    preset === "single-vps-sub1b-cx23" ||
+    preset === "single-vps-sub1b-cax11"
+  );
+}
+
+function isCax11Preset(preset: LlamaCppLaunchProfile["preset"]): boolean {
+  return preset === "single-vps-sub1b-cax11";
+}
+
 function formatSystemdEnvironmentLine(name: string, value: string | number): string {
   return `Environment=${name}=${value}`;
 }
@@ -86,11 +98,11 @@ function formatMiB(value: number): string {
 }
 
 function getPresetMemoryBudgetMiB(preset: LlamaCppLaunchProfile["preset"]): number {
-  return preset === "single-vps-sub1b" ? 4_096 : 8_192;
+  return isSub1bPreset(preset) ? 4_096 : 8_192;
 }
 
 function estimateKvBytesPerToken(preset: LlamaCppLaunchProfile["preset"]): number {
-  return preset === "single-vps-sub1b" ? 128 * 1_024 : 320 * 1_024;
+  return isSub1bPreset(preset) ? 128 * 1_024 : 320 * 1_024;
 }
 
 function formatMemoryEstimateMessage(estimate: LlamaCppMemoryEstimate): string {
@@ -471,7 +483,7 @@ export function diagnoseConfig(
           });
         }
 
-        if (launchProfile.preset === "single-vps-sub1b" && launchProfile.cacheRamMiB > 1024) {
+        if (isSub1bPreset(launchProfile.preset) && launchProfile.cacheRamMiB > 1024) {
           diagnostics.push({
             level: "warn",
             code: "cache_ram_high_for_small_vps",
@@ -514,6 +526,15 @@ export function diagnoseConfig(
           code: "ctx_per_slot_high",
           message:
             "The effective ctx-size per slot is high for a small-model VPS profile. Reducing ctx-size often improves throughput on 2 vCPU nodes.",
+        });
+      }
+
+      if (isCax11Preset(launchProfile.preset) && launchProfile.parallel > 1) {
+        diagnostics.push({
+          level: "warn",
+          code: "cax11_parallel_high",
+          message:
+            "The CAX11-class ARM preset is tuned for one active slot. Raising parallel above 1 usually hurts latency before it helps throughput on 2 vCPU ARM nodes.",
         });
       }
 

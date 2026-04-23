@@ -27,6 +27,7 @@ import {
   type RayConfig,
   type RuntimeMetricsSnapshot,
   type ScheduleLane,
+  type SchedulerSlotSnapshot,
   type SchedulerSnapshot,
   type UsageBreakdown,
   type UsageStats,
@@ -775,12 +776,7 @@ export class RayRuntime {
         ? buildCacheKey(this.config, tuned.request)
         : undefined;
 
-    this.metrics.gauge("queue.depth", queueSnapshot.queueDepth);
-    this.metrics.gauge("queue.short_depth", queueSnapshot.shortQueueDepth);
-    this.metrics.gauge("queue.draft_depth", queueSnapshot.draftQueueDepth);
-    this.metrics.gauge("inference.in_flight", queueSnapshot.inFlight);
-    this.metrics.gauge("queue.tokens", queueSnapshot.queuedTokens);
-    this.metrics.gauge("inference.in_flight_tokens", queueSnapshot.inFlightTokens);
+    this.recordSchedulerMetrics(queueSnapshot);
     this.metrics.gauge("prompt.compiler.chars_saved", compiled.diagnostics.charsSaved);
     this.metrics.gauge(
       "learned_output_cap.max_tokens_ratio",
@@ -819,6 +815,7 @@ export class RayRuntime {
 
       if (preparation?.slotSnapshots) {
         this.scheduler.updateBackendSlots(preparation.slotSnapshots);
+        this.recordProviderMetrics(undefined, preparation.promptTokens, preparation.slotSnapshots);
       }
 
       const requestForProvider = preparation?.request ?? tuned.request;
@@ -880,16 +877,12 @@ export class RayRuntime {
         degraded: degraded.degraded,
       });
       const currentSnapshot = this.scheduler.snapshot();
-      this.metrics.gauge("queue.depth", currentSnapshot.queueDepth);
-      this.metrics.gauge("queue.short_depth", currentSnapshot.shortQueueDepth);
-      this.metrics.gauge("queue.draft_depth", currentSnapshot.draftQueueDepth);
-      this.metrics.gauge("inference.in_flight", currentSnapshot.inFlight);
-      this.metrics.gauge("queue.tokens", currentSnapshot.queuedTokens);
-      this.metrics.gauge("inference.in_flight_tokens", currentSnapshot.inFlightTokens);
+      this.recordSchedulerMetrics(currentSnapshot);
       this.metrics.gauge("cache.entries", this.cache.size());
-      this.metrics.gauge(
-        "provider.completion_tps",
-        scheduled.value.diagnostics?.timings?.completionTokensPerSecond ?? 0,
+      this.recordProviderMetrics(
+        payload.providerDiagnostics,
+        payload.usage.tokens?.prompt ?? preparation?.promptTokens,
+        preparation?.slotSnapshots,
       );
       this.metrics.gauge("queue.last_delay_ms", scheduled.queueTimeMs);
 
@@ -982,7 +975,7 @@ export class RayRuntime {
           checkedAtMs: now,
           snapshot,
         };
-        this.metrics.recordProviderHealth(snapshot.status, snapshot.latencyMs);
+        this.metrics.recordProviderHealth(snapshot);
         return snapshot;
       } catch (error) {
         const snapshot: ProviderHealthSnapshot = {
@@ -996,7 +989,7 @@ export class RayRuntime {
           checkedAtMs: now,
           snapshot,
         };
-        this.metrics.recordProviderHealth(snapshot.status);
+        this.metrics.recordProviderHealth(snapshot);
         return snapshot;
       }
     }
@@ -1029,7 +1022,7 @@ export class RayRuntime {
                 checkedAt: new Date().toISOString(),
               };
 
-    this.metrics.recordProviderHealth(snapshot.status, snapshot.latencyMs);
+    this.metrics.recordProviderHealth(snapshot);
     return snapshot;
   }
 
@@ -1115,6 +1108,45 @@ export class RayRuntime {
     }
 
     return Math.max(1, Math.ceil(usage.chars.completion / 4));
+  }
+
+  private recordSchedulerMetrics(snapshot: SchedulerSnapshot): void {
+    this.metrics.gauge("queue.depth", snapshot.queueDepth);
+    this.metrics.gauge("queue.short_depth", snapshot.shortQueueDepth);
+    this.metrics.gauge("queue.draft_depth", snapshot.draftQueueDepth);
+    this.metrics.gauge("inference.in_flight", snapshot.inFlight);
+    this.metrics.gauge("queue.tokens", snapshot.queuedTokens);
+    this.metrics.gauge("inference.in_flight_tokens", snapshot.inFlightTokens);
+  }
+
+  private recordProviderMetrics(
+    diagnostics: ProviderDiagnostics | undefined,
+    promptTokens?: number,
+    slotSnapshots?: SchedulerSlotSnapshot[],
+  ): void {
+    const result: {
+      diagnostics?: ProviderDiagnostics;
+      promptTokens?: number;
+      slotSnapshots?: SchedulerSlotSnapshot[];
+    } = {};
+
+    if (diagnostics) {
+      result.diagnostics = diagnostics;
+    }
+
+    if (typeof promptTokens === "number") {
+      result.promptTokens = promptTokens;
+    }
+
+    if (slotSnapshots) {
+      result.slotSnapshots = slotSnapshots;
+    }
+
+    this.metrics.recordProviderResult(result);
+    this.metrics.gauge(
+      "provider.completion_tps",
+      diagnostics?.timings?.completionTokensPerSecond ?? 0,
+    );
   }
 }
 

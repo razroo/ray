@@ -1,4 +1,4 @@
-export type RayProfile = "tiny" | "vps" | "balanced";
+export type RayProfile = "tiny" | "sub1b" | "vps" | "balanced";
 export type LogLevel = "debug" | "info" | "warn" | "error";
 export type ProviderKind = "mock" | "openai-compatible" | "llama.cpp";
 export type Quantization = "q4_0" | "q4_k_m" | "q5_k_m" | "q8_0" | "fp16" | "unknown";
@@ -58,7 +58,11 @@ export interface LlamaCppProviderConfig {
 }
 
 export interface LlamaCppLaunchProfile {
-  preset: "single-vps-sub1b" | "single-vps-balanced";
+  preset:
+    | "single-vps-sub1b"
+    | "single-vps-sub1b-cx23"
+    | "single-vps-sub1b-cax11"
+    | "single-vps-balanced";
   binaryPath: string;
   modelPath: string;
   host: string;
@@ -469,5 +473,13 @@ export interface RuntimeMetricsSnapshot {
     lastDegradedAt: string | null;
     lastRateLimitAt: string | null;
     lastAuthRejectAt: string | null;
+    lastPromptCacheReuseRatio: number | null;
+    lastPromptCacheTokens: number | null;
+    lastSlotId: number | null;
+    lastSlotOccupancyRatio: number | null;
+    lastProcessRssMiB: number | null;
+    lastHeapUsedMiB: number | null;
+    lastCpuPercent: number | null;
+    lastEventLoopLagP95Ms: number | null;
   };
 }

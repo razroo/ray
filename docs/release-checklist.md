@@ -39,12 +39,14 @@ Aligned with [roadmap Phase 1 exit criteria](roadmap.md) and day-one operator ex
 
    ```bash
    pnpm validate:config
+   RAY_API_KEYS=smoke pnpm validate:config:public
    ```
 
-5. **VPS-oriented checks** (when exercising the OpenAI-compatible adapter path)
+5. **VPS-oriented checks** (when exercising the default `sub1b` / `llama.cpp` path)
    - Gateway serves `/health` and `/metrics`.
    - With auth enabled in config, `/v1/infer` rejects missing or invalid API keys.
    - Rate limiting behaves as configured.
+   - On a real Hetzner runner, `pnpm benchmark:assert:cx23` or `pnpm benchmark:assert:cax11` passes for the target machine class.
 
 ## npm packages
 

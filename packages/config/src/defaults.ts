@@ -1,4 +1,4 @@
-import type { RayConfig, RayProfile } from "@razroo/ray-core";
+import type { LlamaCppLaunchProfile, RayConfig, RayProfile } from "@razroo/ray-core";
 
 export type DeepPartial<T> = {
   [Key in keyof T]?: T[Key] extends object
@@ -7,6 +7,168 @@ export type DeepPartial<T> = {
       ? Array<DeepPartial<Item>>
       : T[Key];
 };
+
+type Sub1bMachineClass = "cx23" | "cax11";
+
+function createSub1bLaunchProfile(machineClass: Sub1bMachineClass): LlamaCppLaunchProfile {
+  if (machineClass === "cax11") {
+    return {
+      preset: "single-vps-sub1b-cax11",
+      binaryPath: "/usr/local/bin/llama-server",
+      modelPath: "/var/lib/ray/models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+      host: "127.0.0.1",
+      port: 8081,
+      alias: "qwen2.5-0.5b-instruct-q4_k_m",
+      ctxSize: 3072,
+      parallel: 1,
+      threads: 2,
+      threadsHttp: 2,
+      batchSize: 192,
+      ubatchSize: 96,
+      cachePrompt: true,
+      cacheReuse: 256,
+      cacheRamMiB: 512,
+      continuousBatching: true,
+      enableMetrics: true,
+      exposeSlots: true,
+      warmup: true,
+      enableUnifiedKv: true,
+      cacheIdleSlots: true,
+      contextShift: true,
+    };
+  }
+
+  return {
+    preset: "single-vps-sub1b-cx23",
+    binaryPath: "/usr/local/bin/llama-server",
+    modelPath: "/var/lib/ray/models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+    host: "127.0.0.1",
+    port: 8081,
+    alias: "qwen2.5-0.5b-instruct-q4_k_m",
+    ctxSize: 3072,
+    parallel: 2,
+    threads: 2,
+    threadsHttp: 2,
+    batchSize: 256,
+    ubatchSize: 128,
+    cachePrompt: true,
+    cacheReuse: 256,
+    cacheRamMiB: 512,
+    continuousBatching: true,
+    enableMetrics: true,
+    exposeSlots: true,
+    warmup: true,
+    enableUnifiedKv: true,
+    cacheIdleSlots: true,
+    contextShift: true,
+  };
+}
+
+function createSub1bDefaults(machineClass: Sub1bMachineClass): RayConfig {
+  const launchProfile = createSub1bLaunchProfile(machineClass);
+
+  return {
+    profile: "sub1b",
+    server: {
+      host: "127.0.0.1",
+      port: 3000,
+      requestBodyLimitBytes: 48_000,
+    },
+    model: {
+      id: "qwen2.5-0.5b-instruct-q4_k_m",
+      family: "qwen2.5",
+      quantization: "q4_k_m",
+      contextWindow: 8192,
+      warmOnBoot: true,
+      maxOutputTokens: 256,
+      adapter: {
+        kind: "llama.cpp",
+        baseUrl: "http://127.0.0.1:8081",
+        modelRef: "qwen2.5-0.5b-instruct-q4_k_m",
+        timeoutMs: 18_000,
+        cachePrompt: true,
+        slotStateTtlMs: 200,
+        promptScaffoldCacheEntries: 256,
+        launchProfile,
+      },
+    },
+    scheduler: {
+      concurrency: machineClass === "cax11" ? 1 : 2,
+      maxQueue: machineClass === "cax11" ? 48 : 64,
+      maxQueuedTokens: machineClass === "cax11" ? 18_000 : 24_000,
+      maxInflightTokens: machineClass === "cax11" ? 3_072 : 4_096,
+      requestTimeoutMs: machineClass === "cax11" ? 22_000 : 20_000,
+      dedupeInflight: true,
+      batchWindowMs: machineClass === "cax11" ? 5 : 10,
+      affinityLookahead: machineClass === "cax11" ? 16 : 24,
+      shortJobMaxTokens: 96,
+    },
+    asyncQueue: {
+      enabled: false,
+      storageDir: ".ray/async-queue",
+      pollIntervalMs: 1_000,
+      dispatchConcurrency: 1,
+      maxAttempts: 3,
+      callbackTimeoutMs: 5_000,
+      maxCallbackAttempts: 5,
+    },
+    cache: {
+      enabled: true,
+      maxEntries: 256,
+      ttlMs: 90_000,
+      keyStrategy: "input+params",
+    },
+    telemetry: {
+      serviceName: "ray-gateway",
+      logLevel: "info",
+      includeDebugMetrics: true,
+      slowRequestThresholdMs: machineClass === "cax11" ? 1_500 : 1_200,
+    },
+    gracefulDegradation: {
+      enabled: true,
+      queueDepthThreshold: machineClass === "cax11" ? 12 : 16,
+      maxPromptChars: 6_000,
+      degradeToMaxTokens: 128,
+    },
+    promptCompiler: {
+      enabled: true,
+      collapseWhitespace: true,
+      dedupeRepeatedLines: true,
+      familyMetadataKeys: ["promptFamily", "taskTemplate", "template", "useCase"],
+    },
+    adaptiveTuning: {
+      enabled: true,
+      sampleSize: 32,
+      queueLatencyThresholdMs: machineClass === "cax11" ? 450 : 350,
+      minCompletionTokensPerSecond: machineClass === "cax11" ? 10 : 14,
+      maxOutputReductionRatio: 0.5,
+      minOutputTokens: 64,
+      learnedFamilyCapEnabled: true,
+      familyHistorySize: 64,
+      learnedCapMinSamples: 8,
+      draftPercentile: 0.95,
+      shortPercentile: 0.9,
+      learnedCapHeadroomTokens: 24,
+    },
+    auth: {
+      enabled: false,
+      apiKeyEnv: "RAY_API_KEYS",
+    },
+    rateLimit: {
+      enabled: true,
+      windowMs: 60_000,
+      maxRequests: machineClass === "cax11" ? 90 : 120,
+      keyStrategy: "ip+api-key",
+      trustProxyHeaders: true,
+    },
+    tags: {
+      target: "sub1b",
+      hosting: "cheap-vps",
+      engine: "llama.cpp",
+      hardware: machineClass === "cax11" ? "hetzner-cax11-class" : "hetzner-cx23-class",
+    },
+  };
+}
 
 const profileDefaults: Record<RayProfile, RayConfig> = {
   tiny: {
@@ -103,6 +265,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       hosting: "cheap-vps",
     },
   },
+  sub1b: createSub1bDefaults("cx23"),
   vps: {
     profile: "vps",
     server: {

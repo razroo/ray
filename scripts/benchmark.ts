@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -7,6 +7,10 @@ import type { LlamaCppLaunchProfile, RayConfig } from "@razroo/ray-core";
 import { buildLlamaCppEnvironment } from "../packages/deploy/src/index.ts";
 
 type AutotuneScope = "auto" | "gateway" | "full";
+type BenchmarkCheckOperator = "<=" | ">=" | "===";
+
+const STRUCTURED_OUTPUT_VERSION = 1;
+const BENCHMARK_API_KEY_ENV = "RAY_BENCHMARK_API_KEY";
 
 interface BenchmarkArgs {
   baseUrl: string;
@@ -16,8 +20,11 @@ interface BenchmarkArgs {
   label?: string;
   configPath?: string;
   apiKey?: string;
+  outputPath?: string;
+  baselinePath?: string;
   autotune: boolean;
   autotuneScope: AutotuneScope;
+  assertBaseline: boolean;
   help: boolean;
 }
 
@@ -110,6 +117,84 @@ interface SchedulerBenchmarkResult {
   summary: BenchmarkSummary;
 }
 
+interface BenchmarkBaselineAssertions {
+  maxLatencyP95Ms?: number;
+  maxQueueDelayP95Ms?: number;
+  maxTtftP95Ms?: number;
+  minCompletionTokensPerSecondAvg?: number;
+  minPromptCacheHitRate?: number;
+  minPromptCacheReuseRatio?: number;
+  minEmailsPerHour?: number;
+}
+
+interface BenchmarkBaseline {
+  version: number;
+  label: string;
+  machineClass: string;
+  workloadPath?: string;
+  concurrency: number;
+  requests: number;
+  assertions: BenchmarkBaselineAssertions;
+  notes?: string[];
+}
+
+interface BenchmarkComparisonCheck {
+  metric: string;
+  operator: BenchmarkCheckOperator;
+  expected: number | string;
+  actual: number | string;
+  passed: boolean;
+}
+
+interface BenchmarkComparison {
+  baselinePath: string;
+  baselineLabel: string;
+  machineClass: string;
+  passed: boolean;
+  checks: BenchmarkComparisonCheck[];
+}
+
+interface BenchmarkSummaryOutput {
+  kind: "benchmark-summary";
+  version: number;
+  generatedAt: string;
+  args: {
+    baseUrl: string;
+    workloadPath?: string;
+    concurrency: number;
+    requests: number;
+    label: string;
+    configPath?: string;
+    baselinePath?: string;
+  };
+  summary: BenchmarkSummary;
+  comparison?: BenchmarkComparison;
+}
+
+interface AutotuneOutput {
+  kind: "autotune-report";
+  version: number;
+  generatedAt: string;
+  args: {
+    configPath: string;
+    scope: "gateway" | "full";
+    workloadPath?: string;
+    concurrency: number;
+    requests: number;
+  };
+  launchResults?: Array<{
+    label: string;
+    profile: LlamaCppLaunchProfile;
+    summary: BenchmarkSummary;
+  }>;
+  schedulerResults: Array<{
+    label: string;
+    schedulerOverride: DeepPartial<RayConfig>["scheduler"];
+    summary: BenchmarkSummary;
+  }>;
+  recommendedPatch: DeepPartial<RayConfig>;
+}
+
 const defaultWorkload: InferenceRequest[] = [
   {
     templateId: "email.cold_outreach.v1",
@@ -150,6 +235,7 @@ function parseArgs(argv: string[]): BenchmarkArgs {
     concurrency: 1,
     autotune: false,
     autotuneScope: "auto",
+    assertBaseline: false,
     help: false,
   };
 
@@ -168,6 +254,11 @@ function parseArgs(argv: string[]): BenchmarkArgs {
 
     if (current === "--autotune") {
       result.autotune = true;
+      continue;
+    }
+
+    if (current === "--assert-baseline") {
+      result.assertBaseline = true;
       continue;
     }
 
@@ -217,6 +308,18 @@ function parseArgs(argv: string[]): BenchmarkArgs {
       continue;
     }
 
+    if (current === "--output") {
+      result.outputPath = next;
+      index += 1;
+      continue;
+    }
+
+    if (current === "--baseline") {
+      result.baselinePath = next;
+      index += 1;
+      continue;
+    }
+
     if (
       current === "--autotune-scope" &&
       (next === "auto" || next === "gateway" || next === "full")
@@ -240,9 +343,16 @@ function printUsage(): void {
   console.log("  --label <name>          Label shown in benchmark output.");
   console.log("  --config <path>         Ray config path for autotune mode.");
   console.log("  --api-key <key>         Bearer API key used for auth-enabled gateways.");
+  console.log(
+    `  --output <path>         Write structured benchmark or autotune output JSON (${STRUCTURED_OUTPUT_VERSION}).`,
+  );
+  console.log("  --baseline <path>       Compare the benchmark summary against a baseline JSON.");
+  console.log("  --assert-baseline       Exit non-zero if the baseline checks fail.");
   console.log("  --autotune              Sweep scheduler settings using the supplied config.");
   console.log("  --autotune-scope <mode> Autotune scope: auto, gateway, or full. Default: auto.");
   console.log("  --help, -h              Show this help text.");
+  console.log("");
+  console.log(`Auth fallback env: ${BENCHMARK_API_KEY_ENV}`);
 }
 
 async function loadWorkload(workloadPath?: string): Promise<InferenceRequest[]> {
@@ -267,6 +377,19 @@ async function loadWorkload(workloadPath?: string): Promise<InferenceRequest[]> 
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
     .map((line) => JSON.parse(line) as InferenceRequest);
+}
+
+async function loadBaseline(baselinePath: string): Promise<BenchmarkBaseline> {
+  const resolvedPath = path.resolve(process.cwd(), baselinePath);
+  const baseline = JSON.parse(await readFile(resolvedPath, "utf8")) as BenchmarkBaseline;
+
+  if (baseline.version !== 1) {
+    throw new Error(
+      `Unsupported benchmark baseline version in ${resolvedPath}: ${baseline.version}`,
+    );
+  }
+
+  return baseline;
 }
 
 function quantile(values: number[], q: number): number | undefined {
@@ -308,6 +431,11 @@ function resolveBenchmarkApiKey(args: BenchmarkArgs, config?: RayConfig): string
     return args.apiKey;
   }
 
+  const directEnvKey = process.env[BENCHMARK_API_KEY_ENV];
+  if (directEnvKey) {
+    return directEnvKey;
+  }
+
   if (!config?.auth.enabled || !config.auth.apiKeyEnv) {
     return undefined;
   }
@@ -339,6 +467,10 @@ function buildBaseUrl(host: string, port: number): string {
 
 function getPortOffset(basePort: number, index: number): number {
   return basePort + index + 1;
+}
+
+function isCax11Preset(preset: LlamaCppLaunchProfile["preset"]): boolean {
+  return preset === "single-vps-sub1b-cax11";
 }
 
 async function invoke(
@@ -486,11 +618,13 @@ function printSummary(summary: BenchmarkSummary): void {
 
 function buildAutotuneCandidates(config: RayConfig): AutotuneCandidate[] {
   const base = config.scheduler;
+  const concurrencyCeiling =
+    config.model.adapter.kind === "llama.cpp" ? Math.max(1, base.concurrency) : 4;
   const concurrencyValues = uniqueIntegers([
     1,
     base.concurrency,
     Math.max(1, base.concurrency - 1),
-    Math.min(base.concurrency + 1, config.model.adapter.kind === "llama.cpp" ? 2 : 4),
+    Math.min(base.concurrency + 1, concurrencyCeiling),
   ]);
   const batchWindowValues = uniqueIntegers([0, base.batchWindowMs, 5, 10, 15]);
   const affinityValues = uniqueIntegers([8, base.affinityLookahead, 16, 24]);
@@ -531,9 +665,15 @@ function buildAutotuneCandidates(config: RayConfig): AutotuneCandidate[] {
 function buildLaunchProfileRecommendations(
   launchProfile: LlamaCppLaunchProfile,
 ): LaunchProfileCandidate[] {
-  const ctxSizes = uniqueIntegers([2048, 3072, launchProfile.ctxSize, 4096]);
-  const parallels = uniqueIntegers([1, launchProfile.parallel, 2]);
-  const batchSizes = uniqueIntegers([128, launchProfile.batchSize, 256]);
+  const ctxSizes = isCax11Preset(launchProfile.preset)
+    ? uniqueIntegers([2048, 2560, launchProfile.ctxSize, 3072])
+    : uniqueIntegers([2048, 3072, launchProfile.ctxSize, 4096]);
+  const parallels = isCax11Preset(launchProfile.preset)
+    ? uniqueIntegers([1, launchProfile.parallel])
+    : uniqueIntegers([1, launchProfile.parallel, 2]);
+  const batchSizes = isCax11Preset(launchProfile.preset)
+    ? uniqueIntegers([96, 128, launchProfile.batchSize, 192])
+    : uniqueIntegers([128, launchProfile.batchSize, 256]);
   const recommendations: LaunchProfileCandidate[] = [];
 
   for (const ctxSize of ctxSizes) {
@@ -818,7 +958,165 @@ function printTopLaunchProfileResults(results: LaunchProfileBenchmarkResult[]): 
   }
 }
 
-async function runAutotune(args: BenchmarkArgs, workload: InferenceRequest[]): Promise<void> {
+function addBaselineCheck(
+  checks: BenchmarkComparisonCheck[],
+  metric: string,
+  operator: BenchmarkCheckOperator,
+  expected: number | string,
+  actual: number | string | undefined,
+): void {
+  const normalizedActual = actual ?? "missing";
+  const passed =
+    operator === "<="
+      ? typeof normalizedActual === "number" &&
+        typeof expected === "number" &&
+        normalizedActual <= expected
+      : operator === ">="
+        ? typeof normalizedActual === "number" &&
+          typeof expected === "number" &&
+          normalizedActual >= expected
+        : normalizedActual === expected;
+
+  checks.push({
+    metric,
+    operator,
+    expected,
+    actual: normalizedActual,
+    passed,
+  });
+}
+
+function compareSummaryToBaseline(options: {
+  summary: BenchmarkSummary;
+  baseline: BenchmarkBaseline;
+  baselinePath: string;
+  args: BenchmarkArgs;
+}): BenchmarkComparison {
+  const checks: BenchmarkComparisonCheck[] = [];
+  const { baseline, summary, args } = options;
+
+  addBaselineCheck(checks, "concurrency", "===", baseline.concurrency, summary.concurrency);
+  addBaselineCheck(checks, "requests", "===", baseline.requests, summary.requests);
+
+  if (baseline.workloadPath) {
+    addBaselineCheck(
+      checks,
+      "workloadPath",
+      "===",
+      path.normalize(baseline.workloadPath),
+      args.workloadPath ? path.normalize(args.workloadPath) : undefined,
+    );
+  }
+
+  if (baseline.assertions.maxLatencyP95Ms !== undefined) {
+    addBaselineCheck(
+      checks,
+      "latencyP95Ms",
+      "<=",
+      baseline.assertions.maxLatencyP95Ms,
+      summary.latencyP95Ms,
+    );
+  }
+
+  if (baseline.assertions.maxQueueDelayP95Ms !== undefined) {
+    addBaselineCheck(
+      checks,
+      "queueDelayP95Ms",
+      "<=",
+      baseline.assertions.maxQueueDelayP95Ms,
+      summary.queueDelayP95Ms,
+    );
+  }
+
+  if (baseline.assertions.maxTtftP95Ms !== undefined) {
+    addBaselineCheck(
+      checks,
+      "ttftP95Ms",
+      "<=",
+      baseline.assertions.maxTtftP95Ms,
+      summary.ttftP95Ms,
+    );
+  }
+
+  if (baseline.assertions.minCompletionTokensPerSecondAvg !== undefined) {
+    addBaselineCheck(
+      checks,
+      "completionTokensPerSecondAvg",
+      ">=",
+      baseline.assertions.minCompletionTokensPerSecondAvg,
+      summary.completionTokensPerSecondAvg,
+    );
+  }
+
+  if (baseline.assertions.minPromptCacheHitRate !== undefined) {
+    addBaselineCheck(
+      checks,
+      "promptCacheHitRate",
+      ">=",
+      baseline.assertions.minPromptCacheHitRate,
+      summary.promptCacheHitRate,
+    );
+  }
+
+  if (baseline.assertions.minPromptCacheReuseRatio !== undefined) {
+    addBaselineCheck(
+      checks,
+      "promptCacheReuseRatio",
+      ">=",
+      baseline.assertions.minPromptCacheReuseRatio,
+      summary.promptCacheReuseRatio,
+    );
+  }
+
+  if (baseline.assertions.minEmailsPerHour !== undefined) {
+    addBaselineCheck(
+      checks,
+      "emailsPerHour",
+      ">=",
+      baseline.assertions.minEmailsPerHour,
+      summary.emailsPerHour,
+    );
+  }
+
+  return {
+    baselinePath: path.resolve(process.cwd(), options.baselinePath),
+    baselineLabel: baseline.label,
+    machineClass: baseline.machineClass,
+    passed: checks.every((check) => check.passed),
+    checks,
+  };
+}
+
+function printComparison(comparison: BenchmarkComparison): void {
+  console.log(
+    `Baseline ${comparison.machineClass} (${comparison.baselineLabel}): ${comparison.passed ? "PASS" : "FAIL"}`,
+  );
+
+  for (const check of comparison.checks) {
+    const actual =
+      typeof check.actual === "number" ? formatNumber(check.actual, 2) : String(check.actual);
+    const expected =
+      typeof check.expected === "number" ? formatNumber(check.expected, 2) : String(check.expected);
+    console.log(
+      `  ${check.passed ? "ok" : "fail"} ${check.metric} ${check.operator} ${expected} (actual ${actual})`,
+    );
+  }
+}
+
+async function writeStructuredOutput(
+  outputPath: string,
+  payload: BenchmarkSummaryOutput | AutotuneOutput,
+): Promise<void> {
+  const resolvedPath = path.resolve(process.cwd(), outputPath);
+  await mkdir(path.dirname(resolvedPath), { recursive: true });
+  await writeFile(resolvedPath, `${JSON.stringify(payload, null, 2)}\n`);
+  console.log(`Wrote structured output to ${resolvedPath}`);
+}
+
+async function runAutotune(
+  args: BenchmarkArgs,
+  workload: InferenceRequest[],
+): Promise<AutotuneOutput> {
   if (!args.configPath) {
     throw new Error("--autotune requires --config");
   }
@@ -831,7 +1129,7 @@ async function runAutotune(args: BenchmarkArgs, workload: InferenceRequest[]): P
   const apiKey = resolveBenchmarkApiKey(args, config);
   if (config.auth.enabled && !apiKey) {
     throw new Error(
-      `Auth is enabled in ${args.configPath}. Supply --api-key or populate ${config.auth.apiKeyEnv}.`,
+      `Auth is enabled in ${args.configPath}. Supply --api-key, set ${BENCHMARK_API_KEY_ENV}, or populate ${config.auth.apiKeyEnv}.`,
     );
   }
 
@@ -845,10 +1143,12 @@ async function runAutotune(args: BenchmarkArgs, workload: InferenceRequest[]): P
 
   const baseRequests = args.requests ?? Math.max(workload.length * 3, 12);
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-autotune-"));
+  let pinnedBackend: ChildProcess | undefined;
 
   try {
     let schedulerBaseConfig = config;
     let bestLaunchProfile: LlamaCppLaunchProfile | undefined;
+    let launchResultsOutput: AutotuneOutput["launchResults"] | undefined;
 
     if (
       scope === "full" &&
@@ -876,60 +1176,28 @@ async function runAutotune(args: BenchmarkArgs, workload: InferenceRequest[]): P
       }
 
       bestLaunchProfile = bestLaunchResult.candidate.profile;
+      launchResultsOutput = launchResults.map((result) => ({
+        label: result.candidate.label,
+        profile: result.candidate.profile,
+        summary: result.summary,
+      }));
+
       const launchedProfile: LlamaCppLaunchProfile = {
         ...bestLaunchProfile,
         port: getPortOffset(config.model.adapter.launchProfile.port, 100),
       };
-      const backend = await startLlamaCppServer(launchedProfile);
+      pinnedBackend = await startLlamaCppServer(launchedProfile);
 
-      try {
-        await waitForHealth(buildBaseUrl(launchedProfile.host, launchedProfile.port), 60_000);
-        schedulerBaseConfig = mergeConfig(config, {
-          model: {
-            adapter: {
-              kind: "llama.cpp",
-              baseUrl: buildBaseUrl(launchedProfile.host, launchedProfile.port),
-              launchProfile: launchedProfile,
-            },
+      await waitForHealth(buildBaseUrl(launchedProfile.host, launchedProfile.port), 60_000);
+      schedulerBaseConfig = mergeConfig(config, {
+        model: {
+          adapter: {
+            kind: "llama.cpp",
+            baseUrl: buildBaseUrl(launchedProfile.host, launchedProfile.port),
+            launchProfile: launchedProfile,
           },
-        });
-
-        const schedulerResults = await runSchedulerSweep({
-          config: schedulerBaseConfig,
-          workload,
-          clientConcurrency: args.concurrency,
-          requests: baseRequests,
-          tempDir,
-          apiKey,
-        });
-
-        printTopSchedulerResults(schedulerResults);
-        const bestSchedulerResult = [...schedulerResults].sort(
-          (left, right) => (right.summary.score ?? 0) - (left.summary.score ?? 0),
-        )[0];
-        if (!bestSchedulerResult) {
-          throw new Error("No scheduler candidates were benchmarked.");
-        }
-
-        console.log("\nRecommended autotune patch:");
-        console.log(
-          JSON.stringify(
-            {
-              model: {
-                adapter: {
-                  launchProfile: bestLaunchProfile,
-                },
-              },
-              scheduler: bestSchedulerResult.candidate.override.scheduler,
-            },
-            null,
-            2,
-          ),
-        );
-      } finally {
-        await stopChildProcess(backend);
-      }
-      return;
+        },
+      });
     }
 
     const schedulerResults = await runSchedulerSweep({
@@ -948,17 +1216,45 @@ async function runAutotune(args: BenchmarkArgs, workload: InferenceRequest[]): P
       throw new Error("No scheduler candidates were benchmarked.");
     }
 
-    console.log("\nRecommended autotune patch:");
-    console.log(
-      JSON.stringify(
-        {
+    const recommendedPatch: DeepPartial<RayConfig> = bestLaunchProfile
+      ? {
+          model: {
+            adapter: {
+              launchProfile: bestLaunchProfile,
+            },
+          },
           scheduler: bestSchedulerResult.candidate.override.scheduler,
-        },
-        null,
-        2,
-      ),
-    );
+        }
+      : {
+          scheduler: bestSchedulerResult.candidate.override.scheduler,
+        };
+
+    console.log("\nRecommended autotune patch:");
+    console.log(JSON.stringify(recommendedPatch, null, 2));
+
+    return {
+      kind: "autotune-report",
+      version: STRUCTURED_OUTPUT_VERSION,
+      generatedAt: new Date().toISOString(),
+      args: {
+        configPath: path.resolve(process.cwd(), args.configPath),
+        scope,
+        ...(args.workloadPath ? { workloadPath: args.workloadPath } : {}),
+        concurrency: args.concurrency,
+        requests: baseRequests,
+      },
+      ...(launchResultsOutput ? { launchResults: launchResultsOutput } : {}),
+      schedulerResults: schedulerResults.map((result) => ({
+        label: result.candidate.label,
+        schedulerOverride: result.candidate.override.scheduler,
+        summary: result.summary,
+      })),
+      recommendedPatch,
+    };
   } finally {
+    if (pinnedBackend) {
+      await stopChildProcess(pinnedBackend);
+    }
     await rm(tempDir, { recursive: true, force: true });
   }
 }
@@ -971,22 +1267,76 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.assertBaseline && !args.baselinePath) {
+    throw new Error("--assert-baseline requires --baseline");
+  }
+
   const workload = await loadWorkload(args.workloadPath);
 
   if (args.autotune) {
-    await runAutotune(args, workload);
+    const report = await runAutotune(args, workload);
+    if (args.outputPath) {
+      await writeStructuredOutput(args.outputPath, report);
+    }
     return;
   }
 
+  const directConfig = args.configPath
+    ? (
+        await loadRayConfig({
+          cwd: process.cwd(),
+          configPath: args.configPath,
+        })
+      ).config
+    : undefined;
+  const requests = args.requests ?? workload.length;
   const summary = await runBenchmark({
     baseUrl: args.baseUrl,
     workload,
     concurrency: args.concurrency,
-    requests: args.requests ?? workload.length,
+    requests,
     label: args.label ?? args.workloadPath ?? "default-workload",
-    apiKey: args.apiKey,
+    apiKey: resolveBenchmarkApiKey(args, directConfig),
   });
   printSummary(summary);
+
+  let comparison: BenchmarkComparison | undefined;
+  if (args.baselinePath) {
+    const baseline = await loadBaseline(args.baselinePath);
+    comparison = compareSummaryToBaseline({
+      summary,
+      baseline,
+      baselinePath: args.baselinePath,
+      args,
+    });
+    console.log("");
+    printComparison(comparison);
+  }
+
+  if (args.outputPath) {
+    await writeStructuredOutput(args.outputPath, {
+      kind: "benchmark-summary",
+      version: STRUCTURED_OUTPUT_VERSION,
+      generatedAt: new Date().toISOString(),
+      args: {
+        baseUrl: args.baseUrl,
+        ...(args.workloadPath ? { workloadPath: args.workloadPath } : {}),
+        concurrency: args.concurrency,
+        requests,
+        label: summary.label,
+        ...(args.configPath ? { configPath: path.resolve(process.cwd(), args.configPath) } : {}),
+        ...(args.baselinePath
+          ? { baselinePath: path.resolve(process.cwd(), args.baselinePath) }
+          : {}),
+      },
+      summary,
+      ...(comparison ? { comparison } : {}),
+    });
+  }
+
+  if (args.assertBaseline && comparison && !comparison.passed) {
+    process.exitCode = 1;
+  }
 }
 
 void main().catch((error) => {

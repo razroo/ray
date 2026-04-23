@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import {
+  type LlamaCppLaunchProfile,
   RayError,
   isNonEmptyString,
   type LogLevel,
@@ -8,6 +9,13 @@ import {
   type RayProfile,
 } from "@razroo/ray-core";
 import { createDefaultConfig, mergeConfig, type DeepPartial } from "./defaults.js";
+
+const llamaCppLaunchPresets = new Set<LlamaCppLaunchProfile["preset"]>([
+  "single-vps-sub1b",
+  "single-vps-sub1b-cx23",
+  "single-vps-sub1b-cax11",
+  "single-vps-balanced",
+]);
 
 export interface LoadRayConfigOptions {
   configPath?: string;
@@ -33,7 +41,7 @@ function parseConfigJson(raw: string, configPath: string): DeepPartial<RayConfig
 }
 
 function parseProfile(value: string | undefined): RayProfile | undefined {
-  if (value === "tiny" || value === "vps" || value === "balanced") {
+  if (value === "tiny" || value === "sub1b" || value === "vps" || value === "balanced") {
     return value;
   }
 
@@ -63,6 +71,10 @@ function parseLogLevel(value: string | undefined): LogLevel | undefined {
   }
 
   return undefined;
+}
+
+function isLlamaCppLaunchPreset(value: string): value is LlamaCppLaunchProfile["preset"] {
+  return llamaCppLaunchPresets.has(value as LlamaCppLaunchProfile["preset"]);
 }
 
 function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig {
@@ -466,6 +478,14 @@ function validateConfig(config: RayConfig): RayConfig {
         });
       }
 
+      if (!isLlamaCppLaunchPreset(profile.preset)) {
+        throw new RayError("model.adapter.launchProfile.preset is not recognized", {
+          code: "config_validation_error",
+          status: 500,
+          details: profile.preset,
+        });
+      }
+
       assertPositiveInteger(profile.port, "model.adapter.launchProfile.port");
       assertPositiveInteger(profile.ctxSize, "model.adapter.launchProfile.ctxSize");
       assertPositiveInteger(profile.parallel, "model.adapter.launchProfile.parallel");
@@ -541,7 +561,7 @@ export async function loadRayConfig(options: LoadRayConfigOptions = {}): Promise
     fileConfig = parseConfigJson(raw, absoluteConfigPath);
   }
 
-  const selectedProfile = fileConfig?.profile ?? parseProfile(env.RAY_PROFILE) ?? "vps";
+  const selectedProfile = fileConfig?.profile ?? parseProfile(env.RAY_PROFILE) ?? "sub1b";
   const defaultConfig = createDefaultConfig(selectedProfile);
   const mergedConfig = mergeConfig(defaultConfig, fileConfig);
   const config = validateConfig(resolveConfigPaths(applyEnvOverrides(mergedConfig, env), cwd));

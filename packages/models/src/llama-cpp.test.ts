@@ -32,7 +32,7 @@ function createContext(model: ModelConfig, signal: AbortSignal): ProviderContext
     signal,
     requestId: "req_test",
     config: {
-      profile: "vps",
+      profile: "sub1b",
       server: {
         host: "127.0.0.1",
         port: 3000,

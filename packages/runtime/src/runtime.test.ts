@@ -210,3 +210,74 @@ test("runtime adaptively reduces maxTokens when observed throughput drops", asyn
   assert.ok((second.diagnostics?.adaptiveTuning?.appliedMaxTokens ?? 128) < 128);
   assert.deepEqual(observedMaxTokens, [128, 96]);
 });
+
+test("runtime metrics expose small-box process and provider telemetry", async () => {
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "telemetry-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async prepare(request) {
+      return {
+        request,
+        promptTokens: 80,
+        preferredSlot: 1,
+        slotSnapshots: [
+          {
+            id: 1,
+            isProcessing: false,
+            promptTokens: 64,
+            cacheTokens: 48,
+            updatedAt: new Date().toISOString(),
+          },
+          {
+            id: 2,
+            isProcessing: true,
+            promptTokens: 96,
+            cacheTokens: 32,
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      };
+    },
+    async infer() {
+      return {
+        output: "ok",
+        diagnostics: {
+          requestShape: "llama.cpp-completion",
+          slotId: 1,
+          tokensCached: 40,
+          timings: {
+            completionTokensPerSecond: 22,
+          },
+        },
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("sub1b"), { provider });
+  await runtime.infer({
+    input: "hello world",
+    maxTokens: 64,
+  });
+
+  const metrics = runtime.metricsSnapshot();
+
+  assert.equal(metrics.gauges["provider.slots.total"], 2);
+  assert.equal(metrics.gauges["provider.slots.processing"], 1);
+  assert.equal(metrics.gauges["provider.slots.idle"], 1);
+  assert.equal(metrics.gauges["provider.slot.last_id"], 1);
+  assert.equal(metrics.gauges["provider.prompt_cache.tokens_cached"], 40);
+  assert.equal(metrics.gauges["provider.prompt_cache.reuse_ratio"], 0.5);
+  assert.equal(metrics.gauges["provider.completion_tps"], 22);
+  assert.ok(typeof metrics.gauges["process.memory.rss_mib"] === "number");
+  assert.ok(typeof metrics.gauges["process.memory.heap_used_mib"] === "number");
+  assert.ok(typeof metrics.gauges["process.cpu.percent"] === "number");
+  assert.ok(typeof metrics.gauges["runtime.event_loop_lag_p95_ms"] === "number");
+  assert.equal(metrics.recent?.lastSlotId, 1);
+  assert.equal(metrics.recent?.lastPromptCacheTokens, 40);
+  assert.equal(metrics.recent?.lastPromptCacheReuseRatio, 0.5);
+});

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "label": "hetzner-cx23-sub1b",
+  "machineClass": "hetzner-cx23",
+  "workloadPath": "./examples/workloads/email-workload.jsonl",
+  "concurrency": 2,
+  "requests": 16,
+  "assertions": {
+    "maxLatencyP95Ms": 1800,
+    "maxQueueDelayP95Ms": 250,
+    "maxTtftP95Ms": 900,
+    "minCompletionTokensPerSecondAvg": 18,
+    "minPromptCacheHitRate": 70,
+    "minPromptCacheReuseRatio": 0.35
+  },
+  "notes": [
+    "Assumes a sub-1B Q4 model on a Hetzner CX23-class 2 vCPU / 4 GB x86 VPS.",
+    "Run against the default ray.sub1b profile or a tuned descendant using the email workload."
+  ]
+}

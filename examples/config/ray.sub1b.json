@@ -6,7 +6,7 @@
     "requestBodyLimitBytes": 48000
   },
   "model": {
-    "id": "razroo-email-ai-qwen0.6b",
+    "id": "qwen2.5-0.5b-instruct-q4_k_m",
     "family": "qwen2.5",
     "quantization": "q4_k_m",
     "contextWindow": 8192,
@@ -15,7 +15,7 @@
     "adapter": {
       "kind": "llama.cpp",
       "baseUrl": "http://127.0.0.1:8081",
-      "modelRef": "qwen2.5-0.6b-razroo-email-ai",
+      "modelRef": "qwen2.5-0.5b-instruct-q4_k_m",
       "timeoutMs": 18000,
       "cachePrompt": true,
       "slotStateTtlMs": 200,
@@ -23,10 +23,10 @@
       "launchProfile": {
         "preset": "single-vps-sub1b-cx23",
         "binaryPath": "/usr/local/bin/llama-server",
-        "modelPath": "/var/lib/ray/models/qwen2.5-0.6b-razroo-email-ai.q4_k_m.gguf",
+        "modelPath": "/var/lib/ray/models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
         "host": "127.0.0.1",
         "port": 8081,
-        "alias": "qwen2.5-0.6b-razroo-email-ai",
+        "alias": "qwen2.5-0.5b-instruct-q4_k_m",
         "ctxSize": 3072,
         "parallel": 2,
         "threads": 2,
@@ -43,25 +43,7 @@
         "enableUnifiedKv": true,
         "cacheIdleSlots": true,
         "contextShift": true
-      },
-      "warmupRequests": [
-        {
-          "templateId": "email.cold_outreach.v1",
-          "templateVariables": {
-            "recipientRole": "CTO",
-            "topic": "developer tooling",
-            "valueProp": "less build waste and faster feedback loops",
-            "companyContext": "startup engineering team shipping multiple times a day"
-          },
-          "maxTokens": 1
-        },
-        {
-          "templateId": "email.reply_classification.v1",
-          "templateVariables": {
-            "replyText": "Sounds interesting, send details."
-          }
-        }
-      ]
+      }
     }
   },
   "scheduler": {
@@ -75,15 +57,6 @@
     "affinityLookahead": 24,
     "shortJobMaxTokens": 96
   },
-  "asyncQueue": {
-    "enabled": true,
-    "storageDir": "/var/lib/ray/async-queue",
-    "pollIntervalMs": 1000,
-    "dispatchConcurrency": 1,
-    "maxAttempts": 3,
-    "callbackTimeoutMs": 5000,
-    "maxCallbackAttempts": 5
-  },
   "cache": {
     "enabled": true,
     "maxEntries": 256,
@@ -95,12 +68,6 @@
     "queueDepthThreshold": 16,
     "maxPromptChars": 6000,
     "degradeToMaxTokens": 128
-  },
-  "promptCompiler": {
-    "enabled": true,
-    "collapseWhitespace": true,
-    "dedupeRepeatedLines": true,
-    "familyMetadataKeys": ["promptFamily", "taskTemplate", "template", "useCase"]
   },
   "adaptiveTuning": {
     "enabled": true,
@@ -128,8 +95,7 @@
     "trustProxyHeaders": true
   },
   "tags": {
-    "integration": "razroo-email-ai",
-    "hardware": "hetzner-cx23",
+    "hardware": "hetzner-cx23-class",
     "engine": "llama.cpp",
     "exposure": "private-local"
   }

@@ -17,7 +17,7 @@ import {
 test("renderSystemdService includes hardening directives", () => {
   const service = renderSystemdService({
     workingDirectory: "/srv/ray",
-    configPath: "/etc/ray/ray.vps.json",
+    configPath: "/etc/ray/ray.sub1b.public.json",
     user: "ray",
     envFile: "/etc/ray/ray.env",
   });
@@ -238,6 +238,20 @@ test("diagnoseConfig warns when cache RAM is left implicit on a small VPS launch
   const diagnostics = diagnoseConfig(config, process.env);
 
   assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "cache_ram_implicit"));
+});
+
+test("diagnoseConfig warns when the cax11 preset is overcommitted", () => {
+  const config = createDefaultConfig("sub1b");
+  assert.equal(config.model.adapter.kind, "llama.cpp");
+  assert.ok(config.model.adapter.launchProfile);
+
+  const launchProfile = config.model.adapter.launchProfile;
+  launchProfile.preset = "single-vps-sub1b-cax11";
+  launchProfile.parallel = 2;
+
+  const diagnostics = diagnoseConfig(config, process.env);
+
+  assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "cax11_parallel_high"));
 });
 
 test("loadAndDiagnoseDeployment errors when the projected memory fit exceeds a 4 GB target", async (t) => {

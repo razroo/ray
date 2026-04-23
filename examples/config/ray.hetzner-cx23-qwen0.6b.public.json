@@ -1,5 +1,5 @@
 {
-  "profile": "vps",
+  "profile": "sub1b",
   "server": {
     "host": "127.0.0.1",
     "port": 3000,
@@ -21,7 +21,7 @@
       "slotStateTtlMs": 200,
       "promptScaffoldCacheEntries": 256,
       "launchProfile": {
-        "preset": "single-vps-sub1b",
+        "preset": "single-vps-sub1b-cx23",
         "binaryPath": "/usr/local/bin/llama-server",
         "modelPath": "/var/lib/ray/models/qwen2.5-0.6b-razroo-email-ai.q4_k_m.gguf",
         "host": "127.0.0.1",

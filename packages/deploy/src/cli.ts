@@ -24,7 +24,7 @@ function parseCliArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
     command,
     cwd: process.cwd(),
-    configPath: "./examples/config/ray.vps.json",
+    configPath: "./examples/config/ray.sub1b.public.json",
     user: "ray",
     domain: "ray.local",
   };

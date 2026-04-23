@@ -4,7 +4,7 @@ This describes a **single-node** setup for **razroo-email-ai**: a **~0.6B Qwen**
 
 ## Target hardware
 
-Typical match: **Hetzner CX23** (2 vCPU, 4 GB RAM) or **CAX11** (2 vCPU, 4 GB). The example config tightens queue, cache size, and output limits compared to the generic [ray.vps.json](../../examples/config/ray.vps.json) (which targets a larger 3B-style model).
+Typical match: **Hetzner CX23** (2 vCPU, 4 GB RAM) with the defaults in [ray.sub1b.public.json](../../examples/config/ray.sub1b.public.json), or **CAX11** (2 vCPU, 4 GB ARM) with the tighter single-slot defaults in [ray.sub1b.cax11.public.json](../../examples/config/ray.sub1b.cax11.public.json). The example config here tightens queue, cache size, and output limits further for the `razroo-email-ai` workload. The older [ray.vps.json](../../examples/config/ray.vps.json) remains the roomier 3B-style OpenAI-compatible path.
 
 ## Example config
 

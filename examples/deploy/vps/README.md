@@ -36,14 +36,29 @@ sudo corepack enable
 
 ### 2. Run a local model backend
 
-Use any lightweight OpenAI-compatible backend you trust. A typical `llama.cpp` shape is:
+Use any lightweight OpenAI-compatible backend you trust. The default Ray `sub1b` profile assumes a CX23-class x86 `llama.cpp` shape close to:
 
 ```bash
 ./llama-server \
   --host 127.0.0.1 \
   --port 8081 \
-  --model /srv/models/qwen2.5-3b-instruct-q4_k_m.gguf \
-  --ctx-size 8192
+  --model /srv/models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+  --alias qwen2.5-0.5b-instruct-q4_k_m \
+  --ctx-size 3072 \
+  --parallel 2 \
+  --threads 2 \
+  --threads-http 2 \
+  --batch-size 256 \
+  --ubatch-size 128 \
+  --cache-prompt \
+  --cache-reuse 256 \
+  --cache-ram 512 \
+  --metrics \
+  --slots \
+  --warmup \
+  --kv-unified \
+  --cache-idle-slots \
+  --context-shift
 ```
 
 ### 3. Build Ray
@@ -57,11 +72,12 @@ pnpm build
 
 ### 4. Place the config
 
-Start from [ray.vps.json](../../config/ray.vps.json) and adjust:
+Start from [ray.sub1b.public.json](../../config/ray.sub1b.public.json) for a public CX23-class VPS, or [ray.sub1b.json](../../config/ray.sub1b.json) for local/private loopback use. For the ARM CAX11 variant, use [ray.sub1b.cax11.public.json](../../config/ray.sub1b.cax11.public.json) or [ray.sub1b.cax11.json](../../config/ray.sub1b.cax11.json). Adjust:
 
 - `model.id`
 - `model.adapter.modelRef`
 - `model.adapter.baseUrl`
+- `model.adapter.launchProfile.modelPath`
 - `auth.enabled`
 - `rateLimit.maxRequests`
 
@@ -69,7 +85,7 @@ Put the final file somewhere stable, for example:
 
 ```bash
 sudo mkdir -p /etc/ray
-sudo cp examples/config/ray.vps.json /etc/ray/ray.vps.json
+sudo cp examples/config/ray.sub1b.public.json /etc/ray/ray.json
 ```
 
 ### 5. Add the environment file
@@ -104,8 +120,9 @@ sudo systemctl reload caddy
 ### 8. Run the deployment checks
 
 ```bash
-pnpm validate:config
+RAY_API_KEYS=replace-with-real-key pnpm validate:config:public
 pnpm doctor
+pnpm benchmark:assert:cx23
 ```
 
 ## Operational Notes
@@ -114,6 +131,7 @@ pnpm doctor
 - Let Ray be the public inference surface.
 - Keep the Ray gateway bound to localhost and expose it through Caddy or nginx.
 - Enable `auth.enabled` before exposing `/v1/infer` publicly.
+- Keep `cacheRamMiB` pinned for `llama.cpp`. The upstream default is too large for a 4 GB VPS.
 - Tune `scheduler.concurrency` conservatively. Tiny hardware collapses faster from overcommit than underutilization.
 - Keep `scheduler.requestTimeoutMs` slightly above `model.adapter.timeoutMs` so provider timeouts remain visible.
 - Keep the cache bounded. Ray is designed to stay predictable under memory pressure.

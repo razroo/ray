@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "label": "hetzner-cax11-sub1b",
+  "machineClass": "hetzner-cax11",
+  "workloadPath": "./examples/workloads/email-workload.jsonl",
+  "concurrency": 2,
+  "requests": 16,
+  "assertions": {
+    "maxLatencyP95Ms": 2400,
+    "maxQueueDelayP95Ms": 500,
+    "maxTtftP95Ms": 1300,
+    "minCompletionTokensPerSecondAvg": 10,
+    "minPromptCacheHitRate": 70,
+    "minPromptCacheReuseRatio": 0.35
+  },
+  "notes": [
+    "Assumes a sub-1B Q4 model on a Hetzner CAX11-class 2 vCPU / 4 GB ARM VPS.",
+    "Run against the ray.sub1b.cax11 profile or a tuned descendant using the email workload."
+  ]
+}

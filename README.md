@@ -43,7 +43,7 @@ Ray is a lightweight inference gateway/runtime built around a few hard constrain
 Phase 1 is intentionally adapter-driven. Ray does not try to embed heavyweight inference kernels into the gateway process. Instead, it provides the control plane that small-model hosting actually needs on day one:
 
 - a simple inference API
-- configuration profiles for tiny, VPS, and balanced setups
+- configuration profiles for tiny, sub1b, VPS, and balanced setups
 - backend-aware health and readiness checks
 - request scheduling and backpressure
 - prompt/result caching
@@ -195,13 +195,15 @@ curl -s http://127.0.0.1:3000/v1/jobs \
 pnpm build
 ```
 
-### VPS profile (OpenAI-compatible backend)
+### Default cheap-VPS profile (sub-1B llama.cpp backend)
 
-Expects an OpenAI-compatible server on `127.0.0.1:8081` (see example configs):
+Expects a local `llama.cpp` server on `127.0.0.1:8081` (see [ray.sub1b.json](examples/config/ray.sub1b.json)). The default sub-1B path is tuned for a CX23-class 2 vCPU / 4 GB x86 VPS; use [ray.sub1b.cax11.json](examples/config/ray.sub1b.cax11.json) for the ARM CAX11 variant.
 
 ```bash
 pnpm start
 ```
+
+For the roomier 3B-style OpenAI-compatible profile, use `pnpm start:vps`.
 
 Deployment walkthrough: [examples/deploy/vps/README.md](examples/deploy/vps/README.md).
 
@@ -211,6 +213,19 @@ Deployment walkthrough: [examples/deploy/vps/README.md](examples/deploy/vps/READ
 pnpm validate:config
 pnpm doctor
 ```
+
+`pnpm doctor` targets the public `sub1b` deploy profile. Run it on the VPS after the GGUF exists at the configured path and `/etc/ray/ray.env` is populated.
+
+### Benchmark Contract
+
+On a real Hetzner box, the benchmark script can now emit structured JSON and assert against checked-in baselines:
+
+```bash
+pnpm benchmark:assert:cx23
+pnpm benchmark:assert:cax11
+```
+
+Those commands write the latest report to `.ray/benchmarks/` and compare the run against the baseline JSON in `examples/benchmarks/baselines/`.
 
 ### Quality gate (matches CI)
 
@@ -225,7 +240,11 @@ That runs lint, Prettier `--check`, and tests (`pnpm test` builds then runs the 
 ## Example config profiles
 
 - [examples/config/ray.tiny.json](examples/config/ray.tiny.json) — mock provider; boots immediately
-- [examples/config/ray.vps.json](examples/config/ray.vps.json) — tuned for a cheap VPS + local OpenAI-compatible backend
+- [examples/config/ray.sub1b.json](examples/config/ray.sub1b.json) — default private/local sub-1B `llama.cpp` profile for CX23-class x86 boxes
+- [examples/config/ray.sub1b.public.json](examples/config/ray.sub1b.public.json) — public-safe CX23-class sub-1B `llama.cpp` profile with auth enabled and bounded cache RAM
+- [examples/config/ray.sub1b.cax11.json](examples/config/ray.sub1b.cax11.json) — private/local CAX11-class ARM variant with tighter queue and single-slot defaults
+- [examples/config/ray.sub1b.cax11.public.json](examples/config/ray.sub1b.cax11.public.json) — public-safe CAX11-class ARM variant
+- [examples/config/ray.vps.json](examples/config/ray.vps.json) — roomier single-node profile for a local OpenAI-compatible 3B-style backend
 - [examples/config/ray.balanced.json](examples/config/ray.balanced.json) — slightly roomier single-node defaults
 - [examples/config/ray.hetzner-cx23-qwen0.6b.public.json](examples/config/ray.hetzner-cx23-qwen0.6b.public.json) — public-safe Hetzner CX23-class (2 vCPU / 4 GB) deployment profile with auth enabled and llama.cpp cache RAM pinned
 - [examples/config/ray.hetzner-cx23-qwen0.6b.json](examples/config/ray.hetzner-cx23-qwen0.6b.json) — local/private Hetzner CX23-class dev profile for the same ~0.6B Qwen workload; see [docs/integrations/razroo-email-ai.md](docs/integrations/razroo-email-ai.md)

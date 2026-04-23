@@ -20,7 +20,7 @@ Ray is being built as a lean inference runtime for cheap VPS hardware. Contribut
 
 1. Install Node 20+ and `pnpm`.
 2. Run `pnpm install`.
-3. Start the gateway with `pnpm dev`.
+3. Start the default sub-1B `llama.cpp` path with `pnpm dev`, or use `pnpm dev:tiny` if you do not have a local model backend running yet.
 4. Build with `pnpm build`.
 5. Run tests with `pnpm test`.
 6. Run `pnpm run release:gate` before opening a PR — same command CI runs (**Quality checks** → **`quality`** job: lint, format check, tests).

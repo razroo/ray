@@ -8,7 +8,7 @@ User=ray
 WorkingDirectory=/srv/ray
 EnvironmentFile=/etc/ray/ray.env
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/node /srv/ray/apps/gateway/dist/index.js --config /etc/ray/ray.vps.json
+ExecStart=/usr/bin/node /srv/ray/apps/gateway/dist/index.js --config /etc/ray/ray.json
 Restart=always
 RestartSec=2
 NoNewPrivileges=true
