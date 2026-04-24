@@ -53,12 +53,15 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
 
-      - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: pnpm
+
+      - name: Enable pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.12.3 --activate
 
       - name: Verify deploy secrets are present
         run: |

@@ -29,13 +29,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
           cache: pnpm
+
+      - name: Enable pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.12.3 --activate
 
       - name: Set version from release tag
         run: |

@@ -1,4 +1,4 @@
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,19 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
 import { createGatewayServer } from "./index.js";
+
+async function closeServer(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
 
 test("gateway rejects inference requests without a valid API key when auth is enabled", async (t) => {
   const config = mergeConfig(createDefaultConfig("tiny"), {
@@ -102,9 +115,6 @@ test("gateway rate limits repeated inference requests", async (t) => {
 
 test("gateway accepts async inference jobs and exposes status retrieval", async (t) => {
   const storageDir = await mkdtemp(join(tmpdir(), "ray-gateway-jobs-"));
-  t.after(async () => {
-    await rm(storageDir, { recursive: true, force: true });
-  });
 
   let callbackPayload: unknown;
   const callbackServer = createServer(async (request, response) => {
@@ -119,7 +129,6 @@ test("gateway accepts async inference jobs and exposes status retrieval", async 
     response.end();
   });
   await new Promise<void>((resolve) => callbackServer.listen(0, "127.0.0.1", resolve));
-  t.after(() => callbackServer.close());
 
   const callbackAddress = callbackServer.address();
   if (!callbackAddress || typeof callbackAddress === "string") {
@@ -149,7 +158,9 @@ test("gateway accepts async inference jobs and exposes status retrieval", async 
   await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
   t.after(async () => {
     await gateway.jobQueue?.stop();
-    gateway.server.close();
+    await closeServer(gateway.server);
+    await closeServer(callbackServer);
+    await rm(storageDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const address = gateway.server.address();
