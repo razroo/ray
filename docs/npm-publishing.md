@@ -2,7 +2,7 @@
 
 Ray publishes **library** packages from this monorepo for TypeScript consumers. The gateway app (`apps/gateway`) stays source-first in the repo and is not published as an npm CLI in this layout.
 
-Push-time automation follows [**geometra**](https://github.com/razroo/geometra)-style naming: [**Quality checks**](../.github/workflows/quality.yml) runs a single job **`quality`** that executes **`pnpm release:gate`** (lint, format check, full test build). Tags and **`gh release create`** follow the **`iso`** pattern ([**ray-core-release.yml**](../.github/workflows/ray-core-release.yml), [**ray-sdk-release.yml**](../.github/workflows/ray-sdk-release.yml)); publish workflows poll for the **`quality`** check run before `npm publish`, same idea as geometra’s release workflow waiting on **`quality`**.
+Push-time automation follows [**geometra**](https://github.com/razroo/geometra)-style naming: [**Quality checks**](../.github/workflows/quality.yml) runs a single job **`quality`** that executes **`pnpm release:gate`** under Node 20 and Node 22. The gate covers lint, format check, full test build, and npm pack smoke checks. Tags and **`gh release create`** follow the **`iso`** pattern ([**ray-core-release.yml**](../.github/workflows/ray-core-release.yml), [**ray-sdk-release.yml**](../.github/workflows/ray-sdk-release.yml)); publish workflows poll for the **`quality`** check run before `npm publish`, same idea as geometra’s release workflow waiting on **`quality`**.
 
 ## Packages
 
@@ -21,7 +21,7 @@ Configure **`NPM_TOKEN`** on the GitHub repo (fine-grained or classic token allo
 
 ### Maintain your machine
 
-- Node 22+ matches CI (Ray still supports Node 20+ locally via `engines`).
+- Node 20+ matches the supported runtime; CI also runs the gate under Node 22.
 - [GitHub CLI](https://cli.github.com/) (`gh`) for releases.
 - `pnpm` 9 and repo install as in the root `README.md`.
 

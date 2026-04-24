@@ -1,4 +1,6 @@
 import { promises as fs } from "node:fs";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import path from "node:path";
 import { normalizeInferenceRequest, type RayRuntime } from "@ray/runtime";
 import { Logger } from "@ray/telemetry";
@@ -70,7 +72,136 @@ function shouldRetryJob(error: unknown): boolean {
   return true;
 }
 
-function normalizeCallbackUrl(callbackUrl: string | undefined): string | undefined {
+function normalizeHostname(hostname: string): string {
+  return hostname
+    .trim()
+    .toLowerCase()
+    .replace(/^\[(.*)\]$/, "$1")
+    .replace(/\.$/, "");
+}
+
+function matchesAllowedHost(hostname: string, allowedHosts: string[]): boolean {
+  const normalized = normalizeHostname(hostname);
+
+  return allowedHosts.some((allowedHost) => {
+    const allowed = normalizeHostname(allowedHost);
+
+    if (allowed.startsWith("*.")) {
+      const suffix = allowed.slice(1);
+      return normalized.endsWith(suffix) && normalized.length > suffix.length;
+    }
+
+    return normalized === allowed;
+  });
+}
+
+function isPrivateIpv4(address: string): boolean {
+  const parts = address.split(".").map((part) => Number.parseInt(part, 10));
+
+  if (
+    parts.length !== 4 ||
+    parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+  ) {
+    return false;
+  }
+
+  const [first = 0, second = 0] = parts;
+
+  return (
+    first === 0 ||
+    first === 10 ||
+    first === 127 ||
+    (first === 100 && second >= 64 && second <= 127) ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168) ||
+    first >= 224
+  );
+}
+
+function isPrivateIpv6(address: string): boolean {
+  const normalized = normalizeHostname(address);
+  const mappedIpv4 = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+
+  if (mappedIpv4?.[1]) {
+    return isPrivateIpv4(mappedIpv4[1]);
+  }
+
+  const firstSegment = normalized.split(":")[0] ?? "";
+
+  return (
+    normalized === "::" ||
+    normalized === "::1" ||
+    normalized.startsWith("fc") ||
+    normalized.startsWith("fd") ||
+    /^fe[89ab]/.test(firstSegment)
+  );
+}
+
+function isPrivateNetworkAddress(address: string): boolean {
+  const version = isIP(address);
+
+  if (version === 4) {
+    return isPrivateIpv4(address);
+  }
+
+  if (version === 6) {
+    return isPrivateIpv6(address);
+  }
+
+  return false;
+}
+
+async function resolveCallbackAddresses(hostname: string): Promise<string[]> {
+  const normalized = normalizeHostname(hostname);
+
+  if (isIP(normalized)) {
+    return [normalized];
+  }
+
+  try {
+    const records = await lookup(normalized, {
+      all: true,
+      verbatim: true,
+    });
+    return records.map((record) => record.address);
+  } catch (error) {
+    throw new RayError("callbackUrl hostname could not be resolved", {
+      code: "invalid_request",
+      status: 400,
+      details: error,
+    });
+  }
+}
+
+async function assertCallbackNetworkAllowed(parsed: URL, config: AsyncQueueConfig): Promise<void> {
+  if (matchesAllowedHost(parsed.hostname, config.callbackAllowedHosts)) {
+    return;
+  }
+
+  if (config.callbackAllowPrivateNetwork) {
+    return;
+  }
+
+  const addresses = await resolveCallbackAddresses(parsed.hostname);
+  const blockedAddress = addresses.find((address) => isPrivateNetworkAddress(address));
+
+  if (blockedAddress) {
+    throw new RayError("callbackUrl resolves to a private or local network address", {
+      code: "invalid_request",
+      status: 400,
+      details: {
+        hostname: parsed.hostname,
+        address: blockedAddress,
+      },
+    });
+  }
+}
+
+async function normalizeCallbackUrl(
+  callbackUrl: string | undefined,
+  config: AsyncQueueConfig,
+): Promise<string | undefined> {
   if (!isNonEmptyString(callbackUrl)) {
     return undefined;
   }
@@ -93,6 +224,8 @@ function normalizeCallbackUrl(callbackUrl: string | undefined): string | undefin
       status: 400,
     });
   }
+
+  await assertCallbackNetworkAllowed(parsed, config);
 
   return parsed.toString();
 }
@@ -176,7 +309,7 @@ export class DurableInferenceQueue {
     await this.ensureReady();
     normalizeInferenceRequest(this.options.runtime.config, cloneRequest(request));
 
-    const callbackUrl = normalizeCallbackUrl(request.callbackUrl);
+    const callbackUrl = await normalizeCallbackUrl(request.callbackUrl, this.options.config);
     const now = new Date().toISOString();
     const job: InferenceJobRecord = {
       id: createRequestId("job"),

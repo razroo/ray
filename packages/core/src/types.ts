@@ -53,6 +53,7 @@ export interface LlamaCppProviderConfig {
   cachePrompt?: boolean;
   slotId?: number;
   slotStateTtlMs?: number;
+  slotSnapshotTimeoutMs?: number;
   promptScaffoldCacheEntries?: number;
   launchProfile?: LlamaCppLaunchProfile;
 }
@@ -129,6 +130,8 @@ export interface AsyncQueueConfig {
   maxAttempts: number;
   callbackTimeoutMs: number;
   maxCallbackAttempts: number;
+  callbackAllowPrivateNetwork: boolean;
+  callbackAllowedHosts: string[];
 }
 
 export interface CacheConfig {
@@ -183,6 +186,7 @@ export interface RateLimitConfig {
   enabled: boolean;
   windowMs: number;
   maxRequests: number;
+  maxKeys: number;
   keyStrategy: RateLimitKeyStrategy;
   trustProxyHeaders: boolean;
 }

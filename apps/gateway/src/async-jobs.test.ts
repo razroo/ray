@@ -80,3 +80,48 @@ test("durable inference queue recovers queued jobs from disk", async () => {
     await rm(storageDir, { recursive: true, force: true });
   }
 });
+
+test("durable inference queue rejects private-network callbacks by default", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-"));
+
+  try {
+    const config = mergeConfig(createDefaultConfig("tiny"), {
+      asyncQueue: {
+        enabled: true,
+        storageDir,
+        pollIntervalMs: 20,
+        dispatchConcurrency: 1,
+        maxAttempts: 2,
+        callbackTimeoutMs: 500,
+        maxCallbackAttempts: 2,
+      },
+      model: {
+        adapter: {
+          kind: "mock",
+          latencyMs: 5,
+        },
+      },
+    });
+    const runtime = createRayRuntime(config);
+    const logger = new Logger("test", "error");
+    const queue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+    });
+
+    await assert.rejects(
+      () =>
+        queue.enqueue({
+          input: "Do not call local callback",
+          callbackUrl: "http://127.0.0.1:8080/callback",
+        }),
+      (error: unknown) =>
+        error instanceof Error &&
+        "code" in error &&
+        (error as { code?: string }).code === "invalid_request",
+    );
+  } finally {
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});

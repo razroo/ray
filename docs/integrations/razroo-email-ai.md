@@ -33,8 +33,9 @@ The gateway exposes:
 - `POST /v1/infer` — synchronous inference (JSON body: `input`, optional `system`, `maxTokens`, `temperature`, `topP`, `seed`, `stop`, `responseFormat`, `cache`, `dedupeKey`, `metadata`).
 - `POST /v1/jobs` — async durable submission (same inference fields, plus optional `callbackUrl`). Returns `202 Accepted` and a job location.
 - `GET /v1/jobs/:id` — durable job state and final result/error.
-- `GET /health` — liveness and queue/provider snapshot, plus `asyncQueue` when enabled.
-- `GET /v1/config` — non-secret config (sanitized).
+- `GET /livez` — lightweight unauthenticated liveness for reverse proxies.
+- `GET /health` — detailed queue/provider snapshot, plus `asyncQueue` when enabled. Public profiles require Bearer auth.
+- `GET /v1/config` — non-secret config (sanitized). Public profiles require Bearer auth.
 
 With the public profile, a minimal `curl` check is:
 
@@ -51,7 +52,7 @@ For `razroo-email-ai`, pass a deterministic `seed` per lead or per variant. That
 
 Use `stop` for hard section boundaries when you know the completion should terminate on a fixed delimiter, and `responseFormat: { "type": "json_object" }` for classification-style calls that need structured output from llama.cpp.
 
-For longer-running or high-volume work, prefer `POST /v1/jobs` over holding an HTTP connection open. Ray persists the job to disk, processes it in the background, and can `POST` the terminal payload to `callbackUrl` when the work completes.
+For longer-running or high-volume work, prefer `POST /v1/jobs` over holding an HTTP connection open. Ray persists the job to disk, processes it in the background, and can `POST` the terminal payload to `callbackUrl` when the work completes. Callback URLs resolve to public network addresses by default; use the async queue allowlist only for explicitly trusted private callbacks.
 
 ## llama.cpp on the same VPS
 

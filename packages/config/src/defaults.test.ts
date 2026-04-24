@@ -39,6 +39,8 @@ test("sub1b profile defaults to a bounded llama.cpp launch profile", () => {
 
   assert.equal(config.model.adapter.launchProfile.preset, "single-vps-sub1b-cx23");
   assert.equal(config.model.adapter.launchProfile.cacheRamMiB, 512);
+  assert.equal(config.model.adapter.slotSnapshotTimeoutMs, 250);
+  assert.equal(config.rateLimit.maxKeys, 4096);
   assert.equal(config.auth.enabled, false);
 });
 

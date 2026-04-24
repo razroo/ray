@@ -20,16 +20,32 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          node-version: "20"
           package-manager-cache: false
 
-      - name: Enable pnpm via Corepack
+      - name: Enable pnpm via Corepack (Node 20)
         run: |
           corepack enable
           corepack prepare pnpm@9.12.3 --activate
 
-      - name: Install dependencies
+      - name: Install dependencies (Node 20)
         run: pnpm install --frozen-lockfile
 
-      - name: Release readiness gate
+      - name: Release readiness gate (Node 20)
+        run: pnpm run release:gate
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Enable pnpm via Corepack (Node 22)
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.12.3 --activate
+
+      - name: Install dependencies (Node 22)
+        run: pnpm install --frozen-lockfile
+
+      - name: Release readiness gate (Node 22)
         run: pnpm run release:gate

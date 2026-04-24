@@ -49,7 +49,7 @@ Phase 1 is intentionally adapter-driven. Ray does not try to embed heavyweight i
 - prompt/result caching
 - request deduplication
 - graceful degradation under tight hardware constraints
-- Bearer API key auth for inference routes
+- Bearer API key auth for inference and detailed operational routes
 - fixed-window rate limiting
 - JSON logging and lightweight metrics
 - deployment scaffolding for a single VPS
@@ -139,7 +139,7 @@ scripts/
 
 The scaffold targets a credible first version:
 
-- `apps/gateway`: HTTP inference gateway with `/v1/infer`, `/v1/jobs`, `/health`, `/metrics`, and `/v1/config`
+- `apps/gateway`: HTTP inference gateway with `/v1/infer`, `/v1/jobs`, `/livez`, `/health`, `/metrics`, and `/v1/config`
 - `packages/runtime`: request normalization, degradation policy, cache integration, and provider orchestration
 - `packages/models`: provider abstraction with `mock` and `openai-compatible` adapters
 - `packages/scheduler`: lightweight queueing, token-aware admission, concurrency limits, and in-flight deduplication
@@ -234,13 +234,13 @@ Those commands write the latest report to `.ray/benchmarks/` and compare the run
 
 ### Quality gate (matches CI)
 
-Same command **[Quality checks](.github/workflows/quality.yml)** runs on **`main`**:
+Same command **[Quality checks](.github/workflows/quality.yml)** runs on **`main`** under Node 20 and Node 22:
 
 ```bash
 pnpm run release:gate
 ```
 
-That runs lint, Prettier `--check`, and tests (`pnpm test` builds then runs the Tap suite).
+That runs lint, Prettier `--check`, tests (`pnpm test` builds then runs the Tap suite), and npm pack smoke checks for the public packages.
 
 ## Example config profiles
 

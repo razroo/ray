@@ -61,6 +61,8 @@ function createContext(signal: AbortSignal): ProviderContext {
         maxAttempts: 2,
         callbackTimeoutMs: 500,
         maxCallbackAttempts: 2,
+        callbackAllowPrivateNetwork: false,
+        callbackAllowedHosts: [],
       },
       cache: {
         enabled: true,
@@ -108,6 +110,7 @@ function createContext(signal: AbortSignal): ProviderContext {
         enabled: false,
         windowMs: 60_000,
         maxRequests: 60,
+        maxKeys: 64,
         keyStrategy: "ip",
         trustProxyHeaders: false,
       },

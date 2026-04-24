@@ -19,9 +19,15 @@ export class FixedWindowRateLimiter {
   constructor(private readonly config: RateLimitConfig) {}
 
   take(key: string, now = Date.now()): RateLimitDecision {
-    const existing = this.entries.get(key);
+    let existing = this.entries.get(key);
 
-    if (!existing || existing.resetAt <= now) {
+    if (existing && existing.resetAt <= now) {
+      this.entries.delete(key);
+      existing = undefined;
+    }
+
+    if (!existing) {
+      this.ensureCapacity(now);
       const resetAt = now + this.config.windowMs;
       this.entries.set(key, {
         count: 1,
@@ -44,6 +50,32 @@ export class FixedWindowRateLimiter {
       remaining: Math.max(this.config.maxRequests - existing.count, 0),
       resetAt: existing.resetAt,
     };
+  }
+
+  private ensureCapacity(now: number): void {
+    if (this.entries.size < this.config.maxKeys) {
+      return;
+    }
+
+    this.pruneExpired(now);
+
+    while (this.entries.size >= this.config.maxKeys) {
+      const oldestKey = this.entries.keys().next().value;
+
+      if (oldestKey === undefined) {
+        break;
+      }
+
+      this.entries.delete(oldestKey);
+    }
+  }
+
+  private pruneExpired(now: number): void {
+    for (const [key, entry] of this.entries.entries()) {
+      if (entry.resetAt <= now) {
+        this.entries.delete(key);
+      }
+    }
   }
 }
 

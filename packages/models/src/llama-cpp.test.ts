@@ -58,6 +58,8 @@ function createContext(model: ModelConfig, signal: AbortSignal): ProviderContext
         maxAttempts: 2,
         callbackTimeoutMs: 500,
         maxCallbackAttempts: 2,
+        callbackAllowPrivateNetwork: false,
+        callbackAllowedHosts: [],
       },
       cache: {
         enabled: true,
@@ -105,6 +107,7 @@ function createContext(model: ModelConfig, signal: AbortSignal): ProviderContext
         enabled: false,
         windowMs: 60_000,
         maxRequests: 60,
+        maxKeys: 64,
         keyStrategy: "ip",
         trustProxyHeaders: false,
       },
@@ -427,8 +430,9 @@ test("llama.cpp provider degrades gracefully when slot snapshots time out", asyn
     throw new Error("Expected a TCP server address");
   }
 
-  const model = createModel(`http://127.0.0.1:${address.port}`, 50, {
+  const model = createModel(`http://127.0.0.1:${address.port}`, 500, {
     slotStateTtlMs: 0,
+    slotSnapshotTimeoutMs: 100,
   });
   const provider = new LlamaCppProvider(model, model.adapter as LlamaCppProviderConfig);
   const context = createContext(model, new AbortController().signal);

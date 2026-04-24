@@ -25,7 +25,7 @@ import {
   normalizeBaseUrl,
 } from "./http.js";
 
-const SLOT_SNAPSHOT_TIMEOUT_MS = 15_000;
+const DEFAULT_SLOT_SNAPSHOT_TIMEOUT_MS = 250;
 const TOKENIZE_TIMEOUT_MS = 30_000;
 
 interface LlamaCppHealthResponse {
@@ -777,7 +777,10 @@ export class LlamaCppProvider implements ModelProvider {
       const payload = await this.request(
         "/slots",
         { method: "GET" },
-        Math.min(this.adapter.timeoutMs, SLOT_SNAPSHOT_TIMEOUT_MS),
+        Math.min(
+          this.adapter.timeoutMs,
+          this.adapter.slotSnapshotTimeoutMs ?? DEFAULT_SLOT_SNAPSHOT_TIMEOUT_MS,
+        ),
         signal,
       );
       snapshots = parseSlotSnapshots(payload);
@@ -986,6 +989,8 @@ export class LlamaCppProvider implements ModelProvider {
           maxAttempts: 1,
           callbackTimeoutMs: 1,
           maxCallbackAttempts: 1,
+          callbackAllowPrivateNetwork: false,
+          callbackAllowedHosts: [],
         },
         cache: {
           enabled: false,
@@ -1032,6 +1037,7 @@ export class LlamaCppProvider implements ModelProvider {
           enabled: false,
           windowMs: 1,
           maxRequests: 1,
+          maxKeys: 1,
           keyStrategy: "ip",
           trustProxyHeaders: false,
         },

@@ -284,7 +284,7 @@ export function renderCaddyfile(options: ReverseProxyOptions): string {
     -Server
   }
   reverse_proxy 127.0.0.1:${options.upstreamPort} {
-    health_uri /health
+    health_uri /livez
     health_interval 15s
   }
 }

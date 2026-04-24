@@ -22,4 +22,4 @@ GitHub branch rules are **not stored in git**; a repo admin applies them in the 
 
 5. Save the ruleset.
 
-After this, contributors cannot merge PRs until lint, format check, and tests match what `pnpm run release:gate` runs locally.
+After this, contributors cannot merge PRs until lint, format check, tests, and npm pack smoke checks match what `pnpm run release:gate` runs locally.

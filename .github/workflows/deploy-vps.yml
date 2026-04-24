@@ -231,5 +231,5 @@ jobs:
           $SUDO systemctl enable --now ray-gateway.service
           $SUDO systemctl restart ray-gateway.service
           sleep 2
-          curl -fsS "http://127.0.0.1:${HEALTH_PORT}/health"
+          curl -fsS "http://127.0.0.1:${HEALTH_PORT}/livez"
           ENDSSH

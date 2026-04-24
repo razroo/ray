@@ -35,7 +35,7 @@ test("renderCaddyfile applies body size and health checks", () => {
   });
 
   assert.match(caddyfile, /max_size 64000/);
-  assert.match(caddyfile, /health_uri \/health/);
+  assert.match(caddyfile, /health_uri \/livez/);
 });
 
 test("diagnoseConfig flags unsafe public deployment defaults", () => {

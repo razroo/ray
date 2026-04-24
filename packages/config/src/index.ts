@@ -302,6 +302,7 @@ function validateConfig(config: RayConfig): RayConfig {
   assertPositiveInteger(config.asyncQueue.maxAttempts, "asyncQueue.maxAttempts");
   assertPositiveInteger(config.asyncQueue.callbackTimeoutMs, "asyncQueue.callbackTimeoutMs");
   assertPositiveInteger(config.asyncQueue.maxCallbackAttempts, "asyncQueue.maxCallbackAttempts");
+  assertStringArray(config.asyncQueue.callbackAllowedHosts, "asyncQueue.callbackAllowedHosts");
   assertPositiveInteger(config.cache.maxEntries, "cache.maxEntries");
   assertPositiveInteger(config.cache.ttlMs, "cache.ttlMs");
   assertPositiveInteger(
@@ -332,6 +333,7 @@ function validateConfig(config: RayConfig): RayConfig {
   );
   assertPositiveInteger(config.rateLimit.windowMs, "rateLimit.windowMs");
   assertPositiveInteger(config.rateLimit.maxRequests, "rateLimit.maxRequests");
+  assertPositiveInteger(config.rateLimit.maxKeys, "rateLimit.maxKeys");
   assertUnitInterval(
     config.adaptiveTuning.maxOutputReductionRatio,
     "adaptiveTuning.maxOutputReductionRatio",
@@ -434,6 +436,18 @@ function validateConfig(config: RayConfig): RayConfig {
         code: "config_validation_error",
         status: 500,
         details: config.model.adapter.slotStateTtlMs,
+      });
+    }
+
+    if (
+      config.model.adapter.slotSnapshotTimeoutMs !== undefined &&
+      (!Number.isInteger(config.model.adapter.slotSnapshotTimeoutMs) ||
+        config.model.adapter.slotSnapshotTimeoutMs <= 0)
+    ) {
+      throw new RayError("model.adapter.slotSnapshotTimeoutMs must be a positive integer", {
+        code: "config_validation_error",
+        status: 500,
+        details: config.model.adapter.slotSnapshotTimeoutMs,
       });
     }
 

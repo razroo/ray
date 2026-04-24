@@ -165,7 +165,8 @@ Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 - Keep the model backend bound to localhost.
 - Let Ray be the public inference surface.
 - Keep the Ray gateway bound to localhost and expose it through Caddy or nginx.
-- Enable `auth.enabled` before exposing `/v1/infer` publicly.
+- Enable `auth.enabled` before exposing Ray publicly; it also protects detailed `/health`, `/metrics`, and `/v1/config` responses.
+- Use `/livez` for reverse-proxy health checks.
 - Keep `cacheRamMiB` pinned for `llama.cpp`. The upstream default is too large for a 4 GB VPS.
 - Tune `scheduler.concurrency` conservatively. Tiny hardware collapses faster from overcommit than underutilization.
 - Keep `scheduler.requestTimeoutMs` slightly above `model.adapter.timeoutMs` so provider timeouts remain visible.

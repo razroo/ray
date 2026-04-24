@@ -56,6 +56,44 @@ test("gateway rejects inference requests without a valid API key when auth is en
   assert.equal(body.error.code, "unauthorized");
 });
 
+test("gateway protects detailed operational endpoints when auth is enabled", async (t) => {
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    auth: {
+      enabled: true,
+    },
+  });
+  const gateway = createGatewayServer({
+    config,
+    env: {
+      RAY_API_KEYS: "secret-token",
+    },
+  });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const livez = await fetch(`${baseUrl}/livez`);
+  assert.equal(livez.status, 200);
+
+  for (const pathname of ["/health", "/metrics", "/v1/config"]) {
+    const rejected = await fetch(`${baseUrl}${pathname}`);
+    assert.equal(rejected.status, 401);
+  }
+
+  const accepted = await fetch(`${baseUrl}/health`, {
+    headers: {
+      authorization: "Bearer secret-token",
+    },
+  });
+  assert.equal(accepted.status, 200);
+});
+
 test("gateway rate limits repeated inference requests", async (t) => {
   const config = mergeConfig(createDefaultConfig("tiny"), {
     auth: {
@@ -144,6 +182,7 @@ test("gateway accepts async inference jobs and exposes status retrieval", async 
       maxAttempts: 2,
       callbackTimeoutMs: 500,
       maxCallbackAttempts: 2,
+      callbackAllowedHosts: ["127.0.0.1"],
     },
     model: {
       adapter: {

@@ -111,7 +111,7 @@ function buildRateLimitHeaders(decision: {
   };
 }
 
-function authorizeInferenceRoute(
+function authorizeProtectedRoute(
   request: IncomingMessage,
   response: ServerResponse,
   options: CreateGatewayHandlerOptions,
@@ -128,7 +128,7 @@ function authorizeInferenceRoute(
       {
         error: {
           code: "unauthorized",
-          message: "A valid Bearer API key is required for inference requests",
+          message: "A valid Bearer API key is required for this request",
         },
       },
       {
@@ -227,7 +227,20 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
         return;
       }
 
+      if (request.method === "GET" && url.pathname === "/livez") {
+        writeJson(response, 200, {
+          status: "ok",
+          service: "ray-gateway",
+        });
+        return;
+      }
+
       if (request.method === "GET" && url.pathname === "/health") {
+        const bearerToken = authorizeProtectedRoute(request, response, options, runtime, apiKeys);
+        if (options.config.auth.enabled && bearerToken === undefined) {
+          return;
+        }
+
         const health = await runtime.health();
         if (jobQueue) {
           health.asyncQueue = jobQueue.snapshot();
@@ -237,17 +250,27 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
       }
 
       if (request.method === "GET" && url.pathname === "/metrics") {
+        const bearerToken = authorizeProtectedRoute(request, response, options, runtime, apiKeys);
+        if (options.config.auth.enabled && bearerToken === undefined) {
+          return;
+        }
+
         writeJson(response, 200, runtime.metricsSnapshot());
         return;
       }
 
       if (request.method === "GET" && url.pathname === "/v1/config") {
+        const bearerToken = authorizeProtectedRoute(request, response, options, runtime, apiKeys);
+        if (options.config.auth.enabled && bearerToken === undefined) {
+          return;
+        }
+
         writeJson(response, 200, runtime.sanitizedConfig());
         return;
       }
 
       if (request.method === "POST" && url.pathname === "/v1/infer") {
-        const bearerToken = authorizeInferenceRoute(request, response, options, runtime, apiKeys);
+        const bearerToken = authorizeProtectedRoute(request, response, options, runtime, apiKeys);
         if (options.config.auth.enabled && bearerToken === undefined) {
           return;
         }
@@ -274,7 +297,7 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
       }
 
       if (request.method === "POST" && url.pathname === "/v1/jobs") {
-        const bearerToken = authorizeInferenceRoute(request, response, options, runtime, apiKeys);
+        const bearerToken = authorizeProtectedRoute(request, response, options, runtime, apiKeys);
         if (options.config.auth.enabled && bearerToken === undefined) {
           return;
         }
@@ -315,7 +338,7 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
       }
 
       if (request.method === "GET" && /^\/v1\/jobs\/[^/]+$/.test(url.pathname)) {
-        const bearerToken = authorizeInferenceRoute(request, response, options, runtime, apiKeys);
+        const bearerToken = authorizeProtectedRoute(request, response, options, runtime, apiKeys);
         if (options.config.auth.enabled && bearerToken === undefined) {
           return;
         }
