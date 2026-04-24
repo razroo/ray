@@ -41,6 +41,7 @@ jobs:
       RAY_DEPLOY_SSH_KEY: ${{ secrets.RAY_DEPLOY_SSH_KEY }}
       RAY_DEPLOY_KNOWN_HOSTS: ${{ secrets.RAY_DEPLOY_KNOWN_HOSTS }}
       RAY_ENV_FILE_CONTENTS: ${{ secrets.RAY_ENV_FILE_CONTENTS }}
+      RAY_CONFIG_JSON: ${{ secrets.RAY_CONFIG_JSON }}
       RAY_DEPLOY_SSH_USER: ${{ vars.RAY_DEPLOY_SSH_USER }}
       RAY_CONFIG_PATH_VAR: ${{ vars.RAY_CONFIG_PATH }}
       RAY_NODE_MAJOR: ${{ vars.RAY_NODE_MAJOR }}
@@ -78,14 +79,23 @@ jobs:
           CONFIG_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.config_path || '' }}
         run: |
           set -euo pipefail
+          CONFIG_SOURCE="repo"
           CONFIG_PATH="${CONFIG_INPUT:-${RAY_CONFIG_PATH_VAR:-./examples/config/ray.sub1b.public.json}}"
 
-          if [ ! -f "$CONFIG_PATH" ]; then
+          if [ -n "${RAY_CONFIG_JSON:-}" ]; then
+            printf '%s\n' "$RAY_CONFIG_JSON" > .ray-deploy-config.json
+            CONFIG_PATH=".ray-deploy-config.json"
+            CONFIG_SOURCE="secret"
+          elif [ ! -f "$CONFIG_PATH" ]; then
             echo "::error::Config file not found: $CONFIG_PATH"
             exit 1
           fi
 
-          CONFIG_REL="${CONFIG_PATH#./}"
+          CONFIG_REL=""
+          if [ "$CONFIG_SOURCE" = "repo" ]; then
+            CONFIG_REL="${CONFIG_PATH#./}"
+          fi
+
           HEALTH_PORT=$(CONFIG_PATH="$CONFIG_PATH" node --input-type=module <<'EOF'
           import { loadRayConfig } from "./packages/config/dist/index.js";
 
@@ -99,6 +109,7 @@ jobs:
           )
 
           echo "config_path=$CONFIG_PATH" >> "$GITHUB_OUTPUT"
+          echo "config_source=$CONFIG_SOURCE" >> "$GITHUB_OUTPUT"
           echo "config_rel=$CONFIG_REL" >> "$GITHUB_OUTPUT"
           echo "health_port=$HEALTH_PORT" >> "$GITHUB_OUTPUT"
 
@@ -168,6 +179,7 @@ jobs:
       - name: Install config, env, and restart service
         env:
           SSH_USER: ${{ vars.RAY_DEPLOY_SSH_USER }}
+          CONFIG_SOURCE: ${{ steps.settings.outputs.config_source }}
           CONFIG_REL: ${{ steps.settings.outputs.config_rel }}
           HEALTH_PORT: ${{ steps.settings.outputs.health_port }}
         run: |
@@ -175,9 +187,10 @@ jobs:
           SSH_USER="${SSH_USER:-root}"
           TARGET="$SSH_USER@$RAY_DEPLOY_HOST"
           ENV_B64="$(printf '%s' "${RAY_ENV_FILE_CONTENTS:-}" | base64 -w 0)"
+          CONFIG_B64="$(printf '%s' "${RAY_CONFIG_JSON:-}" | base64 -w 0)"
 
           ssh -i ~/.ssh/deploy_key "$TARGET" \
-            "CONFIG_REL=$CONFIG_REL HEALTH_PORT=$HEALTH_PORT ENV_B64=$ENV_B64 bash -s" <<'ENDSSH'
+            "CONFIG_SOURCE=$CONFIG_SOURCE CONFIG_REL=$CONFIG_REL CONFIG_B64=$CONFIG_B64 HEALTH_PORT=$HEALTH_PORT ENV_B64=$ENV_B64 bash -s" <<'ENDSSH'
           set -euo pipefail
 
           SUDO=""
@@ -193,7 +206,11 @@ jobs:
           cd /srv/ray
           $SUDO pnpm install --prod --frozen-lockfile --ignore-scripts
 
-          $SUDO cp "/srv/ray/$CONFIG_REL" /etc/ray/ray.json
+          if [ "${CONFIG_SOURCE:-repo}" = "secret" ] && [ -n "${CONFIG_B64:-}" ]; then
+            printf '%s' "$CONFIG_B64" | base64 -d | $SUDO tee /etc/ray/ray.json >/dev/null
+          else
+            $SUDO cp "/srv/ray/$CONFIG_REL" /etc/ray/ray.json
+          fi
           if [ -n "${ENV_B64:-}" ]; then
             printf '%s' "$ENV_B64" | base64 -d | $SUDO tee /etc/ray/ray.env >/dev/null
           else

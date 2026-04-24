@@ -136,6 +136,7 @@ Set these GitHub secrets in your own repo or fork:
 - `RAY_DEPLOY_HOST` — VPS hostname or IP
 - `RAY_DEPLOY_SSH_KEY` — private SSH key for the deploy user
 - `RAY_DEPLOY_KNOWN_HOSTS` — `known_hosts` entry for the VPS
+- `RAY_CONFIG_JSON` — optional full Ray config JSON to write to `/etc/ray/ray.json`
 - `RAY_ENV_FILE_CONTENTS` — optional complete contents of `/etc/ray/ray.env`
 
 Optional repository variables:
@@ -144,6 +145,10 @@ Optional repository variables:
 - `RAY_CONFIG_PATH` — repo-relative config path to install, defaults to `./examples/config/ray.sub1b.public.json`
 - `RAY_NODE_MAJOR` — Node major version to install on the VPS when missing, defaults to `22`
 - `RAY_AUTO_DEPLOY` — set to `true` if pushes to `main` should auto-deploy
+
+Use `RAY_CONFIG_JSON` when the live deployment needs host-specific or private
+settings that should not live in the public repository. If `RAY_CONFIG_JSON` is
+present, it takes precedence over `RAY_CONFIG_PATH`.
 
 `RAY_ENV_FILE_CONTENTS` is the right place for auth keys or env overrides, for example:
 
