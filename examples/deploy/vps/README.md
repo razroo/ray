@@ -74,7 +74,7 @@ pnpm build
 
 ### 4. Place the config
 
-Start from [ray.sub1b.public.json](../../config/ray.sub1b.public.json) for a public CX23-class VPS, or [ray.sub1b.json](../../config/ray.sub1b.json) for local/private loopback use. For the ARM CAX11 variant, use [ray.sub1b.cax11.public.json](../../config/ray.sub1b.cax11.public.json) or [ray.sub1b.cax11.json](../../config/ray.sub1b.cax11.json). For better 1B-class email inference, use [ray.1b.public.json](../../config/ray.1b.public.json) on 4 GB or [ray.1b.8gb.public.json](../../config/ray.1b.8gb.public.json) on 8 GB. Adjust:
+Start from [ray.sub1b.public.json](../../config/ray.sub1b.public.json) for a public CX23-class VPS, or [ray.sub1b.json](../../config/ray.sub1b.json) for local/private loopback use. For the ARM CAX11 variant, use [ray.sub1b.cax11.public.json](../../config/ray.sub1b.cax11.public.json) or [ray.sub1b.cax11.json](../../config/ray.sub1b.cax11.json). For below-1B role-specific tuning, use [ray.sub1b.classifier.json](../../config/ray.sub1b.classifier.json) for short JSON/classifier traffic or [ray.sub1b.drafter.json](../../config/ray.sub1b.drafter.json) for draft generation. For better 1B-class email inference, use [ray.1b.public.json](../../config/ray.1b.public.json) on 4 GB or [ray.1b.8gb.public.json](../../config/ray.1b.8gb.public.json) on 8 GB. Adjust:
 
 - `model.id`
 - `model.adapter.modelRef`

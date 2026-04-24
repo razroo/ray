@@ -323,7 +323,23 @@ export interface ProviderHealthSnapshot {
   status: ProviderHealthStatus;
   checkedAt: string;
   latencyMs?: number;
+  detectedCapabilities?: ProviderDetectedCapabilities;
   details?: Record<string, unknown>;
+}
+
+export type ProviderCapabilityStatus = "available" | "unavailable" | "unknown";
+
+export interface ProviderDetectedCapabilities {
+  modelRef?: string;
+  backendModel?: string;
+  launchPreset?: string;
+  applyTemplate: ProviderCapabilityStatus;
+  chatTemplate: ProviderCapabilityStatus;
+  jsonMode: ProviderCapabilityStatus;
+  contextWindow?: number;
+  totalSlots?: number;
+  promptFormatPreference?: "native-template" | "openai-chat" | "plain-completion";
+  errors?: Record<string, string>;
 }
 
 export interface ProviderTimings {
@@ -348,6 +364,11 @@ export interface SchedulerSlotSnapshot {
 export interface ProviderDiagnostics {
   requestShape?: "openai-chat" | "llama.cpp-completion";
   promptFormat?: "llama.cpp-template" | "prompt-scaffold" | "ray-chat-fallback";
+  promptFormatReason?: string;
+  modelRef?: string;
+  backendModel?: string;
+  launchPreset?: string;
+  totalSlots?: number;
   slotId?: number;
   preferredSlot?: number;
   tokensCached?: number;

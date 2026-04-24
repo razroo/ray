@@ -1,0 +1,76 @@
+{
+  "profile": "sub1b",
+  "model": {
+    "maxOutputTokens": 96,
+    "operational": {
+      "recommendedPromptFormat": "native-template",
+      "supportsJsonMode": true,
+      "tokensPerSecondTarget": 22,
+      "memoryClassMiB": 4096,
+      "preferredCtxSize": 2048,
+      "chatTemplateKnown": true
+    },
+    "adapter": {
+      "kind": "llama.cpp",
+      "timeoutMs": 12000,
+      "slotSnapshotTimeoutMs": 200,
+      "promptScaffoldCacheEntries": 256,
+      "warmupRequests": [
+        {
+          "templateId": "email.reply_classification.v1",
+          "templateVariables": {
+            "replyText": "Send pricing and implementation details."
+          },
+          "maxTokens": 64,
+          "seed": 11
+        }
+      ],
+      "launchProfile": {
+        "preset": "single-vps-sub1b-cx23",
+        "binaryPath": "/usr/local/bin/llama-server",
+        "modelPath": "/var/lib/ray/models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        "host": "127.0.0.1",
+        "port": 8081,
+        "alias": "qwen2.5-0.5b-instruct-q4_k_m",
+        "ctxSize": 2048,
+        "parallel": 2,
+        "threads": 2,
+        "threadsHttp": 2,
+        "batchSize": 256,
+        "ubatchSize": 128,
+        "cachePrompt": true,
+        "cacheReuse": 192,
+        "cacheRamMiB": 384,
+        "continuousBatching": true,
+        "enableMetrics": true,
+        "exposeSlots": true,
+        "warmup": true,
+        "enableUnifiedKv": true,
+        "cacheIdleSlots": true,
+        "contextShift": true
+      }
+    }
+  },
+  "scheduler": {
+    "concurrency": 2,
+    "maxQueue": 96,
+    "maxQueuedTokens": 16000,
+    "maxInflightTokens": 2048,
+    "requestTimeoutMs": 14000,
+    "dedupeInflight": true,
+    "batchWindowMs": 5,
+    "affinityLookahead": 24,
+    "shortJobMaxTokens": 64
+  },
+  "gracefulDegradation": {
+    "queueDepthThreshold": 18,
+    "maxPromptChars": 3500,
+    "degradeToMaxTokens": 64
+  },
+  "tags": {
+    "target": "sub1b",
+    "modelRole": "classifier",
+    "modelSize": "0.5b-class",
+    "hardware": "hetzner-cx23-class"
+  }
+}

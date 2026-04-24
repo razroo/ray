@@ -1,0 +1,114 @@
+[
+  {
+    "templateId": "email.cold_outreach.v1",
+    "templateVariables": {
+      "recipientRole": "VP Revenue Operations",
+      "topic": "reducing slow lead follow-up",
+      "valueProp": "turn CRM context into ready-to-edit follow-up drafts",
+      "companyContext": "B2B SaaS team with high inbound volume"
+    },
+    "temperature": 0.35,
+    "topP": 0.85,
+    "seed": 301,
+    "metadata": {
+      "useCase": "razroo-email-ai",
+      "promptFamily": "eval.email.cold_outreach",
+      "evalSet": "email-prompt-families-1b"
+    },
+    "benchmark": {
+      "minOutputChars": 120,
+      "maxOutputChars": 850,
+      "mustNotContain": [
+        "I hope this finds you well",
+        "mutually beneficial",
+        "at your earliest convenience"
+      ],
+      "noPromptEcho": true
+    }
+  },
+  {
+    "templateId": "email.follow_up.v1",
+    "templateVariables": {
+      "recipientRole": "Head of Customer Success",
+      "previousTopic": "prioritizing churn-risk accounts",
+      "reasonToReply": "their team needs clearer follow-up tasks after renewal calls"
+    },
+    "temperature": 0.3,
+    "topP": 0.85,
+    "seed": 302,
+    "metadata": {
+      "useCase": "razroo-email-ai",
+      "promptFamily": "eval.email.follow_up",
+      "evalSet": "email-prompt-families-1b"
+    },
+    "benchmark": {
+      "minOutputChars": 90,
+      "maxOutputChars": 700,
+      "mustNotContain": ["just checking in", "touching base"],
+      "noPromptEcho": true
+    }
+  },
+  {
+    "templateId": "email.reply_classification.v1",
+    "templateVariables": {
+      "replyText": "Loop me in after QBRs are done. Budget is tight, but this could help the team if implementation is light."
+    },
+    "temperature": 0,
+    "topP": 0.8,
+    "seed": 303,
+    "metadata": {
+      "useCase": "razroo-email-ai",
+      "promptFamily": "eval.email.reply_classification",
+      "evalSet": "email-prompt-families-1b"
+    },
+    "benchmark": {
+      "requiresValidJson": true,
+      "mustContain": ["sentiment", "intent", "urgency"],
+      "maxOutputChars": 500,
+      "noPromptEcho": true
+    }
+  },
+  {
+    "templateId": "email.reply_rewrite.v1",
+    "templateVariables": {
+      "rewriteGoal": "Sound confident and concise.",
+      "replyText": "Maybe send the overview and I can see if there is time to review it later."
+    },
+    "temperature": 0.25,
+    "topP": 0.85,
+    "seed": 304,
+    "stop": ["\n\nOriginal reply:"],
+    "metadata": {
+      "useCase": "razroo-email-ai",
+      "promptFamily": "eval.email.reply_rewrite",
+      "evalSet": "email-prompt-families-1b"
+    },
+    "benchmark": {
+      "minOutputChars": 50,
+      "maxOutputChars": 550,
+      "stopMustNotAppear": true,
+      "noPromptEcho": true
+    }
+  },
+  {
+    "input": "Write one concise outbound email body section. Audience: CFO. Product context: an AI assistant that turns account notes into clean renewal follow-up drafts. Constraint: no greeting, no subject line, no markdown, no more than 80 words.",
+    "system": "You write short B2B email sections. Return only the section text.",
+    "maxTokens": 100,
+    "temperature": 0.35,
+    "topP": 0.85,
+    "seed": 305,
+    "stop": ["Subject:", "```"],
+    "metadata": {
+      "useCase": "razroo-email-ai",
+      "promptFamily": "eval.email.section_generation",
+      "evalSet": "email-prompt-families-1b"
+    },
+    "benchmark": {
+      "minOutputChars": 70,
+      "maxOutputChars": 600,
+      "mustNotContain": ["Subject:", "```", "I hope this finds you well"],
+      "stopMustNotAppear": true,
+      "noPromptEcho": true
+    }
+  }
+]

@@ -6,6 +6,7 @@ import {
   type ModelConfig,
   type ModelProvider,
   type NormalizedInferenceRequest,
+  type ProviderDetectedCapabilities,
   type ProviderContext,
   type ProviderHealthSnapshot,
   type ProviderRequestPreparation,
@@ -27,6 +28,7 @@ import {
 
 const DEFAULT_SLOT_SNAPSHOT_TIMEOUT_MS = 250;
 const TOKENIZE_TIMEOUT_MS = 30_000;
+const CAPABILITY_CACHE_TTL_MS = 60_000;
 
 interface LlamaCppHealthResponse {
   status?: string;
@@ -113,12 +115,22 @@ interface PromptPreparation {
   prompt: string;
   diagnostics: {
     promptFormat: "llama.cpp-template" | "prompt-scaffold" | "ray-chat-fallback";
+    promptFormatReason: string;
+    modelRef?: string;
+    backendModel?: string;
+    launchPreset?: string;
+    totalSlots?: number;
   };
 }
 
 interface CachedSlotState {
   checkedAtMs: number;
   slots: SchedulerSlotSnapshot[];
+}
+
+interface CachedBackendCapabilities {
+  checkedAtMs: number;
+  capabilities: ProviderDetectedCapabilities;
 }
 
 function buildChatMessages(
@@ -259,6 +271,7 @@ export class LlamaCppProvider implements ModelProvider {
   private readonly maxPromptTokenCacheEntries = 1024;
   private readonly maxPromptScaffoldEntries: number;
   private slotStateCache: CachedSlotState | undefined;
+  private backendCapabilitiesCache: CachedBackendCapabilities | undefined;
 
   constructor(
     private readonly model: ModelConfig,
@@ -269,6 +282,8 @@ export class LlamaCppProvider implements ModelProvider {
   }
 
   async warm(): Promise<void> {
+    await this.detectCapabilities(undefined, { force: true, includeJsonProbe: true });
+
     const warmupRequests =
       this.adapter.warmupRequests && this.adapter.warmupRequests.length > 0
         ? this.adapter.warmupRequests
@@ -306,9 +321,9 @@ export class LlamaCppProvider implements ModelProvider {
     const startedAt = Date.now();
 
     try {
-      const [healthProbe, propsProbe, slotProbe] = await Promise.allSettled([
+      const [healthProbe, capabilityProbe, slotProbe] = await Promise.allSettled([
         this.fetchHealthPayload(),
-        this.request("/props", { method: "GET" }, Math.min(this.adapter.timeoutMs, 5_000)),
+        this.detectCapabilities(undefined, { includeJsonProbe: false }),
         this.getSlotSnapshots(),
       ]);
 
@@ -316,8 +331,8 @@ export class LlamaCppProvider implements ModelProvider {
       const latencyMs = Date.now() - startedAt;
       const healthPayload =
         healthProbe.status === "fulfilled" ? healthProbe.value.payload : undefined;
-      const propsPayload =
-        propsProbe.status === "fulfilled" ? (propsProbe.value as LlamaCppPropsResponse) : undefined;
+      const detectedCapabilities =
+        capabilityProbe.status === "fulfilled" ? capabilityProbe.value : undefined;
       const slotSnapshots = slotProbe.status === "fulfilled" ? slotProbe.value : undefined;
       const healthStatus = healthPayload?.status?.toLowerCase() ?? "unknown";
       let status: ProviderHealthSnapshot["status"] = "unknown";
@@ -330,7 +345,7 @@ export class LlamaCppProvider implements ModelProvider {
         status = "ready";
       } else if (
         healthProbe.status === "fulfilled" ||
-        propsProbe.status === "fulfilled" ||
+        capabilityProbe.status === "fulfilled" ||
         slotProbe.status === "fulfilled"
       ) {
         status = "ready";
@@ -342,29 +357,28 @@ export class LlamaCppProvider implements ModelProvider {
         status,
         checkedAt,
         latencyMs,
+        ...(detectedCapabilities ? { detectedCapabilities } : {}),
         details: {
-          probe: "/health + /props + /slots",
+          probe: "/health + capabilities + /slots",
           modelRef: this.adapter.modelRef,
           slotsIdle: healthPayload?.slots_idle,
           slotsProcessing: healthPayload?.slots_processing,
           slots: slotSnapshots,
-          totalSlots: propsPayload?.total_slots,
-          chatTemplate:
-            typeof propsPayload?.chat_template === "string"
-              ? propsPayload.chat_template.slice(0, 120)
-              : undefined,
-          contextWindow:
-            propsPayload?.default_generation_settings?.n_ctx ?? this.model.contextWindow,
-          backendModel: propsPayload?.default_generation_settings?.model,
+          totalSlots: detectedCapabilities?.totalSlots,
+          contextWindow: detectedCapabilities?.contextWindow ?? this.model.contextWindow,
+          backendModel: detectedCapabilities?.backendModel,
+          applyTemplate: detectedCapabilities?.applyTemplate,
+          chatTemplate: detectedCapabilities?.chatTemplate,
+          jsonMode: detectedCapabilities?.jsonMode,
           familyPreferredSlots: Object.fromEntries(this.familyPreferredSlots.entries()),
           ...(healthProbe.status === "rejected"
             ? {
                 healthError: toErrorMessage(healthProbe.reason),
               }
             : {}),
-          ...(propsProbe.status === "rejected"
+          ...(capabilityProbe.status === "rejected"
             ? {
-                propsError: toErrorMessage(propsProbe.reason),
+                capabilitiesError: toErrorMessage(capabilityProbe.reason),
               }
             : {}),
           ...(slotProbe.status === "rejected"
@@ -386,6 +400,139 @@ export class LlamaCppProvider implements ModelProvider {
     }
   }
 
+  private async detectCapabilities(
+    signal?: AbortSignal,
+    options: {
+      force?: boolean;
+      includeJsonProbe?: boolean;
+    } = {},
+  ): Promise<ProviderDetectedCapabilities> {
+    if (
+      !options.force &&
+      this.backendCapabilitiesCache &&
+      Date.now() - this.backendCapabilitiesCache.checkedAtMs < CAPABILITY_CACHE_TTL_MS &&
+      (!options.includeJsonProbe ||
+        this.backendCapabilitiesCache.capabilities.jsonMode !== "unknown")
+    ) {
+      return this.backendCapabilitiesCache.capabilities;
+    }
+
+    const errors: Record<string, string> = {};
+    const [propsProbe, applyTemplateProbe] = await Promise.allSettled([
+      this.request("/props", { method: "GET" }, Math.min(this.adapter.timeoutMs, 5_000), signal),
+      this.probeApplyTemplate(signal),
+    ]);
+    const propsPayload =
+      propsProbe.status === "fulfilled" ? (propsProbe.value as LlamaCppPropsResponse) : undefined;
+    const applyTemplate =
+      applyTemplateProbe.status === "fulfilled" && applyTemplateProbe.value
+        ? "available"
+        : "unavailable";
+    const chatTemplate =
+      typeof propsPayload?.chat_template === "string" && propsPayload.chat_template.length > 0
+        ? "available"
+        : propsProbe.status === "fulfilled"
+          ? "unavailable"
+          : "unknown";
+    let jsonMode: ProviderDetectedCapabilities["jsonMode"] =
+      this.backendCapabilitiesCache?.capabilities.jsonMode ?? "unknown";
+
+    if (propsProbe.status === "rejected") {
+      errors.props = toErrorMessage(propsProbe.reason);
+    }
+
+    if (applyTemplateProbe.status === "rejected") {
+      errors.applyTemplate = toErrorMessage(applyTemplateProbe.reason);
+    }
+
+    if (options.includeJsonProbe) {
+      try {
+        jsonMode = (await this.probeJsonMode(signal)) ? "available" : "unavailable";
+      } catch (error) {
+        jsonMode = "unavailable";
+        errors.jsonMode = toErrorMessage(error);
+      }
+    }
+
+    const capabilities: ProviderDetectedCapabilities = {
+      modelRef: this.adapter.modelRef,
+      ...(this.adapter.launchProfile?.preset
+        ? { launchPreset: this.adapter.launchProfile.preset }
+        : {}),
+      applyTemplate,
+      chatTemplate,
+      jsonMode,
+      ...(typeof propsPayload?.default_generation_settings?.model === "string"
+        ? { backendModel: propsPayload.default_generation_settings.model }
+        : {}),
+      ...(typeof propsPayload?.default_generation_settings?.n_ctx === "number"
+        ? { contextWindow: propsPayload.default_generation_settings.n_ctx }
+        : { contextWindow: this.model.contextWindow }),
+      ...(typeof propsPayload?.total_slots === "number"
+        ? { totalSlots: propsPayload.total_slots }
+        : {}),
+      ...(this.model.operational?.recommendedPromptFormat
+        ? { promptFormatPreference: this.model.operational.recommendedPromptFormat }
+        : {}),
+      ...(Object.keys(errors).length > 0 ? { errors } : {}),
+    };
+
+    this.backendCapabilitiesCache = {
+      checkedAtMs: Date.now(),
+      capabilities,
+    };
+    return capabilities;
+  }
+
+  private async probeApplyTemplate(signal?: AbortSignal): Promise<boolean> {
+    const payload = (await this.request(
+      "/apply-template",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          messages: [
+            { role: "system", content: "You are a liveness probe." },
+            { role: "user", content: "ping" },
+          ],
+        }),
+      },
+      Math.min(this.adapter.timeoutMs, 2_500),
+      signal,
+    )) as LlamaCppApplyTemplateResponse;
+
+    return typeof payload.prompt === "string" && payload.prompt.length > 0;
+  }
+
+  private async probeJsonMode(signal?: AbortSignal): Promise<boolean> {
+    const payload = (await this.request(
+      "/v1/chat/completions",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          model: this.adapter.modelRef,
+          stream: false,
+          temperature: 0,
+          max_tokens: 8,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "Return only compact JSON." },
+            { role: "user", content: 'Return {"ok":true}.' },
+          ],
+        }),
+      },
+      Math.min(this.adapter.timeoutMs, 5_000),
+      signal,
+    )) as OpenAICompatibleResponse;
+    const output = extractAssistantText(payload);
+
+    try {
+      JSON.parse(output);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async prepare(
     request: NormalizedInferenceRequest,
     context: ProviderContext,
@@ -401,8 +548,15 @@ export class LlamaCppProvider implements ModelProvider {
       };
     }
 
-    const slots = await this.getSlotSnapshots(context.signal);
-    const promptPreparation = await this.preparePrompt(request, context.signal);
+    const [slots, detectedCapabilities] = await Promise.all([
+      this.getSlotSnapshots(context.signal),
+      this.detectCapabilities(context.signal, { includeJsonProbe: false }),
+    ]);
+    const promptPreparation = await this.preparePrompt(
+      request,
+      context.signal,
+      detectedCapabilities,
+    );
     const promptTokens = await this.countPromptTokens(promptPreparation.prompt, context.signal);
     const slotSelection = this.selectPreferredSlot(context.affinityKey, slots);
     const requestShape =
@@ -422,11 +576,13 @@ export class LlamaCppProvider implements ModelProvider {
       diagnostics: {
         requestShape,
         ...promptPreparation.diagnostics,
+        ...(detectedCapabilities.contextWindow
+          ? { contextWindow: detectedCapabilities.contextWindow }
+          : {}),
         ...(slotSelection.preferredSlot !== undefined
           ? { preferredSlot: slotSelection.preferredSlot }
           : {}),
         ...(slotSelection.routeReason ? { slotRouteReason: slotSelection.routeReason } : {}),
-        contextWindow: this.model.contextWindow,
       },
     };
 
@@ -493,6 +649,21 @@ export class LlamaCppProvider implements ModelProvider {
         requestShape: "openai-chat",
         ...(preparation.diagnostics?.promptFormat
           ? { promptFormat: preparation.diagnostics.promptFormat }
+          : {}),
+        ...(preparation.diagnostics?.promptFormatReason
+          ? { promptFormatReason: preparation.diagnostics.promptFormatReason }
+          : {}),
+        ...(preparation.diagnostics?.modelRef
+          ? { modelRef: preparation.diagnostics.modelRef }
+          : {}),
+        ...(preparation.diagnostics?.backendModel
+          ? { backendModel: preparation.diagnostics.backendModel }
+          : {}),
+        ...(preparation.diagnostics?.launchPreset
+          ? { launchPreset: preparation.diagnostics.launchPreset }
+          : {}),
+        ...(typeof preparation.diagnostics?.totalSlots === "number"
+          ? { totalSlots: preparation.diagnostics.totalSlots }
           : {}),
         ...(preparation.preferredSlot !== undefined
           ? { preferredSlot: preparation.preferredSlot }
@@ -577,6 +748,21 @@ export class LlamaCppProvider implements ModelProvider {
         ...(preparation.diagnostics?.promptFormat
           ? { promptFormat: preparation.diagnostics.promptFormat }
           : {}),
+        ...(preparation.diagnostics?.promptFormatReason
+          ? { promptFormatReason: preparation.diagnostics.promptFormatReason }
+          : {}),
+        ...(preparation.diagnostics?.modelRef
+          ? { modelRef: preparation.diagnostics.modelRef }
+          : {}),
+        ...(preparation.diagnostics?.backendModel
+          ? { backendModel: preparation.diagnostics.backendModel }
+          : {}),
+        ...(preparation.diagnostics?.launchPreset
+          ? { launchPreset: preparation.diagnostics.launchPreset }
+          : {}),
+        ...(typeof preparation.diagnostics?.totalSlots === "number"
+          ? { totalSlots: preparation.diagnostics.totalSlots }
+          : {}),
         ...(slotId !== undefined ? { slotId } : {}),
         ...(preparation.preferredSlot !== undefined
           ? { preferredSlot: preparation.preferredSlot }
@@ -597,7 +783,42 @@ export class LlamaCppProvider implements ModelProvider {
   private async preparePrompt(
     request: NormalizedInferenceRequest,
     signal?: AbortSignal,
+    detectedCapabilities?: ProviderDetectedCapabilities,
   ): Promise<PromptPreparation> {
+    const capabilities =
+      detectedCapabilities ?? (await this.detectCapabilities(signal, { includeJsonProbe: false }));
+    const baseDiagnostics = {
+      modelRef: this.adapter.modelRef,
+      ...(capabilities.backendModel ? { backendModel: capabilities.backendModel } : {}),
+      ...(this.adapter.launchProfile?.preset
+        ? { launchPreset: this.adapter.launchProfile.preset }
+        : {}),
+      ...(typeof capabilities.totalSlots === "number"
+        ? { totalSlots: capabilities.totalSlots }
+        : {}),
+    };
+    const preferredFormat = this.model.operational?.recommendedPromptFormat;
+
+    if (
+      preferredFormat === "plain-completion" ||
+      capabilities.applyTemplate === "unavailable" ||
+      capabilities.chatTemplate === "unavailable"
+    ) {
+      return {
+        prompt: this.buildFallbackPrompt(request),
+        diagnostics: {
+          promptFormat: "ray-chat-fallback",
+          promptFormatReason:
+            preferredFormat === "plain-completion"
+              ? "model prefers plain completion"
+              : capabilities.applyTemplate === "unavailable"
+                ? "llama.cpp /apply-template unavailable"
+                : "llama.cpp chat template unavailable",
+          ...baseDiagnostics,
+        },
+      };
+    }
+
     if (request.promptTemplateId && request.templateVariables) {
       try {
         const scaffold = await this.getPromptScaffold(
@@ -609,6 +830,8 @@ export class LlamaCppProvider implements ModelProvider {
           prompt: this.renderPromptFromScaffold(scaffold, request.templateVariables),
           diagnostics: {
             promptFormat: "prompt-scaffold",
+            promptFormatReason: "template request reused cached llama.cpp scaffold",
+            ...baseDiagnostics,
           },
         };
       } catch (error) {
@@ -617,6 +840,8 @@ export class LlamaCppProvider implements ModelProvider {
             prompt: this.buildFallbackPrompt(request),
             diagnostics: {
               promptFormat: "ray-chat-fallback",
+              promptFormatReason: `prompt scaffold failed: ${toErrorMessage(error)}`,
+              ...baseDiagnostics,
             },
           };
         }
@@ -630,6 +855,8 @@ export class LlamaCppProvider implements ModelProvider {
         prompt: await this.applyTemplate(request, signal),
         diagnostics: {
           promptFormat: "llama.cpp-template",
+          promptFormatReason: "llama.cpp native template applied",
+          ...baseDiagnostics,
         },
       };
     } catch (error) {
@@ -638,6 +865,8 @@ export class LlamaCppProvider implements ModelProvider {
           prompt: this.buildFallbackPrompt(request),
           diagnostics: {
             promptFormat: "ray-chat-fallback",
+            promptFormatReason: `native template failed: ${toErrorMessage(error)}`,
+            ...baseDiagnostics,
           },
         };
       }

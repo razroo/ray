@@ -77,8 +77,18 @@ interface InferenceResponse {
   };
   diagnostics?: {
     provider?: {
+      requestShape?: "openai-chat" | "llama.cpp-completion";
+      promptFormat?: "llama.cpp-template" | "prompt-scaffold" | "ray-chat-fallback";
+      promptFormatReason?: string;
+      modelRef?: string;
+      backendModel?: string;
+      launchPreset?: string;
+      totalSlots?: number;
       tokensCached?: number;
       slotId?: number;
+      preferredSlot?: number;
+      slotRouteReason?: string;
+      contextWindow?: number;
       timings?: {
         ttftMs?: number;
         completionTokensPerSecond?: number;
@@ -87,10 +97,28 @@ interface InferenceResponse {
   };
 }
 
+type BenchmarkProviderDiagnostics = NonNullable<
+  NonNullable<InferenceResponse["diagnostics"]>["provider"]
+>;
+
 interface BenchmarkSample {
   request: BenchmarkWorkloadItem;
   response: InferenceResponse;
   wallTimeMs: number;
+}
+
+interface BenchmarkProviderDiagnosticsSummary {
+  requestShapes: Record<string, number>;
+  promptFormats: Record<string, number>;
+  promptFormatReasons: Record<string, number>;
+  slotRouteReasons: Record<string, number>;
+  modelRefs: Record<string, number>;
+  backendModels: Record<string, number>;
+  launchPresets: Record<string, number>;
+  totalSlots?: number;
+  contextWindowP50?: number;
+  slotReuseRate?: number;
+  cachedTokensAvg?: number;
 }
 
 interface BenchmarkSummary {
@@ -115,6 +143,7 @@ interface BenchmarkSummary {
   validJsonRate?: number;
   promptEchoRejects?: number;
   qualityFailures?: number;
+  providerDiagnostics?: BenchmarkProviderDiagnosticsSummary;
   score?: number;
 }
 
@@ -442,6 +471,20 @@ function uniqueIntegers(values: number[]): number[] {
   return [...new Set(values.map((value) => Math.max(1, Math.round(value))))];
 }
 
+function countOccurrences(values: Array<string | undefined>): Record<string, number> {
+  const counts: Record<string, number> = {};
+
+  for (const value of values) {
+    if (!value) {
+      continue;
+    }
+
+    counts[value] = (counts[value] ?? 0) + 1;
+  }
+
+  return counts;
+}
+
 function scoreSummary(summary: BenchmarkSummary): number {
   const emailsPerHour = summary.emailsPerHour ?? 0;
   const latencyPenalty = (summary.latencyP95Ms ?? summary.latencyP50Ms ?? 0) / 1_000;
@@ -594,14 +637,24 @@ async function invoke(
 ): Promise<BenchmarkSample> {
   const inferenceRequest = stripBenchmarkFields(request);
   const startedAt = Date.now();
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/infer`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-    },
-    body: JSON.stringify(inferenceRequest),
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/infer`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+      },
+      body: JSON.stringify(inferenceRequest),
+    });
+  } catch (error) {
+    throw new Error(
+      `Benchmark could not reach Ray at ${baseUrl}. Start the gateway and backend first. Cause: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 
   if (!response.ok) {
     const body = await response.text();
@@ -704,6 +757,60 @@ async function runBenchmark(options: {
   const promptEchoRejects = qualityResults.filter((failures) =>
     failures.includes("prompt_echo"),
   ).length;
+  const providerDiagnostics = responses
+    .map((response) => response.diagnostics?.provider)
+    .filter(
+      (diagnostics): diagnostics is BenchmarkProviderDiagnostics => diagnostics !== undefined,
+    );
+  const cachedTokenValues = providerDiagnostics
+    .map((diagnostics) => diagnostics.tokensCached)
+    .filter((value): value is number => typeof value === "number" && value >= 0);
+  const contextWindowValues = providerDiagnostics
+    .map((diagnostics) => diagnostics.contextWindow)
+    .filter((value): value is number => typeof value === "number" && value > 0);
+  const routedSlotSamples = providerDiagnostics.filter(
+    (diagnostics) =>
+      typeof diagnostics.slotId === "number" && typeof diagnostics.preferredSlot === "number",
+  );
+  const reusedSlotSamples = routedSlotSamples.filter(
+    (diagnostics) => diagnostics.slotId === diagnostics.preferredSlot,
+  );
+  const totalSlots = [...providerDiagnostics]
+    .reverse()
+    .find((diagnostics) => typeof diagnostics.totalSlots === "number")?.totalSlots;
+  const providerDiagnosticsSummary: BenchmarkProviderDiagnosticsSummary | undefined =
+    providerDiagnostics.length > 0
+      ? {
+          requestShapes: countOccurrences(
+            providerDiagnostics.map((diagnostics) => diagnostics.requestShape),
+          ),
+          promptFormats: countOccurrences(
+            providerDiagnostics.map((diagnostics) => diagnostics.promptFormat),
+          ),
+          promptFormatReasons: countOccurrences(
+            providerDiagnostics.map((diagnostics) => diagnostics.promptFormatReason),
+          ),
+          slotRouteReasons: countOccurrences(
+            providerDiagnostics.map((diagnostics) => diagnostics.slotRouteReason),
+          ),
+          modelRefs: countOccurrences(
+            providerDiagnostics.map((diagnostics) => diagnostics.modelRef),
+          ),
+          backendModels: countOccurrences(
+            providerDiagnostics.map((diagnostics) => diagnostics.backendModel),
+          ),
+          launchPresets: countOccurrences(
+            providerDiagnostics.map((diagnostics) => diagnostics.launchPreset),
+          ),
+          ...(typeof totalSlots === "number" ? { totalSlots } : {}),
+          contextWindowP50: quantile(contextWindowValues, 0.5),
+          slotReuseRate:
+            routedSlotSamples.length > 0
+              ? (reusedSlotSamples.length / routedSlotSamples.length) * 100
+              : undefined,
+          cachedTokensAvg: mean(cachedTokenValues),
+        }
+      : undefined;
 
   const summary: BenchmarkSummary = {
     label: options.label,
@@ -733,6 +840,7 @@ async function runBenchmark(options: {
     validJsonRate: jsonRequests > 0 ? (validJsonResponses / jsonRequests) * 100 : undefined,
     promptEchoRejects,
     qualityFailures: qualityResults.length - qualityPasses,
+    ...(providerDiagnosticsSummary ? { providerDiagnostics: providerDiagnosticsSummary } : {}),
   };
   summary.score = scoreSummary(summary);
   return summary;
@@ -766,6 +874,22 @@ function printSummary(summary: BenchmarkSummary): void {
       summary.validJsonRate,
     )}% failures=${summary.qualityFailures ?? 0} promptEcho=${summary.promptEchoRejects ?? 0}`,
   );
+  if (summary.providerDiagnostics) {
+    console.log(
+      `Provider: promptFormats=${JSON.stringify(
+        summary.providerDiagnostics.promptFormats,
+      )} requestShapes=${JSON.stringify(summary.providerDiagnostics.requestShapes)}`,
+    );
+    console.log(
+      `Provider: slotReuse=${formatNumber(
+        summary.providerDiagnostics.slotReuseRate,
+      )}% cachedTokensAvg=${formatNumber(
+        summary.providerDiagnostics.cachedTokensAvg,
+      )} ctxP50=${formatNumber(summary.providerDiagnostics.contextWindowP50)} totalSlots=${
+        summary.providerDiagnostics.totalSlots ?? "n/a"
+      }`,
+    );
+  }
   console.log(`Emails/hour: ${formatNumber(summary.emailsPerHour)}`);
   console.log(`Score: ${formatNumber(summary.score, 2)}`);
 }

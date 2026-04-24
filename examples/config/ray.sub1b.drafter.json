@@ -1,0 +1,64 @@
+{
+  "profile": "sub1b",
+  "model": {
+    "maxOutputTokens": 180,
+    "operational": {
+      "recommendedPromptFormat": "native-template",
+      "supportsJsonMode": true,
+      "tokensPerSecondTarget": 16,
+      "memoryClassMiB": 4096,
+      "preferredCtxSize": 3072,
+      "chatTemplateKnown": true
+    },
+    "adapter": {
+      "kind": "llama.cpp",
+      "timeoutMs": 18000,
+      "slotSnapshotTimeoutMs": 250,
+      "promptScaffoldCacheEntries": 384,
+      "warmupRequests": [
+        {
+          "templateId": "email.cold_outreach.v1",
+          "templateVariables": {
+            "recipientRole": "VP Revenue Operations",
+            "topic": "faster follow-up drafting",
+            "valueProp": "turn CRM context into first-pass replies",
+            "companyContext": "B2B SaaS team"
+          },
+          "maxTokens": 120,
+          "seed": 21
+        },
+        {
+          "templateId": "email.reply_rewrite.v1",
+          "templateVariables": {
+            "rewriteGoal": "Sound clear and helpful.",
+            "replyText": "I can take a look next week if you send details."
+          },
+          "maxTokens": 100,
+          "seed": 22
+        }
+      ]
+    }
+  },
+  "scheduler": {
+    "concurrency": 2,
+    "maxQueue": 72,
+    "maxQueuedTokens": 22000,
+    "maxInflightTokens": 4096,
+    "requestTimeoutMs": 20000,
+    "dedupeInflight": true,
+    "batchWindowMs": 10,
+    "affinityLookahead": 24,
+    "shortJobMaxTokens": 96
+  },
+  "gracefulDegradation": {
+    "queueDepthThreshold": 14,
+    "maxPromptChars": 5500,
+    "degradeToMaxTokens": 112
+  },
+  "tags": {
+    "target": "sub1b",
+    "modelRole": "drafter",
+    "modelSize": "0.5b-class",
+    "hardware": "hetzner-cx23-class"
+  }
+}

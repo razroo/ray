@@ -225,6 +225,10 @@ test("llama.cpp provider uses native completion diagnostics and exact tokenizati
   assert.equal(health.status, "ready");
   assert.equal(health.details?.slotsIdle, 1);
   assert.equal(health.details?.contextWindow, 8192);
+  assert.equal(health.detectedCapabilities?.applyTemplate, "available");
+  assert.equal(health.detectedCapabilities?.chatTemplate, "available");
+  assert.equal(health.detectedCapabilities?.backendModel, "qwen2.5-0.6b-q4");
+  assert.equal(health.detectedCapabilities?.totalSlots, 2);
 
   const preparation = await provider.prepare(
     {
@@ -265,6 +269,9 @@ test("llama.cpp provider uses native completion diagnostics and exact tokenizati
   });
   assert.equal(result.diagnostics?.requestShape, "llama.cpp-completion");
   assert.equal(result.diagnostics?.promptFormat, "llama.cpp-template");
+  assert.equal(result.diagnostics?.promptFormatReason, "llama.cpp native template applied");
+  assert.equal(result.diagnostics?.backendModel, "qwen2.5-0.6b-q4");
+  assert.equal(result.diagnostics?.totalSlots, 2);
   assert.equal(result.diagnostics?.tokensCached, 3);
   assert.equal(result.diagnostics?.slotId, 0);
   assert.equal(result.diagnostics?.timings?.ttftMs, 40);
@@ -357,6 +364,7 @@ test("llama.cpp provider falls back when native prompt templating is unavailable
 
   assert.equal(result.output, "A concise fallback completion.");
   assert.equal(result.diagnostics?.promptFormat, "ray-chat-fallback");
+  assert.equal(result.diagnostics?.promptFormatReason, "llama.cpp /apply-template unavailable");
   assert.match(String(completionBody?.prompt ?? ""), /System:\nKeep it direct\./);
   assert.match(String(completionBody?.prompt ?? ""), /User:\nWrite one sentence\./);
   assert.ok(seenPaths.includes("/apply-template"));

@@ -19,6 +19,8 @@ Use [ray.hetzner-cx23-qwen0.6b.public.json](../../examples/config/ray.hetzner-cx
 
 For the 1B path, use [ray.1b.public.json](../../examples/config/ray.1b.public.json) or [ray.1b.8gb.public.json](../../examples/config/ray.1b.8gb.public.json) instead. These profiles switch the default GGUF path to `qwen2.5-1.5b-instruct-q4_k_m.gguf`, add model operational metadata, and keep the 4 GB profile single-slot to avoid memory pressure.
 
+For below-1B split-role experiments, use [ray.sub1b.classifier.json](../../examples/config/ray.sub1b.classifier.json) for short JSON/classification traffic and [ray.sub1b.drafter.json](../../examples/config/ray.sub1b.drafter.json) for draft generation. These stay on the 0.5B-class GGUF path but use different output caps, warmups, and scheduler pressure limits.
+
 ## Local development (this repo)
 
 ```bash
@@ -65,6 +67,8 @@ pnpm autotune:1b
 ```
 
 The workload in [email-1b-workload.jsonl](../../examples/workloads/email-1b-workload.jsonl) exercises cold outreach, follow-up, reply classification, reply rewrite, and a direct section-generation prompt shaped like the app's product flow. It asserts JSON validity for classification and rejects common prompt echo, stop-token leakage, and generic email filler.
+
+[email-prompt-families-1b.json](../../examples/evals/email-prompt-families-1b.json) is the smaller golden eval set for prompt wording changes. Run it with `pnpm eval:prompt-families:1b` against a live Ray gateway. The output includes provider diagnostics for `promptFormat`, `promptFormatReason`, `modelRef`, `launchPreset`, cached tokens, slot reuse, and context window.
 
 For longer-running or high-volume work, prefer `POST /v1/jobs` over holding an HTTP connection open. Ray persists the job to disk, processes it in the background, and can `POST` the terminal payload to `callbackUrl` when the work completes. Callback URLs resolve to public network addresses by default; use the async queue allowlist only for explicitly trusted private callbacks.
 

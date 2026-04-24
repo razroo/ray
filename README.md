@@ -243,6 +243,14 @@ pnpm benchmark:assert:8gb:1b
 
 Those commands write the latest report to `.ray/benchmarks/` and compare the run against the baseline JSON in `examples/benchmarks/baselines/`. The 1B workload also checks simple output quality signals such as JSON validity, prompt echo, stop-token leakage, and generic email filler.
 
+For prompt-family quality checks across cold outreach, follow-up, classification, rewrite, and section generation:
+
+```bash
+pnpm eval:prompt-families:1b
+```
+
+The structured benchmark output includes provider diagnostics such as prompt format, request shape, model ref, launch preset, slot reuse, cached tokens, and context window so a quality regression can be tied back to the backend path Ray chose.
+
 ### Quality gate (matches CI)
 
 Same command **[Quality checks](.github/workflows/quality.yml)** runs on **`main`** under Node 20 and Node 22:
@@ -260,6 +268,8 @@ That runs lint, Prettier `--check`, tests (`pnpm test` builds then runs the Tap 
 - [examples/config/ray.sub1b.public.json](examples/config/ray.sub1b.public.json) — public-safe CX23-class sub-1B `llama.cpp` profile with auth enabled and bounded cache RAM
 - [examples/config/ray.sub1b.cax11.json](examples/config/ray.sub1b.cax11.json) — private/local CAX11-class ARM variant with tighter queue and single-slot defaults
 - [examples/config/ray.sub1b.cax11.public.json](examples/config/ray.sub1b.cax11.public.json) — public-safe CAX11-class ARM variant
+- [examples/config/ray.sub1b.classifier.json](examples/config/ray.sub1b.classifier.json) — below-1B classifier-oriented profile with shorter outputs, JSON-mode warmup, and tighter context
+- [examples/config/ray.sub1b.drafter.json](examples/config/ray.sub1b.drafter.json) — below-1B email drafting profile with warmer prompt-family defaults
 - [examples/config/ray.1b.json](examples/config/ray.1b.json) — private/local 1B-class `llama.cpp` profile for 4 GB CX23-class boxes
 - [examples/config/ray.1b.public.json](examples/config/ray.1b.public.json) — public-safe 4 GB 1B-class profile with auth and async queue enabled
 - [examples/config/ray.1b.8gb.json](examples/config/ray.1b.8gb.json) — private/local 1B-class profile for 8 GB single-node boxes
