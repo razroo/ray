@@ -25,6 +25,9 @@ import {
   normalizeBaseUrl,
 } from "./http.js";
 
+const SLOT_SNAPSHOT_TIMEOUT_MS = 15_000;
+const TOKENIZE_TIMEOUT_MS = 30_000;
+
 interface LlamaCppHealthResponse {
   status?: string;
   slots_idle?: number;
@@ -644,7 +647,7 @@ export class LlamaCppProvider implements ModelProvider {
           add_special: false,
         }),
       },
-      Math.min(this.adapter.timeoutMs, 10_000),
+      Math.min(this.adapter.timeoutMs, TOKENIZE_TIMEOUT_MS),
       signal,
     )) as LlamaCppTokenizeResponse;
 
@@ -774,21 +777,30 @@ export class LlamaCppProvider implements ModelProvider {
       const payload = await this.request(
         "/slots",
         { method: "GET" },
-        Math.min(this.adapter.timeoutMs, 5_000),
+        Math.min(this.adapter.timeoutMs, SLOT_SNAPSHOT_TIMEOUT_MS),
         signal,
       );
       snapshots = parseSlotSnapshots(payload);
     } catch (error) {
-      if (
-        error instanceof RayError &&
-        error.code === "provider_upstream_error" &&
-        /\b404\b/.test(error.message)
-      ) {
-        this.slotStateCache = {
-          checkedAtMs: now,
-          slots: [],
-        };
-        return [];
+      if (error instanceof RayError) {
+        if (error.code === "provider_upstream_error" && /\b404\b/.test(error.message)) {
+          this.slotStateCache = {
+            checkedAtMs: now,
+            slots: [],
+          };
+          return [];
+        }
+
+        // Slot snapshots improve affinity and queueing, but inference can still
+        // proceed safely without them on small single-node backends.
+        if (error.code === "provider_timeout" || error.code === "provider_request_failed") {
+          const fallbackSlots = this.slotStateCache?.slots ?? [];
+          this.slotStateCache = {
+            checkedAtMs: now,
+            slots: fallbackSlots,
+          };
+          return fallbackSlots;
+        }
       }
       throw error;
     }
