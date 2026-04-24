@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "label": "single-node-8gb-1b",
+  "machineClass": "single-node-8gb",
+  "workloadPath": "./examples/workloads/email-1b-workload.jsonl",
+  "concurrency": 2,
+  "requests": 16,
+  "assertions": {
+    "maxLatencyP95Ms": 5000,
+    "maxQueueDelayP95Ms": 450,
+    "maxTtftP95Ms": 2200,
+    "minCompletionTokensPerSecondAvg": 14,
+    "minQualityPassRate": 85,
+    "minValidJsonRate": 100
+  },
+  "notes": [
+    "Assumes a Qwen2.5 1.5B-class Q4 model on an 8 GB single-node VPS.",
+    "Run against the ray.1b.8gb profile or a tuned descendant using the 1B email workload.",
+    "The 8 GB profile keeps two llama.cpp slots and a larger context window for parallel email drafting."
+  ]
+}

@@ -43,7 +43,7 @@ Ray is a lightweight inference gateway/runtime built around a few hard constrain
 Phase 1 is intentionally adapter-driven. Ray does not try to embed heavyweight inference kernels into the gateway process. Instead, it provides the control plane that small-model hosting actually needs on day one:
 
 - a simple inference API
-- configuration profiles for tiny, sub1b, VPS, and balanced setups
+- configuration profiles for tiny, sub1b, 1b, VPS, and balanced setups
 - backend-aware health and readiness checks
 - request scheduling and backpressure
 - prompt/result caching
@@ -205,6 +205,15 @@ pnpm start
 
 For the roomier 3B-style OpenAI-compatible profile, use `pnpm start:vps`.
 
+### 1B llama.cpp profile
+
+Use the 1B profile when the product needs better instruction following than the sub-1B default and can tolerate lower throughput on the same cheap-VPS class. The default [ray.1b.json](examples/config/ray.1b.json) target is a conservative 4 GB CX23-class single-slot setup for a Qwen2.5 1.5B Q4 GGUF. The [ray.1b.8gb.json](examples/config/ray.1b.8gb.json) variant raises context, cache, and parallelism for an 8 GB single node.
+
+```bash
+pnpm start:1b
+pnpm start:1b:8gb
+```
+
 Deployment walkthrough: [examples/deploy/vps/README.md](examples/deploy/vps/README.md).
 
 The repo also includes an opt-in GitHub Actions VPS deploy workflow for the
@@ -228,9 +237,11 @@ On a real Hetzner box, the benchmark script can now emit structured JSON and ass
 ```bash
 pnpm benchmark:assert:cx23
 pnpm benchmark:assert:cax11
+pnpm benchmark:assert:cx23:1b
+pnpm benchmark:assert:8gb:1b
 ```
 
-Those commands write the latest report to `.ray/benchmarks/` and compare the run against the baseline JSON in `examples/benchmarks/baselines/`.
+Those commands write the latest report to `.ray/benchmarks/` and compare the run against the baseline JSON in `examples/benchmarks/baselines/`. The 1B workload also checks simple output quality signals such as JSON validity, prompt echo, stop-token leakage, and generic email filler.
 
 ### Quality gate (matches CI)
 
@@ -249,6 +260,10 @@ That runs lint, Prettier `--check`, tests (`pnpm test` builds then runs the Tap 
 - [examples/config/ray.sub1b.public.json](examples/config/ray.sub1b.public.json) — public-safe CX23-class sub-1B `llama.cpp` profile with auth enabled and bounded cache RAM
 - [examples/config/ray.sub1b.cax11.json](examples/config/ray.sub1b.cax11.json) — private/local CAX11-class ARM variant with tighter queue and single-slot defaults
 - [examples/config/ray.sub1b.cax11.public.json](examples/config/ray.sub1b.cax11.public.json) — public-safe CAX11-class ARM variant
+- [examples/config/ray.1b.json](examples/config/ray.1b.json) — private/local 1B-class `llama.cpp` profile for 4 GB CX23-class boxes
+- [examples/config/ray.1b.public.json](examples/config/ray.1b.public.json) — public-safe 4 GB 1B-class profile with auth and async queue enabled
+- [examples/config/ray.1b.8gb.json](examples/config/ray.1b.8gb.json) — private/local 1B-class profile for 8 GB single-node boxes
+- [examples/config/ray.1b.8gb.public.json](examples/config/ray.1b.8gb.public.json) — public-safe 8 GB 1B-class profile
 - [examples/config/ray.vps.json](examples/config/ray.vps.json) — roomier single-node profile for a local OpenAI-compatible 3B-style backend
 - [examples/config/ray.balanced.json](examples/config/ray.balanced.json) — slightly roomier single-node defaults
 - [examples/config/ray.hetzner-cx23-qwen0.6b.public.json](examples/config/ray.hetzner-cx23-qwen0.6b.public.json) — public-safe Hetzner CX23-class (2 vCPU / 4 GB) deployment profile with auth enabled and llama.cpp cache RAM pinned

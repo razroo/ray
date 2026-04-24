@@ -34,13 +34,30 @@ interface InferenceRequest {
   maxTokens?: number;
   temperature?: number;
   topP?: number;
+  seed?: number;
   stop?: string[];
   responseFormat?: {
     type: "text" | "json_object";
   };
+  cache?: boolean;
+  dedupeKey?: string;
   metadata?: Record<string, string>;
   templateId?: string;
   templateVariables?: Record<string, string | number | boolean>;
+}
+
+interface BenchmarkQualityAssertions {
+  requiresValidJson?: boolean;
+  minOutputChars?: number;
+  maxOutputChars?: number;
+  mustContain?: string[];
+  mustNotContain?: string[];
+  noPromptEcho?: boolean;
+  stopMustNotAppear?: boolean;
+}
+
+interface BenchmarkWorkloadItem extends InferenceRequest {
+  benchmark?: BenchmarkQualityAssertions;
 }
 
 interface InferenceResponse {
@@ -71,6 +88,7 @@ interface InferenceResponse {
 }
 
 interface BenchmarkSample {
+  request: BenchmarkWorkloadItem;
   response: InferenceResponse;
   wallTimeMs: number;
 }
@@ -93,6 +111,10 @@ interface BenchmarkSummary {
   emailsPerHour?: number;
   wallTimeMs: number;
   clientLatencyP50Ms?: number;
+  qualityPassRate?: number;
+  validJsonRate?: number;
+  promptEchoRejects?: number;
+  qualityFailures?: number;
   score?: number;
 }
 
@@ -125,6 +147,8 @@ interface BenchmarkBaselineAssertions {
   minPromptCacheHitRate?: number;
   minPromptCacheReuseRatio?: number;
   minEmailsPerHour?: number;
+  minQualityPassRate?: number;
+  minValidJsonRate?: number;
 }
 
 interface BenchmarkBaseline {
@@ -195,7 +219,7 @@ interface AutotuneOutput {
   recommendedPatch: DeepPartial<RayConfig>;
 }
 
-const defaultWorkload: InferenceRequest[] = [
+const defaultWorkload: BenchmarkWorkloadItem[] = [
   {
     templateId: "email.cold_outreach.v1",
     templateVariables: {
@@ -355,7 +379,7 @@ function printUsage(): void {
   console.log(`Auth fallback env: ${BENCHMARK_API_KEY_ENV}`);
 }
 
-async function loadWorkload(workloadPath?: string): Promise<InferenceRequest[]> {
+async function loadWorkload(workloadPath?: string): Promise<BenchmarkWorkloadItem[]> {
   if (!workloadPath) {
     return defaultWorkload;
   }
@@ -369,14 +393,14 @@ async function loadWorkload(workloadPath?: string): Promise<InferenceRequest[]> 
   }
 
   if (trimmed.startsWith("[")) {
-    return JSON.parse(trimmed) as InferenceRequest[];
+    return JSON.parse(trimmed) as BenchmarkWorkloadItem[];
   }
 
   return trimmed
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line) as InferenceRequest);
+    .map((line) => JSON.parse(line) as BenchmarkWorkloadItem);
 }
 
 async function loadBaseline(baselinePath: string): Promise<BenchmarkBaseline> {
@@ -423,7 +447,89 @@ function scoreSummary(summary: BenchmarkSummary): number {
   const latencyPenalty = (summary.latencyP95Ms ?? summary.latencyP50Ms ?? 0) / 1_000;
   const queuePenalty = (summary.queueDelayP95Ms ?? summary.queueDelayP50Ms ?? 0) / 1_000;
   const throughputBonus = (summary.completionTokensPerSecondAvg ?? 0) / 100;
-  return emailsPerHour / Math.max(1, 1 + latencyPenalty + queuePenalty) + throughputBonus;
+  const qualityMultiplier = (summary.qualityPassRate ?? 100) / 100;
+  return (
+    (emailsPerHour / Math.max(1, 1 + latencyPenalty + queuePenalty) + throughputBonus) *
+    qualityMultiplier
+  );
+}
+
+function stripBenchmarkFields(request: BenchmarkWorkloadItem): InferenceRequest {
+  const inferenceRequest = { ...request };
+  delete inferenceRequest.benchmark;
+  return inferenceRequest;
+}
+
+function normalizeForQuality(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function containsPromptEcho(request: BenchmarkWorkloadItem, output: string): boolean {
+  const input = normalizeForQuality(request.input ?? "");
+  const renderedVariables = Object.values(request.templateVariables ?? {})
+    .map((value) => normalizeForQuality(String(value)))
+    .filter((value) => value.length >= 24);
+  const candidates = [input, ...renderedVariables].filter((value) => value.length >= 32);
+  const normalizedOutput = normalizeForQuality(output);
+
+  return candidates.some((candidate) => normalizedOutput.includes(candidate.slice(0, 96)));
+}
+
+function resolveQualityAssertions(request: BenchmarkWorkloadItem): BenchmarkQualityAssertions {
+  return {
+    ...(request.responseFormat?.type === "json_object" ? { requiresValidJson: true } : {}),
+    ...(request.stop && request.stop.length > 0 ? { stopMustNotAppear: true } : {}),
+    ...(request.benchmark ?? {}),
+  };
+}
+
+function evaluateQuality(request: BenchmarkWorkloadItem, response: InferenceResponse): string[] {
+  const assertions = resolveQualityAssertions(request);
+  const failures: string[] = [];
+  const output = response.output.trim();
+  const normalizedOutput = normalizeForQuality(output);
+
+  if (assertions.requiresValidJson) {
+    try {
+      JSON.parse(output);
+    } catch {
+      failures.push("invalid_json");
+    }
+  }
+
+  if (assertions.minOutputChars !== undefined && output.length < assertions.minOutputChars) {
+    failures.push("output_too_short");
+  }
+
+  if (assertions.maxOutputChars !== undefined && output.length > assertions.maxOutputChars) {
+    failures.push("output_too_long");
+  }
+
+  for (const required of assertions.mustContain ?? []) {
+    if (!normalizedOutput.includes(normalizeForQuality(required))) {
+      failures.push(`missing:${required}`);
+    }
+  }
+
+  for (const forbidden of assertions.mustNotContain ?? []) {
+    if (normalizedOutput.includes(normalizeForQuality(forbidden))) {
+      failures.push(`forbidden:${forbidden}`);
+    }
+  }
+
+  if (assertions.stopMustNotAppear) {
+    for (const stop of request.stop ?? []) {
+      if (stop.length > 0 && output.includes(stop)) {
+        failures.push(`stop_leak:${stop}`);
+      }
+    }
+  }
+
+  if (assertions.noPromptEcho && containsPromptEcho(request, output)) {
+    failures.push("prompt_echo");
+  }
+
+  return failures;
 }
 
 function resolveBenchmarkApiKey(args: BenchmarkArgs, config?: RayConfig): string | undefined {
@@ -473,11 +579,20 @@ function isCax11Preset(preset: LlamaCppLaunchProfile["preset"]): boolean {
   return preset === "single-vps-sub1b-cax11";
 }
 
+function is1bPreset(preset: LlamaCppLaunchProfile["preset"]): boolean {
+  return preset === "single-vps-1b-cx23" || preset === "single-vps-1b-8gb";
+}
+
+function is1bCx23Preset(preset: LlamaCppLaunchProfile["preset"]): boolean {
+  return preset === "single-vps-1b-cx23";
+}
+
 async function invoke(
   baseUrl: string,
-  request: InferenceRequest,
+  request: BenchmarkWorkloadItem,
   apiKey?: string,
 ): Promise<BenchmarkSample> {
+  const inferenceRequest = stripBenchmarkFields(request);
   const startedAt = Date.now();
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/infer`, {
     method: "POST",
@@ -485,7 +600,7 @@ async function invoke(
       "content-type": "application/json",
       ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
     },
-    body: JSON.stringify(request),
+    body: JSON.stringify(inferenceRequest),
   });
 
   if (!response.ok) {
@@ -494,6 +609,7 @@ async function invoke(
   }
 
   return {
+    request,
     response: (await response.json()) as InferenceResponse,
     wallTimeMs: Date.now() - startedAt,
   };
@@ -501,7 +617,7 @@ async function invoke(
 
 async function runBenchmark(options: {
   baseUrl: string;
-  workload: InferenceRequest[];
+  workload: BenchmarkWorkloadItem[];
   concurrency: number;
   requests: number;
   label: string;
@@ -533,6 +649,7 @@ async function runBenchmark(options: {
 
   const wallTimeMs = Date.now() - startedAt;
   const responses = results.map((sample) => sample.response);
+  const qualityResults = results.map((sample) => evaluateQuality(sample.request, sample.response));
   const latencyValues = responses.map((response) => response.latencyMs);
   const queueValues = responses.map((response) => response.queueTimeMs);
   const ttftValues = responses
@@ -560,6 +677,33 @@ async function runBenchmark(options: {
   const promptCacheHits = responses.filter(
     (response) => (response.diagnostics?.provider?.tokensCached ?? 0) > 0,
   ).length;
+  const qualityPasses = qualityResults.filter((failures) => failures.length === 0).length;
+  const jsonRequests = results
+    .map((sample) => sample.request)
+    .filter(
+      (request) =>
+        request?.responseFormat?.type === "json_object" ||
+        request?.benchmark?.requiresValidJson === true,
+    ).length;
+  const validJsonResponses = results.filter((sample) => {
+    const request = sample.request;
+    if (
+      request?.responseFormat?.type !== "json_object" &&
+      request?.benchmark?.requiresValidJson !== true
+    ) {
+      return false;
+    }
+
+    try {
+      JSON.parse(sample.response.output);
+      return true;
+    } catch {
+      return false;
+    }
+  }).length;
+  const promptEchoRejects = qualityResults.filter((failures) =>
+    failures.includes("prompt_echo"),
+  ).length;
 
   const summary: BenchmarkSummary = {
     label: options.label,
@@ -584,6 +728,11 @@ async function runBenchmark(options: {
       results.map((sample) => sample.wallTimeMs),
       0.5,
     ),
+    qualityPassRate:
+      qualityResults.length > 0 ? (qualityPasses / qualityResults.length) * 100 : undefined,
+    validJsonRate: jsonRequests > 0 ? (validJsonResponses / jsonRequests) * 100 : undefined,
+    promptEchoRejects,
+    qualityFailures: qualityResults.length - qualityPasses,
   };
   summary.score = scoreSummary(summary);
   return summary;
@@ -611,6 +760,11 @@ function printSummary(summary: BenchmarkSummary): void {
         ? summary.promptCacheReuseRatio * 100
         : undefined,
     )}%`,
+  );
+  console.log(
+    `Quality: pass=${formatNumber(summary.qualityPassRate)}% validJson=${formatNumber(
+      summary.validJsonRate,
+    )}% failures=${summary.qualityFailures ?? 0} promptEcho=${summary.promptEchoRejects ?? 0}`,
   );
   console.log(`Emails/hour: ${formatNumber(summary.emailsPerHour)}`);
   console.log(`Score: ${formatNumber(summary.score, 2)}`);
@@ -665,15 +819,20 @@ function buildAutotuneCandidates(config: RayConfig): AutotuneCandidate[] {
 function buildLaunchProfileRecommendations(
   launchProfile: LlamaCppLaunchProfile,
 ): LaunchProfileCandidate[] {
-  const ctxSizes = isCax11Preset(launchProfile.preset)
-    ? uniqueIntegers([2048, 2560, launchProfile.ctxSize, 3072])
-    : uniqueIntegers([2048, 3072, launchProfile.ctxSize, 4096]);
-  const parallels = isCax11Preset(launchProfile.preset)
-    ? uniqueIntegers([1, launchProfile.parallel])
-    : uniqueIntegers([1, launchProfile.parallel, 2]);
-  const batchSizes = isCax11Preset(launchProfile.preset)
-    ? uniqueIntegers([96, 128, launchProfile.batchSize, 192])
-    : uniqueIntegers([128, launchProfile.batchSize, 256]);
+  const ctxSizes =
+    isCax11Preset(launchProfile.preset) || is1bCx23Preset(launchProfile.preset)
+      ? uniqueIntegers([1536, 2048, launchProfile.ctxSize, 2560])
+      : is1bPreset(launchProfile.preset)
+        ? uniqueIntegers([2048, 3072, launchProfile.ctxSize, 4096])
+        : uniqueIntegers([2048, 3072, launchProfile.ctxSize, 4096]);
+  const parallels =
+    isCax11Preset(launchProfile.preset) || is1bCx23Preset(launchProfile.preset)
+      ? uniqueIntegers([1, launchProfile.parallel])
+      : uniqueIntegers([1, launchProfile.parallel, 2]);
+  const batchSizes =
+    isCax11Preset(launchProfile.preset) || is1bCx23Preset(launchProfile.preset)
+      ? uniqueIntegers([96, 128, launchProfile.batchSize, 192])
+      : uniqueIntegers([128, launchProfile.batchSize, 256]);
   const recommendations: LaunchProfileCandidate[] = [];
 
   for (const ctxSize of ctxSizes) {
@@ -701,12 +860,16 @@ function buildLaunchProfileRecommendations(
     .slice(0, 8);
 }
 
-async function waitForHealth(baseUrl: string, timeoutMs = 15_000): Promise<void> {
+async function waitForHealth(
+  baseUrl: string,
+  timeoutMs = 15_000,
+  healthPath = "/health",
+): Promise<void> {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      const response = await fetch(`${baseUrl.replace(/\/$/, "")}/health`);
+      const response = await fetch(`${baseUrl.replace(/\/$/, "")}${healthPath}`);
       if (response.ok) {
         return;
       }
@@ -717,7 +880,7 @@ async function waitForHealth(baseUrl: string, timeoutMs = 15_000): Promise<void>
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
 
-  throw new Error(`Timed out waiting for health at ${baseUrl}`);
+  throw new Error(`Timed out waiting for health at ${baseUrl}${healthPath}`);
 }
 
 async function startGateway(configPath: string): Promise<ChildProcess> {
@@ -786,7 +949,7 @@ async function stopChildProcess(child: ChildProcess): Promise<void> {
 async function benchmarkGatewayConfig(options: {
   config: RayConfig;
   configPath: string;
-  workload: InferenceRequest[];
+  workload: BenchmarkWorkloadItem[];
   concurrency: number;
   requests: number;
   label: string;
@@ -797,7 +960,7 @@ async function benchmarkGatewayConfig(options: {
 
   try {
     const baseUrl = buildBaseUrl(options.config.server.host, options.config.server.port);
-    await waitForHealth(baseUrl);
+    await waitForHealth(baseUrl, 15_000, "/livez");
     return await runBenchmark({
       baseUrl,
       workload: options.workload,
@@ -813,7 +976,7 @@ async function benchmarkGatewayConfig(options: {
 
 async function runSchedulerSweep(options: {
   config: RayConfig;
-  workload: InferenceRequest[];
+  workload: BenchmarkWorkloadItem[];
   clientConcurrency: number;
   requests: number;
   tempDir: string;
@@ -855,7 +1018,7 @@ async function runSchedulerSweep(options: {
 
 async function runLaunchProfileSweep(options: {
   config: RayConfig;
-  workload: InferenceRequest[];
+  workload: BenchmarkWorkloadItem[];
   clientConcurrency: number;
   requests: number;
   tempDir: string;
@@ -1078,6 +1241,26 @@ function compareSummaryToBaseline(options: {
     );
   }
 
+  if (baseline.assertions.minQualityPassRate !== undefined) {
+    addBaselineCheck(
+      checks,
+      "qualityPassRate",
+      ">=",
+      baseline.assertions.minQualityPassRate,
+      summary.qualityPassRate,
+    );
+  }
+
+  if (baseline.assertions.minValidJsonRate !== undefined) {
+    addBaselineCheck(
+      checks,
+      "validJsonRate",
+      ">=",
+      baseline.assertions.minValidJsonRate,
+      summary.validJsonRate,
+    );
+  }
+
   return {
     baselinePath: path.resolve(process.cwd(), options.baselinePath),
     baselineLabel: baseline.label,
@@ -1115,7 +1298,7 @@ async function writeStructuredOutput(
 
 async function runAutotune(
   args: BenchmarkArgs,
-  workload: InferenceRequest[],
+  workload: BenchmarkWorkloadItem[],
 ): Promise<AutotuneOutput> {
   if (!args.configPath) {
     throw new Error("--autotune requires --config");

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "label": "hetzner-cx23-1b",
+  "machineClass": "hetzner-cx23",
+  "workloadPath": "./examples/workloads/email-1b-workload.jsonl",
+  "concurrency": 1,
+  "requests": 10,
+  "assertions": {
+    "maxLatencyP95Ms": 6500,
+    "maxQueueDelayP95Ms": 300,
+    "maxTtftP95Ms": 2800,
+    "minCompletionTokensPerSecondAvg": 8,
+    "minQualityPassRate": 80,
+    "minValidJsonRate": 100
+  },
+  "notes": [
+    "Assumes a Qwen2.5 1.5B-class Q4 model on a Hetzner CX23-class 2 vCPU / 4 GB x86 VPS.",
+    "Run against the ray.1b profile or a tuned descendant using the 1B email workload.",
+    "Latency thresholds are intentionally looser than the sub-1B baselines because this profile favors output quality on the same 4 GB class."
+  ]
+}

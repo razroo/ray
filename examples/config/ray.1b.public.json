@@ -1,0 +1,17 @@
+{
+  "profile": "1b",
+  "asyncQueue": {
+    "enabled": true,
+    "storageDir": "/var/lib/ray/async-queue"
+  },
+  "auth": {
+    "enabled": true,
+    "apiKeyEnv": "RAY_API_KEYS"
+  },
+  "tags": {
+    "hardware": "hetzner-cx23-class",
+    "engine": "llama.cpp",
+    "modelSize": "1b-class",
+    "exposure": "public"
+  }
+}

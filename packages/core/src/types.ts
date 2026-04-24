@@ -1,4 +1,4 @@
-export type RayProfile = "tiny" | "sub1b" | "vps" | "balanced";
+export type RayProfile = "tiny" | "sub1b" | "1b" | "vps" | "balanced";
 export type LogLevel = "debug" | "info" | "warn" | "error";
 export type ProviderKind = "mock" | "openai-compatible" | "llama.cpp";
 export type Quantization = "q4_0" | "q4_k_m" | "q5_k_m" | "q8_0" | "fp16" | "unknown";
@@ -63,6 +63,8 @@ export interface LlamaCppLaunchProfile {
     | "single-vps-sub1b"
     | "single-vps-sub1b-cx23"
     | "single-vps-sub1b-cax11"
+    | "single-vps-1b-cx23"
+    | "single-vps-1b-8gb"
     | "single-vps-balanced";
   binaryPath: string;
   modelPath: string;
@@ -100,6 +102,15 @@ export type ProviderConfig =
   | LlamaCppProviderConfig
   | MockProviderConfig;
 
+export interface ModelOperationalMetadata {
+  recommendedPromptFormat: "native-template" | "openai-chat" | "plain-completion";
+  supportsJsonMode: boolean;
+  tokensPerSecondTarget: number;
+  memoryClassMiB: number;
+  preferredCtxSize: number;
+  chatTemplateKnown: boolean;
+}
+
 export interface ModelConfig {
   id: string;
   family: string;
@@ -107,6 +118,7 @@ export interface ModelConfig {
   contextWindow: number;
   warmOnBoot: boolean;
   maxOutputTokens: number;
+  operational?: ModelOperationalMetadata;
   adapter: ProviderConfig;
 }
 
@@ -335,6 +347,7 @@ export interface SchedulerSlotSnapshot {
 
 export interface ProviderDiagnostics {
   requestShape?: "openai-chat" | "llama.cpp-completion";
+  promptFormat?: "llama.cpp-template" | "prompt-scaffold" | "ray-chat-fallback";
   slotId?: number;
   preferredSlot?: number;
   tokensCached?: number;

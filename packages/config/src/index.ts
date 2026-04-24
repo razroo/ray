@@ -14,6 +14,8 @@ const llamaCppLaunchPresets = new Set<LlamaCppLaunchProfile["preset"]>([
   "single-vps-sub1b",
   "single-vps-sub1b-cx23",
   "single-vps-sub1b-cax11",
+  "single-vps-1b-cx23",
+  "single-vps-1b-8gb",
   "single-vps-balanced",
 ]);
 
@@ -41,7 +43,13 @@ function parseConfigJson(raw: string, configPath: string): DeepPartial<RayConfig
 }
 
 function parseProfile(value: string | undefined): RayProfile | undefined {
-  if (value === "tiny" || value === "sub1b" || value === "vps" || value === "balanced") {
+  if (
+    value === "tiny" ||
+    value === "sub1b" ||
+    value === "1b" ||
+    value === "vps" ||
+    value === "balanced"
+  ) {
     return value;
   }
 
@@ -147,6 +155,16 @@ function assertUnitInterval(value: number, label: string): void {
 function assertSafeInteger(value: number, label: string): void {
   if (!Number.isSafeInteger(value)) {
     throw new RayError(`${label} must be a safe integer`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { value },
+    });
+  }
+}
+
+function assertBoolean(value: boolean, label: string): void {
+  if (typeof value !== "boolean") {
+    throw new RayError(`${label} must be a boolean`, {
       code: "config_validation_error",
       status: 500,
       details: { value },
@@ -278,6 +296,35 @@ function assertStringArray(value: string[] | undefined, label: string): void {
   }
 }
 
+function assertModelOperationalMetadata(config: RayConfig): void {
+  const metadata = config.model.operational;
+
+  if (!metadata) {
+    return;
+  }
+
+  if (
+    metadata.recommendedPromptFormat !== "native-template" &&
+    metadata.recommendedPromptFormat !== "openai-chat" &&
+    metadata.recommendedPromptFormat !== "plain-completion"
+  ) {
+    throw new RayError(
+      "model.operational.recommendedPromptFormat must be native-template, openai-chat, or plain-completion",
+      {
+        code: "config_validation_error",
+        status: 500,
+        details: metadata,
+      },
+    );
+  }
+
+  assertPositiveInteger(metadata.tokensPerSecondTarget, "model.operational.tokensPerSecondTarget");
+  assertPositiveInteger(metadata.memoryClassMiB, "model.operational.memoryClassMiB");
+  assertPositiveInteger(metadata.preferredCtxSize, "model.operational.preferredCtxSize");
+  assertBoolean(metadata.supportsJsonMode, "model.operational.supportsJsonMode");
+  assertBoolean(metadata.chatTemplateKnown, "model.operational.chatTemplateKnown");
+}
+
 function validateConfig(config: RayConfig): RayConfig {
   if (!isNonEmptyString(config.server.host)) {
     throw new RayError("server.host must be a non-empty string", {
@@ -347,6 +394,8 @@ function validateConfig(config: RayConfig): RayConfig {
       status: 500,
     });
   }
+
+  assertModelOperationalMetadata(config);
 
   if (!isNonEmptyString(config.asyncQueue.storageDir)) {
     throw new RayError("asyncQueue.storageDir must be a non-empty string", {

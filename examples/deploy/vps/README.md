@@ -61,6 +61,8 @@ Use any lightweight OpenAI-compatible backend you trust. The default Ray `sub1b`
   --context-shift
 ```
 
+For the 1B profile on the same 4 GB class, keep `--parallel 1`, lower `--ctx-size` to `2048`, and use the 1.5B-class GGUF path from [ray.1b.public.json](../../config/ray.1b.public.json). On an 8 GB node, [ray.1b.8gb.public.json](../../config/ray.1b.8gb.public.json) raises context to `4096` and uses two parallel slots.
+
 ### 3. Build Ray
 
 ```bash
@@ -72,7 +74,7 @@ pnpm build
 
 ### 4. Place the config
 
-Start from [ray.sub1b.public.json](../../config/ray.sub1b.public.json) for a public CX23-class VPS, or [ray.sub1b.json](../../config/ray.sub1b.json) for local/private loopback use. For the ARM CAX11 variant, use [ray.sub1b.cax11.public.json](../../config/ray.sub1b.cax11.public.json) or [ray.sub1b.cax11.json](../../config/ray.sub1b.cax11.json). Adjust:
+Start from [ray.sub1b.public.json](../../config/ray.sub1b.public.json) for a public CX23-class VPS, or [ray.sub1b.json](../../config/ray.sub1b.json) for local/private loopback use. For the ARM CAX11 variant, use [ray.sub1b.cax11.public.json](../../config/ray.sub1b.cax11.public.json) or [ray.sub1b.cax11.json](../../config/ray.sub1b.cax11.json). For better 1B-class email inference, use [ray.1b.public.json](../../config/ray.1b.public.json) on 4 GB or [ray.1b.8gb.public.json](../../config/ray.1b.8gb.public.json) on 8 GB. Adjust:
 
 - `model.id`
 - `model.adapter.modelRef`
@@ -121,8 +123,10 @@ sudo systemctl reload caddy
 
 ```bash
 RAY_API_KEYS=replace-with-real-key pnpm validate:config:public
+RAY_API_KEYS=replace-with-real-key pnpm validate:config:1b:public
 pnpm doctor
 pnpm benchmark:assert:cx23
+pnpm benchmark:assert:cx23:1b
 ```
 
 ### 9. Optional GitHub Actions deploy

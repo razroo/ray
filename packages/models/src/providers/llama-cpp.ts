@@ -109,6 +109,13 @@ interface PreparedPromptState {
   prompt: string;
 }
 
+interface PromptPreparation {
+  prompt: string;
+  diagnostics: {
+    promptFormat: "llama.cpp-template" | "prompt-scaffold" | "ray-chat-fallback";
+  };
+}
+
 interface CachedSlotState {
   checkedAtMs: number;
   slots: SchedulerSlotSnapshot[];
@@ -395,8 +402,8 @@ export class LlamaCppProvider implements ModelProvider {
     }
 
     const slots = await this.getSlotSnapshots(context.signal);
-    const prompt = await this.preparePrompt(request, context.signal);
-    const promptTokens = await this.countPromptTokens(prompt, context.signal);
+    const promptPreparation = await this.preparePrompt(request, context.signal);
+    const promptTokens = await this.countPromptTokens(promptPreparation.prompt, context.signal);
     const slotSelection = this.selectPreferredSlot(context.affinityKey, slots);
     const requestShape =
       request.responseFormat?.type === "json_object" ? "openai-chat" : "llama.cpp-completion";
@@ -410,10 +417,11 @@ export class LlamaCppProvider implements ModelProvider {
         : {}),
       ...(slots.length > 0 ? { slotSnapshots: slots } : {}),
       providerState: {
-        prompt,
+        prompt: promptPreparation.prompt,
       } satisfies PreparedPromptState,
       diagnostics: {
         requestShape,
+        ...promptPreparation.diagnostics,
         ...(slotSelection.preferredSlot !== undefined
           ? { preferredSlot: slotSelection.preferredSlot }
           : {}),
@@ -483,6 +491,9 @@ export class LlamaCppProvider implements ModelProvider {
       ...(usage ? { usage } : {}),
       diagnostics: {
         requestShape: "openai-chat",
+        ...(preparation.diagnostics?.promptFormat
+          ? { promptFormat: preparation.diagnostics.promptFormat }
+          : {}),
         ...(preparation.preferredSlot !== undefined
           ? { preferredSlot: preparation.preferredSlot }
           : {}),
@@ -563,6 +574,9 @@ export class LlamaCppProvider implements ModelProvider {
       },
       diagnostics: {
         requestShape: "llama.cpp-completion",
+        ...(preparation.diagnostics?.promptFormat
+          ? { promptFormat: preparation.diagnostics.promptFormat }
+          : {}),
         ...(slotId !== undefined ? { slotId } : {}),
         ...(preparation.preferredSlot !== undefined
           ? { preferredSlot: preparation.preferredSlot }
@@ -583,17 +597,76 @@ export class LlamaCppProvider implements ModelProvider {
   private async preparePrompt(
     request: NormalizedInferenceRequest,
     signal?: AbortSignal,
-  ): Promise<string> {
+  ): Promise<PromptPreparation> {
     if (request.promptTemplateId && request.templateVariables) {
-      const scaffold = await this.getPromptScaffold(
-        request.promptTemplateId,
-        request.responseFormat?.type ?? "text",
-        signal,
-      );
-      return this.renderPromptFromScaffold(scaffold, request.templateVariables);
+      try {
+        const scaffold = await this.getPromptScaffold(
+          request.promptTemplateId,
+          request.responseFormat?.type ?? "text",
+          signal,
+        );
+        return {
+          prompt: this.renderPromptFromScaffold(scaffold, request.templateVariables),
+          diagnostics: {
+            promptFormat: "prompt-scaffold",
+          },
+        };
+      } catch (error) {
+        if (this.canFallbackPrompt(error)) {
+          return {
+            prompt: this.buildFallbackPrompt(request),
+            diagnostics: {
+              promptFormat: "ray-chat-fallback",
+            },
+          };
+        }
+
+        throw error;
+      }
     }
 
-    return this.applyTemplate(request, signal);
+    try {
+      return {
+        prompt: await this.applyTemplate(request, signal),
+        diagnostics: {
+          promptFormat: "llama.cpp-template",
+        },
+      };
+    } catch (error) {
+      if (this.canFallbackPrompt(error)) {
+        return {
+          prompt: this.buildFallbackPrompt(request),
+          diagnostics: {
+            promptFormat: "ray-chat-fallback",
+          },
+        };
+      }
+
+      throw error;
+    }
+  }
+
+  private canFallbackPrompt(error: unknown): boolean {
+    return (
+      error instanceof RayError &&
+      (error.code === "provider_upstream_error" ||
+        error.code === "provider_invalid_response" ||
+        error.code === "provider_request_failed")
+    );
+  }
+
+  private buildFallbackPrompt(request: NormalizedInferenceRequest): string {
+    const format = this.model.operational?.recommendedPromptFormat;
+
+    if (format === "plain-completion") {
+      return [request.system, request.input].filter((part) => part && part.length > 0).join("\n\n");
+    }
+
+    return [
+      ...(request.system ? [`System:\n${request.system}`] : []),
+      `User:\n${request.input}`,
+      "Assistant:",
+    ].join("\n\n");
   }
 
   private async countPromptTokens(prompt: string, signal?: AbortSignal): Promise<number> {

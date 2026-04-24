@@ -9,6 +9,7 @@ export type DeepPartial<T> = {
 };
 
 type Sub1bMachineClass = "cx23" | "cax11";
+type OneBMachineClass = "cx23" | "8gb";
 
 function createSub1bLaunchProfile(machineClass: Sub1bMachineClass): LlamaCppLaunchProfile {
   if (machineClass === "cax11") {
@@ -174,6 +175,179 @@ function createSub1bDefaults(machineClass: Sub1bMachineClass): RayConfig {
   };
 }
 
+function create1bLaunchProfile(machineClass: OneBMachineClass): LlamaCppLaunchProfile {
+  if (machineClass === "8gb") {
+    return {
+      preset: "single-vps-1b-8gb",
+      binaryPath: "/usr/local/bin/llama-server",
+      modelPath: "/var/lib/ray/models/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+      host: "127.0.0.1",
+      port: 8081,
+      alias: "qwen2.5-1.5b-instruct-q4_k_m",
+      ctxSize: 4096,
+      parallel: 2,
+      threads: 4,
+      threadsHttp: 2,
+      batchSize: 256,
+      ubatchSize: 128,
+      cachePrompt: true,
+      cacheReuse: 256,
+      cacheRamMiB: 768,
+      continuousBatching: true,
+      enableMetrics: true,
+      exposeSlots: true,
+      warmup: true,
+      enableUnifiedKv: true,
+      cacheIdleSlots: true,
+      contextShift: true,
+    };
+  }
+
+  return {
+    preset: "single-vps-1b-cx23",
+    binaryPath: "/usr/local/bin/llama-server",
+    modelPath: "/var/lib/ray/models/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+    host: "127.0.0.1",
+    port: 8081,
+    alias: "qwen2.5-1.5b-instruct-q4_k_m",
+    ctxSize: 2048,
+    parallel: 1,
+    threads: 2,
+    threadsHttp: 2,
+    batchSize: 192,
+    ubatchSize: 96,
+    cachePrompt: true,
+    cacheReuse: 192,
+    cacheRamMiB: 384,
+    continuousBatching: true,
+    enableMetrics: true,
+    exposeSlots: true,
+    warmup: true,
+    enableUnifiedKv: true,
+    cacheIdleSlots: true,
+    contextShift: true,
+  };
+}
+
+function create1bDefaults(machineClass: OneBMachineClass): RayConfig {
+  const launchProfile = create1bLaunchProfile(machineClass);
+  const is8gb = machineClass === "8gb";
+
+  return {
+    profile: "1b",
+    server: {
+      host: "127.0.0.1",
+      port: 3000,
+      requestBodyLimitBytes: is8gb ? 64_000 : 48_000,
+    },
+    model: {
+      id: "qwen2.5-1.5b-instruct-q4_k_m",
+      family: "qwen2.5",
+      quantization: "q4_k_m",
+      contextWindow: 8192,
+      warmOnBoot: true,
+      maxOutputTokens: is8gb ? 256 : 192,
+      operational: {
+        recommendedPromptFormat: "native-template",
+        supportsJsonMode: true,
+        tokensPerSecondTarget: is8gb ? 18 : 10,
+        memoryClassMiB: is8gb ? 8192 : 4096,
+        preferredCtxSize: launchProfile.ctxSize,
+        chatTemplateKnown: true,
+      },
+      adapter: {
+        kind: "llama.cpp",
+        baseUrl: "http://127.0.0.1:8081",
+        modelRef: "qwen2.5-1.5b-instruct-q4_k_m",
+        timeoutMs: is8gb ? 24_000 : 28_000,
+        cachePrompt: true,
+        slotStateTtlMs: 250,
+        slotSnapshotTimeoutMs: 300,
+        promptScaffoldCacheEntries: 384,
+        launchProfile,
+      },
+    },
+    scheduler: {
+      concurrency: is8gb ? 2 : 1,
+      maxQueue: is8gb ? 96 : 40,
+      maxQueuedTokens: is8gb ? 48_000 : 18_000,
+      maxInflightTokens: is8gb ? 6_144 : 2_560,
+      requestTimeoutMs: is8gb ? 28_000 : 32_000,
+      dedupeInflight: true,
+      batchWindowMs: is8gb ? 10 : 5,
+      affinityLookahead: is8gb ? 24 : 12,
+      shortJobMaxTokens: 96,
+    },
+    asyncQueue: {
+      enabled: false,
+      storageDir: ".ray/async-queue",
+      pollIntervalMs: 1_000,
+      dispatchConcurrency: 1,
+      maxAttempts: 3,
+      callbackTimeoutMs: 5_000,
+      maxCallbackAttempts: 5,
+      callbackAllowPrivateNetwork: false,
+      callbackAllowedHosts: [],
+    },
+    cache: {
+      enabled: true,
+      maxEntries: is8gb ? 512 : 256,
+      ttlMs: 120_000,
+      keyStrategy: "input+params",
+    },
+    telemetry: {
+      serviceName: "ray-gateway",
+      logLevel: "info",
+      includeDebugMetrics: true,
+      slowRequestThresholdMs: is8gb ? 1_800 : 2_200,
+    },
+    gracefulDegradation: {
+      enabled: true,
+      queueDepthThreshold: is8gb ? 20 : 10,
+      maxPromptChars: is8gb ? 8_000 : 5_000,
+      degradeToMaxTokens: is8gb ? 160 : 128,
+    },
+    promptCompiler: {
+      enabled: true,
+      collapseWhitespace: true,
+      dedupeRepeatedLines: true,
+      familyMetadataKeys: ["promptFamily", "taskTemplate", "template", "useCase"],
+    },
+    adaptiveTuning: {
+      enabled: true,
+      sampleSize: 32,
+      queueLatencyThresholdMs: is8gb ? 450 : 600,
+      minCompletionTokensPerSecond: is8gb ? 14 : 8,
+      maxOutputReductionRatio: 0.5,
+      minOutputTokens: 64,
+      learnedFamilyCapEnabled: true,
+      familyHistorySize: 64,
+      learnedCapMinSamples: 8,
+      draftPercentile: 0.95,
+      shortPercentile: 0.9,
+      learnedCapHeadroomTokens: 24,
+    },
+    auth: {
+      enabled: false,
+      apiKeyEnv: "RAY_API_KEYS",
+    },
+    rateLimit: {
+      enabled: true,
+      windowMs: 60_000,
+      maxRequests: is8gb ? 150 : 75,
+      maxKeys: is8gb ? 8_192 : 4_096,
+      keyStrategy: "ip+api-key",
+      trustProxyHeaders: true,
+    },
+    tags: {
+      target: "1b",
+      hosting: is8gb ? "single-node-8gb" : "cheap-vps",
+      engine: "llama.cpp",
+      hardware: is8gb ? "8gb-vps-class" : "hetzner-cx23-class",
+    },
+  };
+}
+
 const profileDefaults: Record<RayProfile, RayConfig> = {
   tiny: {
     profile: "tiny",
@@ -273,6 +447,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
     },
   },
   sub1b: createSub1bDefaults("cx23"),
+  "1b": create1bDefaults("cx23"),
   vps: {
     profile: "vps",
     server: {

@@ -33,6 +33,7 @@ Scope:
 - stronger cache policy and cache key tuning
 - warm-start hooks and lightweight preload behavior
 - quantization-aware adapter metadata
+- first-class sub-1B and 1B deployment profiles with workload-specific baselines
 - backend capability detection
 - memory-aware concurrency and scheduling defaults
 - smarter degradation policy under pressure

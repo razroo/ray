@@ -77,6 +77,14 @@ function isSub1bPreset(preset: LlamaCppLaunchProfile["preset"]): boolean {
   );
 }
 
+function is1bPreset(preset: LlamaCppLaunchProfile["preset"]): boolean {
+  return preset === "single-vps-1b-cx23" || preset === "single-vps-1b-8gb";
+}
+
+function isSmallVpsPreset(preset: LlamaCppLaunchProfile["preset"]): boolean {
+  return isSub1bPreset(preset) || preset === "single-vps-1b-cx23";
+}
+
 function isCax11Preset(preset: LlamaCppLaunchProfile["preset"]): boolean {
   return preset === "single-vps-sub1b-cax11";
 }
@@ -98,11 +106,11 @@ function formatMiB(value: number): string {
 }
 
 function getPresetMemoryBudgetMiB(preset: LlamaCppLaunchProfile["preset"]): number {
-  return isSub1bPreset(preset) ? 4_096 : 8_192;
+  return isSmallVpsPreset(preset) ? 4_096 : 8_192;
 }
 
 function estimateKvBytesPerToken(preset: LlamaCppLaunchProfile["preset"]): number {
-  return isSub1bPreset(preset) ? 128 * 1_024 : 320 * 1_024;
+  return isSub1bPreset(preset) ? 128 * 1_024 : is1bPreset(preset) ? 192 * 1_024 : 320 * 1_024;
 }
 
 function formatMemoryEstimateMessage(estimate: LlamaCppMemoryEstimate): string {
@@ -483,7 +491,7 @@ export function diagnoseConfig(
           });
         }
 
-        if (isSub1bPreset(launchProfile.preset) && launchProfile.cacheRamMiB > 1024) {
+        if (isSmallVpsPreset(launchProfile.preset) && launchProfile.cacheRamMiB > 1024) {
           diagnostics.push({
             level: "warn",
             code: "cache_ram_high_for_small_vps",

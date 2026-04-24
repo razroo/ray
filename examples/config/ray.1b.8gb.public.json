@@ -1,0 +1,86 @@
+{
+  "profile": "1b",
+  "asyncQueue": {
+    "enabled": true,
+    "storageDir": "/var/lib/ray/async-queue"
+  },
+  "auth": {
+    "enabled": true,
+    "apiKeyEnv": "RAY_API_KEYS"
+  },
+  "server": {
+    "requestBodyLimitBytes": 64000
+  },
+  "model": {
+    "maxOutputTokens": 256,
+    "operational": {
+      "recommendedPromptFormat": "native-template",
+      "supportsJsonMode": true,
+      "tokensPerSecondTarget": 18,
+      "memoryClassMiB": 8192,
+      "preferredCtxSize": 4096,
+      "chatTemplateKnown": true
+    },
+    "adapter": {
+      "kind": "llama.cpp",
+      "timeoutMs": 24000,
+      "slotStateTtlMs": 250,
+      "slotSnapshotTimeoutMs": 300,
+      "promptScaffoldCacheEntries": 384,
+      "launchProfile": {
+        "preset": "single-vps-1b-8gb",
+        "binaryPath": "/usr/local/bin/llama-server",
+        "modelPath": "/var/lib/ray/models/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+        "host": "127.0.0.1",
+        "port": 8081,
+        "alias": "qwen2.5-1.5b-instruct-q4_k_m",
+        "ctxSize": 4096,
+        "parallel": 2,
+        "threads": 4,
+        "threadsHttp": 2,
+        "batchSize": 256,
+        "ubatchSize": 128,
+        "cachePrompt": true,
+        "cacheReuse": 256,
+        "cacheRamMiB": 768,
+        "continuousBatching": true,
+        "enableMetrics": true,
+        "exposeSlots": true,
+        "warmup": true,
+        "enableUnifiedKv": true,
+        "cacheIdleSlots": true,
+        "contextShift": true
+      }
+    }
+  },
+  "scheduler": {
+    "concurrency": 2,
+    "maxQueue": 96,
+    "maxQueuedTokens": 48000,
+    "maxInflightTokens": 6144,
+    "requestTimeoutMs": 28000,
+    "dedupeInflight": true,
+    "batchWindowMs": 10,
+    "affinityLookahead": 24,
+    "shortJobMaxTokens": 96
+  },
+  "cache": {
+    "maxEntries": 512,
+    "ttlMs": 120000
+  },
+  "gracefulDegradation": {
+    "queueDepthThreshold": 20,
+    "maxPromptChars": 8000,
+    "degradeToMaxTokens": 160
+  },
+  "rateLimit": {
+    "maxRequests": 150,
+    "maxKeys": 8192
+  },
+  "tags": {
+    "hardware": "8gb-vps-class",
+    "engine": "llama.cpp",
+    "modelSize": "1b-class",
+    "exposure": "public"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "profile": "1b",
+  "tags": {
+    "hardware": "hetzner-cx23-class",
+    "engine": "llama.cpp",
+    "modelSize": "1b-class",
+    "exposure": "private-local"
+  }
+}

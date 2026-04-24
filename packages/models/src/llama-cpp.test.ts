@@ -264,6 +264,7 @@ test("llama.cpp provider uses native completion diagnostics and exact tokenizati
     total: 9,
   });
   assert.equal(result.diagnostics?.requestShape, "llama.cpp-completion");
+  assert.equal(result.diagnostics?.promptFormat, "llama.cpp-template");
   assert.equal(result.diagnostics?.tokensCached, 3);
   assert.equal(result.diagnostics?.slotId, 0);
   assert.equal(result.diagnostics?.timings?.ttftMs, 40);
@@ -272,6 +273,93 @@ test("llama.cpp provider uses native completion diagnostics and exact tokenizati
   assert.ok(seenPaths.includes("/apply-template"));
   assert.ok(seenPaths.includes("/tokenize"));
   assert.ok(seenPaths.includes("/completion"));
+});
+
+test("llama.cpp provider falls back when native prompt templating is unavailable", async (t) => {
+  const seenPaths: string[] = [];
+  let completionBody: Record<string, unknown> | undefined;
+
+  const server = createServer(async (request, response) => {
+    seenPaths.push(request.url ?? "/");
+
+    if (request.url === "/slots") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify([]));
+      return;
+    }
+
+    if (request.url === "/apply-template") {
+      response.writeHead(404, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "not found" }));
+      return;
+    }
+
+    if (request.url === "/tokenize") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ tokens: [1, 2, 3, 4, 5] }));
+      return;
+    }
+
+    if (request.url === "/completion") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      completionBody = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<
+        string,
+        unknown
+      >;
+
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          content: "A concise fallback completion.",
+          timings: {
+            prompt_n: 5,
+            predicted_n: 4,
+            predicted_ms: 40,
+          },
+        }),
+      );
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const model = createModel(`http://127.0.0.1:${address.port}`, 500);
+  const provider = new LlamaCppProvider(model, model.adapter as LlamaCppProviderConfig);
+  const context = createContext(model, new AbortController().signal);
+  const request = {
+    input: "Write one sentence.",
+    system: "Keep it direct.",
+    maxTokens: 32,
+    temperature: 0.2,
+    topP: 0.95,
+    cache: true,
+    metadata: {},
+  };
+
+  const preparation = await provider.prepare(request, context);
+  const result = await provider.infer(request, {
+    ...context,
+    preparation,
+  });
+
+  assert.equal(result.output, "A concise fallback completion.");
+  assert.equal(result.diagnostics?.promptFormat, "ray-chat-fallback");
+  assert.match(String(completionBody?.prompt ?? ""), /System:\nKeep it direct\./);
+  assert.match(String(completionBody?.prompt ?? ""), /User:\nWrite one sentence\./);
+  assert.ok(seenPaths.includes("/apply-template"));
 });
 
 test("llama.cpp provider falls back to chat completions for json_object requests", async (t) => {

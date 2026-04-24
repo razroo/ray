@@ -44,6 +44,24 @@ test("sub1b profile defaults to a bounded llama.cpp launch profile", () => {
   assert.equal(config.auth.enabled, false);
 });
 
+test("1b profile defaults to a conservative llama.cpp launch profile", () => {
+  const config = createDefaultConfig("1b");
+
+  assert.equal(config.profile, "1b");
+  assert.equal(config.model.adapter.kind, "llama.cpp");
+  assert.equal(config.model.operational?.memoryClassMiB, 4096);
+  assert.equal(config.model.operational?.supportsJsonMode, true);
+
+  if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
+    throw new Error("Expected a llama.cpp launch profile");
+  }
+
+  assert.equal(config.model.adapter.launchProfile.preset, "single-vps-1b-cx23");
+  assert.equal(config.model.adapter.launchProfile.parallel, 1);
+  assert.equal(config.model.adapter.launchProfile.cacheRamMiB, 384);
+  assert.equal(config.scheduler.concurrency, 1);
+});
+
 test("resolveAuthApiKeys parses comma and newline separated values", () => {
   const config = mergeConfig(createDefaultConfig("tiny"), {
     auth: {

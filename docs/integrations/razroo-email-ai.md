@@ -4,7 +4,7 @@ This describes a **single-node** setup for **razroo-email-ai**: a **~0.6B Qwen**
 
 ## Target hardware
 
-Typical match: **Hetzner CX23** (2 vCPU, 4 GB RAM) with the defaults in [ray.sub1b.public.json](../../examples/config/ray.sub1b.public.json), or **CAX11** (2 vCPU, 4 GB ARM) with the tighter single-slot defaults in [ray.sub1b.cax11.public.json](../../examples/config/ray.sub1b.cax11.public.json). The example config here tightens queue, cache size, and output limits further for the `razroo-email-ai` workload. The older [ray.vps.json](../../examples/config/ray.vps.json) remains the roomier 3B-style OpenAI-compatible path.
+Typical match: **Hetzner CX23** (2 vCPU, 4 GB RAM) with the defaults in [ray.sub1b.public.json](../../examples/config/ray.sub1b.public.json), or **CAX11** (2 vCPU, 4 GB ARM) with the tighter single-slot defaults in [ray.sub1b.cax11.public.json](../../examples/config/ray.sub1b.cax11.public.json). For better instruction following on the email workload, use [ray.1b.public.json](../../examples/config/ray.1b.public.json) on a 4 GB CX23-class box, or [ray.1b.8gb.public.json](../../examples/config/ray.1b.8gb.public.json) when an 8 GB node is available. The older [ray.vps.json](../../examples/config/ray.vps.json) remains the roomier 3B-style OpenAI-compatible path.
 
 ## Example config
 
@@ -16,6 +16,8 @@ Use [ray.hetzner-cx23-qwen0.6b.public.json](../../examples/config/ray.hetzner-cx
 - **`asyncQueue.storageDir`** — durable on-disk queue location. On a real VPS, keep it on persistent local storage such as `/var/lib/ray/async-queue`.
 - **`model.adapter.launchProfile.cacheRamMiB`** — pinned prompt-cache RAM budget for llama.cpp. The example sets **`512` MiB** instead of inheriting the upstream `8192` MiB default, which is a better fit for a 4 GB VPS.
 - **`auth.apiKeyEnv`** — public profile auth is enabled by default. Populate **`RAY_API_KEYS`** before starting the gateway.
+
+For the 1B path, use [ray.1b.public.json](../../examples/config/ray.1b.public.json) or [ray.1b.8gb.public.json](../../examples/config/ray.1b.8gb.public.json) instead. These profiles switch the default GGUF path to `qwen2.5-1.5b-instruct-q4_k_m.gguf`, add model operational metadata, and keep the 4 GB profile single-slot to avoid memory pressure.
 
 ## Local development (this repo)
 
@@ -51,6 +53,18 @@ If you use the local profile for private-only development, auth stays disabled t
 For `razroo-email-ai`, pass a deterministic `seed` per lead or per variant. That preserves the repo's current "stable for the same lead, different across leads" inference behavior instead of collapsing every repeated prompt onto the same sampling path.
 
 Use `stop` for hard section boundaries when you know the completion should terminate on a fixed delimiter, and `responseFormat: { "type": "json_object" }` for classification-style calls that need structured output from llama.cpp.
+
+If `razroo-email-ai` checks availability before sending inference, point the Ray backend check at `GET /livez`. Public Ray profiles intentionally protect detailed `/health` with Bearer auth, while `/livez` stays unauthenticated for reverse proxies and app liveness checks.
+
+Benchmark the 1B email path with:
+
+```bash
+pnpm benchmark:assert:cx23:1b
+pnpm benchmark:assert:8gb:1b
+pnpm autotune:1b
+```
+
+The workload in [email-1b-workload.jsonl](../../examples/workloads/email-1b-workload.jsonl) exercises cold outreach, follow-up, reply classification, reply rewrite, and a direct section-generation prompt shaped like the app's product flow. It asserts JSON validity for classification and rejects common prompt echo, stop-token leakage, and generic email filler.
 
 For longer-running or high-volume work, prefer `POST /v1/jobs` over holding an HTTP connection open. Ray persists the job to disk, processes it in the background, and can `POST` the terminal payload to `callbackUrl` when the work completes. Callback URLs resolve to public network addresses by default; use the async queue allowlist only for explicitly trusted private callbacks.
 
