@@ -170,6 +170,7 @@ jobs:
           TARGET="$SSH_USER@$RAY_DEPLOY_HOST"
 
           rsync -az --delete \
+            -e "ssh -i ~/.ssh/deploy_key" \
             --exclude '.git' \
             --exclude '.github' \
             --exclude '.ray' \
