@@ -1,0 +1,211 @@
+name: Deploy gateway to VPS
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to deploy
+        required: false
+        default: main
+      config_path:
+        description: Repo-relative Ray config to install on the VPS
+        required: false
+        default: ./examples/config/ray.sub1b.public.json
+  push:
+    branches: [main]
+    paths:
+      - apps/**
+      - packages/**
+      - examples/config/**
+      - examples/deploy/vps/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - tsconfig.base.json
+      - tsconfig.build.json
+      - .github/workflows/deploy-vps.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ray-vps-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || vars.RAY_AUTO_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    env:
+      RAY_DEPLOY_HOST: ${{ secrets.RAY_DEPLOY_HOST }}
+      RAY_DEPLOY_SSH_KEY: ${{ secrets.RAY_DEPLOY_SSH_KEY }}
+      RAY_DEPLOY_KNOWN_HOSTS: ${{ secrets.RAY_DEPLOY_KNOWN_HOSTS }}
+      RAY_ENV_FILE_CONTENTS: ${{ secrets.RAY_ENV_FILE_CONTENTS }}
+      RAY_DEPLOY_SSH_USER: ${{ vars.RAY_DEPLOY_SSH_USER }}
+      RAY_CONFIG_PATH_VAR: ${{ vars.RAY_CONFIG_PATH }}
+      RAY_NODE_MAJOR: ${{ vars.RAY_NODE_MAJOR }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Verify deploy secrets are present
+        run: |
+          set -euo pipefail
+          for key in RAY_DEPLOY_HOST RAY_DEPLOY_SSH_KEY RAY_DEPLOY_KNOWN_HOSTS; do
+            if [ -z "${!key:-}" ]; then
+              echo "::error::$key is required for VPS deployment."
+              exit 1
+            fi
+          done
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Resolve config and health port
+        id: settings
+        env:
+          CONFIG_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.config_path || '' }}
+        run: |
+          set -euo pipefail
+          CONFIG_PATH="${CONFIG_INPUT:-${RAY_CONFIG_PATH_VAR:-./examples/config/ray.sub1b.public.json}}"
+
+          if [ ! -f "$CONFIG_PATH" ]; then
+            echo "::error::Config file not found: $CONFIG_PATH"
+            exit 1
+          fi
+
+          CONFIG_REL="${CONFIG_PATH#./}"
+          HEALTH_PORT=$(CONFIG_PATH="$CONFIG_PATH" node --input-type=module <<'EOF'
+          import { loadRayConfig } from "./packages/config/dist/index.js";
+
+          const { config } = await loadRayConfig({
+            cwd: process.cwd(),
+            configPath: process.env.CONFIG_PATH,
+          });
+
+          process.stdout.write(String(config.server.port));
+          EOF
+          )
+
+          echo "config_path=$CONFIG_PATH" >> "$GITHUB_OUTPUT"
+          echo "config_rel=$CONFIG_REL" >> "$GITHUB_OUTPUT"
+          echo "health_port=$HEALTH_PORT" >> "$GITHUB_OUTPUT"
+
+      - name: Set up SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$RAY_DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$RAY_DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Bootstrap remote runtime
+        env:
+          SSH_USER: ${{ vars.RAY_DEPLOY_SSH_USER }}
+        run: |
+          set -euo pipefail
+          SSH_USER="${SSH_USER:-root}"
+          NODE_MAJOR="${RAY_NODE_MAJOR:-22}"
+          TARGET="$SSH_USER@$RAY_DEPLOY_HOST"
+
+          ssh -i ~/.ssh/deploy_key "$TARGET" "NODE_MAJOR=$NODE_MAJOR bash -s" <<'ENDSSH'
+          set -euo pipefail
+
+          SUDO=""
+          if [ "$(id -u)" -ne 0 ]; then
+            if ! command -v sudo >/dev/null 2>&1; then
+              echo "Deploy user must be root or have sudo available."
+              exit 1
+            fi
+            SUDO="sudo"
+          fi
+
+          NEED_NODE=1
+          if command -v node >/dev/null 2>&1; then
+            if node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 20 || (major === 20 && minor >= 11) ? 0 : 1)'; then
+              NEED_NODE=0
+            fi
+          fi
+
+          if [ "$NEED_NODE" -eq 1 ]; then
+            curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | $SUDO bash -
+            $SUDO apt-get install -y nodejs
+          fi
+
+          if ! id -u ray >/dev/null 2>&1; then
+            $SUDO useradd --system --home /srv/ray --shell /usr/sbin/nologin ray
+          fi
+
+          $SUDO install -d -m 0755 /srv/ray /etc/ray /var/lib/ray/async-queue
+          ENDSSH
+
+      - name: Sync repository to VPS
+        env:
+          SSH_USER: ${{ vars.RAY_DEPLOY_SSH_USER }}
+        run: |
+          set -euo pipefail
+          SSH_USER="${SSH_USER:-root}"
+          TARGET="$SSH_USER@$RAY_DEPLOY_HOST"
+
+          rsync -az --delete \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude '.ray' \
+            --exclude 'node_modules' \
+            ./ "$TARGET:/srv/ray/"
+
+      - name: Install config, env, and restart service
+        env:
+          SSH_USER: ${{ vars.RAY_DEPLOY_SSH_USER }}
+          CONFIG_REL: ${{ steps.settings.outputs.config_rel }}
+          HEALTH_PORT: ${{ steps.settings.outputs.health_port }}
+        run: |
+          set -euo pipefail
+          SSH_USER="${SSH_USER:-root}"
+          TARGET="$SSH_USER@$RAY_DEPLOY_HOST"
+          ENV_B64="$(printf '%s' "${RAY_ENV_FILE_CONTENTS:-}" | base64 -w 0)"
+
+          ssh -i ~/.ssh/deploy_key "$TARGET" \
+            "CONFIG_REL=$CONFIG_REL HEALTH_PORT=$HEALTH_PORT ENV_B64=$ENV_B64 bash -s" <<'ENDSSH'
+          set -euo pipefail
+
+          SUDO=""
+          if [ "$(id -u)" -ne 0 ]; then
+            SUDO="sudo"
+          fi
+
+          if command -v corepack >/dev/null 2>&1; then
+            $SUDO corepack enable
+            $SUDO corepack prepare pnpm@9.12.3 --activate
+          fi
+
+          cd /srv/ray
+          $SUDO pnpm install --prod --frozen-lockfile --ignore-scripts
+
+          $SUDO cp "/srv/ray/$CONFIG_REL" /etc/ray/ray.json
+          if [ -n "${ENV_B64:-}" ]; then
+            printf '%s' "$ENV_B64" | base64 -d | $SUDO tee /etc/ray/ray.env >/dev/null
+          else
+            printf 'RAY_LOG_LEVEL=info\n' | $SUDO tee /etc/ray/ray.env >/dev/null
+          fi
+          $SUDO chmod 600 /etc/ray/ray.env
+
+          $SUDO cp /srv/ray/examples/deploy/vps/ray-gateway.service /etc/systemd/system/ray-gateway.service
+          $SUDO chown -R ray:ray /srv/ray /var/lib/ray
+          $SUDO systemctl daemon-reload
+          $SUDO systemctl enable --now ray-gateway.service
+          $SUDO systemctl restart ray-gateway.service
+          sleep 2
+          curl -fsS "http://127.0.0.1:${HEALTH_PORT}/health"
+          ENDSSH

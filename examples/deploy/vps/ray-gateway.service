@@ -18,7 +18,6 @@ ProtectHome=true
 ProtectControlGroups=true
 ProtectKernelTunables=true
 LockPersonality=true
-MemoryDenyWriteExecute=true
 RestrictSUIDSGID=true
 UMask=027
 LimitNOFILE=4096

@@ -207,6 +207,11 @@ For the roomier 3B-style OpenAI-compatible profile, use `pnpm start:vps`.
 
 Deployment walkthrough: [examples/deploy/vps/README.md](examples/deploy/vps/README.md).
 
+The repo also includes an opt-in GitHub Actions VPS deploy workflow for the
+gateway itself: [.github/workflows/deploy-vps.yml](.github/workflows/deploy-vps.yml).
+That workflow is generic and only uses repository secrets/variables supplied by
+the operator.
+
 ### Validate config / doctor
 
 ```bash

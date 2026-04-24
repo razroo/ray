@@ -125,6 +125,36 @@ pnpm doctor
 pnpm benchmark:assert:cx23
 ```
 
+### 9. Optional GitHub Actions deploy
+
+The repo includes a generic VPS deploy workflow at
+[.github/workflows/deploy-vps.yml](../../../.github/workflows/deploy-vps.yml).
+It deploys the Ray gateway itself, not any app that happens to call Ray.
+
+Set these GitHub secrets in your own repo or fork:
+
+- `RAY_DEPLOY_HOST` — VPS hostname or IP
+- `RAY_DEPLOY_SSH_KEY` — private SSH key for the deploy user
+- `RAY_DEPLOY_KNOWN_HOSTS` — `known_hosts` entry for the VPS
+- `RAY_ENV_FILE_CONTENTS` — optional complete contents of `/etc/ray/ray.env`
+
+Optional repository variables:
+
+- `RAY_DEPLOY_SSH_USER` — defaults to `root`
+- `RAY_CONFIG_PATH` — repo-relative config path to install, defaults to `./examples/config/ray.sub1b.public.json`
+- `RAY_NODE_MAJOR` — Node major version to install on the VPS when missing, defaults to `22`
+- `RAY_AUTO_DEPLOY` — set to `true` if pushes to `main` should auto-deploy
+
+`RAY_ENV_FILE_CONTENTS` is the right place for auth keys or env overrides, for example:
+
+```dotenv
+RAY_API_KEYS=replace-with-comma-separated-client-keys
+RAY_LOG_LEVEL=info
+```
+
+Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
+`workflow_dispatch` for manual deploys.
+
 ## Operational Notes
 
 - Keep the model backend bound to localhost.
