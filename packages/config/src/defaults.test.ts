@@ -94,7 +94,12 @@ test("sanitizeConfig redacts upstream adapter headers", () => {
         headers: Record<string, string>;
       };
     };
+    capabilityHints: {
+      modelId: string;
+      operational?: unknown;
+    };
   };
 
   assert.equal(safe.model.adapter.headers.authorization, "[redacted]");
+  assert.equal(safe.capabilityHints.modelId, "qwen2.5-3b-instruct-q4");
 });

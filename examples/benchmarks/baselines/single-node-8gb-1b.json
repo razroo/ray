@@ -11,6 +11,7 @@
     "maxTtftP95Ms": 2200,
     "minCompletionTokensPerSecondAvg": 14,
     "minQualityPassRate": 85,
+    "minQualityScoreAvg": 85,
     "minValidJsonRate": 100
   },
   "notes": [

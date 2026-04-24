@@ -150,6 +150,45 @@ test("runtime uses provider token preparation and exposes compiler diagnostics",
   assert.equal(result.usage.tokens?.prompt, 77);
   assert.ok((result.diagnostics?.promptCompiler?.charsSaved ?? 0) > 0);
   assert.ok(typeof result.diagnostics?.promptCompiler?.familyKey === "string");
+  assert.equal(result.diagnostics?.taskRouting?.recommendedModelRole, "drafter");
+});
+
+test("runtime exposes task-aware routing diagnostics for classification", async () => {
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "classifier-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async infer() {
+      return {
+        output: '{"intent":"positive"}',
+      };
+    },
+  };
+  const runtime = createRayRuntime(
+    mergeConfig(createDefaultConfig("tiny"), {
+      tags: {
+        modelRole: "classifier",
+      },
+    }),
+    { provider },
+  );
+  const result = await runtime.infer({
+    input: "Classify this reply",
+    responseFormat: {
+      type: "json_object",
+    },
+    metadata: {
+      promptFamily: "email.reply_classification",
+    },
+  });
+
+  assert.equal(result.diagnostics?.taskRouting?.taskKind, "classification");
+  assert.equal(result.diagnostics?.taskRouting?.recommendedModelRole, "classifier");
+  assert.equal(result.diagnostics?.taskRouting?.matchedActiveRole, true);
 });
 
 test("runtime adaptively reduces maxTokens when observed throughput drops", async () => {

@@ -239,9 +239,10 @@ pnpm benchmark:assert:cx23
 pnpm benchmark:assert:cax11
 pnpm benchmark:assert:cx23:1b
 pnpm benchmark:assert:8gb:1b
+pnpm benchmark:1b:prompt-formats
 ```
 
-Those commands write the latest report to `.ray/benchmarks/` and compare the run against the baseline JSON in `examples/benchmarks/baselines/`. The 1B workload also checks simple output quality signals such as JSON validity, prompt echo, stop-token leakage, and generic email filler.
+Those commands write the latest report to `.ray/benchmarks/`, append JSONL history when configured, and compare the run against the baseline JSON in `examples/benchmarks/baselines/`. The 1B workload also checks scored output quality signals such as JSON validity, prompt echo, stop-token leakage, call-to-action presence, forbidden wrappers, and generic email filler.
 
 For prompt-family quality checks across cold outreach, follow-up, classification, rewrite, and section generation:
 
@@ -249,7 +250,7 @@ For prompt-family quality checks across cold outreach, follow-up, classification
 pnpm eval:prompt-families:1b
 ```
 
-The structured benchmark output includes provider diagnostics such as prompt format, request shape, model ref, launch preset, slot reuse, cached tokens, and context window so a quality regression can be tied back to the backend path Ray chose.
+The structured benchmark output includes provider diagnostics such as prompt format, request shape, model ref, launch preset, slot reuse, cached tokens, JSON repair attempts, and context window so a quality regression can be tied back to the backend path Ray chose. `/health` also exposes detected backend capabilities, and `/v1/config` includes sanitized capability hints for the configured profile.
 
 ### Quality gate (matches CI)
 

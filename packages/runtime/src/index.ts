@@ -29,6 +29,7 @@ import {
   type ScheduleLane,
   type SchedulerSlotSnapshot,
   type SchedulerSnapshot,
+  type TaskRoutingDiagnostics,
   type UsageBreakdown,
   type UsageStats,
 } from "@razroo/ray-core";
@@ -261,6 +262,35 @@ function resolveScheduleLane(config: RayConfig, request: NormalizedInferenceRequ
   }
 
   return "draft";
+}
+
+function resolveTaskRoutingDiagnostics(
+  config: RayConfig,
+  request: NormalizedInferenceRequest,
+): TaskRoutingDiagnostics {
+  const family = request.promptFamily ?? request.metadata.promptFamily ?? "";
+  const promptText = `${request.system ?? ""}\n${request.input}`.toLowerCase();
+  const taskKind: TaskRoutingDiagnostics["taskKind"] =
+    request.responseFormat?.type === "json_object" || family.includes("classification")
+      ? "classification"
+      : family.includes("rewrite")
+        ? "rewrite"
+        : family.includes("email") || promptText.includes("email")
+          ? "draft"
+          : "unknown";
+  const recommendedModelRole: TaskRoutingDiagnostics["recommendedModelRole"] =
+    taskKind === "classification" ? "classifier" : taskKind === "unknown" ? "general" : "drafter";
+  const activeModelRole = config.tags.modelRole;
+
+  return {
+    taskKind,
+    recommendedModelRole,
+    ...(activeModelRole ? { activeModelRole } : {}),
+    matchedActiveRole:
+      activeModelRole === undefined ||
+      activeModelRole === recommendedModelRole ||
+      recommendedModelRole === "general",
+  };
 }
 
 function compilePrompt(config: RayConfig, request: NormalizedInferenceRequest): CompiledPrompt {
@@ -770,6 +800,7 @@ export class RayRuntime {
       promptCompiler: compiled.diagnostics,
       learnedOutputCap: learnedCap.diagnostics,
       adaptiveTuning: tuned.diagnostics,
+      taskRouting: resolveTaskRoutingDiagnostics(this.config, tuned.request),
     };
     const cacheKey =
       this.config.cache.enabled && tuned.request.cache

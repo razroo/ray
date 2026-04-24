@@ -22,6 +22,8 @@ interface BenchmarkArgs {
   apiKey?: string;
   outputPath?: string;
   baselinePath?: string;
+  historyDir?: string;
+  promptFormatSweep: boolean;
   autotune: boolean;
   autotuneScope: AutotuneScope;
   assertBaseline: boolean;
@@ -54,6 +56,8 @@ interface BenchmarkQualityAssertions {
   mustNotContain?: string[];
   noPromptEcho?: boolean;
   stopMustNotAppear?: boolean;
+  requiresCallToAction?: boolean;
+  noSubjectGreetingSignoff?: boolean;
 }
 
 interface BenchmarkWorkloadItem extends InferenceRequest {
@@ -80,6 +84,8 @@ interface InferenceResponse {
       requestShape?: "openai-chat" | "llama.cpp-completion";
       promptFormat?: "llama.cpp-template" | "prompt-scaffold" | "ray-chat-fallback";
       promptFormatReason?: string;
+      jsonRepairAttempted?: boolean;
+      jsonRepairSucceeded?: boolean;
       modelRef?: string;
       backendModel?: string;
       launchPreset?: string;
@@ -115,6 +121,8 @@ interface BenchmarkProviderDiagnosticsSummary {
   modelRefs: Record<string, number>;
   backendModels: Record<string, number>;
   launchPresets: Record<string, number>;
+  jsonRepairAttempts?: number;
+  jsonRepairSuccesses?: number;
   totalSlots?: number;
   contextWindowP50?: number;
   slotReuseRate?: number;
@@ -143,6 +151,8 @@ interface BenchmarkSummary {
   validJsonRate?: number;
   promptEchoRejects?: number;
   qualityFailures?: number;
+  qualityScoreAvg?: number;
+  qualityScoreP50?: number;
   providerDiagnostics?: BenchmarkProviderDiagnosticsSummary;
   score?: number;
 }
@@ -177,6 +187,7 @@ interface BenchmarkBaselineAssertions {
   minPromptCacheReuseRatio?: number;
   minEmailsPerHour?: number;
   minQualityPassRate?: number;
+  minQualityScoreAvg?: number;
   minValidJsonRate?: number;
 }
 
@@ -248,6 +259,24 @@ interface AutotuneOutput {
   recommendedPatch: DeepPartial<RayConfig>;
 }
 
+interface PromptFormatSweepOutput {
+  kind: "prompt-format-sweep";
+  version: number;
+  generatedAt: string;
+  args: {
+    baseUrl: string;
+    workloadPath?: string;
+    concurrency: number;
+    requests: number;
+    label: string;
+  };
+  results: Array<{
+    promptFormat: string;
+    summary: BenchmarkSummary;
+  }>;
+  recommendedPromptFormat: string;
+}
+
 const defaultWorkload: BenchmarkWorkloadItem[] = [
   {
     templateId: "email.cold_outreach.v1",
@@ -286,6 +315,7 @@ function parseArgs(argv: string[]): BenchmarkArgs {
   const result: BenchmarkArgs = {
     baseUrl: "http://127.0.0.1:3000",
     concurrency: 1,
+    promptFormatSweep: false,
     autotune: false,
     autotuneScope: "auto",
     assertBaseline: false,
@@ -307,6 +337,11 @@ function parseArgs(argv: string[]): BenchmarkArgs {
 
     if (current === "--autotune") {
       result.autotune = true;
+      continue;
+    }
+
+    if (current === "--prompt-format-sweep") {
+      result.promptFormatSweep = true;
       continue;
     }
 
@@ -367,6 +402,12 @@ function parseArgs(argv: string[]): BenchmarkArgs {
       continue;
     }
 
+    if (current === "--history-dir") {
+      result.historyDir = next;
+      index += 1;
+      continue;
+    }
+
     if (current === "--baseline") {
       result.baselinePath = next;
       index += 1;
@@ -399,8 +440,10 @@ function printUsage(): void {
   console.log(
     `  --output <path>         Write structured benchmark or autotune output JSON (${STRUCTURED_OUTPUT_VERSION}).`,
   );
+  console.log("  --history-dir <path>    Append structured benchmark output to JSONL history.");
   console.log("  --baseline <path>       Compare the benchmark summary against a baseline JSON.");
   console.log("  --assert-baseline       Exit non-zero if the baseline checks fail.");
+  console.log("  --prompt-format-sweep   Run llama.cpp template/scaffold/Ray fallback variants.");
   console.log("  --autotune              Sweep scheduler settings using the supplied config.");
   console.log("  --autotune-scope <mode> Autotune scope: auto, gateway, or full. Default: auto.");
   console.log("  --help, -h              Show this help text.");
@@ -518,10 +561,51 @@ function containsPromptEcho(request: BenchmarkWorkloadItem, output: string): boo
   return candidates.some((candidate) => normalizedOutput.includes(candidate.slice(0, 96)));
 }
 
+function containsCallToAction(output: string): boolean {
+  const normalizedOutput = normalizeForQuality(output);
+  return [
+    "would you",
+    "are you open",
+    "open to",
+    "worth a",
+    "can we",
+    "could we",
+    "happy to",
+    "send over",
+    "take a look",
+    "review",
+    "if useful",
+    "if helpful",
+  ].some((phrase) => normalizedOutput.includes(phrase));
+}
+
+function containsEmailWrapper(output: string): boolean {
+  const normalizedOutput = normalizeForQuality(output);
+  return (
+    normalizedOutput.startsWith("subject:") ||
+    normalizedOutput.startsWith("hi ") ||
+    normalizedOutput.startsWith("hello ") ||
+    normalizedOutput.includes("best regards") ||
+    normalizedOutput.includes("sincerely,") ||
+    normalizedOutput.includes("thanks,")
+  );
+}
+
 function resolveQualityAssertions(request: BenchmarkWorkloadItem): BenchmarkQualityAssertions {
+  const templateId = request.templateId ?? "";
+  const promptFamily = request.metadata?.promptFamily ?? "";
+  const isEmailDraft =
+    templateId === "email.cold_outreach.v1" ||
+    templateId === "email.follow_up.v1" ||
+    promptFamily.includes("cold_outreach") ||
+    promptFamily.includes("follow_up");
+  const isEmailBodySection = isEmailDraft || promptFamily.includes("section_generation");
+
   return {
     ...(request.responseFormat?.type === "json_object" ? { requiresValidJson: true } : {}),
     ...(request.stop && request.stop.length > 0 ? { stopMustNotAppear: true } : {}),
+    ...(isEmailBodySection ? { noSubjectGreetingSignoff: true } : {}),
+    ...(isEmailDraft ? { requiresCallToAction: true } : {}),
     ...(request.benchmark ?? {}),
   };
 }
@@ -572,7 +656,43 @@ function evaluateQuality(request: BenchmarkWorkloadItem, response: InferenceResp
     failures.push("prompt_echo");
   }
 
+  if (assertions.requiresCallToAction && !containsCallToAction(output)) {
+    failures.push("missing_cta");
+  }
+
+  if (assertions.noSubjectGreetingSignoff && containsEmailWrapper(output)) {
+    failures.push("email_wrapper");
+  }
+
   return failures;
+}
+
+function scoreQualityFailures(failures: string[]): number {
+  let score = 100;
+
+  for (const failure of failures) {
+    if (failure === "invalid_json") {
+      score -= 45;
+    } else if (failure === "prompt_echo") {
+      score -= 35;
+    } else if (failure.startsWith("stop_leak")) {
+      score -= 30;
+    } else if (failure === "email_wrapper") {
+      score -= 25;
+    } else if (failure === "missing_cta") {
+      score -= 20;
+    } else if (failure.startsWith("forbidden")) {
+      score -= 20;
+    } else if (failure.startsWith("missing")) {
+      score -= 18;
+    } else if (failure === "output_too_short" || failure === "output_too_long") {
+      score -= 15;
+    } else {
+      score -= 10;
+    }
+  }
+
+  return Math.max(0, score);
 }
 
 function resolveBenchmarkApiKey(args: BenchmarkArgs, config?: RayConfig): string | undefined {
@@ -703,6 +823,7 @@ async function runBenchmark(options: {
   const wallTimeMs = Date.now() - startedAt;
   const responses = results.map((sample) => sample.response);
   const qualityResults = results.map((sample) => evaluateQuality(sample.request, sample.response));
+  const qualityScores = qualityResults.map(scoreQualityFailures);
   const latencyValues = responses.map((response) => response.latencyMs);
   const queueValues = responses.map((response) => response.queueTimeMs);
   const ttftValues = responses
@@ -778,6 +899,12 @@ async function runBenchmark(options: {
   const totalSlots = [...providerDiagnostics]
     .reverse()
     .find((diagnostics) => typeof diagnostics.totalSlots === "number")?.totalSlots;
+  const jsonRepairAttempts = providerDiagnostics.filter(
+    (diagnostics) => diagnostics.jsonRepairAttempted === true,
+  ).length;
+  const jsonRepairSuccesses = providerDiagnostics.filter(
+    (diagnostics) => diagnostics.jsonRepairSucceeded === true,
+  ).length;
   const providerDiagnosticsSummary: BenchmarkProviderDiagnosticsSummary | undefined =
     providerDiagnostics.length > 0
       ? {
@@ -802,6 +929,7 @@ async function runBenchmark(options: {
           launchPresets: countOccurrences(
             providerDiagnostics.map((diagnostics) => diagnostics.launchPreset),
           ),
+          ...(jsonRepairAttempts > 0 ? { jsonRepairAttempts, jsonRepairSuccesses } : {}),
           ...(typeof totalSlots === "number" ? { totalSlots } : {}),
           contextWindowP50: quantile(contextWindowValues, 0.5),
           slotReuseRate:
@@ -837,6 +965,8 @@ async function runBenchmark(options: {
     ),
     qualityPassRate:
       qualityResults.length > 0 ? (qualityPasses / qualityResults.length) * 100 : undefined,
+    qualityScoreAvg: mean(qualityScores),
+    qualityScoreP50: quantile(qualityScores, 0.5),
     validJsonRate: jsonRequests > 0 ? (validJsonResponses / jsonRequests) * 100 : undefined,
     promptEchoRejects,
     qualityFailures: qualityResults.length - qualityPasses,
@@ -872,7 +1002,9 @@ function printSummary(summary: BenchmarkSummary): void {
   console.log(
     `Quality: pass=${formatNumber(summary.qualityPassRate)}% validJson=${formatNumber(
       summary.validJsonRate,
-    )}% failures=${summary.qualityFailures ?? 0} promptEcho=${summary.promptEchoRejects ?? 0}`,
+    )}% score=${formatNumber(summary.qualityScoreAvg)} p50=${formatNumber(
+      summary.qualityScoreP50,
+    )} failures=${summary.qualityFailures ?? 0} promptEcho=${summary.promptEchoRejects ?? 0}`,
   );
   if (summary.providerDiagnostics) {
     console.log(
@@ -887,6 +1019,8 @@ function printSummary(summary: BenchmarkSummary): void {
         summary.providerDiagnostics.cachedTokensAvg,
       )} ctxP50=${formatNumber(summary.providerDiagnostics.contextWindowP50)} totalSlots=${
         summary.providerDiagnostics.totalSlots ?? "n/a"
+      } jsonRepair=${summary.providerDiagnostics.jsonRepairSuccesses ?? 0}/${
+        summary.providerDiagnostics.jsonRepairAttempts ?? 0
       }`,
     );
   }
@@ -1375,6 +1509,16 @@ function compareSummaryToBaseline(options: {
     );
   }
 
+  if (baseline.assertions.minQualityScoreAvg !== undefined) {
+    addBaselineCheck(
+      checks,
+      "qualityScoreAvg",
+      ">=",
+      baseline.assertions.minQualityScoreAvg,
+      summary.qualityScoreAvg,
+    );
+  }
+
   if (baseline.assertions.minValidJsonRate !== undefined) {
     addBaselineCheck(
       checks,
@@ -1412,12 +1556,103 @@ function printComparison(comparison: BenchmarkComparison): void {
 
 async function writeStructuredOutput(
   outputPath: string,
-  payload: BenchmarkSummaryOutput | AutotuneOutput,
+  payload: BenchmarkSummaryOutput | AutotuneOutput | PromptFormatSweepOutput,
 ): Promise<void> {
   const resolvedPath = path.resolve(process.cwd(), outputPath);
   await mkdir(path.dirname(resolvedPath), { recursive: true });
   await writeFile(resolvedPath, `${JSON.stringify(payload, null, 2)}\n`);
   console.log(`Wrote structured output to ${resolvedPath}`);
+}
+
+async function appendHistoryOutput(
+  historyDir: string | undefined,
+  payload: BenchmarkSummaryOutput | AutotuneOutput | PromptFormatSweepOutput,
+): Promise<void> {
+  if (!historyDir) {
+    return;
+  }
+
+  const resolvedDir = path.resolve(process.cwd(), historyDir);
+  const historyPath = path.join(resolvedDir, `${payload.kind}.jsonl`);
+  await mkdir(resolvedDir, { recursive: true });
+  await writeFile(historyPath, `${JSON.stringify(payload)}\n`, {
+    flag: "a",
+  });
+  console.log(`Appended benchmark history to ${historyPath}`);
+}
+
+function withPromptFormatOverride(
+  workload: BenchmarkWorkloadItem[],
+  promptFormat: string,
+): BenchmarkWorkloadItem[] {
+  return workload.map((request) => ({
+    ...request,
+    metadata: {
+      ...(request.metadata ?? {}),
+      rayPromptFormat: promptFormat,
+    },
+  }));
+}
+
+async function runPromptFormatSweep(
+  args: BenchmarkArgs,
+  workload: BenchmarkWorkloadItem[],
+): Promise<PromptFormatSweepOutput> {
+  const promptFormats = ["llama.cpp-template", "prompt-scaffold", "ray-chat-fallback"];
+  const requests = args.requests ?? workload.length;
+  const directConfig = args.configPath
+    ? (
+        await loadRayConfig({
+          cwd: process.cwd(),
+          configPath: args.configPath,
+        })
+      ).config
+    : undefined;
+  const results: PromptFormatSweepOutput["results"] = [];
+
+  for (const promptFormat of promptFormats) {
+    const summary = await runBenchmark({
+      baseUrl: args.baseUrl,
+      workload: withPromptFormatOverride(workload, promptFormat),
+      concurrency: args.concurrency,
+      requests,
+      label: `${args.label ?? args.workloadPath ?? "default-workload"}:${promptFormat}`,
+      apiKey: resolveBenchmarkApiKey(args, directConfig),
+    });
+    printSummary(summary);
+    console.log("");
+    results.push({
+      promptFormat,
+      summary,
+    });
+  }
+
+  const winner = [...results].sort(
+    (left, right) =>
+      (right.summary.qualityScoreAvg ?? 0) - (left.summary.qualityScoreAvg ?? 0) ||
+      (right.summary.score ?? 0) - (left.summary.score ?? 0),
+  )[0];
+
+  if (!winner) {
+    throw new Error("Prompt format sweep produced no results.");
+  }
+
+  console.log(`Recommended prompt format: ${winner.promptFormat}`);
+
+  return {
+    kind: "prompt-format-sweep",
+    version: STRUCTURED_OUTPUT_VERSION,
+    generatedAt: new Date().toISOString(),
+    args: {
+      baseUrl: args.baseUrl,
+      ...(args.workloadPath ? { workloadPath: args.workloadPath } : {}),
+      concurrency: args.concurrency,
+      requests,
+      label: args.label ?? args.workloadPath ?? "default-workload",
+    },
+    results,
+    recommendedPromptFormat: winner.promptFormat,
+  };
 }
 
 async function runAutotune(
@@ -1585,6 +1820,16 @@ async function main(): Promise<void> {
     if (args.outputPath) {
       await writeStructuredOutput(args.outputPath, report);
     }
+    await appendHistoryOutput(args.historyDir, report);
+    return;
+  }
+
+  if (args.promptFormatSweep) {
+    const report = await runPromptFormatSweep(args, workload);
+    if (args.outputPath) {
+      await writeStructuredOutput(args.outputPath, report);
+    }
+    await appendHistoryOutput(args.historyDir, report);
     return;
   }
 
@@ -1620,26 +1865,29 @@ async function main(): Promise<void> {
     printComparison(comparison);
   }
 
+  const outputPayload: BenchmarkSummaryOutput = {
+    kind: "benchmark-summary",
+    version: STRUCTURED_OUTPUT_VERSION,
+    generatedAt: new Date().toISOString(),
+    args: {
+      baseUrl: args.baseUrl,
+      ...(args.workloadPath ? { workloadPath: args.workloadPath } : {}),
+      concurrency: args.concurrency,
+      requests,
+      label: summary.label,
+      ...(args.configPath ? { configPath: path.resolve(process.cwd(), args.configPath) } : {}),
+      ...(args.baselinePath
+        ? { baselinePath: path.resolve(process.cwd(), args.baselinePath) }
+        : {}),
+    },
+    summary,
+    ...(comparison ? { comparison } : {}),
+  };
+
   if (args.outputPath) {
-    await writeStructuredOutput(args.outputPath, {
-      kind: "benchmark-summary",
-      version: STRUCTURED_OUTPUT_VERSION,
-      generatedAt: new Date().toISOString(),
-      args: {
-        baseUrl: args.baseUrl,
-        ...(args.workloadPath ? { workloadPath: args.workloadPath } : {}),
-        concurrency: args.concurrency,
-        requests,
-        label: summary.label,
-        ...(args.configPath ? { configPath: path.resolve(process.cwd(), args.configPath) } : {}),
-        ...(args.baselinePath
-          ? { baselinePath: path.resolve(process.cwd(), args.baselinePath) }
-          : {}),
-      },
-      summary,
-      ...(comparison ? { comparison } : {}),
-    });
+    await writeStructuredOutput(args.outputPath, outputPayload);
   }
+  await appendHistoryOutput(args.historyDir, outputPayload);
 
   if (args.assertBaseline && comparison && !comparison.passed) {
     process.exitCode = 1;

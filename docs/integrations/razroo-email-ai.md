@@ -38,8 +38,8 @@ The gateway exposes:
 - `POST /v1/jobs` — async durable submission (same inference fields, plus optional `callbackUrl`). Returns `202 Accepted` and a job location.
 - `GET /v1/jobs/:id` — durable job state and final result/error.
 - `GET /livez` — lightweight unauthenticated liveness for reverse proxies.
-- `GET /health` — detailed queue/provider snapshot, plus `asyncQueue` when enabled. Public profiles require Bearer auth.
-- `GET /v1/config` — non-secret config (sanitized). Public profiles require Bearer auth.
+- `GET /health` — detailed queue/provider snapshot, detected backend capabilities (`applyTemplate`, `chatTemplate`, `jsonMode`, context window, slots), plus `asyncQueue` when enabled. Public profiles require Bearer auth.
+- `GET /v1/config` — non-secret config (sanitized) with capability hints for the configured model/profile. Public profiles require Bearer auth.
 
 With the public profile, a minimal `curl` check is:
 
@@ -63,10 +63,11 @@ Benchmark the 1B email path with:
 ```bash
 pnpm benchmark:assert:cx23:1b
 pnpm benchmark:assert:8gb:1b
+pnpm benchmark:1b:prompt-formats
 pnpm autotune:1b
 ```
 
-The workload in [email-1b-workload.jsonl](../../examples/workloads/email-1b-workload.jsonl) exercises cold outreach, follow-up, reply classification, reply rewrite, and a direct section-generation prompt shaped like the app's product flow. It asserts JSON validity for classification and rejects common prompt echo, stop-token leakage, and generic email filler.
+The workload in [email-1b-workload.jsonl](../../examples/workloads/email-1b-workload.jsonl) exercises cold outreach, follow-up, reply classification, reply rewrite, and a direct section-generation prompt shaped like the app's product flow. It asserts JSON validity for classification and rejects common prompt echo, stop-token leakage, and generic email filler. Benchmark runs can append JSONL history under `.ray/benchmarks/history` so prompt/config changes can be compared over time.
 
 [email-prompt-families-1b.json](../../examples/evals/email-prompt-families-1b.json) is the smaller golden eval set for prompt wording changes. Run it with `pnpm eval:prompt-families:1b` against a live Ray gateway. The output includes provider diagnostics for `promptFormat`, `promptFormatReason`, `modelRef`, `launchPreset`, cached tokens, slot reuse, and context window.
 

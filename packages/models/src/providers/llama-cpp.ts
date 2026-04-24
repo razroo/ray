@@ -29,6 +29,7 @@ import {
 const DEFAULT_SLOT_SNAPSHOT_TIMEOUT_MS = 250;
 const TOKENIZE_TIMEOUT_MS = 30_000;
 const CAPABILITY_CACHE_TTL_MS = 60_000;
+const PROMPT_FORMAT_OVERRIDE_METADATA_KEY = "rayPromptFormat";
 
 interface LlamaCppHealthResponse {
   status?: string;
@@ -85,6 +86,18 @@ interface OpenAICompatibleResponse {
     prompt_tokens?: number;
     completion_tokens?: number;
     total_tokens?: number;
+  };
+}
+
+interface ChatCompletionInferenceResult {
+  output: string;
+  payload: OpenAICompatibleResponse;
+  usage?: {
+    tokens: {
+      prompt: number;
+      completion: number;
+      total: number;
+    };
   };
 }
 
@@ -158,6 +171,52 @@ function buildChatCompletionPayload(options: {
     ...(options.request.stop ? { stop: options.request.stop } : {}),
     ...(options.request.responseFormat ? { response_format: options.request.responseFormat } : {}),
     user: options.user,
+  };
+}
+
+function isValidJsonObject(value: string): boolean {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
+}
+
+function resolvePromptFormatOverride(
+  request: NormalizedInferenceRequest,
+): PromptPreparation["diagnostics"]["promptFormat"] | undefined {
+  const override = request.metadata[PROMPT_FORMAT_OVERRIDE_METADATA_KEY];
+
+  if (
+    override === "llama.cpp-template" ||
+    override === "prompt-scaffold" ||
+    override === "ray-chat-fallback"
+  ) {
+    return override;
+  }
+
+  return undefined;
+}
+
+function mergeUsage(
+  left: ChatCompletionInferenceResult["usage"],
+  right: ChatCompletionInferenceResult["usage"],
+): ChatCompletionInferenceResult["usage"] {
+  if (!left) {
+    return right;
+  }
+
+  if (!right) {
+    return left;
+  }
+
+  return {
+    tokens: {
+      prompt: left.tokens.prompt + right.tokens.prompt,
+      completion: left.tokens.completion + right.tokens.completion,
+      total: left.tokens.total + right.tokens.total,
+    },
   };
 }
 
@@ -612,41 +671,65 @@ export class LlamaCppProvider implements ModelProvider {
     context: ProviderContext,
     preparation: ProviderRequestPreparation,
   ): Promise<ProviderResult> {
-    const payload = (await this.request(
-      "/v1/chat/completions",
-      {
-        method: "POST",
-        body: JSON.stringify(
-          buildChatCompletionPayload({
-            modelRef: this.adapter.modelRef,
-            request,
-            user: context.requestId,
-          }),
-        ),
-      },
-      this.adapter.timeoutMs,
-      context.signal,
-    )) as OpenAICompatibleResponse;
+    const initial = await this.requestChatCompletion(
+      buildChatCompletionPayload({
+        modelRef: this.adapter.modelRef,
+        request,
+        user: context.requestId,
+      }),
+      context,
+      preparation.promptTokens,
+    );
+    let output = initial.output;
+    let usage = initial.usage;
+    let rawPayload = initial.payload;
+    let jsonRepairAttempted = false;
+    let jsonRepairSucceeded = false;
 
-    const output = extractAssistantText(payload);
-    const prompt = payload.usage?.prompt_tokens ?? preparation.promptTokens ?? 0;
-    const completion = payload.usage?.completion_tokens ?? 0;
-    const usage =
-      payload.usage || preparation.promptTokens !== undefined
-        ? {
-            tokens: {
-              prompt,
-              completion,
-              total: payload.usage?.total_tokens ?? prompt + completion,
+    if (request.responseFormat?.type === "json_object" && !isValidJsonObject(output)) {
+      jsonRepairAttempted = true;
+
+      const repaired = await this.requestChatCompletion(
+        {
+          model: this.adapter.modelRef,
+          stream: false,
+          temperature: 0,
+          top_p: 1,
+          max_tokens: Math.max(32, Math.min(request.maxTokens, 128)),
+          response_format: { type: "json_object" },
+          messages: [
+            {
+              role: "system",
+              content:
+                "Repair the assistant output into one valid compact JSON object. Return only JSON.",
             },
-          }
-        : undefined;
+            {
+              role: "user",
+              content: `Original task:\n${request.input}\n\nAssistant output to repair:\n${output}`,
+            },
+          ],
+          user: context.requestId,
+        },
+        context,
+      );
+
+      if (isValidJsonObject(repaired.output)) {
+        output = repaired.output;
+        rawPayload = repaired.payload;
+        usage = mergeUsage(usage, repaired.usage);
+        jsonRepairSucceeded = true;
+      } else {
+        usage = mergeUsage(usage, repaired.usage);
+      }
+    }
 
     return {
       output,
       ...(usage ? { usage } : {}),
       diagnostics: {
         requestShape: "openai-chat",
+        ...(jsonRepairAttempted ? { jsonRepairAttempted } : {}),
+        ...(jsonRepairAttempted ? { jsonRepairSucceeded } : {}),
         ...(preparation.diagnostics?.promptFormat
           ? { promptFormat: preparation.diagnostics.promptFormat }
           : {}),
@@ -675,7 +758,42 @@ export class LlamaCppProvider implements ModelProvider {
           ? { contextWindow: preparation.diagnostics.contextWindow }
           : {}),
       },
-      raw: payload,
+      raw: rawPayload,
+    };
+  }
+
+  private async requestChatCompletion(
+    payload: Record<string, unknown>,
+    context: ProviderContext,
+    fallbackPromptTokens?: number,
+  ): Promise<ChatCompletionInferenceResult> {
+    const response = (await this.request(
+      "/v1/chat/completions",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+      this.adapter.timeoutMs,
+      context.signal,
+    )) as OpenAICompatibleResponse;
+    const output = extractAssistantText(response);
+    const prompt = response.usage?.prompt_tokens ?? fallbackPromptTokens ?? 0;
+    const completion = response.usage?.completion_tokens ?? 0;
+    const usage =
+      response.usage || fallbackPromptTokens !== undefined
+        ? {
+            tokens: {
+              prompt,
+              completion,
+              total: response.usage?.total_tokens ?? prompt + completion,
+            },
+          }
+        : undefined;
+
+    return {
+      output,
+      payload: response,
+      ...(usage ? { usage } : {}),
     };
   }
 
@@ -798,28 +916,37 @@ export class LlamaCppProvider implements ModelProvider {
         : {}),
     };
     const preferredFormat = this.model.operational?.recommendedPromptFormat;
+    const promptFormatOverride = resolvePromptFormatOverride(request);
 
     if (
+      promptFormatOverride === "ray-chat-fallback" ||
       preferredFormat === "plain-completion" ||
-      capabilities.applyTemplate === "unavailable" ||
-      capabilities.chatTemplate === "unavailable"
+      (promptFormatOverride !== "llama.cpp-template" &&
+        (capabilities.applyTemplate === "unavailable" ||
+          capabilities.chatTemplate === "unavailable"))
     ) {
       return {
         prompt: this.buildFallbackPrompt(request),
         diagnostics: {
           promptFormat: "ray-chat-fallback",
           promptFormatReason:
-            preferredFormat === "plain-completion"
-              ? "model prefers plain completion"
-              : capabilities.applyTemplate === "unavailable"
-                ? "llama.cpp /apply-template unavailable"
-                : "llama.cpp chat template unavailable",
+            promptFormatOverride === "ray-chat-fallback"
+              ? "metadata forced ray fallback prompt"
+              : preferredFormat === "plain-completion"
+                ? "model prefers plain completion"
+                : capabilities.applyTemplate === "unavailable"
+                  ? "llama.cpp /apply-template unavailable"
+                  : "llama.cpp chat template unavailable",
           ...baseDiagnostics,
         },
       };
     }
 
-    if (request.promptTemplateId && request.templateVariables) {
+    if (
+      request.promptTemplateId &&
+      request.templateVariables &&
+      promptFormatOverride !== "llama.cpp-template"
+    ) {
       try {
         const scaffold = await this.getPromptScaffold(
           request.promptTemplateId,
@@ -830,12 +957,15 @@ export class LlamaCppProvider implements ModelProvider {
           prompt: this.renderPromptFromScaffold(scaffold, request.templateVariables),
           diagnostics: {
             promptFormat: "prompt-scaffold",
-            promptFormatReason: "template request reused cached llama.cpp scaffold",
+            promptFormatReason:
+              promptFormatOverride === "prompt-scaffold"
+                ? "metadata forced prompt scaffold"
+                : "template request reused cached llama.cpp scaffold",
             ...baseDiagnostics,
           },
         };
       } catch (error) {
-        if (this.canFallbackPrompt(error)) {
+        if (this.canFallbackPrompt(error) && promptFormatOverride !== "prompt-scaffold") {
           return {
             prompt: this.buildFallbackPrompt(request),
             diagnostics: {

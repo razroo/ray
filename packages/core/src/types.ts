@@ -365,6 +365,8 @@ export interface ProviderDiagnostics {
   requestShape?: "openai-chat" | "llama.cpp-completion";
   promptFormat?: "llama.cpp-template" | "prompt-scaffold" | "ray-chat-fallback";
   promptFormatReason?: string;
+  jsonRepairAttempted?: boolean;
+  jsonRepairSucceeded?: boolean;
   modelRef?: string;
   backendModel?: string;
   launchPreset?: string;
@@ -454,10 +456,18 @@ export interface LearnedOutputCapDiagnostics {
   percentile: number;
 }
 
+export interface TaskRoutingDiagnostics {
+  taskKind: "classification" | "rewrite" | "draft" | "unknown";
+  recommendedModelRole: "classifier" | "drafter" | "general";
+  activeModelRole?: string;
+  matchedActiveRole: boolean;
+}
+
 export interface InferenceDiagnostics {
   promptCompiler?: PromptCompilerDiagnostics;
   learnedOutputCap?: LearnedOutputCapDiagnostics;
   adaptiveTuning?: AdaptiveTuningDiagnostics;
+  taskRouting?: TaskRoutingDiagnostics;
   provider?: ProviderDiagnostics;
 }
 

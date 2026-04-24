@@ -641,6 +641,27 @@ export async function loadRayConfig(options: LoadRayConfigOptions = {}): Promise
 
 export function sanitizeConfig(config: RayConfig): Record<string, unknown> {
   const safe = structuredClone(config) as RayConfig;
+  const capabilityHints = {
+    profile: safe.profile,
+    modelId: safe.model.id,
+    family: safe.model.family,
+    quantization: safe.model.quantization,
+    contextWindow: safe.model.contextWindow,
+    maxOutputTokens: safe.model.maxOutputTokens,
+    operational: safe.model.operational,
+    ...(safe.model.adapter.kind === "llama.cpp"
+      ? {
+          llamaCpp: {
+            modelRef: safe.model.adapter.modelRef,
+            launchPreset: safe.model.adapter.launchProfile?.preset,
+            ctxSize: safe.model.adapter.launchProfile?.ctxSize,
+            parallel: safe.model.adapter.launchProfile?.parallel,
+            cacheRamMiB: safe.model.adapter.launchProfile?.cacheRamMiB,
+            cachePrompt: safe.model.adapter.cachePrompt,
+          },
+        }
+      : {}),
+  };
 
   if (
     (safe.model.adapter.kind === "openai-compatible" || safe.model.adapter.kind === "llama.cpp") &&
@@ -651,7 +672,10 @@ export function sanitizeConfig(config: RayConfig): Record<string, unknown> {
     );
   }
 
-  return safe as unknown as Record<string, unknown>;
+  return {
+    ...(safe as unknown as Record<string, unknown>),
+    capabilityHints,
+  };
 }
 
 export { createDefaultConfig, mergeConfig };
