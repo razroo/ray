@@ -156,7 +156,8 @@ When the deploy renderer emits a llama.cpp unit, install it as
 `Wants=` and `After=` dependencies on that local backend service.
 The render output also includes `summary.json` with doctor diagnostics,
 preflight facts, and generated systemd memory ceilings; inspect it before
-copying units into place.
+copying units into place. Relative `--output-dir` values are resolved from the
+rendered `--cwd`.
 
 ```bash
 bun packages/deploy/dist/cli.js render \

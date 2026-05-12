@@ -257,7 +257,7 @@ test("runCli render writes deployment files when output-dir is provided", async 
     "--gateway-runtime-binary",
     "/usr/local/bin/bun",
     "--output-dir",
-    outputDir,
+    "rendered",
   ]);
 
   const service = await readFile(join(outputDir, "ray-gateway.service"), "utf8");

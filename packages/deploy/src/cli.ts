@@ -345,6 +345,7 @@ export async function runCli(argv: string[]): Promise<void> {
     ...options,
     cwd,
     ...(options.envFile ? { envFile: path.resolve(cwd, options.envFile) } : {}),
+    ...(options.outputDir ? { outputDir: path.resolve(cwd, options.outputDir) } : {}),
   };
   const env = await loadEnvironment(resolvedOptions);
 
