@@ -158,18 +158,18 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
   assert.equal(plan.binaryDirectory, "/usr/local/bin");
   assert.equal(plan.modelPath, "/var/lib/ray/models/portable-1b.gguf");
   assert.deepEqual(plan.commands, [
-    "sudo install -d -m 0755 '/usr/local/bin'",
-    "sudo install -D -m 0755 -- './bin/llama-server' '/usr/local/bin/llama-server'",
-    "printf '%s  %s\\n' 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' '/usr/local/bin/llama-server' | sha256sum -c -",
-    "sudo -u 'rayops' test -x '/usr/local/bin/llama-server'",
-    "sudo -u 'rayops' timeout 5s '/usr/local/bin/llama-server' --help >/dev/null",
-    "sudo install -d -m 0755 '/var/lib/ray/models'",
-    `required_mib="$(du -m './models/portable-1b.gguf' | awk 'NR==1 {print $1 + 256}')"; available_mib="$(df -Pm '/var/lib/ray/models' | awk 'NR==2 {print $4}')"; test "\${available_mib:-0}" -ge "\${required_mib:-0}" || { printf '%s\\n' 'Not enough free space in /var/lib/ray/models: keep at least 256 MiB free after copying the GGUF.' >&2; exit 1; }`,
-    `test "$(head -c 4 -- './models/portable-1b.gguf')" = 'GGUF' || { printf '%s\\n' 'GGUF source does not start with the GGUF header: ./models/portable-1b.gguf' >&2; exit 1; }`,
-    "sudo install -D -m 0640 -- './models/portable-1b.gguf' '/var/lib/ray/models/portable-1b.gguf'",
-    "sudo chown 'rayops:rayops' '/var/lib/ray/models/portable-1b.gguf'",
-    "printf '%s  %s\\n' 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' '/var/lib/ray/models/portable-1b.gguf' | sudo sha256sum -c -",
-    "sudo -u 'rayops' test -r '/var/lib/ray/models/portable-1b.gguf'",
+    "timeout 60s sudo install -d -m 0755 '/usr/local/bin'",
+    "timeout 120s sudo install -D -m 0755 -- './bin/llama-server' '/usr/local/bin/llama-server'",
+    "printf '%s  %s\\n' 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' '/usr/local/bin/llama-server' | timeout 120s sha256sum -c -",
+    "timeout 30s sudo -u 'rayops' test -x '/usr/local/bin/llama-server'",
+    "timeout 15s sudo -u 'rayops' timeout 5s '/usr/local/bin/llama-server' --help >/dev/null",
+    "timeout 60s sudo install -d -m 0755 '/var/lib/ray/models'",
+    `du_output="$(timeout 60s du -m './models/portable-1b.gguf')" || exit "$?"; df_output="$(timeout 30s df -Pm '/var/lib/ray/models')" || exit "$?"; required_mib="$(printf '%s\\n' "$du_output" | awk 'NR==1 {print $1 + 256}')"; available_mib="$(printf '%s\\n' "$df_output" | awk 'NR==2 {print $4}')"; test "\${available_mib:-0}" -ge "\${required_mib:-0}" || { printf '%s\\n' 'Not enough free space in /var/lib/ray/models: keep at least 256 MiB free after copying the GGUF.' >&2; exit 1; }`,
+    `magic="$(timeout 30s head -c 4 -- './models/portable-1b.gguf')" || exit "$?"; test "$magic" = 'GGUF' || { printf '%s\\n' 'GGUF source does not start with the GGUF header: ./models/portable-1b.gguf' >&2; exit 1; }`,
+    "timeout 1800s sudo install -D -m 0640 -- './models/portable-1b.gguf' '/var/lib/ray/models/portable-1b.gguf'",
+    "timeout 60s sudo chown 'rayops:rayops' '/var/lib/ray/models/portable-1b.gguf'",
+    "printf '%s  %s\\n' 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' '/var/lib/ray/models/portable-1b.gguf' | timeout 1800s sudo sha256sum -c -",
+    "timeout 30s sudo -u 'rayops' test -r '/var/lib/ray/models/portable-1b.gguf'",
   ]);
 });
 
@@ -191,13 +191,13 @@ test("createModelStagePlan reads staging sources and checksums from env", async 
   assert.equal(plan.sha256, "b".repeat(64));
   assert.match(
     plan.commands.join("\n"),
-    /sudo install -D -m 0755 -- '\/tmp\/ray-artifacts\/llama-server' '\/usr\/local\/bin\/llama-server'/,
+    /timeout 120s sudo install -D -m 0755 -- '\/tmp\/ray-artifacts\/llama-server' '\/usr\/local\/bin\/llama-server'/,
   );
   assert.match(
     plan.commands.join("\n"),
-    /sudo install -D -m 0640 -- '\/tmp\/ray-artifacts\/local-1b-q4\.gguf' '\/var\/lib\/ray\/models\/local-1b-q4\.gguf'/,
+    /timeout 1800s sudo install -D -m 0640 -- '\/tmp\/ray-artifacts\/local-1b-q4\.gguf' '\/var\/lib\/ray\/models\/local-1b-q4\.gguf'/,
   );
-  assert.match(plan.commands.join("\n"), /df -Pm '\/var\/lib\/ray\/models'/);
+  assert.match(plan.commands.join("\n"), /timeout 30s df -Pm '\/var\/lib\/ray\/models'/);
 });
 
 test("formatTextPlan prints an operator-ready staging plan", async () => {
@@ -210,16 +210,16 @@ test("formatTextPlan prints an operator-ready staging plan", async () => {
 
   assert.match(text, /Ray llama\.cpp artifact staging plan:/);
   assert.match(text, /binary source: pass --binary-source \/path\/to\/llama-server/);
-  assert.match(text, /sudo install -D -m 0755 -- '\/path\/to\/llama-server'/);
+  assert.match(text, /timeout 120s sudo install -D -m 0755 -- '\/path\/to\/llama-server'/);
   assert.match(
     text,
-    /sudo -u 'ray' timeout 5s '\/usr\/local\/bin\/llama-server' --help >\/dev\/null/,
+    /timeout 15s sudo -u 'ray' timeout 5s '\/usr\/local\/bin\/llama-server' --help >\/dev\/null/,
   );
   assert.match(text, /target GGUF: \/var\/lib\/ray\/models\/qwen2\.5-0\.5b-instruct-q4_k_m\.gguf/);
   assert.match(text, /keep at least 256 MiB free after copying the GGUF/);
-  assert.match(text, /head -c 4/);
+  assert.match(text, /timeout 30s head -c 4/);
   assert.match(text, /GGUF source does not start with the GGUF header/);
-  assert.match(text, /sudo install -D -m 0640 -- '\/path\/to\/model\.gguf'/);
+  assert.match(text, /timeout 1800s sudo install -D -m 0640 -- '\/path\/to\/model\.gguf'/);
   assert.match(text, /Then run doctor on the VPS/);
 });
 
@@ -235,13 +235,13 @@ test("formatCommandPlan prints shell commands only", async () => {
 
   assert.equal(text, plan.commands.join("\n"));
   assert.doesNotMatch(text, /Ray llama\.cpp artifact staging plan/);
-  assert.match(text, /^sudo install -d -m 0755/);
+  assert.match(text, /^timeout 60s sudo install -d -m 0755/);
   assert.match(
     text,
-    /sudo -u 'ray' timeout 5s '\/usr\/local\/bin\/llama-server' --help >\/dev\/null/,
+    /timeout 15s sudo -u 'ray' timeout 5s '\/usr\/local\/bin\/llama-server' --help >\/dev\/null/,
   );
-  assert.match(text, /head -c 4 -- '\.\/model\.gguf'/);
-  assert.match(text, /sudo -u 'ray' test -r/);
+  assert.match(text, /timeout 30s head -c 4 -- '\.\/model\.gguf'/);
+  assert.match(text, /timeout 30s sudo -u 'ray' test -r/);
 });
 
 test("checkModelStageSources verifies concrete artifact inputs", async (t) => {
@@ -653,8 +653,8 @@ test("runModelStageCli can print commands only", async () => {
   assert.equal(exitCode, 0);
   assert.equal(stderr, "");
   assert.doesNotMatch(stdout, /Ray llama\.cpp artifact staging plan/);
-  assert.match(stdout, /^sudo install -d -m 0755/);
-  assert.match(stdout, /sudo install -D -m 0640 -- '\.\/local-1b-q4\.gguf'/);
+  assert.match(stdout, /^timeout 60s sudo install -d -m 0755/);
+  assert.match(stdout, /timeout 1800s sudo install -D -m 0640 -- '\.\/local-1b-q4\.gguf'/);
 });
 
 test("runModelStageCli can apply verified artifacts", async (t) => {
@@ -758,5 +758,5 @@ test("runModelStageCli checks source artifacts before printing", async (t) => {
 
   assert.equal(exitCode, 0);
   assert.equal(stderr, "");
-  assert.match(stdout, /sudo install -D -m 0755 -- '\.\/llama-server'/);
+  assert.match(stdout, /timeout 120s sudo install -D -m 0755 -- '\.\/llama-server'/);
 });

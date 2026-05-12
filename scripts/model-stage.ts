@@ -41,6 +41,13 @@ const GGUF_MAGIC = "GGUF";
 const LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS = 5;
 const LLAMA_CPP_BINARY_SMOKE_TIMEOUT_MS = LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS * 1000;
 const LLAMA_CPP_BINARY_SMOKE_MAX_BUFFER_BYTES = 64 * 1024;
+const STAGE_INSPECT_TIMEOUT_SECONDS = 30;
+const STAGE_QUICK_TIMEOUT_SECONDS = 60;
+const STAGE_BINARY_COPY_TIMEOUT_SECONDS = 120;
+const STAGE_BINARY_CHECKSUM_TIMEOUT_SECONDS = 120;
+const STAGE_MODEL_COPY_TIMEOUT_SECONDS = 1_800;
+const STAGE_MODEL_CHECKSUM_TIMEOUT_SECONDS = 1_800;
+const STAGE_SERVICE_PROBE_TIMEOUT_SECONDS = LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS + 10;
 const MAX_PROCESS_OUTPUT_CHARS = 1_000;
 const SYSTEMD_PRINCIPAL_PATTERN = /^(?:[A-Za-z_][A-Za-z0-9_-]{0,30}|[0-9]{1,10})$/;
 const SHA256_PATTERN = /^[a-fA-F0-9]{64}$/;
@@ -380,36 +387,36 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
   const binarySourcePath = plan.binarySourcePath ?? PLACEHOLDER_BINARY_SOURCE_PATH;
   const sourcePath = plan.sourcePath ?? PLACEHOLDER_SOURCE_PATH;
   const owner = `${plan.serviceUser}:${plan.serviceGroup}`;
-  const modelStoragePreflight = `required_mib="$(du -m ${shellQuote(
+  const modelStoragePreflight = `du_output="$(timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s du -m ${shellQuote(
     sourcePath,
-  )} | awk 'NR==1 {print $1 + ${MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB}}')"; available_mib="$(df -Pm ${shellQuote(
+  )})" || exit "$?"; df_output="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s df -Pm ${shellQuote(
     plan.modelDirectory,
-  )} | awk 'NR==2 {print $4}')"; test "\${available_mib:-0}" -ge "\${required_mib:-0}" || { printf '%s\\n' ${shellQuote(
+  )})" || exit "$?"; required_mib="$(printf '%s\\n' "$du_output" | awk 'NR==1 {print $1 + ${MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB}}')"; available_mib="$(printf '%s\\n' "$df_output" | awk 'NR==2 {print $4}')"; test "\${available_mib:-0}" -ge "\${required_mib:-0}" || { printf '%s\\n' ${shellQuote(
     `Not enough free space in ${plan.modelDirectory}: keep at least ${MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB} MiB free after copying the GGUF.`,
   )} >&2; exit 1; }`;
-  const modelFormatPreflight = `test "$(head -c ${GGUF_MAGIC.length} -- ${shellQuote(sourcePath)})" = ${shellQuote(
-    GGUF_MAGIC,
-  )} || { printf '%s\\n' ${shellQuote(
+  const modelFormatPreflight = `magic="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s head -c ${GGUF_MAGIC.length} -- ${shellQuote(
+    sourcePath,
+  )})" || exit "$?"; test "$magic" = ${shellQuote(GGUF_MAGIC)} || { printf '%s\\n' ${shellQuote(
     `GGUF source does not start with the ${GGUF_MAGIC} header: ${sourcePath}`,
   )} >&2; exit 1; }`;
   const commands = [
-    `sudo install -d -m 0755 ${shellQuote(plan.binaryDirectory)}`,
-    `sudo install -D -m 0755 -- ${shellQuote(binarySourcePath)} ${shellQuote(plan.binaryPath)}`,
-    `sudo -u ${shellQuote(plan.serviceUser)} test -x ${shellQuote(plan.binaryPath)}`,
-    `sudo -u ${shellQuote(plan.serviceUser)} timeout ${LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS}s ${shellQuote(plan.binaryPath)} --help >/dev/null`,
-    `sudo install -d -m 0755 ${shellQuote(plan.modelDirectory)}`,
+    `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo install -d -m 0755 ${shellQuote(plan.binaryDirectory)}`,
+    `timeout ${STAGE_BINARY_COPY_TIMEOUT_SECONDS}s sudo install -D -m 0755 -- ${shellQuote(binarySourcePath)} ${shellQuote(plan.binaryPath)}`,
+    `timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s sudo -u ${shellQuote(plan.serviceUser)} test -x ${shellQuote(plan.binaryPath)}`,
+    `timeout ${STAGE_SERVICE_PROBE_TIMEOUT_SECONDS}s sudo -u ${shellQuote(plan.serviceUser)} timeout ${LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS}s ${shellQuote(plan.binaryPath)} --help >/dev/null`,
+    `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo install -d -m 0755 ${shellQuote(plan.modelDirectory)}`,
     modelStoragePreflight,
     modelFormatPreflight,
-    `sudo install -D -m 0640 -- ${shellQuote(sourcePath)} ${shellQuote(plan.modelPath)}`,
-    `sudo chown ${shellQuote(owner)} ${shellQuote(plan.modelPath)}`,
-    `sudo -u ${shellQuote(plan.serviceUser)} test -r ${shellQuote(plan.modelPath)}`,
+    `timeout ${STAGE_MODEL_COPY_TIMEOUT_SECONDS}s sudo install -D -m 0640 -- ${shellQuote(sourcePath)} ${shellQuote(plan.modelPath)}`,
+    `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo chown ${shellQuote(owner)} ${shellQuote(plan.modelPath)}`,
+    `timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s sudo -u ${shellQuote(plan.serviceUser)} test -r ${shellQuote(plan.modelPath)}`,
   ];
 
   if (plan.binarySha256) {
     commands.splice(
       2,
       0,
-      `printf '%s  %s\\n' ${shellQuote(plan.binarySha256)} ${shellQuote(plan.binaryPath)} | sha256sum -c -`,
+      `printf '%s  %s\\n' ${shellQuote(plan.binarySha256)} ${shellQuote(plan.binaryPath)} | timeout ${STAGE_BINARY_CHECKSUM_TIMEOUT_SECONDS}s sha256sum -c -`,
     );
   }
 
@@ -417,7 +424,7 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
     commands.splice(
       commands.length - 1,
       0,
-      `printf '%s  %s\\n' ${shellQuote(plan.sha256)} ${shellQuote(plan.modelPath)} | sudo sha256sum -c -`,
+      `printf '%s  %s\\n' ${shellQuote(plan.sha256)} ${shellQuote(plan.modelPath)} | timeout ${STAGE_MODEL_CHECKSUM_TIMEOUT_SECONDS}s sudo sha256sum -c -`,
     );
   }
 
