@@ -343,12 +343,15 @@ bun run deploy:smoke
 bun run model:stage:smoke
 bun run model:stage:1b
 bun run model:stage:1b:8gb
+bun run model:stage:hetzner-email-ai
 RAY_API_KEYS=replace-with-real-key bun run validate:config:public
 RAY_API_KEYS=replace-with-real-key bun run validate:config:cax11:public
 RAY_API_KEYS=replace-with-real-key bun run validate:config:1b:generic:public
 RAY_API_KEYS=replace-with-real-key bun run validate:config:1b:public
+RAY_API_KEYS=replace-with-real-key bun run validate:config:hetzner:public
 bun run doctor:1b:generic
 bun run doctor:cax11
+bun run doctor:hetzner-email-ai
 bun run doctor
 bun run benchmark:assert:cx23
 bun run benchmark:assert:cax11

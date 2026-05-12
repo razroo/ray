@@ -31,6 +31,16 @@ bun run dev:hetzner-email-ai
 
 Ensure an OpenAI-compatible backend is up at the URL in `model.adapter` before sending traffic.
 
+## Public VPS deploy helpers
+
+```bash
+bun run render:service:hetzner-email-ai
+bun run model:stage:hetzner-email-ai
+bun run doctor:hetzner-email-ai
+```
+
+The render and doctor aliases use the public Hetzner CX23/Qwen profile with a 4 GB memory budget and `/etc/ray/ray.env`. Render the units before copying them to the VPS, stage the llama.cpp binary and GGUF with the generated model staging plan, then run doctor on the VPS after `/etc/ray/ray.env` and the configured model files are in place.
+
 ## Calling Ray from the app
 
 The gateway exposes:
