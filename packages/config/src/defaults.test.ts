@@ -195,6 +195,21 @@ test("1b-8gb profile defaults to a roomier llama.cpp launch profile", () => {
   assert.equal(config.rateLimit.maxKeys, 8192);
 });
 
+test("remote-backend default profiles keep gateway timeouts above adapter timeouts", () => {
+  for (const profile of ["sub1b", "sub1b-cax11", "1b", "1b-8gb", "vps", "balanced"] as const) {
+    const config = createDefaultConfig(profile);
+
+    if (config.model.adapter.kind === "mock") {
+      throw new Error(`Expected ${profile} to use a remote backend adapter`);
+    }
+
+    assert.ok(
+      config.scheduler.requestTimeoutMs > config.model.adapter.timeoutMs,
+      `${profile} scheduler timeout should exceed adapter timeout`,
+    );
+  }
+});
+
 test("resolveAuthApiKeys parses comma and newline separated values", () => {
   const config = mergeConfig(createDefaultConfig("tiny"), {
     auth: {
