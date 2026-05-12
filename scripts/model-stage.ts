@@ -25,6 +25,9 @@ const BYTES_PER_MIB = 1024 * 1024;
 const FALLBACK_STATFS_BLOCK_SIZE = 4096;
 const MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB = 256;
 const LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS = 5;
+const LLAMA_CPP_BINARY_SMOKE_TIMEOUT_MS = LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS * 1000;
+const LLAMA_CPP_BINARY_SMOKE_MAX_BUFFER_BYTES = 64 * 1024;
+const MAX_PROCESS_OUTPUT_CHARS = 1_000;
 const SYSTEMD_PRINCIPAL_PATTERN = /^(?:[A-Za-z_][A-Za-z0-9_-]{0,30}|[0-9]{1,10})$/;
 const SHA256_PATTERN = /^[a-fA-F0-9]{64}$/;
 const NUMERIC_PRINCIPAL_PATTERN = /^[0-9]{1,10}$/;
@@ -73,6 +76,7 @@ export interface ModelStagePlan {
 export interface ModelStageApplyResult {
   applied: true;
   binaryPath: string;
+  binaryProbeStatus: "ok";
   modelPath: string;
   serviceUser: string;
   serviceGroup: string;
@@ -88,6 +92,7 @@ export interface ModelStageStorageHeadroom {
 
 export interface ModelStageJsonApplyResult {
   applied: true;
+  binaryProbeStatus: "ok";
   plan: ModelStagePlan;
 }
 
@@ -732,6 +737,47 @@ async function chownIfNeeded(filePath: string, uid: number, gid: number): Promis
   await chown(filePath, uid, gid);
 }
 
+function truncateProcessOutput(output: string): string {
+  return output.length > MAX_PROCESS_OUTPUT_CHARS
+    ? `${output.slice(0, MAX_PROCESS_OUTPUT_CHARS)}...`
+    : output;
+}
+
+function getFailedProcessOutput(error: unknown): string | undefined {
+  if (error === null || typeof error !== "object") {
+    return undefined;
+  }
+
+  const stdout = "stdout" in error ? String((error as { stdout?: unknown }).stdout ?? "") : "";
+  const stderr = "stderr" in error ? String((error as { stderr?: unknown }).stderr ?? "") : "";
+  const output = `${stdout}\n${stderr}`.trim();
+
+  return output ? truncateProcessOutput(output) : undefined;
+}
+
+async function assertLlamaCppBinaryStarts(
+  binaryPath: string,
+  uid: number,
+  gid: number,
+): Promise<void> {
+  try {
+    await execFileAsync(binaryPath, ["--help"], {
+      timeout: LLAMA_CPP_BINARY_SMOKE_TIMEOUT_MS,
+      maxBuffer: LLAMA_CPP_BINARY_SMOKE_MAX_BUFFER_BYTES,
+      encoding: "utf8",
+      uid,
+      gid,
+    });
+  } catch (error) {
+    const output = getFailedProcessOutput(error);
+    throw new Error(
+      `installed llama-server binary failed startup probe at ${binaryPath}: ${
+        error instanceof Error ? error.message : String(error)
+      }${output ? `; output: ${output}` : ""}`,
+    );
+  }
+}
+
 export async function applyModelStagePlan(
   cwd: string,
   plan: ModelStagePlan,
@@ -751,6 +797,7 @@ export async function applyModelStagePlan(
     await assertSha256(binaryTargetPath, plan.binarySha256, "installed llama-server binary");
   }
   await access(binaryTargetPath, constants.X_OK);
+  await assertLlamaCppBinaryStarts(binaryTargetPath, uid, gid);
 
   await mkdir(path.dirname(modelTargetPath), { recursive: true, mode: 0o755 });
   if (path.resolve(modelSourcePath) !== path.resolve(modelTargetPath)) {
@@ -767,6 +814,7 @@ export async function applyModelStagePlan(
   return {
     applied: true,
     binaryPath: plan.binaryPath,
+    binaryProbeStatus: "ok",
     modelPath: plan.modelPath,
     serviceUser: plan.serviceUser,
     serviceGroup: plan.serviceGroup,
@@ -777,6 +825,7 @@ export function formatApplyResult(result: ModelStageApplyResult): string {
   return [
     "Staged Ray llama.cpp artifacts:",
     `- binary: ${result.binaryPath}`,
+    `- binary startup probe: ${result.binaryProbeStatus}`,
     `- GGUF: ${result.modelPath}`,
     `- service owner: ${result.serviceUser}:${result.serviceGroup}`,
     "Checksums were verified when configured. Run doctor before restarting ray-llama-cpp.service.",
@@ -815,7 +864,15 @@ export async function runModelStageCli(
     if (args.apply) {
       const result = await applyModelStagePlan(cwd, plan);
       output = args.json
-        ? JSON.stringify({ applied: true, plan } satisfies ModelStageJsonApplyResult, null, 2)
+        ? JSON.stringify(
+            {
+              applied: true,
+              binaryProbeStatus: result.binaryProbeStatus,
+              plan,
+            } satisfies ModelStageJsonApplyResult,
+            null,
+            2,
+          )
         : formatApplyResult(result);
     } else {
       if (args.checkSources) {

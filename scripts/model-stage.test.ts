@@ -325,6 +325,7 @@ test("applyModelStagePlan installs verified artifacts into the resolved target p
   assert.deepEqual(result, {
     applied: true,
     binaryPath: binaryTarget,
+    binaryProbeStatus: "ok",
     modelPath: modelTarget,
     serviceUser: String(uid),
     serviceGroup: String(gid),
@@ -340,10 +341,52 @@ test("applyModelStagePlan installs verified artifacts into the resolved target p
   assert.equal(modelStats.gid, gid);
 });
 
+test("applyModelStagePlan rejects staged binaries that fail the startup probe", async (t) => {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) {
+    return;
+  }
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-apply-probe-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const binaryPath = path.join(tempDir, "sources", "llama-server");
+  const modelPath = path.join(tempDir, "sources", "model.gguf");
+  const binaryTarget = path.join(tempDir, "target", "bin", "llama-server");
+  const modelTarget = path.join(tempDir, "target", "models", "model.gguf");
+  await mkdir(path.join(tempDir, "sources"), { recursive: true });
+  await writeFile(binaryPath, "#!/bin/sh\necho 'missing shared library' >&2\nexit 127\n", "utf8");
+  await writeFile(modelPath, "gguf", "utf8");
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o644);
+
+  const plan = await createModelStagePlan({
+    cwd: tempDir,
+    configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
+    env: {
+      RAY_LLAMA_CPP_BINARY_PATH: binaryTarget,
+      RAY_MODEL_PATH: modelTarget,
+    },
+    serviceUser: String(uid),
+    serviceGroup: String(gid),
+    binarySourcePath: "./sources/llama-server",
+    sourcePath: "./sources/model.gguf",
+  });
+
+  await assert.rejects(
+    applyModelStagePlan(tempDir, plan),
+    /installed llama-server binary failed startup probe.*missing shared library/s,
+  );
+});
+
 test("formatApplyResult prints the staged artifact summary", () => {
   const text = formatApplyResult({
     applied: true,
     binaryPath: "/usr/local/bin/llama-server",
+    binaryProbeStatus: "ok",
     modelPath: "/var/lib/ray/models/local.gguf",
     serviceUser: "ray",
     serviceGroup: "ray",
@@ -351,6 +394,7 @@ test("formatApplyResult prints the staged artifact summary", () => {
 
   assert.match(text, /Staged Ray llama\.cpp artifacts:/);
   assert.match(text, /binary: \/usr\/local\/bin\/llama-server/);
+  assert.match(text, /binary startup probe: ok/);
   assert.match(text, /GGUF: \/var\/lib\/ray\/models\/local\.gguf/);
   assert.match(text, /Run doctor before restarting ray-llama-cpp\.service/);
 });
@@ -478,8 +522,13 @@ test("runModelStageCli can apply verified artifacts", async (t) => {
 
   assert.equal(exitCode, 0);
   assert.equal(stderr, "");
-  const parsed = JSON.parse(stdout) as { applied: true; plan: { binaryPath: string } };
+  const parsed = JSON.parse(stdout) as {
+    applied: true;
+    binaryProbeStatus: "ok";
+    plan: { binaryPath: string };
+  };
   assert.equal(parsed.applied, true);
+  assert.equal(parsed.binaryProbeStatus, "ok");
   assert.equal(parsed.plan.binaryPath, path.join(tempDir, "target", "bin", "llama-server"));
   assert.equal(
     await readFile(path.join(tempDir, "target", "models", "model.gguf"), "utf8"),

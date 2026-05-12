@@ -312,8 +312,9 @@ path is missing, unreadable, not executable, or does not match a provided
 checksum before reviewing the plan.
 Use `--apply` on the VPS after reviewing those source paths to verify and copy
 the artifacts into the resolved binary and model locations with the generated
-service ownership. Apply checks that the target model filesystem can hold the
-GGUF source while keeping a 256 MiB post-copy reserve.
+service ownership, then run the staged `llama-server --help` probe as that
+service identity. Apply checks that the target model filesystem can hold the GGUF
+source while keeping a 256 MiB post-copy reserve.
 
 Deployment walkthrough: [examples/deploy/vps/README.md](examples/deploy/vps/README.md).
 

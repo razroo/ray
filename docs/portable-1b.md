@@ -167,9 +167,10 @@ Use `--check-sources` when the source artifacts are already on the VPS and you
 want the helper to verify file access and any provided checksums before printing
 the staging plan.
 Use `--apply` on the VPS after reviewing those source paths to verify and stage
-the configured `llama-server` and GGUF into their resolved target locations.
-Apply checks that the model target filesystem can hold the GGUF source while
-keeping a 256 MiB post-copy reserve.
+the configured `llama-server` and GGUF into their resolved target locations,
+then run the staged `llama-server --help` probe as the service identity. Apply
+checks that the model target filesystem can hold the GGUF source while keeping a
+256 MiB post-copy reserve.
 
 Set `RAY_AUTH_API_KEY_ENV` when an existing secret manager or deployment workflow
 uses a different environment variable for the Bearer keys.
