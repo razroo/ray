@@ -280,10 +280,12 @@ test("runCli render writes deployment files when output-dir is provided", async 
   assert.deepEqual(summary.systemd.gateway, {
     memoryHighMiB: 640,
     memoryMaxMiB: 896,
+    cpuWeight: 200,
   });
   assert.deepEqual(summary.systemd.llamaCpp, {
     memoryHighMiB: 2775,
     memoryMaxMiB: 3084,
+    cpuWeight: 80,
   });
   assert.match(rendered, /ray-gateway\.service/);
   assert.doesNotMatch(rendered, /# Ray systemd service/);

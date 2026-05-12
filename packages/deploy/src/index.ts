@@ -19,6 +19,7 @@ export interface SystemdServiceOptions {
   nodeBinary?: string;
   memoryHighMiB?: number;
   memoryMaxMiB?: number;
+  cpuWeight?: number;
 }
 
 export interface ReverseProxyOptions {
@@ -34,6 +35,7 @@ export interface LlamaCppServiceOptions {
   launchProfile: LlamaCppLaunchProfile;
   memoryHighMiB?: number;
   memoryMaxMiB?: number;
+  cpuWeight?: number;
 }
 
 export interface DeploymentDiagnostic {
@@ -47,6 +49,10 @@ export interface SystemdMemoryControls {
   memoryMaxMiB: number;
 }
 
+export interface SystemdResourceControls extends SystemdMemoryControls {
+  cpuWeight: number;
+}
+
 export interface DeploymentBundleSummary {
   profile: RayConfig["profile"];
   model: RayConfig["model"];
@@ -54,8 +60,8 @@ export interface DeploymentBundleSummary {
   diagnostics: DeploymentDiagnostic[];
   preflight: DeploymentPreflight;
   systemd: {
-    gateway: SystemdMemoryControls;
-    llamaCpp?: SystemdMemoryControls;
+    gateway: SystemdResourceControls;
+    llamaCpp?: SystemdResourceControls;
   };
 }
 
@@ -173,6 +179,7 @@ const GATEWAY_RUNTIME_VERSION_MAX_BUFFER_BYTES = 16 * 1024;
 const MAX_SYSTEMD_DEPENDENCY_UNITS = 32;
 const MAX_SYSTEMD_DEPENDENCY_UNIT_CHARS = 256;
 const MAX_SYSTEMD_MEMORY_MIB = 1_048_576;
+const MAX_SYSTEMD_CPU_WEIGHT = 10_000;
 const MAX_LLAMA_CPP_EXTRA_ARGS = 64;
 const MAX_LLAMA_CPP_EXTRA_ARG_CHARS = 4_096;
 const CADDY_UPSTREAM_TIMEOUT_GRACE_MS = 5_000;
@@ -183,6 +190,8 @@ const MAX_CADDY_UPSTREAM_TIMEOUT_MS = 120_000 + CADDY_UPSTREAM_TIMEOUT_GRACE_MS;
 const GATEWAY_MEMORY_HIGH_HEADROOM_MIB = 128;
 const GATEWAY_MEMORY_MAX_HEADROOM_MIB = 384;
 const LLAMA_CPP_MEMORY_HIGH_RATIO = 0.9;
+const GATEWAY_CPU_WEIGHT = 200;
+const LLAMA_CPP_CPU_WEIGHT = 80;
 
 interface StorageStats {
   bavail: number | bigint;
@@ -449,6 +458,15 @@ function formatSystemdMemoryControlLines(options: {
     ...(memoryHighMiB !== undefined ? [`MemoryHigh=${memoryHighMiB}M`] : []),
     ...(memoryMaxMiB !== undefined ? [`MemoryMax=${memoryMaxMiB}M`] : []),
   ].join("\n");
+}
+
+function formatSystemdCpuWeightLine(cpuWeight: number | undefined): string {
+  if (cpuWeight === undefined) {
+    return "";
+  }
+
+  assertPositiveIntegerAtMost(cpuWeight, "cpuWeight", MAX_SYSTEMD_CPU_WEIGHT);
+  return `CPUWeight=${cpuWeight}`;
 }
 
 function formatSystemdDependencyLine(name: "After" | "Wants", units: unknown): string {
@@ -1104,6 +1122,23 @@ function resolveLlamaCppMemoryControls(
   };
 }
 
+function resolveGatewaySystemdControls(config: RayConfig): SystemdResourceControls {
+  return {
+    ...resolveGatewayMemoryControls(config),
+    cpuWeight: GATEWAY_CPU_WEIGHT,
+  };
+}
+
+function resolveLlamaCppSystemdControls(
+  launchProfile: LlamaCppLaunchProfile,
+  preflight: Pick<DeploymentPreflight, "memoryBudgetMiB">,
+): SystemdResourceControls {
+  return {
+    ...resolveLlamaCppMemoryControls(launchProfile, preflight),
+    cpuWeight: LLAMA_CPP_CPU_WEIGHT,
+  };
+}
+
 export function buildLlamaCppEnvironment(profile: LlamaCppLaunchProfile): Record<string, string> {
   assertLlamaCppLaunchProfileForEnvironment(profile);
 
@@ -1190,6 +1225,7 @@ export function renderSystemdService(options: SystemdServiceOptions): string {
     ...(options.memoryHighMiB !== undefined ? { memoryHighMiB: options.memoryHighMiB } : {}),
     ...(options.memoryMaxMiB !== undefined ? { memoryMaxMiB: options.memoryMaxMiB } : {}),
   });
+  const cpuWeightLine = formatSystemdCpuWeightLine(options.cpuWeight);
 
   return `[Unit]
 Description=Ray Gateway
@@ -1211,6 +1247,7 @@ OOMPolicy=stop
 OOMScoreAdjust=-250
 TasksMax=128
 CPUAccounting=true
+${cpuWeightLine ? `${cpuWeightLine}\n` : ""}
 MemoryAccounting=true
 IOAccounting=true
 ${memoryControlLines ? `${memoryControlLines}\n` : ""}
@@ -1304,6 +1341,7 @@ export function renderLlamaCppService(options: LlamaCppServiceOptions): string {
     ...(options.memoryHighMiB !== undefined ? { memoryHighMiB: options.memoryHighMiB } : {}),
     ...(options.memoryMaxMiB !== undefined ? { memoryMaxMiB: options.memoryMaxMiB } : {}),
   });
+  const cpuWeightLine = formatSystemdCpuWeightLine(options.cpuWeight);
 
   return `[Unit]
 Description=llama.cpp Server for Ray
@@ -1324,6 +1362,7 @@ OOMPolicy=stop
 OOMScoreAdjust=250
 TasksMax=256
 CPUAccounting=true
+${cpuWeightLine ? `${cpuWeightLine}\n` : ""}
 MemoryAccounting=true
 IOAccounting=true
 ${memoryControlLines ? `${memoryControlLines}\n` : ""}
@@ -2291,11 +2330,11 @@ export async function renderDeploymentBundle(options: {
   const rendersLlamaCppService =
     inspected.config.model.adapter.kind === "llama.cpp" &&
     inspected.config.model.adapter.launchProfile !== undefined;
-  const gatewayMemoryControls = resolveGatewayMemoryControls(inspected.config);
-  const llamaCppMemoryControls =
+  const gatewaySystemdControls = resolveGatewaySystemdControls(inspected.config);
+  const llamaCppSystemdControls =
     inspected.config.model.adapter.kind === "llama.cpp" &&
     inspected.config.model.adapter.launchProfile
-      ? resolveLlamaCppMemoryControls(
+      ? resolveLlamaCppSystemdControls(
           inspected.config.model.adapter.launchProfile,
           inspected.preflight,
         )
@@ -2306,7 +2345,7 @@ export async function renderDeploymentBundle(options: {
       workingDirectory: cwd,
       configPath: options.configPath,
       user: options.user,
-      ...gatewayMemoryControls,
+      ...gatewaySystemdControls,
       ...(options.runtimeBinary ? { runtimeBinary: options.runtimeBinary } : {}),
       ...(options.nodeBinary ? { nodeBinary: options.nodeBinary } : {}),
       ...(envFile ? { envFile } : {}),
@@ -2332,7 +2371,7 @@ export async function renderDeploymentBundle(options: {
           llamaCppService: renderLlamaCppService({
             user: options.user,
             launchProfile: inspected.config.model.adapter.launchProfile,
-            ...(llamaCppMemoryControls ? llamaCppMemoryControls : {}),
+            ...(llamaCppSystemdControls ? llamaCppSystemdControls : {}),
           }),
         }
       : {}),
@@ -2343,8 +2382,8 @@ export async function renderDeploymentBundle(options: {
       diagnostics: inspected.diagnostics,
       preflight: inspected.preflight,
       systemd: {
-        gateway: gatewayMemoryControls,
-        ...(llamaCppMemoryControls ? { llamaCpp: llamaCppMemoryControls } : {}),
+        gateway: gatewaySystemdControls,
+        ...(llamaCppSystemdControls ? { llamaCpp: llamaCppSystemdControls } : {}),
       },
     },
   };

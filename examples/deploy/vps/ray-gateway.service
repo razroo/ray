@@ -20,6 +20,7 @@ OOMPolicy=stop
 OOMScoreAdjust=-250
 TasksMax=128
 CPUAccounting=true
+CPUWeight=200
 MemoryAccounting=true
 IOAccounting=true
 MemoryHigh=640M

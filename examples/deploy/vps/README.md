@@ -155,7 +155,7 @@ When the deploy renderer emits a llama.cpp unit, install it as
 `/etc/systemd/system/ray-llama-cpp.service`; the generated gateway unit includes
 `Wants=` and `After=` dependencies on that local backend service.
 The render output also includes `summary.json` with doctor diagnostics,
-preflight facts, and generated systemd memory ceilings; inspect it before
+preflight facts, and generated systemd resource controls; inspect it before
 copying units into place. Relative `--output-dir` values are resolved from the
 rendered `--cwd`.
 
@@ -284,6 +284,7 @@ Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 - Use `/livez` for reverse-proxy liveness checks, and `/readyz` when a dependent app needs a minimal backend-aware readiness check; the gateway binds before provider warmup finishes, so a slow local model backend should not make systemd treat the gateway process itself as dead.
 - Let the generated Caddy upstream timeouts track `scheduler.requestTimeoutMs`; public proxy sockets should not outlive Ray's own request budget for long.
 - The generated systemd units enable CPU, memory, and IO accounting, so `systemctl show ray-gateway -p CPUUsageNSec -p MemoryCurrent -p IOReadBytes -p IOWriteBytes` can confirm pressure without extra agents.
+- The generated systemd units set `CPUWeight` so the lightweight gateway gets a larger CPU share than the local model backend when both contend on a small node.
 - The generated systemd units also set `MemoryHigh` and `MemoryMax` cgroup ceilings from the gateway profile and llama.cpp memory budget so backend and gateway memory pressure stays bounded on one-node VPS hosts.
 - The generated systemd units also set OOM policy and OOM score adjustments so the lightweight gateway is less kill-prone than the local model backend under last-resort memory pressure.
 - The generated systemd units also drop Linux capabilities, restrict address families to local/IP sockets, deny realtime scheduling, and hide host devices and kernel controls. Keep custom service overrides equally narrow unless a backend explicitly needs broader access.
