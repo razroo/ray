@@ -374,7 +374,7 @@ bun run benchmark:assert:8gb:1b
 bun run benchmark:1b:prompt-formats
 ```
 
-Those commands write the latest report to `.ray/benchmarks/`, append JSONL history when configured, and compare the run against the baseline JSON in `examples/benchmarks/baselines/`. The 1B workload also checks scored output quality signals such as JSON validity, prompt echo, stop-token leakage, call-to-action presence, forbidden wrappers, and generic email filler.
+Those commands write the latest report to `.ray/benchmarks/`, append JSONL history when configured, and compare the run against the baseline JSON in `examples/benchmarks/baselines/`. Autotune keeps scheduler sweeps to the 64 closest candidates by default on small VPS hardware; pass `--autotune-max-candidates <n>` when a longer run is worth the extra gateway restarts. The 1B workload also checks scored output quality signals such as JSON validity, prompt echo, stop-token leakage, call-to-action presence, forbidden wrappers, and generic email filler.
 
 For prompt-family quality checks across cold outreach, follow-up, classification, rewrite, and section generation:
 

@@ -79,7 +79,7 @@ bun run benchmark:1b:prompt-formats
 bun run autotune:1b
 ```
 
-The workload in [email-1b-workload.jsonl](../../examples/workloads/email-1b-workload.jsonl) exercises cold outreach, follow-up, reply classification, reply rewrite, and a direct section-generation prompt shaped like the app's product flow. It asserts JSON validity for classification and rejects common prompt echo, stop-token leakage, and generic email filler. Benchmark runs can append JSONL history under `.ray/benchmarks/history` so prompt/config changes can be compared over time.
+The workload in [email-1b-workload.jsonl](../../examples/workloads/email-1b-workload.jsonl) exercises cold outreach, follow-up, reply classification, reply rewrite, and a direct section-generation prompt shaped like the app's product flow. It asserts JSON validity for classification and rejects common prompt echo, stop-token leakage, and generic email filler. Benchmark runs can append JSONL history under `.ray/benchmarks/history` so prompt/config changes can be compared over time. Autotune limits scheduler sweeps to the 64 closest candidates by default; pass `--autotune-max-candidates <n>` only when the VPS can afford a longer search.
 
 [email-prompt-families-1b.json](../../examples/evals/email-prompt-families-1b.json) is the smaller golden eval set for prompt wording changes. Run it with `bun run eval:prompt-families:1b` against a live Ray gateway. The output includes provider diagnostics for `promptFormat`, `promptFormatReason`, `modelRef`, `launchPreset`, cached tokens, slot reuse, and context window.
 

@@ -19,6 +19,8 @@ const MAX_BENCHMARK_CLI_ARGS = 128;
 const MAX_BENCHMARK_CLI_ARG_BYTES = 4_096;
 const MAX_BENCHMARK_CONCURRENCY = 64;
 const MAX_BENCHMARK_REQUESTS = 10_000;
+const DEFAULT_AUTOTUNE_SCHEDULER_CANDIDATES = 64;
+const MAX_AUTOTUNE_SCHEDULER_CANDIDATES = 256;
 const MAX_BENCHMARK_LABEL_CHARS = 256;
 const MAX_BENCHMARK_API_KEY_CHARS = 4_096;
 const MAX_BENCHMARK_TEXT_CHARS = 65_536;
@@ -71,6 +73,7 @@ interface BenchmarkArgs {
   promptFormatSweep: boolean;
   autotune: boolean;
   autotuneScope: AutotuneScope;
+  autotuneMaxCandidates: number;
   assertBaseline: boolean;
   help: boolean;
 }
@@ -315,6 +318,7 @@ interface AutotuneOutput {
     workloadPath?: string;
     concurrency: number;
     requests: number;
+    schedulerCandidateLimit: number;
   };
   launchResults?: Array<{
     label: string;
@@ -477,6 +481,7 @@ export function parseArgs(argv: string[]): BenchmarkArgs {
     promptFormatSweep: false,
     autotune: false,
     autotuneScope: "auto",
+    autotuneMaxCandidates: DEFAULT_AUTOTUNE_SCHEDULER_CANDIDATES,
     assertBaseline: false,
     help: false,
   };
@@ -600,6 +605,16 @@ export function parseArgs(argv: string[]): BenchmarkArgs {
       continue;
     }
 
+    if (current === "--autotune-max-candidates") {
+      result.autotuneMaxCandidates = parsePositiveIntegerFlag(
+        readFlagValue(argv, index, current),
+        "--autotune-max-candidates",
+        MAX_AUTOTUNE_SCHEDULER_CANDIDATES,
+      );
+      index += 1;
+      continue;
+    }
+
     if (current.startsWith("-")) {
       throw new Error(`Unknown option: ${current}`);
     }
@@ -630,6 +645,9 @@ function printUsage(): void {
   console.log("  --prompt-format-sweep   Run llama.cpp template/scaffold/Ray fallback variants.");
   console.log("  --autotune              Sweep scheduler settings using the supplied config.");
   console.log("  --autotune-scope <mode> Autotune scope: auto, gateway, or full. Default: auto.");
+  console.log(
+    `  --autotune-max-candidates <n> Max scheduler candidates. Default: ${DEFAULT_AUTOTUNE_SCHEDULER_CANDIDATES}, max: ${MAX_AUTOTUNE_SCHEDULER_CANDIDATES}.`,
+  );
   console.log("  --help, -h              Show this help text.");
   console.log("");
   console.log(`Auth fallback env: ${BENCHMARK_API_KEY_ENV}`);
@@ -1836,7 +1854,47 @@ function printSummary(summary: BenchmarkSummary): void {
   console.log(`Score: ${formatNumber(summary.score, 2)}`);
 }
 
-function buildAutotuneCandidates(config: RayConfig): AutotuneCandidate[] {
+function assertAutotuneCandidateLimit(maxCandidates: number): void {
+  if (
+    !Number.isSafeInteger(maxCandidates) ||
+    maxCandidates <= 0 ||
+    maxCandidates > MAX_AUTOTUNE_SCHEDULER_CANDIDATES
+  ) {
+    throw new Error(
+      `Autotune scheduler candidate limit must be a positive integer less than or equal to ${MAX_AUTOTUNE_SCHEDULER_CANDIDATES}`,
+    );
+  }
+}
+
+function scoreAutotuneCandidateDistance(config: RayConfig, candidate: AutotuneCandidate): number {
+  const base = config.scheduler;
+  const scheduler = candidate.override.scheduler;
+  if (
+    !scheduler ||
+    scheduler.concurrency === undefined ||
+    scheduler.batchWindowMs === undefined ||
+    scheduler.affinityLookahead === undefined ||
+    scheduler.maxInflightTokens === undefined ||
+    scheduler.shortJobMaxTokens === undefined
+  ) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return (
+    Math.abs(scheduler.concurrency - base.concurrency) * 1_000 +
+    Math.abs(scheduler.batchWindowMs - base.batchWindowMs) * 4 +
+    Math.abs(scheduler.affinityLookahead - base.affinityLookahead) * 2 +
+    Math.abs(scheduler.maxInflightTokens - base.maxInflightTokens) / 16 +
+    Math.abs(scheduler.shortJobMaxTokens - base.shortJobMaxTokens) * 2
+  );
+}
+
+export function buildAutotuneCandidates(
+  config: RayConfig,
+  maxCandidates = DEFAULT_AUTOTUNE_SCHEDULER_CANDIDATES,
+): AutotuneCandidate[] {
+  assertAutotuneCandidateLimit(maxCandidates);
+
   const base = config.scheduler;
   const concurrencyCeiling =
     config.model.adapter.kind === "llama.cpp" ? Math.max(1, base.concurrency) : 4;
@@ -1879,7 +1937,13 @@ function buildAutotuneCandidates(config: RayConfig): AutotuneCandidate[] {
     }
   }
 
-  return candidates;
+  return candidates
+    .sort(
+      (left, right) =>
+        scoreAutotuneCandidateDistance(config, left) -
+          scoreAutotuneCandidateDistance(config, right) || left.label.localeCompare(right.label),
+    )
+    .slice(0, maxCandidates);
 }
 
 function buildLaunchProfileRecommendations(
@@ -2177,9 +2241,10 @@ async function runSchedulerSweep(options: {
   clientConcurrency: number;
   requests: number;
   tempDir: string;
+  maxCandidates: number;
   apiKey?: string;
 }): Promise<SchedulerBenchmarkResult[]> {
-  const candidates = buildAutotuneCandidates(options.config);
+  const candidates = buildAutotuneCandidates(options.config, options.maxCandidates);
   const results: SchedulerBenchmarkResult[] = [];
 
   for (let index = 0; index < candidates.length; index += 1) {
@@ -2759,6 +2824,7 @@ async function runAutotune(
       clientConcurrency: args.concurrency,
       requests: baseRequests,
       tempDir,
+      maxCandidates: args.autotuneMaxCandidates,
       apiKey,
     });
     printTopSchedulerResults(schedulerResults);
@@ -2795,6 +2861,7 @@ async function runAutotune(
         ...(args.workloadPath ? { workloadPath: args.workloadPath } : {}),
         concurrency: args.concurrency,
         requests: baseRequests,
+        schedulerCandidateLimit: args.autotuneMaxCandidates,
       },
       ...(launchResultsOutput ? { launchResults: launchResultsOutput } : {}),
       schedulerResults: schedulerResults.map((result) => ({

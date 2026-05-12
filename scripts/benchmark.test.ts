@@ -6,8 +6,10 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { createDefaultConfig } from "@ray/config";
 import {
   appendHistoryOutput,
+  buildAutotuneCandidates,
   loadBaseline,
   loadWorkload,
   parseArgs,
@@ -71,6 +73,8 @@ test("parseArgs accepts strict benchmark CLI options", () => {
     "--autotune",
     "--autotune-scope",
     "gateway",
+    "--autotune-max-candidates",
+    "12",
     "--assert-baseline",
   ]);
 
@@ -87,6 +91,7 @@ test("parseArgs accepts strict benchmark CLI options", () => {
   assert.equal(args.promptFormatSweep, true);
   assert.equal(args.autotune, true);
   assert.equal(args.autotuneScope, "gateway");
+  assert.equal(args.autotuneMaxCandidates, 12);
   assert.equal(args.assertBaseline, true);
 });
 
@@ -152,6 +157,28 @@ test("parseArgs rejects unsafe benchmark limits and URLs", () => {
   assert.throws(
     () => parseArgs(["--requests", "10001"]),
     /--requests must be less than or equal to 10000/,
+  );
+  assert.throws(
+    () => parseArgs(["--autotune-max-candidates", "257"]),
+    /--autotune-max-candidates must be less than or equal to 256/,
+  );
+});
+
+test("buildAutotuneCandidates caps scheduler sweeps near the active config", () => {
+  const config = createDefaultConfig("sub1b");
+  const candidates = buildAutotuneCandidates(config, 12);
+  const baseline = candidates[0]?.override.scheduler;
+
+  assert.equal(candidates.length, 12);
+  assert.equal(new Set(candidates.map((candidate) => candidate.label)).size, candidates.length);
+  assert.equal(baseline?.concurrency, config.scheduler.concurrency);
+  assert.equal(baseline?.batchWindowMs, config.scheduler.batchWindowMs);
+  assert.equal(baseline?.affinityLookahead, config.scheduler.affinityLookahead);
+  assert.equal(baseline?.maxInflightTokens, config.scheduler.maxInflightTokens);
+  assert.equal(baseline?.shortJobMaxTokens, config.scheduler.shortJobMaxTokens);
+  assert.throws(
+    () => buildAutotuneCandidates(config, 257),
+    /Autotune scheduler candidate limit must be a positive integer/,
   );
 });
 

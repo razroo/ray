@@ -213,4 +213,4 @@ bun run benchmark:1b:prompt-formats
 bun run autotune:1b
 ```
 
-For a different product, keep the benchmark harness and replace the workload JSONL with prompts that represent the real application. The important metrics are prompt/cache reuse, queue delay, TTFT, completion tokens per second, and output quality checks that match the product.
+For a different product, keep the benchmark harness and replace the workload JSONL with prompts that represent the real application. The important metrics are prompt/cache reuse, queue delay, TTFT, completion tokens per second, and output quality checks that match the product. Autotune caps scheduler sweeps to the 64 closest candidates by default so a small VPS does not spend hours restarting the gateway; use `--autotune-max-candidates <n>` for deeper runs.
