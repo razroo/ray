@@ -390,6 +390,8 @@ test("runtime collected metrics refresh live queue and cgroup pressure gauges", 
   assert.equal(metrics.gauges["inference.max_inflight_tokens"], config.scheduler.maxInflightTokens);
   assert.equal(metrics.gauges["inference.in_flight_tokens_ratio"], 0);
   assert.equal(metrics.gauges["cache.entries"], 0);
+  assert.equal(metrics.gauges["cache.max_entries"], config.cache.maxEntries);
+  assert.equal(metrics.gauges["cache.entries_ratio"], 0);
   assert.equal(metrics.gauges["process.memory.cgroup_current_mib"], 700);
   assert.equal(metrics.gauges["process.memory.cgroup_high_mib"], 800);
   assert.equal(metrics.gauges["process.memory.cgroup_limit_mib"], 1_000);

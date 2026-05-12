@@ -1799,6 +1799,7 @@ export class RayRuntime {
           cached: true,
           degraded: cached.degraded,
         });
+        this.recordCacheMetrics();
 
         return buildResponse(cached, requestId, latencyMs, 0, true, false, {
           ...runtimeDiagnostics,
@@ -1881,7 +1882,7 @@ export class RayRuntime {
       });
       const currentSnapshot = this.scheduler.snapshot();
       this.recordSchedulerMetrics(currentSnapshot);
-      this.metrics.gauge("cache.entries", this.cache.size());
+      this.recordCacheMetrics();
       this.recordProviderMetrics(
         payload.providerDiagnostics,
         payload.usage.tokens?.prompt ?? preparation?.promptTokens,
@@ -1988,7 +1989,7 @@ export class RayRuntime {
     this.recordSchedulerMetrics(queueSnapshot);
     this.recordMemoryPressureMetrics(memoryPressure, memoryPressureSources);
     this.recordCgroupCpuMetrics(cgroupCpu);
-    this.metrics.gauge("cache.entries", this.cache.size());
+    this.recordCacheMetrics();
 
     return this.metricsSnapshot();
   }
@@ -2316,6 +2317,15 @@ export class RayRuntime {
       "inference.in_flight_tokens_ratio",
       snapshot.inFlightTokens / Math.max(1, snapshot.maxInflightTokens),
     );
+  }
+
+  private recordCacheMetrics(): void {
+    const entries = this.cache.size();
+    const maxEntries = this.config.cache.maxEntries;
+
+    this.metrics.gauge("cache.entries", entries);
+    this.metrics.gauge("cache.max_entries", maxEntries);
+    this.metrics.gauge("cache.entries_ratio", entries / Math.max(1, maxEntries));
   }
 
   private getProcessRssMiB(): number {
