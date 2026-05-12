@@ -1429,6 +1429,12 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
     lines.push(`${config.model.adapter.apiKeyEnv}=replace-with-upstream-api-key`);
   }
 
+  lines.push("# Optional deployment/render switches:");
+  lines.push("# RAY_DEPLOY_SERVICE_USER=ray");
+  lines.push("# RAY_DEPLOY_DOMAIN=ray.local");
+  lines.push(`# RAY_DEPLOY_MEMORY_MIB=${config.model.operational?.memoryClassMiB ?? ""}`);
+  lines.push(`# RAY_GATEWAY_RUNTIME_BINARY=${DEFAULT_GATEWAY_RUNTIME_BINARY}`);
+
   lines.push("# Optional gateway behavior switches:");
   lines.push(`# RAY_LOG_LEVEL=${config.telemetry.logLevel}`);
   lines.push(`# RAY_TELEMETRY_SERVICE_NAME=${config.telemetry.serviceName}`);

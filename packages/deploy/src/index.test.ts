@@ -535,6 +535,16 @@ test("renderEnvironmentFileExample documents gateway behavior switches", () => {
   assert.match(envFile, /RAY_SCHEDULER_SHORT_JOB_MAX_TOKENS=96/);
 });
 
+test("renderEnvironmentFileExample documents deploy-time overrides", () => {
+  const config = createDefaultConfig("1b");
+  const envFile = renderEnvironmentFileExample(config);
+
+  assert.match(envFile, /RAY_DEPLOY_SERVICE_USER=ray/);
+  assert.match(envFile, /RAY_DEPLOY_DOMAIN=ray\.local/);
+  assert.match(envFile, /RAY_DEPLOY_MEMORY_MIB=4096/);
+  assert.match(envFile, /RAY_GATEWAY_RUNTIME_BINARY=\/usr\/local\/bin\/bun/);
+});
+
 test("renderEnvironmentFileExample documents portable llama.cpp model overrides", () => {
   const config = createDefaultConfig("1b");
   const envFile = renderEnvironmentFileExample(config);
