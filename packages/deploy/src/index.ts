@@ -74,6 +74,7 @@ type BinaryPreflightStatus = "found" | "missing" | "unreadable";
 type GatewayRuntimeKind = "bun" | "node";
 type GatewayRuntimeBinaryStatus = BinaryPreflightStatus;
 type GatewayRuntimeVersionStatus = "ok" | "too_old" | "unreadable";
+type CaddyRuntimeStatus = "available" | "missing" | "unreadable";
 type LlamaCppBinaryStatus = BinaryPreflightStatus;
 type GatewayEntrypointStatus = BinaryPreflightStatus;
 type ConfigFileStatus = BinaryPreflightStatus;
@@ -112,6 +113,9 @@ export interface DeploymentPreflight {
   gatewayRuntimeVersion?: string;
   gatewayRuntimeVersionStatus?: GatewayRuntimeVersionStatus;
   gatewayRuntimeVersionError?: string;
+  caddyStatus?: CaddyRuntimeStatus;
+  caddyVersion?: string;
+  caddyError?: string;
   gatewayEntrypointPath?: string;
   gatewayEntrypointStatus?: GatewayEntrypointStatus;
   gatewayEntrypointError?: string;
@@ -197,6 +201,8 @@ const GATEWAY_RUNTIME_VERSION_MAX_BUFFER_BYTES = 16 * 1024;
 const SYSTEMD_RUNTIME_DIRECTORY = "/run/systemd/system";
 const SYSTEMCTL_VERSION_TIMEOUT_MS = 3_000;
 const SYSTEMCTL_VERSION_MAX_BUFFER_BYTES = 16 * 1024;
+const CADDY_VERSION_TIMEOUT_MS = 3_000;
+const CADDY_VERSION_MAX_BUFFER_BYTES = 16 * 1024;
 const MAX_SYSTEMD_DEPENDENCY_UNITS = 32;
 const MAX_SYSTEMD_DEPENDENCY_UNIT_CHARS = 256;
 const MAX_SYSTEMD_MEMORY_MIB = 1_048_576;
@@ -841,7 +847,7 @@ function truncateRuntimeVersionOutput(value: string): string {
   return normalized.length > 256 ? `${normalized.slice(0, 256)}...` : normalized;
 }
 
-function parseSystemctlVersionOutput(value: string): string | undefined {
+function parseCommandVersionOutput(value: string): string | undefined {
   const firstLine = value
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -1828,6 +1834,28 @@ export function diagnoseConfig(
         level: "info",
         code: "systemd_host_ok",
         message: `systemd is available on this host${preflight.systemdVersion ? ` (${preflight.systemdVersion})` : ""}.`,
+      });
+    }
+  }
+
+  if (strictFilesystem && preflight?.caddyStatus !== undefined) {
+    if (preflight.caddyStatus === "missing") {
+      diagnostics.push({
+        level: "error",
+        code: "caddy_runtime_missing",
+        message: `Caddy was not found on this host${preflight.caddyError ? ` (${preflight.caddyError})` : ""}. Generated Ray VPS deployments include a Caddyfile and expect Caddy to terminate public HTTPS before proxying to the local gateway.`,
+      });
+    } else if (preflight.caddyStatus === "unreadable") {
+      diagnostics.push({
+        level: "error",
+        code: "caddy_runtime_unreadable",
+        message: `Doctor could not run caddy version${preflight.caddyError ? ` (${preflight.caddyError})` : ""}. Verify Caddy manually before exposing Ray publicly through the generated Caddyfile.`,
+      });
+    } else {
+      diagnostics.push({
+        level: "info",
+        code: "caddy_runtime_ok",
+        message: `Caddy is available on this host${preflight.caddyVersion ? ` (${preflight.caddyVersion})` : ""}.`,
       });
     }
   }
@@ -2998,10 +3026,54 @@ async function collectSystemdPreflight(
           return;
         }
 
-        const systemdVersion = parseSystemctlVersionOutput(output);
+        const systemdVersion = parseCommandVersionOutput(output);
         resolve({
           systemdStatus: "available",
           ...(systemdVersion ? { systemdVersion } : {}),
+        });
+      },
+    );
+  });
+}
+
+async function collectCaddyPreflight(
+  strictFilesystem: boolean,
+): Promise<Partial<DeploymentPreflight>> {
+  if (!strictFilesystem) {
+    return {};
+  }
+
+  return await new Promise<Partial<DeploymentPreflight>>((resolve) => {
+    execFile(
+      "caddy",
+      ["version"],
+      {
+        timeout: CADDY_VERSION_TIMEOUT_MS,
+        maxBuffer: CADDY_VERSION_MAX_BUFFER_BYTES,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        const output = `${stdout}\n${stderr}`.trim();
+
+        if (error) {
+          const code =
+            error !== null && typeof error === "object" && "code" in error
+              ? (error as { code?: string }).code
+              : undefined;
+
+          resolve({
+            caddyStatus: code === "ENOENT" ? "missing" : "unreadable",
+            caddyError: output
+              ? `${toErrorMessage(error)}; output: ${truncateRuntimeVersionOutput(output)}`
+              : toErrorMessage(error),
+          });
+          return;
+        }
+
+        const caddyVersion = parseCommandVersionOutput(output);
+        resolve({
+          caddyStatus: "available",
+          ...(caddyVersion ? { caddyVersion } : {}),
         });
       },
     );
@@ -3414,6 +3486,7 @@ async function collectDeploymentPreflight(
   const hostMemoryMiB = Math.max(1, Math.floor(totalmem() / BYTES_PER_MIB));
   const hostCpuCount = collectHostCpuCount();
   const systemdPreflight = await collectSystemdPreflight(options.strictFilesystem === true);
+  const caddyPreflight = await collectCaddyPreflight(options.strictFilesystem === true);
   const envFilePreflight = await collectEnvFilePreflight(options.envFile);
   const serviceUserPreflight = await collectServiceUserPreflight(
     options.user,
@@ -3466,6 +3539,7 @@ async function collectDeploymentPreflight(
       ...(hostCpuCount !== undefined ? { hostCpuCount } : {}),
       ...storagePreflight,
       ...systemdPreflight,
+      ...caddyPreflight,
       ...envFilePreflight,
       ...serviceUserPreflight,
       ...configFilePreflight,
@@ -3493,6 +3567,7 @@ async function collectDeploymentPreflight(
     ...(hostCpuCount !== undefined ? { hostCpuCount } : {}),
     ...storagePreflight,
     ...systemdPreflight,
+    ...caddyPreflight,
     ...envFilePreflight,
     ...serviceUserPreflight,
     ...configFilePreflight,

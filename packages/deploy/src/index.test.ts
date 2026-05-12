@@ -1822,6 +1822,39 @@ test("diagnoseConfig reports an available systemd host in strict mode", () => {
   assert.match(diagnostic.message, /systemd 255/);
 });
 
+test("diagnoseConfig errors when Caddy is missing in strict mode", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      caddyStatus: "missing",
+      caddyError: "caddy was not found",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "caddy_runtime_missing");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /Caddyfile/);
+  assert.match(diagnostic.message, /public HTTPS/);
+});
+
+test("diagnoseConfig reports an available Caddy runtime in strict mode", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      caddyStatus: "available",
+      caddyVersion: "v2.8.4",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "caddy_runtime_ok");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+  assert.match(diagnostic.message, /v2\.8\.4/);
+});
+
 test("diagnoseConfig errors when the generated service user cannot access gateway paths", () => {
   const config = createDefaultConfig("tiny");
   const diagnostics = diagnoseConfig(config, process.env, undefined, {
