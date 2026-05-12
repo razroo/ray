@@ -4,7 +4,13 @@ import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
-import { normalizeRepoConfigPath, parseCliArgs, parseEnvironmentFile, runCli } from "./cli.js";
+import {
+  normalizeGatewayRuntimeBinaryPath,
+  normalizeRepoConfigPath,
+  parseCliArgs,
+  parseEnvironmentFile,
+  runCli,
+} from "./cli.js";
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -73,6 +79,41 @@ test("normalizeRepoConfigPath rejects paths that cannot be synced to the VPS", (
   assert.throws(
     () => normalizeRepoConfigPath(" examples/config/ray.json", "RAY_CONFIG_PATH"),
     /without leading or trailing whitespace/,
+  );
+});
+
+test("normalizeGatewayRuntimeBinaryPath resolves deploy runtime paths", () => {
+  assert.equal(
+    normalizeGatewayRuntimeBinaryPath("/usr/local/bin/../bin/bun"),
+    "/usr/local/bin/bun",
+  );
+  assert.equal(normalizeGatewayRuntimeBinaryPath("/opt/ray runtimes/bun"), "/opt/ray runtimes/bun");
+});
+
+test("normalizeGatewayRuntimeBinaryPath rejects paths hidden from systemd services", () => {
+  assert.throws(
+    () => normalizeGatewayRuntimeBinaryPath("bun", "RAY_GATEWAY_RUNTIME_BINARY"),
+    /absolute path/,
+  );
+  assert.throws(
+    () => normalizeGatewayRuntimeBinaryPath("/home/ray/.bun/bin/bun", "RAY_GATEWAY_RUNTIME_BINARY"),
+    /outside \/home, \/root, and \/run\/user/,
+  );
+  assert.throws(
+    () => normalizeGatewayRuntimeBinaryPath("/root/.bun/bin/bun", "RAY_GATEWAY_RUNTIME_BINARY"),
+    /outside \/home, \/root, and \/run\/user/,
+  );
+  assert.throws(
+    () => normalizeGatewayRuntimeBinaryPath(" /usr/local/bin/bun", "RAY_GATEWAY_RUNTIME_BINARY"),
+    /without leading or trailing whitespace/,
+  );
+  assert.throws(
+    () =>
+      normalizeGatewayRuntimeBinaryPath(
+        `/usr/local/bin/bun${"\n"}ExecStart=/bin/false`,
+        "RAY_GATEWAY_RUNTIME_BINARY",
+      ),
+    /control characters/,
   );
 });
 
@@ -190,6 +231,13 @@ test("parseCliArgs accepts explicit gateway runtime binaries", () => {
 
   assert.equal(options.command, "render");
   assert.equal(options.runtimeBinary, "/usr/local/bin/bun");
+});
+
+test("parseCliArgs rejects relative gateway runtime binaries", () => {
+  assert.throws(
+    () => parseCliArgs(["render", "--gateway-runtime-binary", "bun"]),
+    /--gateway-runtime-binary must be an absolute path/,
+  );
 });
 
 test("parseCliArgs keeps --node-binary as a compatibility alias", () => {
@@ -386,6 +434,35 @@ test("runCli explicit gateway runtime flag overrides env-file runtime", async (t
   const rendered = output.join("\n");
   assert.match(rendered, /ExecStart=\/usr\/local\/bin\/bun/);
   assert.doesNotMatch(rendered, /ExecStart=\/opt\/ray\/bin\/bun/);
+});
+
+test("runCli rejects malformed env-file gateway runtime paths", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-runtime-invalid-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(
+    envFile,
+    ["RAY_API_KEYS=test-key", "RAY_GATEWAY_RUNTIME_BINARY=./bun", ""].join("\n"),
+    "utf8",
+  );
+
+  await assert.rejects(
+    () =>
+      runCli([
+        "render",
+        "--cwd",
+        ".",
+        "--config",
+        "./examples/config/ray.1b.generic.public.json",
+        "--ray-env-file",
+        envFile,
+        "--memory-mib",
+        "4096",
+      ]),
+    /RAY_GATEWAY_RUNTIME_BINARY must be an absolute path/,
+  );
 });
 
 test("runCli render applies env-file deploy domain to generated Caddyfile", async (t) => {

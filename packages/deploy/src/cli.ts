@@ -45,6 +45,7 @@ const SYSTEMD_USER_PATTERN = /^(?:[A-Za-z_][A-Za-z0-9_-]{0,30}|[0-9]{1,10})$/;
 const DEFAULT_CONFIG_PATH = "./examples/config/ray.sub1b.public.json";
 const RESERVED_DEPLOY_STAGING_PREFIX = ".ray-deploy-";
 const VPS_WORKFLOW_EXCLUDED_CONFIG_SEGMENTS = new Set([".git", ".github", ".ray", "node_modules"]);
+const SYSTEMD_PROTECTED_HOME_PATHS = ["/home", "/root", "/run/user"] as const;
 
 const DEPLOY_CLI_HELP = `Ray deploy CLI
 
@@ -184,6 +185,47 @@ export function normalizeRepoConfigPath(value: string, label = "config path"): R
     configPath: `./${configRel}`,
     configRel,
   };
+}
+
+function isPosixPathInside(parentPath: string, candidatePath: string): boolean {
+  const relative = path.posix.relative(parentPath, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.posix.isAbsolute(relative));
+}
+
+export function normalizeGatewayRuntimeBinaryPath(
+  value: string,
+  label = "RAY_GATEWAY_RUNTIME_BINARY",
+): string {
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be a string`);
+  }
+
+  if (value.length === 0 || value.trim() !== value) {
+    throw new Error(
+      `${label} must be a non-empty absolute path without leading or trailing whitespace`,
+    );
+  }
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} must not contain control characters`);
+  }
+
+  if (!path.posix.isAbsolute(value)) {
+    throw new Error(`${label} must be an absolute path`);
+  }
+
+  const normalized = path.posix.normalize(value);
+  if (
+    SYSTEMD_PROTECTED_HOME_PATHS.some((protectedPath) =>
+      isPosixPathInside(protectedPath, normalized),
+    )
+  ) {
+    throw new Error(
+      `${label} must be outside /home, /root, and /run/user because systemd uses ProtectHome=true`,
+    );
+  }
+
+  return normalized;
 }
 
 function parseOptionalPositiveIntegerEnv(
@@ -467,13 +509,19 @@ export function parseCliArgs(argv: string[]): CliOptions {
     }
 
     if (current === "--gateway-runtime-binary") {
-      options.runtimeBinary = requireFlagValue(current, next);
+      options.runtimeBinary = normalizeGatewayRuntimeBinaryPath(
+        requireFlagValue(current, next),
+        current,
+      );
       index += 1;
       continue;
     }
 
     if (current === "--node-binary") {
-      options.nodeBinary = requireFlagValue(current, next);
+      options.nodeBinary = normalizeGatewayRuntimeBinaryPath(
+        requireFlagValue(current, next),
+        current,
+      );
       index += 1;
       continue;
     }
@@ -547,7 +595,12 @@ export async function runCli(argv: string[]): Promise<void> {
     ...(resolvedOptions.runtimeBinary === undefined &&
     resolvedOptions.nodeBinary === undefined &&
     envRuntimeBinary !== undefined
-      ? { runtimeBinary: envRuntimeBinary }
+      ? {
+          runtimeBinary: normalizeGatewayRuntimeBinaryPath(
+            envRuntimeBinary,
+            "RAY_GATEWAY_RUNTIME_BINARY",
+          ),
+        }
       : {}),
   };
 

@@ -300,7 +300,7 @@ Optional repository variables:
 - `RAY_DEPLOY_MEMORY_MIB` — optional VPS memory class used by workflow doctor/render when `/etc/ray/ray.env` does not already set it; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--memory-mib` is omitted
 - `RAY_DEPLOY_INSTALL_CADDY` — set to `true` to install and reload the generated Caddyfile; requires `RAY_DEPLOY_DOMAIN`
 - `RAY_CONFIG_PATH` — repo-relative config path to install, defaults to `./examples/config/ray.sub1b.public.json`; the workflow rejects absolute paths, path traversal, and paths excluded from repo sync before opening SSH
-- `RAY_GATEWAY_RUNTIME_BINARY` — absolute JavaScript runtime path rendered into `ray-gateway.service`, defaults to `/usr/local/bin/bun`; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--gateway-runtime-binary` is omitted
+- `RAY_GATEWAY_RUNTIME_BINARY` — absolute JavaScript runtime path rendered into `ray-gateway.service`, defaults to `/usr/local/bin/bun`; the deploy CLI and workflow reject relative paths and paths under `/home`, `/root`, or `/run/user` because generated units use `ProtectHome=true`
 - `RAY_DEPLOY_READY_TIMEOUT_SECONDS` — bounded wait for `/readyz` after service restart before reloading Caddy, defaults to `120`
 - `RAY_AUTO_DEPLOY` — set to `true` if pushes to `main` should auto-deploy
 
@@ -327,8 +327,9 @@ RAY_AUTH_ENABLED=true
 RAY_RATE_LIMIT_MAX_REQUESTS=75
 ```
 
-The workflow refreshes `/usr/local/bin/bun` when it is missing or older than the
-repo's supported Bun runtime, then runs `ray deploy doctor` on the VPS before
+The workflow validates the configured gateway runtime path before opening SSH,
+refreshes `/usr/local/bin/bun` when it is missing or older than the repo's
+supported Bun runtime, then runs `ray deploy doctor` on the VPS before
 restarting services. Missing API keys, missing GGUF files, memory-fit errors,
 exhausted async queue storage reserves, and unsupported gateway runtimes fail
 before systemd tries to start the generated units. The configured gateway
