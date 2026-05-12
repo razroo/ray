@@ -778,15 +778,31 @@ function buildRuntimeHealthDiagnostics(options: {
     queue: {
       degraded: options.queueDegraded,
       depth: options.queueSnapshot.queueDepth,
+      depthRatio: resolveSaturationRatio(
+        options.queueSnapshot.queueDepth,
+        options.queueSnapshot.maxQueue,
+      ),
       shortDepth: options.queueSnapshot.shortQueueDepth,
       draftDepth: options.queueSnapshot.draftQueueDepth,
       threshold: options.queueDepthThreshold,
       maxQueue: options.queueSnapshot.maxQueue,
       inFlight: options.queueSnapshot.inFlight,
+      inFlightRatio: resolveSaturationRatio(
+        options.queueSnapshot.inFlight,
+        options.queueSnapshot.concurrency,
+      ),
       concurrency: options.queueSnapshot.concurrency,
       queuedTokens: options.queueSnapshot.queuedTokens,
+      queuedTokensRatio: resolveSaturationRatio(
+        options.queueSnapshot.queuedTokens,
+        options.queueSnapshot.maxQueuedTokens,
+      ),
       maxQueuedTokens: options.queueSnapshot.maxQueuedTokens,
       inFlightTokens: options.queueSnapshot.inFlightTokens,
+      inFlightTokensRatio: resolveSaturationRatio(
+        options.queueSnapshot.inFlightTokens,
+        options.queueSnapshot.maxInflightTokens,
+      ),
       maxInflightTokens: options.queueSnapshot.maxInflightTokens,
     },
     memory: {
@@ -868,6 +884,10 @@ function bytesToMiB(value: number): number {
 
 function resolveProcessRssPressureRatio(processRssMiB: number, thresholdMiB: number): number {
   return Number((processRssMiB / Math.max(1, thresholdMiB)).toFixed(4));
+}
+
+function resolveSaturationRatio(value: number, capacity: number): number {
+  return Number((value / Math.max(1, capacity)).toFixed(4));
 }
 
 async function defaultReadTextFile(filePath: string): Promise<string> {

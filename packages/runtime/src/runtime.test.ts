@@ -7,6 +7,20 @@ import { createDefaultConfig, mergeConfig } from "@ray/config";
 import type { ModelProvider } from "@razroo/ray-core";
 import { createRayRuntime, readCgroupCpuSnapshot, readCgroupMemorySnapshot } from "./index.js";
 
+async function waitForCondition(predicate: () => boolean | Promise<boolean>): Promise<void> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < 1_000) {
+    if (await predicate()) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  throw new Error("Timed out waiting for condition");
+}
+
 test("runtime rejects invalid direct config", () => {
   const config = createDefaultConfig("tiny");
   config.scheduler.concurrency = 0;
@@ -183,15 +197,19 @@ test("runtime clamps output under cgroup memory pressure", async () => {
   assert.equal(health.status, "degraded");
   assert.equal(health.runtime?.queue.degraded, false);
   assert.equal(health.runtime?.queue.depth, 0);
+  assert.equal(health.runtime?.queue.depthRatio, 0);
   assert.equal(health.runtime?.queue.shortDepth, 0);
   assert.equal(health.runtime?.queue.draftDepth, 0);
   assert.equal(health.runtime?.queue.threshold, config.gracefulDegradation.queueDepthThreshold);
   assert.equal(health.runtime?.queue.maxQueue, config.scheduler.maxQueue);
   assert.equal(health.runtime?.queue.inFlight, 0);
+  assert.equal(health.runtime?.queue.inFlightRatio, 0);
   assert.equal(health.runtime?.queue.concurrency, config.scheduler.concurrency);
   assert.equal(health.runtime?.queue.queuedTokens, 0);
+  assert.equal(health.runtime?.queue.queuedTokensRatio, 0);
   assert.equal(health.runtime?.queue.maxQueuedTokens, config.scheduler.maxQueuedTokens);
   assert.equal(health.runtime?.queue.inFlightTokens, 0);
+  assert.equal(health.runtime?.queue.inFlightTokensRatio, 0);
   assert.equal(health.runtime?.queue.maxInflightTokens, config.scheduler.maxInflightTokens);
   assert.equal(health.runtime?.memory.degraded, true);
   assert.deepEqual(health.runtime?.memory.sources, ["cgroup"]);
@@ -216,6 +234,64 @@ test("runtime clamps output under cgroup memory pressure", async () => {
   assert.equal(metrics.gauges["process.memory.cgroup_oom_kill_events"], 0);
   assert.equal(metrics.gauges["process.memory.rss_pressure_ratio"], 0.0078);
   assert.equal(metrics.gauges["process.memory.pressure"], 1);
+});
+
+test("runtime health exposes queue saturation ratios", async () => {
+  let inferenceStarts = 0;
+  const releaseHandlers: Array<() => void> = [];
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "queue-ratio-model",
+    capabilities: {
+      streaming: false,
+      quantized: false,
+      localBackend: true,
+    },
+    async infer() {
+      inferenceStarts += 1;
+      await new Promise<void>((resolve) => {
+        releaseHandlers.push(resolve);
+      });
+
+      return { output: "ok" };
+    },
+  };
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    scheduler: {
+      concurrency: 1,
+      maxQueue: 4,
+      maxQueuedTokens: 100,
+      maxInflightTokens: 100,
+      requestTimeoutMs: 2_000,
+      affinityLookahead: 4,
+    },
+  });
+  const runtime = createRayRuntime(config, { provider });
+
+  const first = runtime.infer({ input: "ping", maxTokens: 10, cache: false });
+  await waitForCondition(() => inferenceStarts === 1);
+
+  const second = runtime.infer({ input: "pong", maxTokens: 10, cache: false });
+  let health = await runtime.health();
+  await waitForCondition(async () => {
+    health = await runtime.health();
+    return health.runtime?.queue.depth === 1 && health.runtime.queue.inFlight === 1;
+  });
+
+  assert.equal(health.runtime?.queue.depth, 1);
+  assert.equal(health.runtime?.queue.depthRatio, 0.25);
+  assert.equal(health.runtime?.queue.inFlight, 1);
+  assert.equal(health.runtime?.queue.inFlightRatio, 1);
+  assert.equal(health.runtime?.queue.queuedTokens, 11);
+  assert.equal(health.runtime?.queue.queuedTokensRatio, 0.11);
+  assert.equal(health.runtime?.queue.inFlightTokens, 11);
+  assert.equal(health.runtime?.queue.inFlightTokensRatio, 0.11);
+
+  releaseHandlers.shift()?.();
+  await first;
+  await waitForCondition(() => inferenceStarts === 2 && releaseHandlers.length > 0);
+  releaseHandlers.shift()?.();
+  await second;
 });
 
 test("readCgroupMemorySnapshot reads unified cgroup memory files", async (t) => {
