@@ -1326,6 +1326,19 @@ export class DurableInferenceQueue {
           await this.persistJob(parsed);
         }
 
+        if (
+          isTerminalJobStatus(parsed.status) &&
+          parsed.callback?.status === "pending" &&
+          parsed.callback.attempts >= this.options.config.maxCallbackAttempts
+        ) {
+          const recoveredAt = new Date().toISOString();
+          parsed.callback.status = "failed";
+          parsed.callback.lastError =
+            "Callback delivery was pending during restart and had no retry attempts remaining";
+          parsed.updatedAt = recoveredAt;
+          await this.persistJob(parsed);
+        }
+
         if (await this.pruneCompletedJob(parsed, filePath)) {
           continue;
         }

@@ -400,6 +400,84 @@ test("durable inference queue fails recovered running jobs with exhausted attemp
   }
 });
 
+test("durable inference queue fails recovered pending callbacks with exhausted attempts", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-callback-recovery-"));
+
+  try {
+    const config = mergeConfig(createDefaultConfig("tiny"), {
+      asyncQueue: {
+        enabled: true,
+        storageDir,
+        pollIntervalMs: 20,
+        dispatchConcurrency: 1,
+        maxAttempts: 2,
+        callbackTimeoutMs: 500,
+        maxCallbackAttempts: 1,
+      },
+      model: {
+        adapter: {
+          kind: "mock",
+          latencyMs: 5,
+        },
+      },
+    });
+    const jobsDir = join(storageDir, "jobs");
+    const now = new Date().toISOString();
+    await mkdir(jobsDir, { recursive: true });
+    await writeFile(
+      join(jobsDir, "job_callback_exhausted.json"),
+      JSON.stringify({
+        id: "job_callback_exhausted",
+        status: "succeeded",
+        request: {
+          input: "callback crashed after final attempt was recorded",
+        },
+        result: {
+          output: "done",
+        },
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        attempts: 1,
+        maxAttempts: 2,
+        callback: {
+          url: "http://93.184.216.34/ray-callback",
+          status: "pending",
+          attempts: 1,
+          lastAttemptAt: now,
+        },
+      }),
+    );
+
+    const runtime = createRayRuntime(config);
+    const logger = new Logger("test", "error");
+    const queue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+    });
+    await queue.start();
+
+    const recovered = await queue.get("job_callback_exhausted");
+    assert.equal(recovered?.status, "succeeded");
+    assert.equal(recovered?.callback?.status, "failed");
+    assert.equal(recovered?.callback?.attempts, 1);
+    assert.match(recovered?.callback?.lastError ?? "", /no retry attempts remaining/);
+
+    await queue.stop();
+
+    const raw = await fs.readFile(join(jobsDir, "job_callback_exhausted.json"), "utf8");
+    const persisted = JSON.parse(raw) as {
+      callback?: {
+        status?: string;
+      };
+    };
+    assert.equal(persisted.callback?.status, "failed");
+  } finally {
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});
+
 test("durable inference queue fails oversized persisted results without writing oversized records", async () => {
   const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-"));
 
