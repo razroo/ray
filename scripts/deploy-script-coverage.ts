@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { collectPublicConfigPaths } from "./deploy-smoke.ts";
@@ -208,9 +208,27 @@ export function parseArgs(argv: string[]): DeployScriptCoverageArgs {
 }
 
 async function readPackageScripts(packageJsonPath: string): Promise<Record<string, string>> {
-  const contents = await readFile(packageJsonPath, "utf8");
-  if (Buffer.byteLength(contents, "utf8") > MAX_PACKAGE_JSON_BYTES) {
-    throw new Error(`package.json must be at most ${MAX_PACKAGE_JSON_BYTES} bytes`);
+  let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
+  let contents = "";
+
+  try {
+    fileHandle = await open(packageJsonPath, "r");
+    const stats = await fileHandle.stat();
+
+    if (!stats.isFile()) {
+      throw new Error(`package.json path must be a file: ${packageJsonPath}`);
+    }
+
+    if (stats.size > MAX_PACKAGE_JSON_BYTES) {
+      throw new Error(`package.json must be at most ${MAX_PACKAGE_JSON_BYTES} bytes`);
+    }
+
+    contents = await fileHandle.readFile("utf8");
+    if (Buffer.byteLength(contents, "utf8") > MAX_PACKAGE_JSON_BYTES) {
+      throw new Error(`package.json must be at most ${MAX_PACKAGE_JSON_BYTES} bytes`);
+    }
+  } finally {
+    await fileHandle?.close().catch(() => undefined);
   }
 
   const parsed = JSON.parse(contents) as unknown;

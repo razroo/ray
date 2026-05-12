@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { collectPublicConfigPaths } from "./deploy-smoke.ts";
 import {
@@ -100,4 +102,25 @@ test("runDeployScriptCoverageCli prints JSON output", async () => {
   const parsed = JSON.parse(stdout) as { ok: boolean; configCount: number };
   assert.equal(parsed.ok, true);
   assert.equal(parsed.configCount, 7);
+});
+
+test("runDeployScriptCoverageCli rejects oversized package manifests", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-deploy-script-coverage-size-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const packageJsonPath = path.join(tempDir, "package.json");
+  await writeFile(packageJsonPath, "x".repeat(512 * 1024 + 1));
+
+  let stdout = "";
+  let stderr = "";
+  const code = await runDeployScriptCoverageCli(["--package-json", packageJsonPath], {
+    stdout: { write: (chunk: string) => (stdout += chunk) } as NodeJS.WriteStream,
+    stderr: { write: (chunk: string) => (stderr += chunk) } as NodeJS.WriteStream,
+  });
+
+  assert.equal(code, 1);
+  assert.equal(stdout, "");
+  assert.match(stderr, /package\.json must be at most 524288 bytes/);
 });
