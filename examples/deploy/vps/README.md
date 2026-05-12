@@ -302,6 +302,7 @@ Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 - Keep `scheduler.requestTimeoutMs` slightly above `model.adapter.timeoutMs` so provider timeouts remain visible.
 - Use `RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB` when the gateway process needs to clamp output before RSS pressure becomes a swap or OOM problem.
 - Keep a modest swap file on 4 GB llama.cpp VPS targets. Doctor reads `/proc/meminfo` and warns when the small-VPS profile has no swap cushion.
+- Ray samples cgroup CPU throttling counters when available and exposes throttled periods, throttled time, and throttled ratio in health and metrics so small-node CPU contention is visible without extra agents.
 - Ray also samples Linux cgroup memory files when available, marks memory pressure when the service or container reaches 90% of its configured cgroup memory limit, and exposes cgroup v2 `memory.events` counters in health and metrics so operators can see when `MemoryHigh` or OOM boundaries were crossed.
 - The `/metrics` endpoint refreshes live queue, cache, and cgroup resource gauges before responding, so a scraper can observe current pressure without a separate health probe.
 - Use `RAY_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB` to preserve local disk headroom before accepting more durable async jobs. Doctor checks the nearest existing parent of `RAY_ASYNC_QUEUE_STORAGE_DIR`, so it catches a too-small VPS disk even before the queue directory exists, and verifies the generated service user can write there.

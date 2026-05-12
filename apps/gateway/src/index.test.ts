@@ -454,6 +454,15 @@ test("gateway metrics endpoint refreshes live runtime gauges", async (t) => {
       oomEvents: 0,
       oomKillEvents: 0,
     }),
+    cgroupCpu: () => ({
+      usageUsec: 3_000_000,
+      userUsec: 2_000_000,
+      systemUsec: 1_000_000,
+      periods: 300,
+      throttledPeriods: 15,
+      throttledUsec: 50_000,
+      throttledRatio: 0.05,
+    }),
   });
   const gateway = createGatewayServer({
     config,
@@ -479,6 +488,10 @@ test("gateway metrics endpoint refreshes live runtime gauges", async (t) => {
   assert.equal(body.gauges["process.memory.cgroup_limit_mib"], 1_000);
   assert.equal(body.gauges["process.memory.cgroup_pressure_ratio"], 0.8);
   assert.equal(body.gauges["process.memory.cgroup_high_events"], 1);
+  assert.equal(body.gauges["process.cpu.cgroup_usage_usec"], 3_000_000);
+  assert.equal(body.gauges["process.cpu.cgroup_throttled_periods"], 15);
+  assert.equal(body.gauges["process.cpu.cgroup_throttled_usec"], 50_000);
+  assert.equal(body.gauges["process.cpu.cgroup_throttled_ratio"], 0.05);
 });
 
 test("gateway returns service unavailable when detailed health is unavailable", async (t) => {

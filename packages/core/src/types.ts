@@ -544,6 +544,15 @@ export interface RuntimeHealthDiagnostics {
     cgroupMemoryOomEvents?: number;
     cgroupMemoryOomKillEvents?: number;
   };
+  cpu?: {
+    cgroupCpuUsageUsec?: number;
+    cgroupCpuUserUsec?: number;
+    cgroupCpuSystemUsec?: number;
+    cgroupCpuPeriods?: number;
+    cgroupCpuThrottledPeriods?: number;
+    cgroupCpuThrottledUsec?: number;
+    cgroupCpuThrottledRatio?: number;
+  };
 }
 
 export interface HealthSnapshot {

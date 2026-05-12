@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
 import type { ModelProvider } from "@razroo/ray-core";
-import { createRayRuntime, readCgroupMemorySnapshot } from "./index.js";
+import { createRayRuntime, readCgroupCpuSnapshot, readCgroupMemorySnapshot } from "./index.js";
 
 test("runtime rejects invalid direct config", () => {
   const config = createDefaultConfig("tiny");
@@ -275,6 +275,64 @@ test("readCgroupMemorySnapshot falls back to memory.max when memory.high is unli
   assert.equal(snapshot?.oomKillEvents, undefined);
 });
 
+test("readCgroupCpuSnapshot reads unified cgroup cpu.stat files", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-cgroup-cpu-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const cgroupDir = join(tempDir, "ray.slice", "ray-gateway.service");
+  const procCgroupPath = join(tempDir, "self-cgroup");
+
+  await mkdir(cgroupDir, { recursive: true });
+  await writeFile(procCgroupPath, "0::/ray.slice/ray-gateway.service\n", "utf8");
+  await writeFile(
+    join(cgroupDir, "cpu.stat"),
+    "usage_usec 1000000\nuser_usec 700000\nsystem_usec 300000\nnr_periods 100\nnr_throttled 12\nthrottled_usec 45000\n",
+    "utf8",
+  );
+
+  const snapshot = await readCgroupCpuSnapshot({
+    procSelfCgroupPath: procCgroupPath,
+    cgroupV2Root: tempDir,
+  });
+
+  assert.equal(snapshot?.usageUsec, 1_000_000);
+  assert.equal(snapshot?.userUsec, 700_000);
+  assert.equal(snapshot?.systemUsec, 300_000);
+  assert.equal(snapshot?.periods, 100);
+  assert.equal(snapshot?.throttledPeriods, 12);
+  assert.equal(snapshot?.throttledUsec, 45_000);
+  assert.equal(snapshot?.throttledRatio, 0.12);
+});
+
+test("readCgroupCpuSnapshot reads legacy cgroup cpu.stat throttling", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-cgroup-cpu-v1-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const cgroupDir = join(tempDir, "ray", "gateway");
+  const procCgroupPath = join(tempDir, "self-cgroup");
+
+  await mkdir(cgroupDir, { recursive: true });
+  await writeFile(procCgroupPath, "4:cpu,cpuacct:/ray/gateway\n", "utf8");
+  await writeFile(
+    join(cgroupDir, "cpu.stat"),
+    "nr_periods 80\nnr_throttled 20\nthrottled_time 250000000\n",
+    "utf8",
+  );
+
+  const snapshot = await readCgroupCpuSnapshot({
+    procSelfCgroupPath: procCgroupPath,
+    cgroupV1CpuRoot: tempDir,
+  });
+
+  assert.equal(snapshot?.usageUsec, undefined);
+  assert.equal(snapshot?.periods, 80);
+  assert.equal(snapshot?.throttledPeriods, 20);
+  assert.equal(snapshot?.throttledUsec, 250_000);
+  assert.equal(snapshot?.throttledRatio, 0.25);
+});
+
 test("runtime collected metrics refresh live queue and cgroup pressure gauges", async () => {
   const runtime = createRayRuntime(createDefaultConfig("tiny"), {
     memoryUsage: () => ({
@@ -294,6 +352,15 @@ test("runtime collected metrics refresh live queue and cgroup pressure gauges", 
       oomEvents: 0,
       oomKillEvents: 0,
     }),
+    cgroupCpu: () => ({
+      usageUsec: 2_000_000,
+      userUsec: 1_500_000,
+      systemUsec: 500_000,
+      periods: 200,
+      throttledPeriods: 10,
+      throttledUsec: 25_000,
+      throttledRatio: 0.05,
+    }),
   });
 
   const metrics = await runtime.collectMetricsSnapshot();
@@ -311,6 +378,38 @@ test("runtime collected metrics refresh live queue and cgroup pressure gauges", 
   assert.equal(metrics.gauges["process.memory.cgroup_max_events"], 0);
   assert.equal(metrics.gauges["process.memory.cgroup_oom_events"], 0);
   assert.equal(metrics.gauges["process.memory.cgroup_oom_kill_events"], 0);
+  assert.equal(metrics.gauges["process.cpu.cgroup_usage_usec"], 2_000_000);
+  assert.equal(metrics.gauges["process.cpu.cgroup_user_usec"], 1_500_000);
+  assert.equal(metrics.gauges["process.cpu.cgroup_system_usec"], 500_000);
+  assert.equal(metrics.gauges["process.cpu.cgroup_periods"], 200);
+  assert.equal(metrics.gauges["process.cpu.cgroup_throttled_periods"], 10);
+  assert.equal(metrics.gauges["process.cpu.cgroup_throttled_usec"], 25_000);
+  assert.equal(metrics.gauges["process.cpu.cgroup_throttled_ratio"], 0.05);
+});
+
+test("runtime health exposes cgroup CPU throttling", async () => {
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), {
+    cgroupCpu: () => ({
+      usageUsec: 4_000_000,
+      userUsec: 3_000_000,
+      systemUsec: 1_000_000,
+      periods: 400,
+      throttledPeriods: 80,
+      throttledUsec: 125_000,
+      throttledRatio: 0.2,
+    }),
+  });
+
+  const health = await runtime.health();
+
+  assert.equal(health.status, "ok");
+  assert.equal(health.runtime?.cpu?.cgroupCpuUsageUsec, 4_000_000);
+  assert.equal(health.runtime?.cpu?.cgroupCpuUserUsec, 3_000_000);
+  assert.equal(health.runtime?.cpu?.cgroupCpuSystemUsec, 1_000_000);
+  assert.equal(health.runtime?.cpu?.cgroupCpuPeriods, 400);
+  assert.equal(health.runtime?.cpu?.cgroupCpuThrottledPeriods, 80);
+  assert.equal(health.runtime?.cpu?.cgroupCpuThrottledUsec, 125_000);
+  assert.equal(health.runtime?.cpu?.cgroupCpuThrottledRatio, 0.2);
 });
 
 test("runtime returns chars and provider token usage explicitly", async () => {

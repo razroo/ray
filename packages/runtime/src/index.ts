@@ -95,11 +95,33 @@ export interface CgroupMemoryReaderOptions {
   readTextFile?: (filePath: string) => Promise<string>;
 }
 
+export interface CgroupCpuSnapshot {
+  usageUsec?: number;
+  userUsec?: number;
+  systemUsec?: number;
+  periods?: number;
+  throttledPeriods?: number;
+  throttledUsec?: number;
+  throttledRatio?: number;
+}
+
+export interface CgroupCpuReaderOptions {
+  procSelfCgroupPath?: string;
+  cgroupV2Root?: string;
+  cgroupV1CpuRoot?: string;
+  readTextFile?: (filePath: string) => Promise<string>;
+}
+
 interface CgroupMemoryCandidate {
   currentPath: string;
   highPath?: string;
   limitPath: string;
   eventsPath?: string;
+}
+
+interface CgroupCpuCandidate {
+  statPath: string;
+  statVersion: "v1" | "v2";
 }
 
 interface MemoryPressureSnapshot {
@@ -119,6 +141,11 @@ export type CgroupMemoryReader = () =>
   | Promise<CgroupMemorySnapshot | undefined>
   | undefined;
 
+export type CgroupCpuReader = () =>
+  | CgroupCpuSnapshot
+  | Promise<CgroupCpuSnapshot | undefined>
+  | undefined;
+
 const MAX_DEDUPE_KEY_CHARS = 512;
 const MAX_METADATA_ENTRIES = 32;
 const MAX_METADATA_KEY_CHARS = 128;
@@ -128,8 +155,10 @@ const MAX_STOP_SEQUENCE_CHARS = 256;
 const BYTES_PER_MIB = 1024 * 1024;
 const CGROUP_V2_ROOT = "/sys/fs/cgroup";
 const CGROUP_V1_MEMORY_ROOT = "/sys/fs/cgroup/memory";
+const CGROUP_V1_CPU_ROOT = "/sys/fs/cgroup/cpu";
 const PROC_SELF_CGROUP = "/proc/self/cgroup";
 const CGROUP_MEMORY_CACHE_TTL_MS = 250;
+const CGROUP_CPU_CACHE_TTL_MS = 250;
 const CGROUP_MEMORY_PRESSURE_RATIO = 0.9;
 const CGROUP_UNLIMITED_LIMIT_BYTES = 1024 ** 5;
 const unsafeMetadataKeys = new Set(["__proto__", "constructor", "prototype"]);
@@ -143,6 +172,7 @@ export interface CreateRayRuntimeOptions {
   cache?: TtlCache<CachedInferencePayload>;
   memoryUsage?: () => NodeJS.MemoryUsage;
   cgroupMemory?: CgroupMemoryReader | false;
+  cgroupCpu?: CgroupCpuReader | false;
 }
 
 function assertRequestObject(request: InferenceRequest): void {
@@ -732,6 +762,7 @@ function buildRuntimeHealthDiagnostics(options: {
   memoryPressureSources: MemoryPressureSource[];
   memoryPressure: MemoryPressureSnapshot;
   memoryRssThresholdMiB: number;
+  cgroupCpu: CgroupCpuSnapshot | undefined;
 }): RuntimeHealthDiagnostics {
   return {
     queue: {
@@ -778,6 +809,33 @@ function buildRuntimeHealthDiagnostics(options: {
         ? { cgroupMemoryOomKillEvents: options.memoryPressure.cgroupMemoryOomKillEvents }
         : {}),
     },
+    ...(options.cgroupCpu
+      ? {
+          cpu: {
+            ...(options.cgroupCpu.usageUsec !== undefined
+              ? { cgroupCpuUsageUsec: options.cgroupCpu.usageUsec }
+              : {}),
+            ...(options.cgroupCpu.userUsec !== undefined
+              ? { cgroupCpuUserUsec: options.cgroupCpu.userUsec }
+              : {}),
+            ...(options.cgroupCpu.systemUsec !== undefined
+              ? { cgroupCpuSystemUsec: options.cgroupCpu.systemUsec }
+              : {}),
+            ...(options.cgroupCpu.periods !== undefined
+              ? { cgroupCpuPeriods: options.cgroupCpu.periods }
+              : {}),
+            ...(options.cgroupCpu.throttledPeriods !== undefined
+              ? { cgroupCpuThrottledPeriods: options.cgroupCpu.throttledPeriods }
+              : {}),
+            ...(options.cgroupCpu.throttledUsec !== undefined
+              ? { cgroupCpuThrottledUsec: options.cgroupCpu.throttledUsec }
+              : {}),
+            ...(options.cgroupCpu.throttledRatio !== undefined
+              ? { cgroupCpuThrottledRatio: options.cgroupCpu.throttledRatio }
+              : {}),
+          },
+        }
+      : {}),
   };
 }
 
@@ -850,6 +908,50 @@ function parseCgroupMemoryEvents(raw: string): {
   }
 
   return events;
+}
+
+function parseCgroupCpuStat(raw: string, statVersion: "v1" | "v2"): CgroupCpuSnapshot | undefined {
+  const values = new Map<string, number>();
+
+  for (const line of raw.split(/\r?\n/)) {
+    const match = /^([a-z_]+)\s+(\d+)$/.exec(line.trim());
+
+    if (!match) {
+      continue;
+    }
+
+    const value = Number(match[2]);
+
+    if (!Number.isSafeInteger(value) || value < 0) {
+      continue;
+    }
+
+    values.set(match[1] ?? "", value);
+  }
+
+  const usageUsec = values.get("usage_usec");
+  const userUsec = values.get("user_usec");
+  const systemUsec = values.get("system_usec");
+  const periods = values.get("nr_periods");
+  const throttledPeriods = values.get("nr_throttled");
+  const throttledUsec =
+    statVersion === "v2" ? values.get("throttled_usec") : values.get("throttled_time");
+  const snapshot: CgroupCpuSnapshot = {
+    ...(usageUsec !== undefined ? { usageUsec } : {}),
+    ...(userUsec !== undefined ? { userUsec } : {}),
+    ...(systemUsec !== undefined ? { systemUsec } : {}),
+    ...(periods !== undefined ? { periods } : {}),
+    ...(throttledPeriods !== undefined ? { throttledPeriods } : {}),
+    ...(throttledUsec !== undefined
+      ? { throttledUsec: statVersion === "v2" ? throttledUsec : Math.round(throttledUsec / 1000) }
+      : {}),
+  };
+
+  if (periods !== undefined && periods > 0 && throttledPeriods !== undefined) {
+    snapshot.throttledRatio = Number((throttledPeriods / periods).toFixed(4));
+  }
+
+  return Object.keys(snapshot).length > 0 ? snapshot : undefined;
 }
 
 function resolveCgroupFile(root: string, cgroupPath: string, fileName: string): string | undefined {
@@ -936,6 +1038,55 @@ function resolveCgroupMemoryCandidates(
   return candidates;
 }
 
+function resolveCgroupCpuCandidates(
+  procCgroup: string,
+  options: Required<Pick<CgroupCpuReaderOptions, "cgroupV2Root" | "cgroupV1CpuRoot">>,
+): CgroupCpuCandidate[] {
+  const candidates: CgroupCpuCandidate[] = [];
+  const seen = new Set<string>();
+
+  for (const line of procCgroup.split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue;
+    }
+
+    const parts = line.split(":");
+
+    if (parts.length < 3) {
+      continue;
+    }
+
+    const hierarchy = parts[0] ?? "";
+    const controllers = parts[1] ?? "";
+    const cgroupPath = parts.slice(2).join(":") || "/";
+    const isUnifiedCgroup = hierarchy === "0" && controllers === "";
+    const hasCpuController = controllers.split(",").includes("cpu");
+    const root = isUnifiedCgroup
+      ? options.cgroupV2Root
+      : hasCpuController
+        ? options.cgroupV1CpuRoot
+        : undefined;
+
+    if (!root) {
+      continue;
+    }
+
+    const statPath = resolveCgroupFile(root, cgroupPath, "cpu.stat");
+
+    if (!statPath || seen.has(statPath)) {
+      continue;
+    }
+
+    seen.add(statPath);
+    candidates.push({
+      statPath,
+      statVersion: isUnifiedCgroup ? "v2" : "v1",
+    });
+  }
+
+  return candidates;
+}
+
 export async function readCgroupMemorySnapshot(
   options: CgroupMemoryReaderOptions = {},
 ): Promise<CgroupMemorySnapshot | undefined> {
@@ -1008,6 +1159,39 @@ export async function readCgroupMemorySnapshot(
       }
 
       return snapshot;
+    } catch {
+      continue;
+    }
+  }
+
+  return undefined;
+}
+
+export async function readCgroupCpuSnapshot(
+  options: CgroupCpuReaderOptions = {},
+): Promise<CgroupCpuSnapshot | undefined> {
+  const readTextFile = options.readTextFile ?? defaultReadTextFile;
+  let procCgroup: string;
+
+  try {
+    procCgroup = await readTextFile(options.procSelfCgroupPath ?? PROC_SELF_CGROUP);
+  } catch {
+    return undefined;
+  }
+
+  const candidates = resolveCgroupCpuCandidates(procCgroup, {
+    cgroupV2Root: options.cgroupV2Root ?? CGROUP_V2_ROOT,
+    cgroupV1CpuRoot: options.cgroupV1CpuRoot ?? CGROUP_V1_CPU_ROOT,
+  });
+
+  for (const candidate of candidates) {
+    try {
+      const statRaw = await readTextFile(candidate.statPath);
+      const snapshot = parseCgroupCpuStat(statRaw, candidate.statVersion);
+
+      if (snapshot) {
+        return snapshot;
+      }
     } catch {
       continue;
     }
@@ -1356,10 +1540,17 @@ export class RayRuntime {
   private readonly preparationQueue: PreparationQueueEntry[] = [];
   private readonly memoryUsage: () => NodeJS.MemoryUsage;
   private readonly cgroupMemory: CgroupMemoryReader | undefined;
+  private readonly cgroupCpu: CgroupCpuReader | undefined;
   private cgroupMemoryCache:
     | {
         checkedAtMs: number;
         snapshot: CgroupMemorySnapshot | undefined;
+      }
+    | undefined;
+  private cgroupCpuCache:
+    | {
+        checkedAtMs: number;
+        snapshot: CgroupCpuSnapshot | undefined;
       }
     | undefined;
 
@@ -1385,6 +1576,10 @@ export class RayRuntime {
       options.cgroupMemory === false
         ? undefined
         : (options.cgroupMemory ?? (() => readCgroupMemorySnapshot()));
+    this.cgroupCpu =
+      options.cgroupCpu === false
+        ? undefined
+        : (options.cgroupCpu ?? (() => readCgroupCpuSnapshot()));
   }
 
   async warm(): Promise<void> {
@@ -1640,8 +1835,11 @@ export class RayRuntime {
 
   async health(): Promise<HealthSnapshot> {
     const snapshot = this.scheduler.snapshot();
-    const provider = await this.getProviderHealth();
-    const memoryPressure = await this.getMemoryPressureSnapshot();
+    const [provider, memoryPressure, cgroupCpu] = await Promise.all([
+      this.getProviderHealth(),
+      this.getMemoryPressureSnapshot(),
+      this.getCgroupCpuSnapshot(),
+    ]);
     const memoryPressureSources = resolveMemoryPressureSources(this.config, memoryPressure);
     const queueDegraded =
       snapshot.queueDepth >= this.config.gracefulDegradation.queueDepthThreshold;
@@ -1653,8 +1851,10 @@ export class RayRuntime {
       memoryPressureSources,
       memoryPressure,
       memoryRssThresholdMiB: this.config.gracefulDegradation.memoryRssThresholdMiB,
+      cgroupCpu,
     });
     this.recordMemoryPressureMetrics(memoryPressure, memoryPressureSources);
+    this.recordCgroupCpuMetrics(cgroupCpu);
     const status =
       provider.status === "unavailable"
         ? "unavailable"
@@ -1684,11 +1884,15 @@ export class RayRuntime {
 
   async collectMetricsSnapshot(): Promise<RuntimeMetricsSnapshot> {
     const queueSnapshot = this.scheduler.snapshot();
-    const memoryPressure = await this.getMemoryPressureSnapshot();
+    const [memoryPressure, cgroupCpu] = await Promise.all([
+      this.getMemoryPressureSnapshot(),
+      this.getCgroupCpuSnapshot(),
+    ]);
     const memoryPressureSources = resolveMemoryPressureSources(this.config, memoryPressure);
 
     this.recordSchedulerMetrics(queueSnapshot);
     this.recordMemoryPressureMetrics(memoryPressure, memoryPressureSources);
+    this.recordCgroupCpuMetrics(cgroupCpu);
     this.metrics.gauge("cache.entries", this.cache.size());
 
     return this.metricsSnapshot();
@@ -2073,6 +2277,61 @@ export class RayRuntime {
         snapshot: undefined,
       };
       return undefined;
+    }
+  }
+
+  private async getCgroupCpuSnapshot(): Promise<CgroupCpuSnapshot | undefined> {
+    if (!this.cgroupCpu) {
+      return undefined;
+    }
+
+    const now = Date.now();
+
+    if (this.cgroupCpuCache && now - this.cgroupCpuCache.checkedAtMs < CGROUP_CPU_CACHE_TTL_MS) {
+      return this.cgroupCpuCache.snapshot;
+    }
+
+    try {
+      const snapshot = await this.cgroupCpu();
+      this.cgroupCpuCache = {
+        checkedAtMs: now,
+        snapshot,
+      };
+      return snapshot;
+    } catch {
+      this.cgroupCpuCache = {
+        checkedAtMs: now,
+        snapshot: undefined,
+      };
+      return undefined;
+    }
+  }
+
+  private recordCgroupCpuMetrics(snapshot: CgroupCpuSnapshot | undefined): void {
+    if (!snapshot) {
+      return;
+    }
+
+    if (snapshot.usageUsec !== undefined) {
+      this.metrics.gauge("process.cpu.cgroup_usage_usec", snapshot.usageUsec);
+    }
+    if (snapshot.userUsec !== undefined) {
+      this.metrics.gauge("process.cpu.cgroup_user_usec", snapshot.userUsec);
+    }
+    if (snapshot.systemUsec !== undefined) {
+      this.metrics.gauge("process.cpu.cgroup_system_usec", snapshot.systemUsec);
+    }
+    if (snapshot.periods !== undefined) {
+      this.metrics.gauge("process.cpu.cgroup_periods", snapshot.periods);
+    }
+    if (snapshot.throttledPeriods !== undefined) {
+      this.metrics.gauge("process.cpu.cgroup_throttled_periods", snapshot.throttledPeriods);
+    }
+    if (snapshot.throttledUsec !== undefined) {
+      this.metrics.gauge("process.cpu.cgroup_throttled_usec", snapshot.throttledUsec);
+    }
+    if (snapshot.throttledRatio !== undefined) {
+      this.metrics.gauge("process.cpu.cgroup_throttled_ratio", snapshot.throttledRatio);
     }
   }
 
