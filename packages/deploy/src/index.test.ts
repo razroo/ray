@@ -487,6 +487,10 @@ test("renderEnvironmentFileExample documents gateway behavior switches", () => {
   const envFile = renderEnvironmentFileExample(config);
 
   assert.match(envFile, /RAY_MODEL_WARM_ON_BOOT=true/);
+  assert.match(envFile, /RAY_LOG_LEVEL=info/);
+  assert.match(envFile, /RAY_TELEMETRY_SERVICE_NAME=ray-gateway/);
+  assert.match(envFile, /RAY_TELEMETRY_INCLUDE_DEBUG_METRICS=true/);
+  assert.match(envFile, /RAY_TELEMETRY_SLOW_REQUEST_THRESHOLD_MS=2200/);
   assert.match(envFile, /RAY_REQUEST_BODY_LIMIT_BYTES=48000/);
   assert.match(envFile, /RAY_ASYNC_QUEUE_ENABLED=true/);
   assert.match(envFile, /RAY_CACHE_ENABLED=true/);

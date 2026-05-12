@@ -1430,6 +1430,12 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
   }
 
   lines.push("# Optional gateway behavior switches:");
+  lines.push(`# RAY_LOG_LEVEL=${config.telemetry.logLevel}`);
+  lines.push(`# RAY_TELEMETRY_SERVICE_NAME=${config.telemetry.serviceName}`);
+  lines.push(`# RAY_TELEMETRY_INCLUDE_DEBUG_METRICS=${config.telemetry.includeDebugMetrics}`);
+  lines.push(
+    `# RAY_TELEMETRY_SLOW_REQUEST_THRESHOLD_MS=${config.telemetry.slowRequestThresholdMs}`,
+  );
   lines.push(`# RAY_MODEL_WARM_ON_BOOT=${config.model.warmOnBoot}`);
   lines.push(`# RAY_REQUEST_BODY_LIMIT_BYTES=${config.server.requestBodyLimitBytes}`);
   lines.push(`# RAY_ASYNC_QUEUE_ENABLED=${config.asyncQueue.enabled}`);

@@ -143,6 +143,10 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
       RAY_LLAMA_CPP_ENABLE_UNIFIED_KV: "false",
       RAY_LLAMA_CPP_CACHE_IDLE_SLOTS: "false",
       RAY_LLAMA_CPP_CONTEXT_SHIFT: "false",
+      RAY_LOG_LEVEL: "debug",
+      RAY_TELEMETRY_SERVICE_NAME: "ray-vps-test",
+      RAY_TELEMETRY_INCLUDE_DEBUG_METRICS: "false",
+      RAY_TELEMETRY_SLOW_REQUEST_THRESHOLD_MS: "900",
       RAY_REQUEST_BODY_LIMIT_BYTES: "36000",
       RAY_SCHEDULER_DEDUPE_INFLIGHT: "false",
       RAY_SCHEDULER_BATCH_WINDOW_MS: "12",
@@ -199,6 +203,10 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
   assert.equal(loaded.config.model.family, "generic-llama");
   assert.equal(loaded.config.model.quantization, "q4_0");
   assert.equal(loaded.config.model.warmOnBoot, false);
+  assert.equal(loaded.config.telemetry.logLevel, "debug");
+  assert.equal(loaded.config.telemetry.serviceName, "ray-vps-test");
+  assert.equal(loaded.config.telemetry.includeDebugMetrics, false);
+  assert.equal(loaded.config.telemetry.slowRequestThresholdMs, 900);
   assert.equal(loaded.config.server.requestBodyLimitBytes, 36_000);
   assert.equal(loaded.config.model.adapter.kind, "llama.cpp");
 
@@ -481,6 +489,17 @@ test("loadRayConfig rejects malformed environment overrides", async () => {
       },
     }),
     /Expected RAY_LLAMA_CPP_SLOT_ID to be an integer greater than or equal to 0/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_TELEMETRY_SLOW_REQUEST_THRESHOLD_MS: "0",
+      },
+    }),
+    /Expected RAY_TELEMETRY_SLOW_REQUEST_THRESHOLD_MS to be a positive integer/,
   );
 
   await assert.rejects(

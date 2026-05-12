@@ -405,6 +405,15 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
     "RAY_REQUEST_BODY_LIMIT_BYTES",
   );
   const logLevel = parseLogLevel(env.RAY_LOG_LEVEL, "RAY_LOG_LEVEL");
+  const telemetryServiceName = env.RAY_TELEMETRY_SERVICE_NAME;
+  const telemetryIncludeDebugMetrics = parseBoolean(
+    env.RAY_TELEMETRY_INCLUDE_DEBUG_METRICS,
+    "RAY_TELEMETRY_INCLUDE_DEBUG_METRICS",
+  );
+  const telemetrySlowRequestThresholdMs = parsePositiveInteger(
+    env.RAY_TELEMETRY_SLOW_REQUEST_THRESHOLD_MS,
+    "RAY_TELEMETRY_SLOW_REQUEST_THRESHOLD_MS",
+  );
   const modelId = env.RAY_MODEL_ID;
   const modelFamily = env.RAY_MODEL_FAMILY;
   const quantization = parseQuantization(env.RAY_MODEL_QUANTIZATION);
@@ -640,6 +649,18 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
 
   if (logLevel !== undefined) {
     next.telemetry.logLevel = logLevel;
+  }
+
+  if (isNonEmptyString(telemetryServiceName)) {
+    next.telemetry.serviceName = telemetryServiceName;
+  }
+
+  if (telemetryIncludeDebugMetrics !== undefined) {
+    next.telemetry.includeDebugMetrics = telemetryIncludeDebugMetrics;
+  }
+
+  if (telemetrySlowRequestThresholdMs !== undefined) {
+    next.telemetry.slowRequestThresholdMs = telemetrySlowRequestThresholdMs;
   }
 
   if (isNonEmptyString(modelId)) {
@@ -1745,6 +1766,11 @@ function validateConfig(config: RayConfig): RayConfig {
 
   assertTcpPort(config.server.port, "server.port");
   assertRequestBodyLimitBytes(config.server.requestBodyLimitBytes);
+  assertPositiveIntegerAtMost(
+    config.telemetry.slowRequestThresholdMs,
+    "telemetry.slowRequestThresholdMs",
+    MAX_REQUEST_TIMEOUT_MS,
+  );
   assertPositiveIntegerAtMost(
     config.model.contextWindow,
     "model.contextWindow",
