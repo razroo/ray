@@ -43,6 +43,7 @@ type BinaryPreflightStatus = "found" | "missing" | "unreadable";
 type GatewayRuntimeBinaryStatus = BinaryPreflightStatus;
 type LlamaCppBinaryStatus = BinaryPreflightStatus;
 type GatewayEntrypointStatus = BinaryPreflightStatus;
+type ConfigFileStatus = BinaryPreflightStatus;
 type WorkingDirectoryStatus = "found" | "missing" | "not_directory" | "unreadable";
 type EnvFileStatus = "found" | "missing" | "unreadable";
 type ServiceUserStatus = "found" | "missing" | "unreadable";
@@ -76,6 +77,11 @@ export interface DeploymentPreflight {
   gatewayEntrypointError?: string;
   gatewayEntrypointAccessStatus?: ServiceUserAccessStatus;
   gatewayEntrypointAccessError?: string;
+  configFilePath?: string;
+  configFileStatus?: ConfigFileStatus;
+  configFileError?: string;
+  configFileAccessStatus?: ServiceUserAccessStatus;
+  configFileAccessError?: string;
   workingDirectoryPath?: string;
   workingDirectoryStatus?: WorkingDirectoryStatus;
   workingDirectoryError?: string;
@@ -1375,6 +1381,45 @@ export function diagnoseConfig(
     }
   }
 
+  if (strictFilesystem && preflight?.configFileStatus !== undefined) {
+    const configFilePath = preflight.configFilePath ?? "the configured Ray config file";
+
+    if (isSystemdProtectHomePath(configFilePath)) {
+      diagnostics.push({
+        level: "error",
+        code: "config_file_home_protected",
+        message: `The generated gateway config file is under /home, /root, or /run/user at ${configFilePath}, but ray-gateway.service uses ProtectHome=true. Install the rendered config somewhere service-readable such as /etc/ray/ray.json.`,
+      });
+    } else if (preflight.configFileStatus === "missing") {
+      diagnostics.push({
+        level: "error",
+        code: "config_file_missing",
+        message: `The generated gateway config file was not found at ${configFilePath}. Install it before restarting ray-gateway.service.`,
+      });
+    } else if (preflight.configFileStatus === "unreadable") {
+      diagnostics.push({
+        level: "error",
+        code: "config_file_unreadable",
+        message: `The generated gateway config file at ${configFilePath} could not be inspected${preflight.configFileError ? ` (${preflight.configFileError})` : ""}. Doctor cannot verify that ray-gateway.service can load its config.`,
+      });
+    } else if (preflight.configFileAccessStatus === "blocked") {
+      diagnostics.push({
+        level: "error",
+        code: "config_file_service_user_inaccessible",
+        message: `The generated systemd service user "${preflight.serviceUser ?? "the configured service user"}" cannot read the generated gateway config file at ${configFilePath}${preflight.configFileAccessError ? ` (${preflight.configFileAccessError})` : ""}. Grant read access, for example with root:ray ownership and mode 0640, before restarting ray-gateway.service.`,
+      });
+    } else {
+      diagnostics.push({
+        level: "info",
+        code: "config_file_ok",
+        message:
+          preflight.configFileAccessStatus === "ok"
+            ? `Generated gateway config file exists and is readable by "${preflight.serviceUser ?? "the configured service user"}" at ${configFilePath}.`
+            : `Generated gateway config file exists at ${configFilePath}.`,
+      });
+    }
+  }
+
   if (strictFilesystem && preflight?.gatewayRuntimeBinaryStatus !== undefined) {
     const runtimePath = preflight.gatewayRuntimeBinaryPath ?? "the configured gateway runtime";
 
@@ -1950,6 +1995,7 @@ export async function loadAndDiagnoseDeployment(options: {
   });
   const preflight = await collectDeploymentPreflight(loaded.config, {
     cwd: options.cwd,
+    ...(loaded.configPath !== undefined ? { configPath: loaded.configPath } : {}),
     ...(options.memoryBudgetMiB !== undefined ? { memoryBudgetMiB: options.memoryBudgetMiB } : {}),
     ...(options.runtimeBinary !== undefined ? { runtimeBinary: options.runtimeBinary } : {}),
     ...(options.nodeBinary !== undefined ? { nodeBinary: options.nodeBinary } : {}),
@@ -2377,6 +2423,56 @@ async function collectGatewayEntrypointPreflight(
   }
 }
 
+async function collectConfigFilePreflight(
+  configPath: string | undefined,
+  strictFilesystem: boolean,
+  serviceUserIdentity: ServiceUserIdentity | undefined,
+): Promise<Partial<DeploymentPreflight>> {
+  if (!strictFilesystem || configPath === undefined) {
+    return {};
+  }
+
+  const resolvedConfigPath = path.resolve(configPath);
+
+  try {
+    const configFileStat = await stat(resolvedConfigPath);
+
+    if (!configFileStat.isFile()) {
+      return {
+        configFilePath: resolvedConfigPath,
+        configFileStatus: "unreadable",
+        configFileError: "not a regular file",
+      };
+    }
+
+    const serviceUserAccess = serviceUserIdentity
+      ? await verifyServiceUserPathAccess(resolvedConfigPath, serviceUserIdentity, 0o4, "read")
+      : undefined;
+
+    return {
+      configFilePath: resolvedConfigPath,
+      configFileStatus: "found",
+      ...(serviceUserAccess
+        ? {
+            configFileAccessStatus: serviceUserAccess.status,
+            ...(serviceUserAccess.error ? { configFileAccessError: serviceUserAccess.error } : {}),
+          }
+        : {}),
+    };
+  } catch (error) {
+    const code =
+      error !== null && typeof error === "object" && "code" in error
+        ? (error as { code?: string }).code
+        : undefined;
+
+    return {
+      configFilePath: resolvedConfigPath,
+      configFileStatus: code === "ENOENT" ? "missing" : "unreadable",
+      configFileError: toErrorMessage(error),
+    };
+  }
+}
+
 async function collectLlamaCppBinaryPreflight(
   launchProfile: LlamaCppLaunchProfile,
   serviceUserIdentity: ServiceUserIdentity | undefined,
@@ -2462,6 +2558,7 @@ async function collectDeploymentPreflight(
   config: RayConfig,
   options: {
     cwd: string;
+    configPath?: string;
     memoryBudgetMiB?: number;
     runtimeBinary?: string;
     envFile?: string;
@@ -2490,6 +2587,11 @@ async function collectDeploymentPreflight(
           ],
         }
       : undefined;
+  const configFilePreflight = await collectConfigFilePreflight(
+    options.configPath,
+    options.strictFilesystem === true,
+    serviceUserIdentity,
+  );
   const storagePreflight = await collectAsyncQueueStoragePreflight(config, serviceUserIdentity);
   const workingDirectoryPreflight = await collectWorkingDirectoryPreflight(
     options.cwd,
@@ -2514,6 +2616,7 @@ async function collectDeploymentPreflight(
       ...storagePreflight,
       ...envFilePreflight,
       ...serviceUserPreflight,
+      ...configFilePreflight,
       ...workingDirectoryPreflight,
       ...gatewayEntrypointPreflight,
       ...runtimePreflight,
@@ -2538,6 +2641,7 @@ async function collectDeploymentPreflight(
     ...storagePreflight,
     ...envFilePreflight,
     ...serviceUserPreflight,
+    ...configFilePreflight,
     ...workingDirectoryPreflight,
     ...gatewayEntrypointPreflight,
     ...runtimePreflight,

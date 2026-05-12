@@ -260,7 +260,7 @@ bun run doctor:1b:generic
 bun run doctor:1b:8gb:generic
 ```
 
-`bun run doctor` targets the public `sub1b` deploy profile. The 1B doctor commands target the public generic 1B deploy profiles with explicit 4 GB and 8 GB memory budgets. Run them on the VPS after the GGUF exists at the configured path and `/etc/ray/ray.env` is populated. Doctor also verifies the generated systemd service user, service-user access to the rendered Bun runtime (`/usr/local/bin/bun` by default, or `--gateway-runtime-binary`), WorkingDirectory, built gateway entrypoint, configured `llama-server` binary, GGUF model file, and async queue storage, env-file permissions, async queue storage headroom, and small-VPS swap cushion.
+`bun run doctor` targets the public `sub1b` deploy profile. The 1B doctor commands target the public generic 1B deploy profiles with explicit 4 GB and 8 GB memory budgets. Run them on the VPS after the GGUF exists at the configured path and `/etc/ray/ray.env` is populated. Doctor also verifies the generated systemd service user, service-user access to the rendered config file, Bun runtime (`/usr/local/bin/bun` by default, or `--gateway-runtime-binary`), WorkingDirectory, built gateway entrypoint, configured `llama-server` binary, GGUF model file, and async queue storage, env-file permissions, async queue storage headroom, and small-VPS swap cushion.
 
 ### Benchmark Contract
 

@@ -1282,6 +1282,10 @@ test("diagnoseConfig errors when the generated service user cannot access gatewa
     strictFilesystem: true,
     preflight: {
       serviceUser: "ray",
+      configFilePath: "/etc/ray/ray.json",
+      configFileStatus: "found",
+      configFileAccessStatus: "blocked",
+      configFileAccessError: "read permission is not granted on ray.json",
       gatewayRuntimeBinaryPath: "/usr/local/bin/bun",
       gatewayRuntimeBinaryStatus: "found",
       gatewayRuntimeBinaryAccessStatus: "blocked",
@@ -1296,6 +1300,14 @@ test("diagnoseConfig errors when the generated service user cannot access gatewa
       gatewayEntrypointAccessError: "read permission is not granted on index.js",
     },
   });
+
+  const configDiagnostic = diagnostics.find(
+    (entry) => entry.code === "config_file_service_user_inaccessible",
+  );
+  assert.ok(configDiagnostic);
+  assert.equal(configDiagnostic.level, "error");
+  assert.match(configDiagnostic.message, /ray/);
+  assert.match(configDiagnostic.message, /read permission/);
 
   const runtimeDiagnostic = diagnostics.find(
     (entry) => entry.code === "gateway_runtime_service_user_inaccessible",
@@ -1320,6 +1332,23 @@ test("diagnoseConfig errors when the generated service user cannot access gatewa
   assert.equal(entrypointDiagnostic.level, "error");
   assert.match(entrypointDiagnostic.message, /ray/);
   assert.match(entrypointDiagnostic.message, /read permission/);
+});
+
+test("diagnoseConfig errors when the generated gateway config is hidden by ProtectHome", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      configFilePath: "/root/ray.json",
+      configFileStatus: "found",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "config_file_home_protected");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /ProtectHome=true/);
+  assert.match(diagnostic.message, /\/etc\/ray\/ray\.json/);
 });
 
 test("diagnoseConfig errors when the configured gateway runtime is hidden by ProtectHome", () => {
@@ -1396,6 +1425,30 @@ test("loadAndDiagnoseDeployment reports an existing generated service user in st
   const diagnostic = inspected.diagnostics.find((entry) => entry.code === "service_user_ok");
   assert.ok(diagnostic);
   assert.equal(diagnostic.level, "info");
+});
+
+test("loadAndDiagnoseDeployment reports a service-readable gateway config in strict mode", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-config-file-ok-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    user: "root",
+    strictFilesystem: true,
+  });
+
+  const diagnostic = inspected.diagnostics.find((entry) => entry.code === "config_file_ok");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+  assert.match(diagnostic.message, /by "root"/);
+  assert.match(diagnostic.message, new RegExp(configPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
 test("loadAndDiagnoseDeployment errors when the generated working directory is missing in strict mode", async (t) => {

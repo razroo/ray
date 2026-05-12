@@ -278,6 +278,8 @@ jobs:
           else
             $SUDO cp "/srv/ray/$CONFIG_REL" /etc/ray/ray.json
           fi
+          $SUDO chown root:ray /etc/ray/ray.json
+          $SUDO chmod 0640 /etc/ray/ray.json
           if [ -n "${ENV_B64:-}" ]; then
             printf '%s' "$ENV_B64" | base64 -d | $SUDO tee /etc/ray/ray.env >/dev/null
           else
