@@ -2454,7 +2454,7 @@ export function diagnoseConfig(
             level: "warn",
             code: "swap_missing",
             message:
-              "No swap is configured on this small-VPS llama.cpp target. Add a modest swap file before sustained inference so the backend has an OOM cushion when memory spikes.",
+              "No swap is configured on this small-VPS llama.cpp target. Add a modest swap file before sustained inference so the backend has an OOM cushion when memory spikes; `bun run swap:plan` prints guarded setup commands.",
           });
         } else if (
           preflight?.swapTotalMiB !== undefined &&
@@ -2467,7 +2467,7 @@ export function diagnoseConfig(
               preflight.swapTotalMiB,
             )} of swap is configured. Small 4 GB llama.cpp VPS deployments should keep at least ${formatMiB(
               MIN_SMALL_VPS_SWAP_MIB,
-            )} of swap as a last-resort OOM cushion.`,
+            )} of swap as a last-resort OOM cushion; bun run swap:plan -- --size-mib ${MIN_SMALL_VPS_SWAP_MIB} prints guarded setup commands.`,
           });
         } else if (preflight?.swapTotalMiB !== undefined) {
           diagnostics.push({

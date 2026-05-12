@@ -1302,6 +1302,26 @@ test("diagnoseConfig warns when a small VPS llama.cpp profile has no swap cushio
   const diagnostic = diagnostics.find((entry) => entry.code === "swap_missing");
   assert.ok(diagnostic);
   assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /bun run swap:plan/);
+});
+
+test("diagnoseConfig points low small-VPS swap warnings at the swap helper", () => {
+  const config = createDefaultConfig("1b");
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      memoryBudgetMiB: 4_096,
+      memoryBudgetSource: "preset",
+      swapStatus: "available",
+      swapTotalMiB: 512,
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "swap_low");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /bun run swap:plan -- --size-mib 1024/);
 });
 
 test("diagnoseConfig reports adequate swap for a small VPS llama.cpp profile", () => {
