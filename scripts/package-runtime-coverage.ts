@@ -622,10 +622,18 @@ function validateDeployWorkflowRsyncGuards(
   const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
   for (const [index, rawLine] of lines.entries()) {
     const line = rawLine.trim();
-    if (
-      /^(?:-\s+run:\s+)?rsync\b/.test(line) &&
-      !workflowCommandContinuationIncludes(lines, index, "--timeout")
-    ) {
+    const rsyncCommand = /^(?:-\s+run:\s+)?(?:timeout\s+\d+s\s+)?rsync\b/.test(line);
+    if (rsyncCommand && !line.includes("timeout ")) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_rsync_session_timeout_missing",
+        workflowPath,
+        line: index + 1,
+        message:
+          "VPS deploy workflow rsync calls must run under an overall timeout so long repository transfers cannot hold the deploy job indefinitely.",
+      });
+    }
+    if (rsyncCommand && !workflowCommandContinuationIncludes(lines, index, "--timeout")) {
       diagnostics.push({
         level: "error",
         code: "workflow_rsync_timeout_missing",

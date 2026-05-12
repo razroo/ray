@@ -433,9 +433,9 @@ longer bounded copy window, and each remote SSH session has its own wall-clock
 timeout. All workflow SSH and rsync calls run in batch mode
 with `StrictHostKeyChecking=yes`,
 `IdentitiesOnly=yes`, the validated `RAY_DEPLOY_KNOWN_HOSTS` file, a short
-connect timeout, OpenSSH keepalives, and an rsync I/O timeout so stalled
-sessions or repository transfers fail instead of holding the deploy job
-indefinitely. State ownership is repaired on the service directories without
+connect timeout, OpenSSH keepalives, an rsync wall-clock timeout, and an rsync
+I/O timeout so stalled sessions or repository transfers fail instead of holding
+the deploy job indefinitely. State ownership is repaired on the service directories without
 recursively walking staged GGUF files on every deploy. Remote sudo calls use
 `sudo -n` so a deploy user without passwordless sudo fails immediately instead
 of hanging in CI.
