@@ -308,6 +308,7 @@ RAY_LOG_LEVEL=info
 RAY_MODEL_WARM_ON_BOOT=false
 RAY_ASYNC_QUEUE_ENABLED=true
 RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS=callback.example
+RAY_DEPLOY_MEMORY_MIB=4096
 RAY_AUTH_ENABLED=true
 RAY_RATE_LIMIT_MAX_REQUESTS=75
 ```
@@ -347,6 +348,7 @@ Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 - The generated systemd units enable CPU, memory, and IO accounting, so `systemctl show ray-gateway -p CPUUsageNSec -p MemoryCurrent -p IOReadBytes -p IOWriteBytes` can confirm pressure without extra agents.
 - The generated systemd units set `CPUWeight` so the lightweight gateway gets a larger CPU share than the local model backend when both contend on a small node.
 - The generated systemd units also set `MemoryHigh` and `MemoryMax` cgroup ceilings from the gateway profile and llama.cpp memory budget so backend and gateway memory pressure stays bounded on one-node VPS hosts.
+- Use `RAY_DEPLOY_MEMORY_MIB` in the deploy env file, or pass `--memory-mib`, when render or doctor should size llama.cpp against an explicit VPS memory class instead of the detected host or launch-profile preset. The explicit flag wins when both are present.
 - The generated systemd units also set OOM policy and OOM score adjustments so the lightweight gateway is less kill-prone than the local model backend under last-resort memory pressure.
 - The generated systemd units also drop Linux capabilities, restrict address families to local/IP sockets, deny realtime scheduling, and hide host devices and kernel controls. Keep custom service overrides equally narrow unless a backend explicitly needs broader access.
 - The generated gateway unit intentionally does not set `MemoryDenyWriteExecute=true`; Bun and Node can need executable memory for their JavaScript runtimes. Keep that directive limited to native backend units such as the generated `ray-llama-cpp.service`.

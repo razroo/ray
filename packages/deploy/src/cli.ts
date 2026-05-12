@@ -82,6 +82,14 @@ function readNonEmptyEnvValue(value: string | undefined): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
+function parseOptionalPositiveIntegerEnv(
+  value: string | undefined,
+  label: string,
+): number | undefined {
+  const normalized = readNonEmptyEnvValue(value);
+  return normalized === undefined ? undefined : parsePositiveIntegerFlag(normalized, label);
+}
+
 function decodeDoubleQuotedEnvValue(value: string): string {
   return value.replace(/\\(["\\nrt])/g, (_match, escaped: string) => {
     if (escaped === "n") {
@@ -378,9 +386,16 @@ export async function runCli(argv: string[]): Promise<void> {
   const env = await loadEnvironment(resolvedOptions);
   const envRuntimeBinary = readNonEmptyEnvValue(env.RAY_GATEWAY_RUNTIME_BINARY);
   const envDomain = readNonEmptyEnvValue(env.RAY_DEPLOY_DOMAIN);
+  const envMemoryBudgetMiB = parseOptionalPositiveIntegerEnv(
+    env.RAY_DEPLOY_MEMORY_MIB,
+    "RAY_DEPLOY_MEMORY_MIB",
+  );
   const deploymentOptions: CliOptions & { domain: string } = {
     ...resolvedOptions,
     domain: resolvedOptions.domain ?? envDomain ?? "ray.local",
+    ...(resolvedOptions.memoryBudgetMiB === undefined && envMemoryBudgetMiB !== undefined
+      ? { memoryBudgetMiB: envMemoryBudgetMiB }
+      : {}),
     ...(resolvedOptions.runtimeBinary === undefined &&
     resolvedOptions.nodeBinary === undefined &&
     envRuntimeBinary !== undefined

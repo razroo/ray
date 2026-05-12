@@ -594,6 +594,80 @@ test("runCli validate prints deployment preflight details", async (t) => {
   assert.ok(Array.isArray(parsed.diagnostics));
 });
 
+test("runCli validate applies env-file memory budget", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-memory-env-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(
+    envFile,
+    ["RAY_API_KEYS=test-key", "RAY_DEPLOY_MEMORY_MIB=8192", ""].join("\n"),
+    "utf8",
+  );
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli([
+    "validate",
+    "--cwd",
+    ".",
+    "--config",
+    "./examples/config/ray.1b.8gb.generic.public.json",
+    "--ray-env-file",
+    envFile,
+  ]);
+
+  const parsed = JSON.parse(output.join("\n"));
+  assert.equal(parsed.preflight.memoryBudgetMiB, 8192);
+  assert.equal(parsed.preflight.memoryBudgetSource, "override");
+});
+
+test("runCli explicit memory flag overrides env-file memory budget", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-memory-flag-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(
+    envFile,
+    ["RAY_API_KEYS=test-key", "RAY_DEPLOY_MEMORY_MIB=8192", ""].join("\n"),
+    "utf8",
+  );
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli([
+    "validate",
+    "--cwd",
+    ".",
+    "--config",
+    "./examples/config/ray.1b.8gb.generic.public.json",
+    "--ray-env-file",
+    envFile,
+    "--memory-mib",
+    "4096",
+  ]);
+
+  const parsed = JSON.parse(output.join("\n"));
+  assert.equal(parsed.preflight.memoryBudgetMiB, 4096);
+  assert.equal(parsed.preflight.memoryBudgetSource, "override");
+});
+
 test("runCli validate strict-filesystem prints host check diagnostics", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-validate-strict-"));
   t.after(async () => {
