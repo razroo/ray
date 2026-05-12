@@ -133,7 +133,7 @@ The current repo makes this concrete through:
 
 - profile-specific concurrency, queue, token, cache, and timeout budgets for 4 GB and 8 GB VPS classes
 - backend-aware health, warmup, llama.cpp launch presets, and GGUF path diagnostics
-- deploy preflight checks and generated systemd memory/swap ceilings for systemd/Caddy host readiness, profile architecture compatibility, memory fit, service-user access, Bun runtime compatibility, model files, async queue storage, and swap cushion
+- deploy preflight checks and generated systemd memory/swap ceilings for systemd/Caddy host readiness, profile architecture compatibility, backend binary startup, memory fit, service-user access, Bun runtime compatibility, model files, async queue storage, and swap cushion
 
 ### Degradation is a feature, not an afterthought
 

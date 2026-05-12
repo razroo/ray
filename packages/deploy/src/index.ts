@@ -76,6 +76,7 @@ type GatewayRuntimeBinaryStatus = BinaryPreflightStatus;
 type GatewayRuntimeVersionStatus = "ok" | "too_old" | "unreadable";
 type CaddyRuntimeStatus = "available" | "missing" | "unreadable";
 type LlamaCppBinaryStatus = BinaryPreflightStatus;
+type LlamaCppBinaryProbeStatus = "ok" | "failed";
 type GatewayEntrypointStatus = BinaryPreflightStatus;
 type ConfigFileStatus = BinaryPreflightStatus;
 type WorkingDirectoryStatus = "found" | "missing" | "not_directory" | "unreadable";
@@ -135,6 +136,8 @@ export interface DeploymentPreflight {
   llamaCppBinaryPath?: string;
   llamaCppBinaryStatus?: LlamaCppBinaryStatus;
   llamaCppBinaryError?: string;
+  llamaCppBinaryProbeStatus?: LlamaCppBinaryProbeStatus;
+  llamaCppBinaryProbeError?: string;
   llamaCppBinaryAccessStatus?: ServiceUserAccessStatus;
   llamaCppBinaryAccessError?: string;
   envFilePath?: string;
@@ -204,6 +207,8 @@ const SYSTEMCTL_VERSION_TIMEOUT_MS = 3_000;
 const SYSTEMCTL_VERSION_MAX_BUFFER_BYTES = 16 * 1024;
 const CADDY_VERSION_TIMEOUT_MS = 3_000;
 const CADDY_VERSION_MAX_BUFFER_BYTES = 16 * 1024;
+const LLAMA_CPP_BINARY_PROBE_TIMEOUT_MS = 3_000;
+const LLAMA_CPP_BINARY_PROBE_MAX_BUFFER_BYTES = 64 * 1024;
 const MAX_SYSTEMD_DEPENDENCY_UNITS = 32;
 const MAX_SYSTEMD_DEPENDENCY_UNIT_CHARS = 256;
 const MAX_SYSTEMD_MEMORY_MIB = 1_048_576;
@@ -2411,6 +2416,20 @@ export function diagnoseConfig(
                 ? `llama.cpp binary is executable by "${preflight.serviceUser ?? "the configured service user"}" at ${binaryPath}.`
                 : `llama.cpp binary is executable at ${binaryPath}.`,
           });
+
+          if (preflight.llamaCppBinaryProbeStatus === "failed") {
+            diagnostics.push({
+              level: "error",
+              code: "llama_binary_probe_failed",
+              message: `The configured llama.cpp binary at ${binaryPath} is executable but failed to start with --help${preflight.llamaCppBinaryProbeError ? ` (${preflight.llamaCppBinaryProbeError})` : ""}. This usually means a wrong CPU architecture or missing shared libraries; stage a compatible llama-server before restarting ray-llama-cpp.service.`,
+            });
+          } else if (preflight.llamaCppBinaryProbeStatus === "ok") {
+            diagnostics.push({
+              level: "info",
+              code: "llama_binary_probe_ok",
+              message: `llama.cpp binary starts successfully with --help at ${binaryPath}.`,
+            });
+          }
         }
       }
 
@@ -3399,6 +3418,7 @@ async function collectConfigFilePreflight(
 async function collectLlamaCppBinaryPreflight(
   launchProfile: LlamaCppLaunchProfile,
   serviceUserIdentity: ServiceUserIdentity | undefined,
+  strictFilesystem: boolean,
 ): Promise<Partial<DeploymentPreflight>> {
   const binaryPath = launchProfile.binaryPath;
 
@@ -3426,10 +3446,14 @@ async function collectLlamaCppBinaryPreflight(
     const serviceUserAccess = serviceUserIdentity
       ? await verifyServiceUserPathAccess(binaryPath, serviceUserIdentity, 0o1, "execute")
       : undefined;
+    const probePreflight = strictFilesystem
+      ? await collectLlamaCppBinaryProbePreflight(binaryPath)
+      : {};
 
     return {
       llamaCppBinaryPath: binaryPath,
       llamaCppBinaryStatus: "found",
+      ...probePreflight,
       ...(serviceUserAccess
         ? {
             llamaCppBinaryAccessStatus: serviceUserAccess.status,
@@ -3451,6 +3475,39 @@ async function collectLlamaCppBinaryPreflight(
       llamaCppBinaryError: toErrorMessage(error),
     };
   }
+}
+
+async function collectLlamaCppBinaryProbePreflight(
+  binaryPath: string,
+): Promise<Partial<DeploymentPreflight>> {
+  return await new Promise<Partial<DeploymentPreflight>>((resolve) => {
+    execFile(
+      binaryPath,
+      ["--help"],
+      {
+        timeout: LLAMA_CPP_BINARY_PROBE_TIMEOUT_MS,
+        maxBuffer: LLAMA_CPP_BINARY_PROBE_MAX_BUFFER_BYTES,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        const output = `${stdout}\n${stderr}`.trim();
+
+        if (error) {
+          resolve({
+            llamaCppBinaryProbeStatus: "failed",
+            llamaCppBinaryProbeError: output
+              ? `${toErrorMessage(error)}; output: ${truncateRuntimeVersionOutput(output)}`
+              : toErrorMessage(error),
+          });
+          return;
+        }
+
+        resolve({
+          llamaCppBinaryProbeStatus: "ok",
+        });
+      },
+    );
+  });
 }
 
 async function collectSwapPreflight(): Promise<Partial<DeploymentPreflight>> {
@@ -3592,6 +3649,7 @@ async function collectDeploymentPreflight(
   const llamaBinaryPreflight = await collectLlamaCppBinaryPreflight(
     launchProfile,
     serviceUserIdentity,
+    options.strictFilesystem === true,
   );
   const budget = resolveMemoryBudget({
     preset: launchProfile.preset,
