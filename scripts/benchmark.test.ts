@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { loadBaseline, loadWorkload, parseArgs, runBenchmark } from "./benchmark.ts";
+import {
+  appendHistoryOutput,
+  loadBaseline,
+  loadWorkload,
+  parseArgs,
+  runBenchmark,
+} from "./benchmark.ts";
 
 async function withTestServer(
   handler: (request: IncomingMessage, response: ServerResponse) => void,
@@ -437,4 +443,42 @@ test("runBenchmark rejects oversized and malformed gateway success responses", a
       );
     },
   );
+});
+
+test("appendHistoryOutput keeps benchmark history bounded", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-benchmark-history-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const historyDir = path.join(tempDir, "history");
+  const historyPath = path.join(historyDir, "benchmark-summary.jsonl");
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(historyPath, `${"x".repeat(8 * 1024 * 1024 + 128)}\n`);
+
+  await appendHistoryOutput(historyDir, {
+    kind: "benchmark-summary",
+    version: 1,
+    generatedAt: new Date(0).toISOString(),
+    args: {
+      baseUrl: "http://127.0.0.1:3000",
+      concurrency: 1,
+      requests: 1,
+      label: "bounded-history",
+    },
+    summary: {
+      label: "bounded-history",
+      baseUrl: "http://127.0.0.1:3000",
+      concurrency: 1,
+      requests: 1,
+      wallTimeMs: 1,
+    },
+  });
+
+  const historyStats = await stat(historyPath);
+  const contents = await readFile(historyPath, "utf8");
+
+  assert.ok(historyStats.size <= 8 * 1024 * 1024);
+  assert.match(contents, /"kind":"benchmark-summary"/);
+  assert.equal(contents.endsWith("\n"), true);
 });

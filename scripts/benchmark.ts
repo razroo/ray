@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, open, rm, stat, writeFile } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -36,6 +36,8 @@ const MAX_BENCHMARK_BASELINE_NOTES = 16;
 const MAX_BENCHMARK_BASELINE_NOTE_CHARS = 1_024;
 const MAX_BENCHMARK_ERROR_RESPONSE_BYTES = 64 * 1024;
 const MAX_BENCHMARK_SUCCESS_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MAX_BENCHMARK_HISTORY_FILE_BYTES = 8 * 1024 * 1024;
+const BENCHMARK_HISTORY_RETAIN_BYTES = 6 * 1024 * 1024;
 const BENCHMARK_REQUEST_TIMEOUT_MS = 180_000;
 const BENCHMARK_HEALTH_REQUEST_TIMEOUT_MS = 3_000;
 const BUN_RUNTIME_BINARY = process.env.RAY_BUN_BINARY ?? "bun";
@@ -2304,7 +2306,59 @@ async function writeStructuredOutput(
   console.log(`Wrote structured output to ${resolvedPath}`);
 }
 
-async function appendHistoryOutput(
+async function readFileTail(filePath: string, retainBytes: number): Promise<string> {
+  let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
+
+  try {
+    fileHandle = await open(filePath, "r");
+    const stats = await fileHandle.stat();
+    const start = Math.max(0, stats.size - retainBytes);
+    const length = stats.size - start;
+    const buffer = Buffer.alloc(length);
+
+    if (length > 0) {
+      await fileHandle.read(buffer, 0, length, start);
+    }
+
+    return buffer.toString("utf8");
+  } finally {
+    await fileHandle?.close().catch(() => undefined);
+  }
+}
+
+function trimPartialJsonlHead(contents: string): string {
+  const firstNewline = contents.indexOf("\n");
+  return firstNewline === -1 ? "" : contents.slice(firstNewline + 1);
+}
+
+async function pruneHistoryFile(historyPath: string, incomingBytes: number): Promise<void> {
+  let stats: Awaited<ReturnType<typeof stat>>;
+
+  try {
+    stats = await stat(historyPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+
+    throw error;
+  }
+
+  if (!stats.isFile() || stats.size + incomingBytes <= MAX_BENCHMARK_HISTORY_FILE_BYTES) {
+    return;
+  }
+
+  const retainBytes = Math.max(
+    0,
+    Math.min(BENCHMARK_HISTORY_RETAIN_BYTES, MAX_BENCHMARK_HISTORY_FILE_BYTES - incomingBytes),
+  );
+  const tail = retainBytes > 0 ? await readFileTail(historyPath, retainBytes) : "";
+  const retained = stats.size > retainBytes ? trimPartialJsonlHead(tail) : tail;
+
+  await writeFile(historyPath, retained);
+}
+
+export async function appendHistoryOutput(
   historyDir: string | undefined,
   payload: BenchmarkSummaryOutput | AutotuneOutput | PromptFormatSweepOutput,
 ): Promise<void> {
@@ -2314,8 +2368,18 @@ async function appendHistoryOutput(
 
   const resolvedDir = path.resolve(process.cwd(), historyDir);
   const historyPath = path.join(resolvedDir, `${payload.kind}.jsonl`);
+  const line = `${JSON.stringify(payload)}\n`;
+  const lineBytes = Buffer.byteLength(line, "utf8");
+
+  if (lineBytes > MAX_BENCHMARK_HISTORY_FILE_BYTES) {
+    throw new Error(
+      `Benchmark history record must be at most ${MAX_BENCHMARK_HISTORY_FILE_BYTES} bytes`,
+    );
+  }
+
   await mkdir(resolvedDir, { recursive: true });
-  await writeFile(historyPath, `${JSON.stringify(payload)}\n`, {
+  await pruneHistoryFile(historyPath, lineBytes);
+  await writeFile(historyPath, line, {
     flag: "a",
   });
   console.log(`Appended benchmark history to ${historyPath}`);
