@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
 import { constants, createReadStream } from "node:fs";
-import { access, open, stat } from "node:fs/promises";
+import { access, chmod, chown, copyFile, mkdir, open, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import { loadRayConfig } from "../packages/config/src/index.ts";
 import { parseEnvironmentFile } from "../packages/deploy/src/cli.ts";
 
@@ -17,8 +19,13 @@ const MODEL_SHA256_ENV = "RAY_MODEL_SHA256";
 const MAX_CLI_ARGS = 28;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_ENV_FILE_BYTES = 64 * 1024;
+const PRINCIPAL_LOOKUP_TIMEOUT_MS = 3_000;
+const PRINCIPAL_LOOKUP_MAX_BUFFER_BYTES = 16 * 1024;
 const SYSTEMD_PRINCIPAL_PATTERN = /^(?:[A-Za-z_][A-Za-z0-9_-]{0,30}|[0-9]{1,10})$/;
 const SHA256_PATTERN = /^[a-fA-F0-9]{64}$/;
+const NUMERIC_PRINCIPAL_PATTERN = /^[0-9]{1,10}$/;
+
+const execFileAsync = promisify(execFile);
 
 export interface ModelStageArgs {
   cwd: string;
@@ -33,6 +40,7 @@ export interface ModelStageArgs {
   json: boolean;
   commandsOnly: boolean;
   checkSources: boolean;
+  apply: boolean;
   help: boolean;
 }
 
@@ -58,6 +66,19 @@ export interface ModelStagePlan {
   commands: string[];
 }
 
+export interface ModelStageApplyResult {
+  applied: true;
+  binaryPath: string;
+  modelPath: string;
+  serviceUser: string;
+  serviceGroup: string;
+}
+
+export interface ModelStageJsonApplyResult {
+  applied: true;
+  plan: ModelStagePlan;
+}
+
 const HELP = `Stage local artifacts for a generated Ray llama.cpp service.
 
 Usage:
@@ -75,6 +96,7 @@ Options:
   --source <path>          Local GGUF path to install into the configured model path.
   --sha256 <hex>           Expected SHA-256 for the installed GGUF.
   --check-sources          Verify source artifacts and provided checksums before printing the plan.
+  --apply                  Install verified source artifacts into the resolved binary/model paths.
   --commands-only          Print only shell commands, one per line.
   --json                   Print machine-readable staging plan JSON.
   -h, --help               Show this help.
@@ -159,6 +181,7 @@ export function parseArgs(argv: string[]): ModelStageArgs {
     json: false,
     commandsOnly: false,
     checkSources: false,
+    apply: false,
     help: false,
   };
 
@@ -243,6 +266,11 @@ export function parseArgs(argv: string[]): ModelStageArgs {
       continue;
     }
 
+    if (current === "--apply") {
+      args.apply = true;
+      continue;
+    }
+
     if (current === "-h" || current === "--help") {
       args.help = true;
       continue;
@@ -257,6 +285,10 @@ export function parseArgs(argv: string[]): ModelStageArgs {
 
   if (args.json && args.commandsOnly) {
     throw new Error("--json and --commands-only cannot be used together");
+  }
+
+  if (args.apply && args.commandsOnly) {
+    throw new Error("--apply and --commands-only cannot be used together");
   }
 
   return args;
@@ -478,6 +510,10 @@ function resolveSourceCheckPath(cwd: string, sourcePath: string): string {
   return path.isAbsolute(sourcePath) ? sourcePath : path.resolve(cwd, sourcePath);
 }
 
+function resolveStageTargetPath(cwd: string, targetPath: string): string {
+  return path.isAbsolute(targetPath) ? targetPath : path.resolve(cwd, targetPath);
+}
+
 async function assertRegularReadableFile(filePath: string, label: string): Promise<void> {
   const stats = await stat(filePath).catch((error: unknown) => {
     throw new Error(
@@ -549,6 +585,117 @@ export async function checkModelStageSources(cwd: string, plan: ModelStagePlan):
   }
 }
 
+function parsePrincipalId(value: string, label: string): number {
+  const normalized = value.trim();
+  const parsed = Number(normalized);
+
+  if (!NUMERIC_PRINCIPAL_PATTERN.test(normalized) || !Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(`${label} resolved to a non-numeric id: ${value}`);
+  }
+
+  return parsed;
+}
+
+async function lookupPrincipalId(command: string, args: string[], label: string): Promise<number> {
+  const { stdout } = await execFileAsync(command, args, {
+    timeout: PRINCIPAL_LOOKUP_TIMEOUT_MS,
+    maxBuffer: PRINCIPAL_LOOKUP_MAX_BUFFER_BYTES,
+    encoding: "utf8",
+  });
+
+  return parsePrincipalId(String(stdout).trim(), label);
+}
+
+async function lookupGroupId(group: string): Promise<number> {
+  try {
+    const { stdout } = await execFileAsync("getent", ["group", group], {
+      timeout: PRINCIPAL_LOOKUP_TIMEOUT_MS,
+      maxBuffer: PRINCIPAL_LOOKUP_MAX_BUFFER_BYTES,
+      encoding: "utf8",
+    });
+    const gid = String(stdout).trim().split(":")[2] ?? "";
+    return parsePrincipalId(gid, `group ${group}`);
+  } catch {
+    return lookupPrincipalId("id", ["-g", group], `group ${group}`);
+  }
+}
+
+async function resolveServiceOwnerIds(plan: ModelStagePlan): Promise<{ uid: number; gid: number }> {
+  const uid = NUMERIC_PRINCIPAL_PATTERN.test(plan.serviceUser)
+    ? parsePrincipalId(plan.serviceUser, "service user")
+    : await lookupPrincipalId("id", ["-u", plan.serviceUser], `service user ${plan.serviceUser}`);
+  const gid = NUMERIC_PRINCIPAL_PATTERN.test(plan.serviceGroup)
+    ? parsePrincipalId(plan.serviceGroup, "service group")
+    : await lookupGroupId(plan.serviceGroup);
+
+  return { uid, gid };
+}
+
+async function copyFileUnlessSame(sourcePath: string, targetPath: string): Promise<void> {
+  if (path.resolve(sourcePath) === path.resolve(targetPath)) {
+    return;
+  }
+
+  await copyFile(sourcePath, targetPath);
+}
+
+async function chownIfNeeded(filePath: string, uid: number, gid: number): Promise<void> {
+  const stats = await stat(filePath);
+  if (stats.uid === uid && stats.gid === gid) {
+    return;
+  }
+
+  await chown(filePath, uid, gid);
+}
+
+export async function applyModelStagePlan(
+  cwd: string,
+  plan: ModelStagePlan,
+): Promise<ModelStageApplyResult> {
+  await checkModelStageSources(cwd, plan);
+
+  const binarySourcePath = resolveSourceCheckPath(cwd, plan.binarySourcePath ?? "");
+  const modelSourcePath = resolveSourceCheckPath(cwd, plan.sourcePath ?? "");
+  const binaryTargetPath = resolveStageTargetPath(cwd, plan.binaryPath);
+  const modelTargetPath = resolveStageTargetPath(cwd, plan.modelPath);
+  const { uid, gid } = await resolveServiceOwnerIds(plan);
+
+  await mkdir(path.dirname(binaryTargetPath), { recursive: true, mode: 0o755 });
+  await copyFileUnlessSame(binarySourcePath, binaryTargetPath);
+  await chmod(binaryTargetPath, 0o755);
+  if (plan.binarySha256) {
+    await assertSha256(binaryTargetPath, plan.binarySha256, "installed llama-server binary");
+  }
+  await access(binaryTargetPath, constants.X_OK);
+
+  await mkdir(path.dirname(modelTargetPath), { recursive: true, mode: 0o755 });
+  await copyFileUnlessSame(modelSourcePath, modelTargetPath);
+  await chmod(modelTargetPath, 0o640);
+  await chownIfNeeded(modelTargetPath, uid, gid);
+  if (plan.sha256) {
+    await assertSha256(modelTargetPath, plan.sha256, "installed GGUF model");
+  }
+  await access(modelTargetPath, constants.R_OK);
+
+  return {
+    applied: true,
+    binaryPath: plan.binaryPath,
+    modelPath: plan.modelPath,
+    serviceUser: plan.serviceUser,
+    serviceGroup: plan.serviceGroup,
+  };
+}
+
+export function formatApplyResult(result: ModelStageApplyResult): string {
+  return [
+    "Staged Ray llama.cpp artifacts:",
+    `- binary: ${result.binaryPath}`,
+    `- GGUF: ${result.modelPath}`,
+    `- service owner: ${result.serviceUser}:${result.serviceGroup}`,
+    "Checksums were verified when configured. Run doctor before restarting ray-llama-cpp.service.",
+  ].join("\n");
+}
+
 export async function runModelStageCli(
   argv = process.argv.slice(2),
   io: Pick<NodeJS.Process, "stdout" | "stderr"> = process,
@@ -577,15 +724,23 @@ export async function runModelStageCli(
       ...(args.sha256 ? { sha256: args.sha256 } : {}),
     });
 
-    if (args.checkSources) {
-      await checkModelStageSources(cwd, plan);
-    }
+    let output: string;
+    if (args.apply) {
+      const result = await applyModelStagePlan(cwd, plan);
+      output = args.json
+        ? JSON.stringify({ applied: true, plan } satisfies ModelStageJsonApplyResult, null, 2)
+        : formatApplyResult(result);
+    } else {
+      if (args.checkSources) {
+        await checkModelStageSources(cwd, plan);
+      }
 
-    const output = args.json
-      ? JSON.stringify(plan, null, 2)
-      : args.commandsOnly
-        ? formatCommandPlan(plan)
-        : formatTextPlan(cwd, plan);
+      output = args.json
+        ? JSON.stringify(plan, null, 2)
+        : args.commandsOnly
+          ? formatCommandPlan(plan)
+          : formatTextPlan(cwd, plan);
+    }
 
     io.stdout.write(`${output}\n`);
     return 0;

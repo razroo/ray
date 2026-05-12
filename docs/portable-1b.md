@@ -165,6 +165,8 @@ explanatory staging summary.
 Use `--check-sources` when the source artifacts are already on the VPS and you
 want the helper to verify file access and any provided checksums before printing
 the staging plan.
+Use `--apply` on the VPS after reviewing those source paths to verify and stage
+the configured `llama-server` and GGUF into their resolved target locations.
 
 Set `RAY_AUTH_API_KEY_ENV` when an existing secret manager or deployment workflow
 uses a different environment variable for the Bearer keys.

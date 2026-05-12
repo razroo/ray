@@ -95,6 +95,8 @@ explanatory staging summary.
 Add `--check-sources` when the source artifacts are already on the VPS and you
 want the helper to verify file access and any provided checksums before printing
 the staging plan.
+Add `--apply` on the VPS after reviewing those source paths to verify and stage
+the configured `llama-server` and GGUF into their resolved target locations.
 
 On an 8 GB node, [ray.1b.8gb.generic.public.json](../../config/ray.1b.8gb.generic.public.json) raises context to `4096`, batch threads to `4`, cache RAM to `768` MiB, async queue storage headroom to `512` MiB, and gateway RSS degradation headroom to `768` MiB, and uses two parallel slots. Set `RAY_PROFILE=1b-8gb` when selecting those defaults without a JSON config file. The Qwen-specific [ray.1b.public.json](../../config/ray.1b.public.json) and [ray.1b.8gb.public.json](../../config/ray.1b.8gb.public.json) profiles are reference baselines for benchmark reproducibility.
 
@@ -407,10 +409,11 @@ the configured host and SSH port,
 installs missing remote deploy prerequisites such as `curl`, `ca-certificates`,
 `unzip`, and `rsync`, refreshes `/usr/local/bin/bun` when it is missing or older
 than the repo's supported Bun runtime, prints the resolved llama.cpp binary and
-GGUF staging plan for llama.cpp deploy configs, verifies source artifacts first
-when both `RAY_LLAMA_CPP_BINARY_SOURCE_PATH` and `RAY_MODEL_SOURCE_PATH` are set
-in `/etc/ray/ray.env`, then runs `ray deploy doctor` on the VPS before
-restarting services. Missing API keys, missing GGUF files,
+GGUF staging plan for llama.cpp deploy configs, verifies and stages source
+artifacts when both `RAY_LLAMA_CPP_BINARY_SOURCE_PATH` and
+`RAY_MODEL_SOURCE_PATH` are set in `/etc/ray/ray.env`, then runs
+`ray deploy doctor` on the VPS before restarting services. Missing API keys,
+missing GGUF files,
 memory-fit errors, exhausted async queue storage reserves, and unsupported
 gateway runtimes fail before systemd tries to start the generated units. The
 configured gateway runtime binary defaults to `/usr/local/bin/bun`. All workflow

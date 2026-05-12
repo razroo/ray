@@ -605,22 +605,20 @@ jobs:
             process.exit(hasBinarySource && hasModelSource ? 0 : hasBinarySource || hasModelSource ? 2 : 1);
             ' || SOURCE_CHECK_STATUS=$?
             if [ "$SOURCE_CHECK_STATUS" = "0" ]; then
-              echo "::group::Verify llama.cpp artifact source files"
+              echo "::group::Stage llama.cpp artifact files"
               if ! $SUDO /usr/local/bin/bun /srv/ray/scripts/model-stage.ts \
                 --cwd /srv/ray \
                 --config /etc/ray/ray.json \
                 --user "$SERVICE_USER" \
                 --group "$SERVICE_GROUP" \
                 --ray-env-file /etc/ray/ray.env \
-                --check-sources \
-                --commands-only >/dev/null; then
+                --apply; then
                 echo "::endgroup::"
                 exit 1
               fi
-              echo "Configured llama.cpp artifact sources are present, readable, and checksum-valid when checksums are configured."
               echo "::endgroup::"
             elif [ "$SOURCE_CHECK_STATUS" = "2" ]; then
-              echo "::warning::Set both RAY_LLAMA_CPP_BINARY_SOURCE_PATH and RAY_MODEL_SOURCE_PATH to enable deploy-time source artifact verification."
+              echo "::warning::Set both RAY_LLAMA_CPP_BINARY_SOURCE_PATH and RAY_MODEL_SOURCE_PATH to enable deploy-time artifact staging."
             fi
           else
             echo "No generated llama.cpp artifact staging plan for this config."

@@ -310,6 +310,9 @@ explanatory staging summary.
 Use `--check-sources` to fail early when the local `llama-server` or GGUF source
 path is missing, unreadable, not executable, or does not match a provided
 checksum before reviewing the plan.
+Use `--apply` on the VPS after reviewing those source paths to verify and copy
+the artifacts into the resolved binary and model locations with the generated
+service ownership.
 
 Deployment walkthrough: [examples/deploy/vps/README.md](examples/deploy/vps/README.md).
 
