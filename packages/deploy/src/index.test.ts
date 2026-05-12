@@ -1270,6 +1270,43 @@ test("diagnoseConfig warns when the cax11 preset is overcommitted", () => {
   assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "cax11_parallel_high"));
 });
 
+test("diagnoseConfig errors when a sub1b launch profile targets the wrong host architecture", () => {
+  const config = createDefaultConfig("sub1b-cax11");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      hostArchitecture: "x64",
+    },
+  });
+
+  const diagnostic = diagnostics.find(
+    (entry) => entry.code === "llama_launch_profile_architecture_mismatch",
+  );
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /single-vps-sub1b-cax11/);
+  assert.match(diagnostic.message, /arm64/);
+  assert.match(diagnostic.message, /x64/);
+});
+
+test("diagnoseConfig reports a matching sub1b launch profile host architecture", () => {
+  const config = createDefaultConfig("sub1b-cax11");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      hostArchitecture: "arm64",
+    },
+  });
+
+  const diagnostic = diagnostics.find(
+    (entry) => entry.code === "llama_launch_profile_architecture_ok",
+  );
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+  assert.match(diagnostic.message, /single-vps-sub1b-cax11/);
+  assert.match(diagnostic.message, /arm64/);
+});
+
 test("diagnoseConfig warns when llama.cpp compute threads exceed host CPUs", () => {
   const config = createDefaultConfig("sub1b");
   assert.equal(config.model.adapter.kind, "llama.cpp");

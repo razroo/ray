@@ -89,6 +89,7 @@ type SwappinessStatus = "available" | "unreadable";
 export interface DeploymentPreflight {
   hostMemoryMiB?: number;
   hostCpuCount?: number;
+  hostArchitecture?: string;
   memoryBudgetMiB?: number;
   memoryBudgetSource?: MemoryBudgetSource;
   modelFileBytes?: number;
@@ -270,6 +271,20 @@ function isSmallVpsPreset(preset: LlamaCppLaunchProfile["preset"]): boolean {
 
 function isCax11Preset(preset: LlamaCppLaunchProfile["preset"]): boolean {
   return preset === "single-vps-sub1b-cax11";
+}
+
+function getExpectedHostArchitectureForPreset(
+  preset: LlamaCppLaunchProfile["preset"],
+): string | undefined {
+  if (preset === "single-vps-sub1b-cax11") {
+    return "arm64";
+  }
+
+  if (preset === "single-vps-sub1b-cx23") {
+    return "x64";
+  }
+
+  return undefined;
 }
 
 function isPathInside(parentPath: string, candidatePath: string): boolean {
@@ -2259,6 +2274,27 @@ export function diagnoseConfig(
       const perSlotContext = Math.floor(
         launchProfile.ctxSize / Math.max(1, launchProfile.parallel),
       );
+      const expectedHostArchitecture = getExpectedHostArchitectureForPreset(launchProfile.preset);
+
+      if (
+        strictFilesystem &&
+        expectedHostArchitecture !== undefined &&
+        preflight?.hostArchitecture !== undefined
+      ) {
+        if (preflight.hostArchitecture !== expectedHostArchitecture) {
+          diagnostics.push({
+            level: "error",
+            code: "llama_launch_profile_architecture_mismatch",
+            message: `model.adapter.launchProfile.preset ${launchProfile.preset} expects a ${expectedHostArchitecture} host, but doctor detected ${preflight.hostArchitecture}. Use the matching public deploy profile before staging a llama.cpp binary.`,
+          });
+        } else {
+          diagnostics.push({
+            level: "info",
+            code: "llama_launch_profile_architecture_ok",
+            message: `model.adapter.launchProfile.preset ${launchProfile.preset} matches the detected ${preflight.hostArchitecture} host architecture.`,
+          });
+        }
+      }
 
       if (!isLoopbackHost(launchProfile.host)) {
         diagnostics.push({
@@ -3485,6 +3521,7 @@ async function collectDeploymentPreflight(
 ): Promise<DeploymentPreflight> {
   const hostMemoryMiB = Math.max(1, Math.floor(totalmem() / BYTES_PER_MIB));
   const hostCpuCount = collectHostCpuCount();
+  const hostArchitecture = process.arch;
   const systemdPreflight = await collectSystemdPreflight(options.strictFilesystem === true);
   const caddyPreflight = await collectCaddyPreflight(options.strictFilesystem === true);
   const envFilePreflight = await collectEnvFilePreflight(options.envFile);
@@ -3537,6 +3574,7 @@ async function collectDeploymentPreflight(
     return {
       hostMemoryMiB,
       ...(hostCpuCount !== undefined ? { hostCpuCount } : {}),
+      hostArchitecture,
       ...storagePreflight,
       ...systemdPreflight,
       ...caddyPreflight,
@@ -3565,6 +3603,7 @@ async function collectDeploymentPreflight(
   const preflight: DeploymentPreflight = {
     hostMemoryMiB,
     ...(hostCpuCount !== undefined ? { hostCpuCount } : {}),
+    hostArchitecture,
     ...storagePreflight,
     ...systemdPreflight,
     ...caddyPreflight,
