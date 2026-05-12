@@ -3,7 +3,7 @@ name: "@razroo/ray-core Release to npm"
 # Publish when a GitHub Release whose tag starts with `core-v` is published.
 #
 # Cutting a release (after bumping packages/core/package.json version):
-#   TAG="core-v$(node -p 'require(\"./packages/core/package.json\").version')"
+#   TAG="core-v$(bun -e 'console.log(require("./packages/core/package.json").version)')"
 #   git tag "$TAG" && git push origin "$TAG"
 #   gh release create "$TAG" --generate-notes --title "$TAG"
 
@@ -77,7 +77,7 @@ jobs:
           echo "Quality checks succeeded for $SHA"
 
       - name: Verify package.json version matches release tag
-        run: node ./scripts/release/check-source.mjs "$VERSION"
+        run: bun ./scripts/release/check-source.mjs "$VERSION"
 
       - name: Install (workspace root)
         run: bun install --frozen-lockfile

@@ -5,7 +5,7 @@
 const version = process.argv[2];
 
 if (!version) {
-  console.error("Usage: node scripts/release/verify-npm.mjs <version>");
+  console.error("Usage: bun scripts/release/verify-npm.mjs <version>");
   process.exit(1);
 }
 

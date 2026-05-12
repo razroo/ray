@@ -6,7 +6,7 @@ const args = process.argv.slice(2).filter((a) => a !== "--");
 const version = args[0];
 
 if (!version) {
-  console.error("Usage: node scripts/release/check-source.mjs <version>");
+  console.error("Usage: bun scripts/release/check-source.mjs <version>");
   process.exit(1);
 }
 

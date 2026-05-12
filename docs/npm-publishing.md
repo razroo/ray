@@ -71,8 +71,8 @@ Infrastructure-only PRs can add an empty changeset: `bunx changeset add --empty`
 2. Create **annotated tags** pointing at that commit:
 
    ```bash
-   TAG_CORE="core-v$(node -p 'require("./packages/core/package.json").version')"
-   TAG_SDK="sdk-v$(node -p 'require("./packages/sdk/package.json").version')"
+   TAG_CORE="core-v$(bun -e 'console.log(require("./packages/core/package.json").version)')"
+   TAG_SDK="sdk-v$(bun -e 'console.log(require("./packages/sdk/package.json").version)')"
    git tag "$TAG_CORE"
    git tag "$TAG_SDK"
    git push origin "$TAG_CORE" "$TAG_SDK"
@@ -123,8 +123,8 @@ bun run release:verify-npm -- <version-you-just-published>
 Sanity-check `package.json` matches the semver you intend for the tag:
 
 ```bash
-cd packages/core && bun run release:check-source -- "$(node -p 'require("./package.json").version')"
-cd packages/sdk && bun run release:check-source -- "$(node -p 'require("./package.json").version')"
+cd packages/core && bun run release:check-source -- "$(bun -e 'console.log(require("./package.json").version)')"
+cd packages/sdk && bun run release:check-source -- "$(bun -e 'console.log(require("./package.json").version)')"
 ```
 
 ## Consumers
