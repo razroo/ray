@@ -60,6 +60,8 @@ export type CallbackAddressLookup = (
 export interface StorageStats {
   bavail: number | bigint;
   bsize: number | bigint;
+  blocks?: number | bigint;
+  ffree?: number | bigint;
 }
 
 export type StorageStatsReader = (filePath: string) => Promise<StorageStats>;
@@ -924,16 +926,35 @@ function stringifyPersistedJob(job: InferenceJobRecord): string {
   return body;
 }
 
-function statValueToNumber(value: number | bigint): number | undefined {
+function statValueToNumber(value: number | bigint | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
   const numberValue = typeof value === "bigint" ? Number(value) : value;
   return Number.isFinite(numberValue) && numberValue >= 0 ? numberValue : undefined;
 }
 
 function resolveAvailableStorageMiB(stats: StorageStats): number | undefined {
-  const availableBlocks = statValueToNumber(stats.bavail);
-  const blockSize = statValueToNumber(stats.bsize);
+  let availableBlocks = statValueToNumber(stats.bavail);
+  let blockSize = statValueToNumber(stats.bsize);
 
-  if (availableBlocks === undefined || blockSize === undefined) {
+  if (blockSize === 0) {
+    const fallbackBlockSize = statValueToNumber(stats.blocks);
+    const fallbackAvailableBlocks = statValueToNumber(stats.ffree);
+
+    if (
+      fallbackBlockSize !== undefined &&
+      fallbackBlockSize > 0 &&
+      fallbackBlockSize <= BYTES_PER_MIB &&
+      fallbackAvailableBlocks !== undefined
+    ) {
+      blockSize = fallbackBlockSize;
+      availableBlocks = fallbackAvailableBlocks;
+    }
+  }
+
+  if (availableBlocks === undefined || blockSize === undefined || blockSize <= 0) {
     return undefined;
   }
 

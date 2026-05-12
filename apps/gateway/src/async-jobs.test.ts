@@ -216,6 +216,51 @@ test("durable inference queue rejects new jobs when storage reserve is exhausted
   }
 });
 
+test("durable inference queue handles Bun statfs zero block size", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-bun-statfs-"));
+
+  try {
+    const config = mergeConfig(createDefaultConfig("tiny"), {
+      asyncQueue: {
+        enabled: true,
+        storageDir,
+        minFreeStorageMiB: 128,
+      },
+    });
+    const runtime = createRayRuntime(config);
+    const logger = new Logger("test", "error");
+    const queue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+      statfsImpl: async () => ({
+        bavail: 999_999,
+        bsize: 0,
+        blocks: 4096,
+        ffree: 32_512,
+      }),
+    });
+
+    await assert.rejects(
+      () =>
+        queue.enqueue({
+          input: "should use fallback statfs fields",
+        }),
+      (error: unknown) =>
+        error instanceof RayError &&
+        error.code === "async_queue_storage_low" &&
+        (error.details as { availableMiB?: number }).availableMiB === 127,
+    );
+
+    const snapshot = await queue.snapshotWithStorage();
+    assert.equal(snapshot.availableStorageMiB, 127);
+    assert.equal(snapshot.storageReserveRatio, 0.9922);
+    assert.equal(snapshot.storageLow, true);
+  } finally {
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});
+
 test("durable inference queue recovers queued jobs from disk", async () => {
   const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-"));
 
