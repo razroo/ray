@@ -425,8 +425,11 @@ missing or corrupt GGUF files,
 memory-fit errors, exhausted async queue storage reserves, unsupported gateway
 runtimes, generated systemd unit verification, and generated Caddyfile
 validation fail before systemd tries to start the generated units. The
-configured gateway runtime binary defaults to `/usr/local/bin/bun`. All workflow
-SSH and rsync calls run in batch mode with `StrictHostKeyChecking=yes`,
+configured gateway runtime binary defaults to `/usr/local/bin/bun`. Remote Bun
+helper commands for config inspection, staging-plan rendering, doctor, and
+service rendering run under explicit timeouts; deploy-time GGUF staging gets a
+longer bounded copy window. All workflow SSH and rsync calls run in batch mode
+with `StrictHostKeyChecking=yes`,
 `IdentitiesOnly=yes`, the validated `RAY_DEPLOY_KNOWN_HOSTS` file, a short
 connect timeout, OpenSSH keepalives, and an rsync I/O timeout so stalled
 sessions or repository transfers fail instead of holding the deploy job

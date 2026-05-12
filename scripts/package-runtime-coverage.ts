@@ -558,6 +558,32 @@ function validateDeployWorkflowRemoteBunInstallGuards(
   return diagnostics;
 }
 
+function validateDeployWorkflowRemoteBunCommandGuards(
+  workflowPath: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+    if (line.includes("$SUDO /usr/local/bin/bun") && !line.includes("timeout ")) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_remote_bun_command_unbounded",
+        workflowPath,
+        line: index + 1,
+        message:
+          "VPS deploy workflow remote Bun helper calls must run under an overall timeout so deploy-side config, doctor, render, or staging helpers cannot hang indefinitely.",
+      });
+    }
+  }
+
+  return diagnostics;
+}
+
 async function validateWorkflow(
   workflowPath: string,
 ): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
@@ -634,6 +660,7 @@ async function validateWorkflow(
   diagnostics.push(...validateDeployWorkflowRsyncGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowServiceCommandGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRemoteBunInstallGuards(workflowPath, lines));
+  diagnostics.push(...validateDeployWorkflowRemoteBunCommandGuards(workflowPath, lines));
 
   return {
     lineCount: lines.length,

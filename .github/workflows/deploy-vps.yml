@@ -572,7 +572,8 @@ jobs:
           fi
           $SUDO chmod 600 /etc/ray/ray.env
 
-          if $SUDO /usr/local/bin/bun --eval '
+          LLAMA_CONFIG_STATUS=0
+          timeout 30s $SUDO /usr/local/bin/bun --eval '
           import { readFileSync } from "node:fs";
           import { loadRayConfig } from "/srv/ray/packages/config/dist/index.js";
           import { parseEnvironmentFile } from "/srv/ray/packages/deploy/dist/cli.js";
@@ -591,9 +592,10 @@ jobs:
               ? 0
               : 1,
           );
-          '; then
+          ' || LLAMA_CONFIG_STATUS=$?
+          if [ "$LLAMA_CONFIG_STATUS" = "0" ]; then
             echo "::group::Resolved llama.cpp artifact staging plan"
-            $SUDO /usr/local/bin/bun /srv/ray/scripts/model-stage.ts \
+            timeout 120s $SUDO /usr/local/bin/bun /srv/ray/scripts/model-stage.ts \
               --cwd /srv/ray \
               --config /etc/ray/ray.json \
               --user "$SERVICE_USER" \
@@ -602,7 +604,7 @@ jobs:
             echo "::endgroup::"
 
             SOURCE_CHECK_STATUS=0
-            $SUDO /usr/local/bin/bun --eval '
+            timeout 30s $SUDO /usr/local/bin/bun --eval '
             import { readFileSync } from "node:fs";
             import { parseEnvironmentFile } from "/srv/ray/packages/deploy/dist/cli.js";
 
@@ -617,7 +619,7 @@ jobs:
             ' || SOURCE_CHECK_STATUS=$?
             if [ "$SOURCE_CHECK_STATUS" = "0" ]; then
               echo "::group::Stage llama.cpp artifact files"
-              if ! $SUDO /usr/local/bin/bun /srv/ray/scripts/model-stage.ts \
+              if ! timeout 1800s $SUDO /usr/local/bin/bun /srv/ray/scripts/model-stage.ts \
                 --cwd /srv/ray \
                 --config /etc/ray/ray.json \
                 --user "$SERVICE_USER" \
@@ -630,12 +632,18 @@ jobs:
               echo "::endgroup::"
             elif [ "$SOURCE_CHECK_STATUS" = "2" ]; then
               echo "::warning::Set both RAY_LLAMA_CPP_BINARY_SOURCE_PATH and RAY_MODEL_SOURCE_PATH to enable deploy-time artifact staging."
+            elif [ "$SOURCE_CHECK_STATUS" != "1" ]; then
+              echo "Failed to inspect llama.cpp artifact staging source environment."
+              exit "$SOURCE_CHECK_STATUS"
             fi
-          else
+          elif [ "$LLAMA_CONFIG_STATUS" = "1" ]; then
             echo "No generated llama.cpp artifact staging plan for this config."
+          else
+            echo "Failed to inspect resolved Ray config for a llama.cpp launch profile."
+            exit "$LLAMA_CONFIG_STATUS"
           fi
 
-          $SUDO /usr/local/bin/bun /srv/ray/packages/deploy/dist/cli.js doctor \
+          timeout 180s $SUDO /usr/local/bin/bun /srv/ray/packages/deploy/dist/cli.js doctor \
             --cwd /srv/ray \
             --config /etc/ray/ray.json \
             --user "$SERVICE_USER" \
@@ -652,7 +660,7 @@ jobs:
           }
           trap cleanup_render_dir EXIT
 
-          $SUDO /usr/local/bin/bun /srv/ray/packages/deploy/dist/cli.js render \
+          timeout 120s $SUDO /usr/local/bin/bun /srv/ray/packages/deploy/dist/cli.js render \
             --cwd /srv/ray \
             --config /etc/ray/ray.json \
             --user "$SERVICE_USER" \
