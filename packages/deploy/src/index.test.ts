@@ -1,4 +1,13 @@
-import { chmod, mkdir, mkdtemp, readdir, rm, truncate, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -1890,6 +1899,89 @@ test("diagnoseConfig reports an available Caddy runtime in strict mode", () => {
   assert.ok(diagnostic);
   assert.equal(diagnostic.level, "info");
   assert.match(diagnostic.message, /v2\.8\.4/);
+});
+
+test("diagnoseConfig errors when the generated Caddyfile is invalid in strict mode", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      caddyConfigStatus: "invalid",
+      caddyConfigError: "bad directive",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "caddy_config_invalid");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /generated Caddyfile/);
+  assert.match(diagnostic.message, /bad directive/);
+});
+
+test("diagnoseConfig reports a valid generated Caddyfile in strict mode", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      caddyConfigStatus: "valid",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "caddy_config_ok");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+  assert.match(diagnostic.message, /validates/);
+});
+
+test("loadAndDiagnoseDeployment validates the generated Caddyfile in strict mode", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-caddyfile-ok-"));
+  const previousPath = process.env.PATH;
+  t.after(async () => {
+    process.env.PATH = previousPath;
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const binDir = join(tempDir, "bin");
+  const caddyArgsPath = join(tempDir, "caddy-args.txt");
+  await mkdir(binDir);
+  const caddyPath = join(binDir, "caddy");
+  await writeFile(
+    caddyPath,
+    `#!/bin/sh
+if [ "$1" = "version" ]; then
+  echo "v2.8.4"
+  exit 0
+fi
+if [ "$1" = "validate" ]; then
+  printf '%s\\n' "$@" > "${caddyArgsPath}"
+  test "$2" = "--config" || exit 2
+  grep -q 'example.com {' "$3" || exit 3
+  grep -q 'reverse_proxy 127.0.0.1:${config.server.port}' "$3" || exit 4
+  exit 0
+fi
+exit 5
+`,
+  );
+  await chmod(caddyPath, 0o755);
+  process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    domain: "example.com",
+    strictFilesystem: true,
+  });
+
+  assert.equal(inspected.preflight.caddyStatus, "available");
+  assert.equal(inspected.preflight.caddyConfigStatus, "valid");
+  assert.match(await readFile(caddyArgsPath, "utf8"), /^validate\n--config\n/m);
+  const diagnostic = inspected.diagnostics.find((entry) => entry.code === "caddy_config_ok");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
 });
 
 test("diagnoseConfig errors when the generated service user cannot access gateway paths", () => {

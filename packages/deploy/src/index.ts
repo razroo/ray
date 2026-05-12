@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { constants, type Stats } from "node:fs";
-import { access, readFile, stat, statfs } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, stat, statfs, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { availableParallelism, tmpdir, totalmem } from "node:os";
 import path from "node:path";
@@ -75,6 +75,7 @@ type GatewayRuntimeKind = "bun" | "node";
 type GatewayRuntimeBinaryStatus = BinaryPreflightStatus;
 type GatewayRuntimeVersionStatus = "ok" | "too_old" | "unreadable";
 type CaddyRuntimeStatus = "available" | "missing" | "unreadable";
+type CaddyConfigStatus = "valid" | "invalid" | "unreadable";
 type LlamaCppBinaryStatus = BinaryPreflightStatus;
 type LlamaCppBinaryProbeStatus = "ok" | "failed";
 type GatewayEntrypointStatus = BinaryPreflightStatus;
@@ -118,6 +119,8 @@ export interface DeploymentPreflight {
   caddyStatus?: CaddyRuntimeStatus;
   caddyVersion?: string;
   caddyError?: string;
+  caddyConfigStatus?: CaddyConfigStatus;
+  caddyConfigError?: string;
   gatewayEntrypointPath?: string;
   gatewayEntrypointStatus?: GatewayEntrypointStatus;
   gatewayEntrypointError?: string;
@@ -207,6 +210,8 @@ const SYSTEMCTL_VERSION_TIMEOUT_MS = 3_000;
 const SYSTEMCTL_VERSION_MAX_BUFFER_BYTES = 16 * 1024;
 const CADDY_VERSION_TIMEOUT_MS = 3_000;
 const CADDY_VERSION_MAX_BUFFER_BYTES = 16 * 1024;
+const CADDY_VALIDATE_TIMEOUT_MS = 3_000;
+const CADDY_VALIDATE_MAX_BUFFER_BYTES = 64 * 1024;
 const LLAMA_CPP_BINARY_PROBE_TIMEOUT_MS = 3_000;
 const LLAMA_CPP_BINARY_PROBE_MAX_BUFFER_BYTES = 64 * 1024;
 const MAX_SYSTEMD_DEPENDENCY_UNITS = 32;
@@ -1880,6 +1885,29 @@ export function diagnoseConfig(
     }
   }
 
+  if (strictFilesystem && preflight?.caddyConfigStatus !== undefined) {
+    if (preflight.caddyConfigStatus === "invalid") {
+      diagnostics.push({
+        level: "error",
+        code: "caddy_config_invalid",
+        message: `The generated Caddyfile did not validate with the installed Caddy runtime${preflight.caddyConfigError ? ` (${preflight.caddyConfigError})` : ""}. Fix the rendered reverse proxy config before installing or reloading Caddy.`,
+      });
+    } else if (preflight.caddyConfigStatus === "unreadable") {
+      diagnostics.push({
+        level: "error",
+        code: "caddy_config_unreadable",
+        message: `Doctor could not validate the generated Caddyfile${preflight.caddyConfigError ? ` (${preflight.caddyConfigError})` : ""}. Verify Caddy manually before exposing Ray publicly.`,
+      });
+    } else {
+      diagnostics.push({
+        level: "info",
+        code: "caddy_config_ok",
+        message:
+          "The generated Caddyfile validates with the installed Caddy runtime for this config.",
+      });
+    }
+  }
+
   if (strictFilesystem && preflight?.workingDirectoryStatus !== undefined) {
     const workingDirectoryPath =
       preflight.workingDirectoryPath ?? "the configured WorkingDirectory";
@@ -2711,6 +2739,7 @@ export async function loadAndDiagnoseDeployment(options: {
   memoryBudgetMiB?: number;
   runtimeBinary?: string;
   user?: string;
+  domain?: string;
   strictFilesystem?: boolean;
   nodeBinary?: string;
   allowMissingAuthKeys?: boolean;
@@ -2733,6 +2762,7 @@ export async function loadAndDiagnoseDeployment(options: {
     ...(options.nodeBinary !== undefined ? { nodeBinary: options.nodeBinary } : {}),
     ...(options.envFile !== undefined ? { envFile: options.envFile } : {}),
     ...(options.user !== undefined ? { user: options.user } : {}),
+    ...(options.domain !== undefined ? { domain: options.domain } : {}),
     ...(options.strictFilesystem !== undefined
       ? { strictFilesystem: options.strictFilesystem }
       : {}),
@@ -2783,6 +2813,7 @@ export async function renderDeploymentBundle(options: {
     cwd,
     configPath: options.configPath,
     ...(options.env ? { env: options.env } : {}),
+    domain: options.domain,
     ...(systemdEnvFile ? { envFile: systemdEnvFile } : {}),
     ...(options.memoryBudgetMiB !== undefined ? { memoryBudgetMiB: options.memoryBudgetMiB } : {}),
     ...(options.runtimeBinary !== undefined ? { runtimeBinary: options.runtimeBinary } : {}),
@@ -3133,6 +3164,80 @@ async function collectCaddyPreflight(
       },
     );
   });
+}
+
+async function runCaddyValidate(configPath: string): Promise<Partial<DeploymentPreflight>> {
+  return await new Promise<Partial<DeploymentPreflight>>((resolve) => {
+    execFile(
+      "caddy",
+      ["validate", "--config", configPath],
+      {
+        timeout: CADDY_VALIDATE_TIMEOUT_MS,
+        maxBuffer: CADDY_VALIDATE_MAX_BUFFER_BYTES,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        const output = `${stdout}\n${stderr}`.trim();
+
+        if (error) {
+          const code =
+            error !== null && typeof error === "object" && "code" in error
+              ? (error as { code?: string }).code
+              : undefined;
+
+          resolve({
+            caddyConfigStatus: code === "ENOENT" ? "unreadable" : "invalid",
+            caddyConfigError: output
+              ? `${toErrorMessage(error)}; output: ${truncateRuntimeVersionOutput(output)}`
+              : toErrorMessage(error),
+          });
+          return;
+        }
+
+        resolve({ caddyConfigStatus: "valid" });
+      },
+    );
+  });
+}
+
+async function collectCaddyConfigPreflight(
+  config: RayConfig,
+  domain: string,
+  strictFilesystem: boolean,
+  caddyStatus: CaddyRuntimeStatus | undefined,
+): Promise<Partial<DeploymentPreflight>> {
+  if (!strictFilesystem || caddyStatus !== "available") {
+    return {};
+  }
+
+  let caddyfile: string;
+  try {
+    caddyfile = renderCaddyfile({
+      domain,
+      upstreamPort: config.server.port,
+      requestBodyLimitBytes: config.server.requestBodyLimitBytes,
+      upstreamTimeoutMs: config.scheduler.requestTimeoutMs + CADDY_UPSTREAM_TIMEOUT_GRACE_MS,
+    });
+  } catch (error) {
+    return {
+      caddyConfigStatus: "invalid",
+      caddyConfigError: toErrorMessage(error),
+    };
+  }
+
+  const tempDirectory = await mkdtemp(path.join(tmpdir(), "ray-caddy-validate-"));
+  try {
+    const caddyfilePath = path.join(tempDirectory, "Caddyfile");
+    await writeFile(caddyfilePath, caddyfile, "utf8");
+    return await runCaddyValidate(caddyfilePath);
+  } catch (error) {
+    return {
+      caddyConfigStatus: "unreadable",
+      caddyConfigError: toErrorMessage(error),
+    };
+  } finally {
+    await rm(tempDirectory, { recursive: true, force: true });
+  }
 }
 
 async function collectWorkingDirectoryPreflight(
@@ -3572,6 +3677,7 @@ async function collectDeploymentPreflight(
     runtimeBinary?: string;
     envFile?: string;
     user?: string;
+    domain?: string;
     strictFilesystem?: boolean;
     nodeBinary?: string;
   },
@@ -3581,6 +3687,12 @@ async function collectDeploymentPreflight(
   const hostArchitecture = process.arch;
   const systemdPreflight = await collectSystemdPreflight(options.strictFilesystem === true);
   const caddyPreflight = await collectCaddyPreflight(options.strictFilesystem === true);
+  const caddyConfigPreflight = await collectCaddyConfigPreflight(
+    config,
+    options.domain ?? "ray.local",
+    options.strictFilesystem === true,
+    caddyPreflight.caddyStatus,
+  );
   const envFilePreflight = await collectEnvFilePreflight(options.envFile);
   const serviceUserPreflight = await collectServiceUserPreflight(
     options.user,
@@ -3635,6 +3747,7 @@ async function collectDeploymentPreflight(
       ...storagePreflight,
       ...systemdPreflight,
       ...caddyPreflight,
+      ...caddyConfigPreflight,
       ...envFilePreflight,
       ...serviceUserPreflight,
       ...configFilePreflight,
@@ -3665,6 +3778,7 @@ async function collectDeploymentPreflight(
     ...storagePreflight,
     ...systemdPreflight,
     ...caddyPreflight,
+    ...caddyConfigPreflight,
     ...envFilePreflight,
     ...serviceUserPreflight,
     ...configFilePreflight,

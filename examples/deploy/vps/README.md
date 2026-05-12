@@ -421,9 +421,10 @@ artifacts when both `RAY_LLAMA_CPP_BINARY_SOURCE_PATH` and
 `RAY_MODEL_SOURCE_PATH` are set in `/etc/ray/ray.env`, then runs
 `ray deploy doctor` on the VPS before restarting services. Missing API keys,
 missing GGUF files,
-memory-fit errors, exhausted async queue storage reserves, and unsupported
-gateway runtimes fail before systemd tries to start the generated units. The
-configured gateway runtime binary defaults to `/usr/local/bin/bun`. All workflow
+memory-fit errors, exhausted async queue storage reserves, unsupported gateway
+runtimes, and generated Caddyfile validation fail before systemd tries to start
+the generated units. The configured gateway runtime binary defaults to
+`/usr/local/bin/bun`. All workflow
 SSH and rsync calls run in batch mode with `StrictHostKeyChecking=yes`,
 `IdentitiesOnly=yes`, and the validated `RAY_DEPLOY_KNOWN_HOSTS` file. Remote
 sudo calls use `sudo -n` so a deploy user without passwordless sudo fails
