@@ -131,7 +131,7 @@ function sanitizeLogValue(value: unknown, seen: WeakSet<object>, depth = 0): unk
 
   if (value instanceof Error) {
     const serialized: Record<string, unknown> = {
-      name: value.name,
+      name: truncateLogString(value.name),
       message: truncateLogString(value.message),
     };
 
@@ -517,12 +517,12 @@ function nanosecondsToMs(value: number): number {
 export function serializeError(error: unknown): { message: string; name?: string; stack?: string } {
   if (error instanceof Error) {
     const serialized: { message: string; name?: string; stack?: string } = {
-      message: error.message,
-      name: error.name,
+      message: truncateLogString(error.message),
+      name: truncateLogString(error.name),
     };
 
     if (error.stack) {
-      serialized.stack = error.stack;
+      serialized.stack = truncateLogString(error.stack);
     }
 
     return {

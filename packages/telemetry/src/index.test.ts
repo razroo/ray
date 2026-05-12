@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Logger, RuntimeMetrics } from "./index.js";
+import { Logger, RuntimeMetrics, serializeError } from "./index.js";
 
 test("logger rejects invalid direct config", () => {
   assert.throws(() => new Logger("", "info"), /serviceName/);
@@ -123,6 +123,52 @@ test("logger does not throw when field accessors fail", () => {
     field: { explode: string };
   };
   assert.equal(parsed.field.explode, "[Thrown: boom]");
+});
+
+test("logger bounds direct Error fields", () => {
+  const originalError = console.error;
+  let line = "";
+  console.error = (value?: unknown) => {
+    line = String(value);
+  };
+
+  try {
+    const error = new Error("x".repeat(8_193));
+    error.name = "E".repeat(8_193);
+    error.stack = "s".repeat(8_193);
+
+    assert.doesNotThrow(() => {
+      new Logger("ray-test", "debug").error("safe error log", {
+        error,
+      });
+    });
+  } finally {
+    console.error = originalError;
+  }
+
+  const parsed = JSON.parse(line) as {
+    error: {
+      name: string;
+      message: string;
+      stack?: string;
+    };
+  };
+  assert.match(parsed.error.name, /\[truncated 1 chars\]$/);
+  assert.match(parsed.error.message, /\[truncated 1 chars\]$/);
+  assert.match(parsed.error.stack ?? "", /\[truncated 1 chars\]$/);
+});
+
+test("serializeError bounds direct Error fields", () => {
+  const error = new Error("x".repeat(8_193));
+  error.name = "E".repeat(8_193);
+  error.stack = "s".repeat(8_193);
+
+  const serialized = serializeError(error);
+
+  assert.match(serialized.name ?? "", /\[truncated 1 chars\]$/);
+  assert.match(serialized.message, /\[truncated 1 chars\]$/);
+  assert.match(serialized.stack ?? "", /\[truncated 1 chars\]$/);
+  assert.equal(serializeError("plain failure").message, "plain failure");
 });
 
 test("runtime metrics rejects invalid direct metric values", () => {
