@@ -10,7 +10,7 @@ export interface CliOptions {
   cwd: string;
   configPath: string;
   user: string;
-  domain: string;
+  domain?: string;
   envFile?: string;
   outputDir?: string;
   memoryBudgetMiB?: number;
@@ -288,7 +288,6 @@ export function parseCliArgs(argv: string[]): CliOptions {
     cwd: process.cwd(),
     configPath: "./examples/config/ray.sub1b.public.json",
     user: "ray",
-    domain: "ray.local",
   };
 
   for (; index < argv.length; index += 1) {
@@ -378,8 +377,10 @@ export async function runCli(argv: string[]): Promise<void> {
   };
   const env = await loadEnvironment(resolvedOptions);
   const envRuntimeBinary = readNonEmptyEnvValue(env.RAY_GATEWAY_RUNTIME_BINARY);
-  const deploymentOptions: CliOptions = {
+  const envDomain = readNonEmptyEnvValue(env.RAY_DEPLOY_DOMAIN);
+  const deploymentOptions: CliOptions & { domain: string } = {
     ...resolvedOptions,
+    domain: resolvedOptions.domain ?? envDomain ?? "ray.local",
     ...(resolvedOptions.runtimeBinary === undefined &&
     resolvedOptions.nodeBinary === undefined &&
     envRuntimeBinary !== undefined

@@ -93,6 +93,13 @@ test("parseCliArgs accepts render output directories", () => {
   assert.equal(options.outputDir, "/tmp/ray-render");
 });
 
+test("parseCliArgs accepts explicit deploy domains", () => {
+  const options = parseCliArgs(["render", "--domain", "ray.example.com"]);
+
+  assert.equal(options.command, "render");
+  assert.equal(options.domain, "ray.example.com");
+});
+
 test("parseCliArgs accepts strict filesystem checks", () => {
   const options = parseCliArgs(["render", "--strict-filesystem"]);
 
@@ -274,6 +281,83 @@ test("runCli explicit gateway runtime flag overrides env-file runtime", async (t
   const rendered = output.join("\n");
   assert.match(rendered, /ExecStart=\/usr\/local\/bin\/bun/);
   assert.doesNotMatch(rendered, /ExecStart=\/opt\/ray\/bin\/bun/);
+});
+
+test("runCli render applies env-file deploy domain to generated Caddyfile", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-domain-env-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(
+    envFile,
+    ["RAY_API_KEYS=test-key", "RAY_DEPLOY_DOMAIN=ray.example.com", ""].join("\n"),
+    "utf8",
+  );
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli([
+    "render",
+    "--cwd",
+    ".",
+    "--config",
+    "./examples/config/ray.1b.generic.public.json",
+    "--ray-env-file",
+    envFile,
+    "--memory-mib",
+    "4096",
+  ]);
+
+  const rendered = output.join("\n");
+  assert.match(rendered, /^ray\.example\.com \{/m);
+});
+
+test("runCli explicit deploy domain overrides env-file domain", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-domain-flag-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(
+    envFile,
+    ["RAY_API_KEYS=test-key", "RAY_DEPLOY_DOMAIN=env.example.com", ""].join("\n"),
+    "utf8",
+  );
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli([
+    "render",
+    "--cwd",
+    ".",
+    "--config",
+    "./examples/config/ray.1b.generic.public.json",
+    "--ray-env-file",
+    envFile,
+    "--memory-mib",
+    "4096",
+    "--domain",
+    "cli.example.com",
+  ]);
+
+  const rendered = output.join("\n");
+  assert.match(rendered, /^cli\.example\.com \{/m);
+  assert.doesNotMatch(rendered, /^env\.example\.com \{/m);
 });
 
 test("runCli render writes deployment files when output-dir is provided", async (t) => {
