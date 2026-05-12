@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
-import type { ModelProvider } from "@razroo/ray-core";
+import type { ModelProvider, ProviderDiagnostics } from "@razroo/ray-core";
 import { createRayRuntime, readCgroupCpuSnapshot, readCgroupMemorySnapshot } from "./index.js";
 
 async function waitForCondition(predicate: () => boolean | Promise<boolean>): Promise<void> {
@@ -1351,6 +1351,66 @@ test("runtime rejects oversized provider result output before caching", async ()
     /provider result: output must be at most 8192 characters/,
   );
   assert.equal(inferCalls, 2);
+});
+
+test("runtime stores bounded provider result diagnostics", async () => {
+  let inferCalls = 0;
+  const longDiagnostic = `d${"x".repeat(600)}`;
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "bounded-result-diagnostics-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async infer() {
+      inferCalls += 1;
+      return {
+        output: "ok",
+        diagnostics: {
+          requestShape: "llama.cpp-completion",
+          promptFormat: "prompt-scaffold",
+          modelRef: longDiagnostic,
+          backendModel: longDiagnostic,
+          launchPreset: longDiagnostic,
+          slotRouteReason: longDiagnostic,
+          jsonRepairAttempted: true,
+          totalSlots: 2,
+          timings: {
+            completionTokensPerSecond: 12,
+          },
+          extra: "not retained",
+        } as ProviderDiagnostics & { extra: string },
+        raw: {
+          extra: "not retained",
+        },
+      };
+    },
+  };
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+
+  const first = await runtime.infer({ input: "hello world" });
+  const second = await runtime.infer({ input: "hello world" });
+  const diagnostics = second.diagnostics?.provider as
+    | (NonNullable<typeof second.diagnostics>["provider"] & { extra?: unknown; raw?: unknown })
+    | undefined;
+
+  assert.equal(first.cached, false);
+  assert.equal(second.cached, true);
+  assert.equal(inferCalls, 1);
+  assert.equal(diagnostics?.requestShape, "llama.cpp-completion");
+  assert.equal(diagnostics?.promptFormat, "prompt-scaffold");
+  assert.equal(diagnostics?.jsonRepairAttempted, true);
+  assert.equal(diagnostics?.totalSlots, 2);
+  assert.equal(diagnostics?.timings?.completionTokensPerSecond, 12);
+  assert.equal(diagnostics?.modelRef?.length, 512);
+  assert.match(diagnostics?.modelRef ?? "", /\[truncated 113 chars\]$/);
+  assert.equal(diagnostics?.backendModel?.length, 512);
+  assert.equal(diagnostics?.launchPreset?.length, 512);
+  assert.equal(diagnostics?.slotRouteReason?.length, 512);
+  assert.equal(diagnostics?.extra, undefined);
+  assert.equal(diagnostics?.raw, undefined);
 });
 
 test("runtime rejects malformed provider result diagnostics before metrics", async () => {

@@ -179,6 +179,7 @@ const MAX_PROVIDER_SLOT_UPDATED_AT_CHARS = 128;
 const MIN_PROVIDER_RESULT_OUTPUT_CHARS = 8_192;
 const MAX_PROVIDER_RESULT_OUTPUT_CHARS = 262_144;
 const MAX_PROVIDER_RESULT_CHARS_PER_TOKEN = 64;
+const MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS = 512;
 const MAX_PROVIDER_HEALTH_CHECKED_AT_CHARS = 128;
 const MAX_PROVIDER_HEALTH_STRING_CHARS = 512;
 const MAX_PROVIDER_HEALTH_DETAIL_DEPTH = 6;
@@ -194,6 +195,18 @@ const providerDiagnosticIntegerFields = [
   "tokensCached",
   "tokensEvaluated",
   "contextWindow",
+] as const;
+const providerDiagnosticStringFields = [
+  "promptFormatReason",
+  "modelRef",
+  "backendModel",
+  "launchPreset",
+  "slotRouteReason",
+] as const;
+const providerDiagnosticBooleanFields = [
+  "jsonRepairAttempted",
+  "jsonRepairSucceeded",
+  "truncated",
 ] as const;
 const providerTimingFields = [
   "ttftMs",
@@ -1990,6 +2003,70 @@ function assertOptionalProviderResultNumber(value: unknown, field: string): void
   }
 }
 
+function assertOptionalProviderResultBoolean(value: unknown, field: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "boolean") {
+    throw createProviderResultError(`${field} must be a boolean`, { field });
+  }
+}
+
+function assertOptionalProviderResultEnum<T extends string>(
+  value: unknown,
+  field: string,
+  allowed: readonly T[],
+): T | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" || !allowed.includes(value as T)) {
+    throw createProviderResultError(`${field} must be a valid provider diagnostic value`, {
+      field,
+    });
+  }
+
+  return value as T;
+}
+
+function normalizeOptionalProviderResultString(value: unknown, field: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw createProviderResultError(`${field} must be a string`, { field });
+  }
+
+  return truncateProviderResultDiagnosticString(value);
+}
+
+function truncateProviderResultDiagnosticString(value: string): string {
+  if (value.length <= MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS) {
+    return value;
+  }
+
+  let headChars = MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS;
+
+  for (;;) {
+    const omittedChars = value.length - headChars;
+    const suffix = `...[truncated ${omittedChars} chars]`;
+    const nextHeadChars = MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS - suffix.length;
+
+    if (nextHeadChars <= 0) {
+      return suffix.slice(0, MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS);
+    }
+
+    if (nextHeadChars === headChars) {
+      return `${value.slice(0, headChars)}${suffix}`;
+    }
+
+    headChars = nextHeadChars;
+  }
+}
+
 function assertProviderUsageBreakdown(value: unknown, field: string): void {
   if (value === undefined) {
     return;
@@ -2019,38 +2096,88 @@ function assertProviderUsage(value: unknown): void {
   assertProviderUsageBreakdown(usage.tokens, "usage.tokens");
 }
 
-function assertProviderDiagnostics(value: unknown): void {
+function normalizeProviderTimings(value: unknown): ProviderDiagnostics["timings"] | undefined {
   if (value === undefined) {
-    return;
+    return undefined;
+  }
+
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw createProviderResultError("diagnostics.timings must be an object", {
+      field: "diagnostics.timings",
+    });
+  }
+
+  const raw = value as ProviderDiagnostics["timings"];
+  const timings: NonNullable<ProviderDiagnostics["timings"]> = {};
+
+  for (const field of providerTimingFields) {
+    assertOptionalProviderResultNumber(raw?.[field], `diagnostics.timings.${field}`);
+
+    if (raw?.[field] !== undefined) {
+      timings[field] = raw[field];
+    }
+  }
+
+  return Object.keys(timings).length > 0 ? timings : undefined;
+}
+
+function normalizeProviderDiagnostics(value: unknown): ProviderDiagnostics | undefined {
+  if (value === undefined) {
+    return undefined;
   }
 
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw createProviderResultError("diagnostics must be an object", { field: "diagnostics" });
   }
 
-  const diagnostics = value as ProviderDiagnostics;
+  const raw = value as ProviderDiagnostics;
+  const diagnostics: ProviderDiagnostics = {};
+  const requestShape = assertOptionalProviderResultEnum(
+    raw.requestShape,
+    "diagnostics.requestShape",
+    ["openai-chat", "llama.cpp-completion"],
+  );
+  const promptFormat = assertOptionalProviderResultEnum(
+    raw.promptFormat,
+    "diagnostics.promptFormat",
+    ["llama.cpp-template", "prompt-scaffold", "ray-chat-fallback"],
+  );
+
+  if (requestShape !== undefined) {
+    diagnostics.requestShape = requestShape;
+  }
+
+  if (promptFormat !== undefined) {
+    diagnostics.promptFormat = promptFormat;
+  }
+
+  for (const field of providerDiagnosticStringFields) {
+    const normalized = normalizeOptionalProviderResultString(raw[field], `diagnostics.${field}`);
+    if (normalized !== undefined) {
+      diagnostics[field] = normalized;
+    }
+  }
+
+  for (const field of providerDiagnosticBooleanFields) {
+    assertOptionalProviderResultBoolean(raw[field], `diagnostics.${field}`);
+    if (raw[field] !== undefined) {
+      diagnostics[field] = raw[field];
+    }
+  }
+
   for (const field of providerDiagnosticIntegerFields) {
-    assertOptionalProviderResultInteger(diagnostics[field], `diagnostics.${field}`);
-  }
-
-  if (diagnostics.timings !== undefined) {
-    if (
-      diagnostics.timings === null ||
-      typeof diagnostics.timings !== "object" ||
-      Array.isArray(diagnostics.timings)
-    ) {
-      throw createProviderResultError("diagnostics.timings must be an object", {
-        field: "diagnostics.timings",
-      });
-    }
-
-    for (const field of providerTimingFields) {
-      assertOptionalProviderResultNumber(
-        diagnostics.timings[field],
-        `diagnostics.timings.${field}`,
-      );
+    assertOptionalProviderResultInteger(raw[field], `diagnostics.${field}`);
+    if (raw[field] !== undefined) {
+      diagnostics[field] = raw[field];
     }
   }
+
+  const timings = normalizeProviderTimings(raw.timings);
+  if (timings !== undefined) {
+    diagnostics.timings = timings;
+  }
+
+  return Object.keys(diagnostics).length > 0 ? diagnostics : undefined;
 }
 
 function resolveProviderResultOutputLimit(request: NormalizedInferenceRequest): number {
@@ -2086,9 +2213,13 @@ function normalizeProviderResult(
   }
 
   assertProviderUsage(value.usage);
-  assertProviderDiagnostics(value.diagnostics);
+  const diagnostics = normalizeProviderDiagnostics(value.diagnostics);
 
-  return value;
+  return {
+    output: value.output,
+    ...(value.usage ? { usage: value.usage } : {}),
+    ...(diagnostics ? { diagnostics } : {}),
+  };
 }
 
 function createProviderHealthError(message: string, details?: Record<string, unknown>): RayError {

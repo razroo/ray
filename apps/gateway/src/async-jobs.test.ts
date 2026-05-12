@@ -522,7 +522,7 @@ test("durable inference queue fails oversized persisted results without writing 
       },
     });
     const provider: ModelProvider = {
-      modelId: config.model.id,
+      modelId: "x".repeat(PERSISTED_JOB_FILE_LIMIT_BYTES),
       kind: "mock",
       capabilities: {
         streaming: false,
@@ -531,9 +531,6 @@ test("durable inference queue fails oversized persisted results without writing 
       },
       infer: async () => ({
         output: "done",
-        diagnostics: {
-          modelRef: "x".repeat(PERSISTED_JOB_FILE_LIMIT_BYTES),
-        },
       }),
     };
     const runtime = createRayRuntime(config, { provider });
