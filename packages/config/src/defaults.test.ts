@@ -119,6 +119,7 @@ test("sub1b profile defaults to a bounded llama.cpp launch profile", () => {
   assert.equal(config.asyncQueue.maxJobs, 1_000);
   assert.equal(config.asyncQueue.minFreeStorageMiB, 256);
   assert.equal(config.asyncQueue.completedTtlMs, 86_400_000);
+  assert.equal(config.cache.maxBytes, 2 * 1024 * 1024);
   assert.equal(config.gracefulDegradation.memoryRssThresholdMiB, 512);
   assert.equal(config.gracefulDegradation.cpuThrottledRatioThreshold, 0.2);
   assert.equal(config.rateLimit.maxKeys, 4096);
@@ -166,6 +167,7 @@ test("1b profile defaults to a conservative llama.cpp launch profile", () => {
   assert.equal(config.model.adapter.launchProfile.cacheRamMiB, 384);
   assert.equal(config.scheduler.concurrency, 1);
   assert.equal(config.asyncQueue.minFreeStorageMiB, 256);
+  assert.equal(config.cache.maxBytes, 2 * 1024 * 1024);
   assert.equal(config.gracefulDegradation.memoryRssThresholdMiB, 512);
   assert.equal(config.gracefulDegradation.cpuThrottledRatioThreshold, 0.2);
 });
@@ -193,6 +195,7 @@ test("1b-8gb profile defaults to a roomier llama.cpp launch profile", () => {
   assert.equal(config.adaptiveTuning.queueLatencyThresholdMs, 450);
   assert.equal(config.adaptiveTuning.minCompletionTokensPerSecond, 14);
   assert.equal(config.rateLimit.maxKeys, 8192);
+  assert.equal(config.cache.maxBytes, 4 * 1024 * 1024);
 });
 
 test("remote-backend default profiles keep gateway timeouts above adapter timeouts", () => {

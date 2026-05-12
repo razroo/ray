@@ -21,6 +21,40 @@ test("ttl cache evicts the oldest entry once full", () => {
   assert.equal(cache.get("c"), "three");
 });
 
+test("ttl cache evicts the oldest entries to stay within byte budget", () => {
+  const cache = new TtlCache<string>({
+    maxEntries: 10,
+    ttlMs: 10_000,
+    maxBytes: 10,
+    sizeOf: (value) => value.length,
+  });
+
+  cache.set("a", "12345");
+  cache.set("b", "12345");
+  cache.set("c", "12345");
+
+  assert.equal(cache.get("a"), undefined);
+  assert.equal(cache.get("b"), "12345");
+  assert.equal(cache.get("c"), "12345");
+  assert.equal(cache.sizeBytes(), 10);
+});
+
+test("ttl cache does not retain single entries above byte budget", () => {
+  const cache = new TtlCache<string>({
+    maxEntries: 10,
+    ttlMs: 10_000,
+    maxBytes: 8,
+    sizeOf: (value) => value.length,
+  });
+
+  cache.set("a", "cached");
+  cache.set("a", "too-large");
+
+  assert.equal(cache.get("a"), undefined);
+  assert.equal(cache.size(), 0);
+  assert.equal(cache.sizeBytes(), 0);
+});
+
 test("ttl cache rejects invalid capacity and ttl options", () => {
   assert.throws(() => new TtlCache<string>({ maxEntries: 0, ttlMs: 10_000 }), /maxEntries/);
   assert.throws(() => new TtlCache<string>({ maxEntries: 2.5, ttlMs: 10_000 }), /maxEntries/);
@@ -28,6 +62,20 @@ test("ttl cache rejects invalid capacity and ttl options", () => {
   assert.throws(
     () => new TtlCache<string>({ maxEntries: 2, ttlMs: Number.POSITIVE_INFINITY }),
     /ttlMs/,
+  );
+  assert.throws(
+    () => new TtlCache<string>({ maxEntries: 2, ttlMs: 10_000, maxBytes: 0 }),
+    /maxBytes/,
+  );
+  assert.throws(
+    () =>
+      new TtlCache<string>({
+        maxEntries: 2,
+        ttlMs: 10_000,
+        maxBytes: 10,
+        sizeOf: () => -1,
+      }).set("a", "one"),
+    /cache entry size/,
   );
 });
 

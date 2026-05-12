@@ -59,6 +59,7 @@
   },
   "cache": {
     "maxEntries": 512,
+    "maxBytes": 4194304,
     "ttlMs": 120000
   },
   "telemetry": {

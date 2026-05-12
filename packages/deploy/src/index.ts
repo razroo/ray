@@ -1706,6 +1706,7 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
   lines.push(`# RAY_ASYNC_QUEUE_ENABLED=${config.asyncQueue.enabled}`);
   lines.push(`# RAY_CACHE_ENABLED=${config.cache.enabled}`);
   lines.push(`# RAY_CACHE_MAX_ENTRIES=${config.cache.maxEntries}`);
+  lines.push(`# RAY_CACHE_MAX_BYTES=${config.cache.maxBytes}`);
   lines.push(`# RAY_CACHE_TTL_MS=${config.cache.ttlMs}`);
   lines.push(`# RAY_CACHE_KEY_STRATEGY=${config.cache.keyStrategy}`);
   lines.push(`# RAY_GRACEFUL_DEGRADATION_ENABLED=${config.gracefulDegradation.enabled}`);

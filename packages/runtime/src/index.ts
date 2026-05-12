@@ -1783,6 +1783,27 @@ function buildResponse(
   };
 }
 
+function estimateCachedInferencePayloadBytes(
+  payload: CachedInferencePayload,
+  cacheKey: string,
+): number {
+  return (
+    Buffer.byteLength(cacheKey, "utf8") +
+    Buffer.byteLength(payload.model, "utf8") +
+    Buffer.byteLength(payload.output, "utf8") +
+    estimateJsonBytes(payload.usage) +
+    (payload.providerDiagnostics ? estimateJsonBytes(payload.providerDiagnostics) : 0)
+  );
+}
+
+function estimateJsonBytes(value: unknown): number {
+  try {
+    return Buffer.byteLength(JSON.stringify(value) ?? "null", "utf8");
+  } catch {
+    return 0;
+  }
+}
+
 function createPreparationTimeoutError(timeoutMs: number): RayError {
   return new RayError("The inference request exceeded the preparation timeout", {
     code: "request_timeout",
@@ -2452,7 +2473,9 @@ export class RayRuntime {
       options.cache ??
       new TtlCache<CachedInferencePayload>({
         maxEntries: this.config.cache.maxEntries,
+        maxBytes: this.config.cache.maxBytes,
         ttlMs: this.config.cache.ttlMs,
+        sizeOf: estimateCachedInferencePayloadBytes,
       });
     this.memoryUsage = options.memoryUsage ?? process.memoryUsage;
     this.cgroupMemory =
@@ -3164,11 +3187,16 @@ export class RayRuntime {
 
   private recordCacheMetrics(): void {
     const entries = this.cache.size();
+    const bytes = this.cache.sizeBytes();
     const maxEntries = this.config.cache.maxEntries;
+    const maxBytes = this.config.cache.maxBytes;
 
     this.metrics.gauge("cache.entries", entries);
     this.metrics.gauge("cache.max_entries", maxEntries);
     this.metrics.gauge("cache.entries_ratio", entries / Math.max(1, maxEntries));
+    this.metrics.gauge("cache.bytes", bytes);
+    this.metrics.gauge("cache.max_bytes", maxBytes);
+    this.metrics.gauge("cache.bytes_ratio", bytes / Math.max(1, maxBytes));
   }
 
   private getProcessRssMiB(): number {

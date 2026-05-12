@@ -12,6 +12,7 @@ type Sub1bMachineClass = "cx23" | "cax11";
 type OneBMachineClass = "cx23" | "8gb";
 const unsafeMergeKeys = new Set(["__proto__", "constructor", "prototype"]);
 const DEFAULT_CPU_THROTTLED_RATIO_THRESHOLD = 0.2;
+const MIB = 1024 * 1024;
 
 function createSub1bLaunchProfile(machineClass: Sub1bMachineClass): LlamaCppLaunchProfile {
   if (machineClass === "cax11") {
@@ -124,6 +125,7 @@ function createSub1bDefaults(machineClass: Sub1bMachineClass): RayConfig {
     cache: {
       enabled: true,
       maxEntries: 256,
+      maxBytes: 2 * MIB,
       ttlMs: 90_000,
       keyStrategy: "input+params",
     },
@@ -304,6 +306,7 @@ function create1bDefaults(machineClass: OneBMachineClass): RayConfig {
     cache: {
       enabled: true,
       maxEntries: is8gb ? 512 : 256,
+      maxBytes: is8gb ? 4 * MIB : 2 * MIB,
       ttlMs: 120_000,
       keyStrategy: "input+params",
     },
@@ -411,6 +414,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
     cache: {
       enabled: true,
       maxEntries: 128,
+      maxBytes: MIB,
       ttlMs: 30_000,
       keyStrategy: "input+params",
     },
@@ -518,6 +522,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
     cache: {
       enabled: true,
       maxEntries: 512,
+      maxBytes: 4 * MIB,
       ttlMs: 120_000,
       keyStrategy: "input+params",
     },
@@ -621,6 +626,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
     cache: {
       enabled: true,
       maxEntries: 1024,
+      maxBytes: 8 * MIB,
       ttlMs: 180_000,
       keyStrategy: "input+params",
     },

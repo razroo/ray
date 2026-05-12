@@ -143,7 +143,7 @@ The scaffold targets a credible first version:
 - `packages/runtime`: request normalization, degradation policy, cache integration, and provider orchestration
 - `packages/models`: provider abstraction with `mock` and `openai-compatible` adapters
 - `packages/scheduler`: lightweight queueing, token-aware admission, concurrency limits, and in-flight deduplication
-- `packages/cache`: TTL cache for prompt/result reuse
+- `packages/cache`: byte- and entry-bounded TTL cache for prompt/result reuse
 - `packages/config`: profile defaults and JSON config loading
 - `packages/telemetry`: JSON logger and lightweight in-memory metrics
 - `packages/deploy`: systemd and Caddy scaffolding for cheap VPS deployment
@@ -264,6 +264,7 @@ RAY_SCHEDULER_AFFINITY_LOOKAHEAD=12
 RAY_SCHEDULER_SHORT_JOB_MAX_TOKENS=96
 RAY_CACHE_ENABLED=true
 RAY_CACHE_MAX_ENTRIES=256
+RAY_CACHE_MAX_BYTES=2097152
 RAY_CACHE_TTL_MS=120000
 RAY_CACHE_KEY_STRATEGY=input+params
 RAY_PROMPT_COMPILER_ENABLED=true

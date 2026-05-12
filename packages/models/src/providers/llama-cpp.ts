@@ -1581,6 +1581,7 @@ export class LlamaCppProvider implements ModelProvider {
         cache: {
           enabled: false,
           maxEntries: 1,
+          maxBytes: 1,
           ttlMs: 1,
           keyStrategy: "input",
         },

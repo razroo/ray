@@ -60,6 +60,7 @@
   "cache": {
     "enabled": true,
     "maxEntries": 256,
+    "maxBytes": 2097152,
     "ttlMs": 90000,
     "keyStrategy": "input+params"
   },

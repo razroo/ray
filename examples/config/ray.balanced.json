@@ -29,6 +29,7 @@
   "cache": {
     "enabled": true,
     "maxEntries": 1024,
+    "maxBytes": 8388608,
     "ttlMs": 180000,
     "keyStrategy": "input+params"
   },

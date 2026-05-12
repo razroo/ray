@@ -268,6 +268,7 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
       RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS: "callback.example,*.trusted.example",
       RAY_CACHE_ENABLED: "0",
       RAY_CACHE_MAX_ENTRIES: "128",
+      RAY_CACHE_MAX_BYTES: "65536",
       RAY_CACHE_TTL_MS: "45000",
       RAY_CACHE_KEY_STRATEGY: "input",
       RAY_GRACEFUL_DEGRADATION_ENABLED: "1",
@@ -363,6 +364,7 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
   ]);
   assert.equal(loaded.config.cache.enabled, false);
   assert.equal(loaded.config.cache.maxEntries, 128);
+  assert.equal(loaded.config.cache.maxBytes, 65_536);
   assert.equal(loaded.config.cache.ttlMs, 45_000);
   assert.equal(loaded.config.cache.keyStrategy, "input");
   assert.equal(loaded.config.gracefulDegradation.enabled, true);
@@ -771,6 +773,26 @@ test("loadRayConfig rejects oversized retained-entry budgets", async (t) => {
       env: {},
     }),
     /cache\.maxEntries must be less than or equal to 4096/,
+  );
+
+  const cacheBytesConfigPath = join(tempDir, "ray.cache-bytes.invalid.json");
+  await writeFile(
+    cacheBytesConfigPath,
+    JSON.stringify({
+      profile: "tiny",
+      cache: {
+        maxBytes: 268_435_457,
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: cacheBytesConfigPath,
+      env: {},
+    }),
+    /cache\.maxBytes must be less than or equal to 268435456/,
   );
 
   const rateLimitConfigPath = join(tempDir, "ray.rate-limit.invalid.json");

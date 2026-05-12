@@ -125,7 +125,7 @@ Current design choices that reflect this:
 - no required database
 - no required message broker
 - no distributed cache in the MVP
-- in-memory TTL cache with bounded entry count
+- in-memory TTL cache with bounded entry count and byte budget
 - bounded request queue with explicit backpressure
 - process RSS, Linux cgroup memory, and cgroup CPU throttling signals for overload decisions
 

@@ -51,6 +51,7 @@ const MAX_ASYNC_DISPATCH_CONCURRENCY = 8;
 const MAX_ASYNC_QUEUE_JOBS = 2_000;
 const MAX_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB = 1_048_576;
 const MAX_CACHE_ENTRIES = 4_096;
+const MAX_CACHE_BYTES = 256 * 1024 * 1024;
 const MAX_RATE_LIMIT_KEYS = 16_384;
 const MAX_CONFIG_RECORD_ENTRIES = 64;
 const MAX_CONFIG_RECORD_KEY_CHARS = 128;
@@ -530,6 +531,7 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
   );
   const cacheEnabled = parseBoolean(env.RAY_CACHE_ENABLED, "RAY_CACHE_ENABLED");
   const cacheMaxEntries = parsePositiveInteger(env.RAY_CACHE_MAX_ENTRIES, "RAY_CACHE_MAX_ENTRIES");
+  const cacheMaxBytes = parsePositiveInteger(env.RAY_CACHE_MAX_BYTES, "RAY_CACHE_MAX_BYTES");
   const cacheTtlMs = parsePositiveInteger(env.RAY_CACHE_TTL_MS, "RAY_CACHE_TTL_MS");
   const cacheKeyStrategy = parseCacheKeyStrategy(
     env.RAY_CACHE_KEY_STRATEGY,
@@ -1031,6 +1033,10 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
 
   if (cacheMaxEntries !== undefined) {
     next.cache.maxEntries = cacheMaxEntries;
+  }
+
+  if (cacheMaxBytes !== undefined) {
+    next.cache.maxBytes = cacheMaxBytes;
   }
 
   if (cacheTtlMs !== undefined) {
@@ -1935,6 +1941,7 @@ function validateConfig(config: RayConfig): RayConfig {
     "asyncQueue.callbackAllowedHosts",
   );
   assertPositiveIntegerAtMost(config.cache.maxEntries, "cache.maxEntries", MAX_CACHE_ENTRIES);
+  assertPositiveIntegerAtMost(config.cache.maxBytes, "cache.maxBytes", MAX_CACHE_BYTES);
   assertPositiveIntegerAtMost(config.cache.ttlMs, "cache.ttlMs", MAX_CACHE_TTL_MS);
   assertPositiveIntegerAtMost(
     config.gracefulDegradation.maxPromptChars,

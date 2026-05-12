@@ -586,6 +586,9 @@ test("runtime collected metrics refresh live queue and cgroup pressure gauges", 
   assert.equal(metrics.gauges["cache.entries"], 0);
   assert.equal(metrics.gauges["cache.max_entries"], config.cache.maxEntries);
   assert.equal(metrics.gauges["cache.entries_ratio"], 0);
+  assert.equal(metrics.gauges["cache.bytes"], 0);
+  assert.equal(metrics.gauges["cache.max_bytes"], config.cache.maxBytes);
+  assert.equal(metrics.gauges["cache.bytes_ratio"], 0);
   assert.equal(metrics.gauges["process.memory.cgroup_current_mib"], 700);
   assert.equal(metrics.gauges["process.memory.cgroup_high_mib"], 800);
   assert.equal(metrics.gauges["process.memory.cgroup_limit_mib"], 1_000);
@@ -1090,6 +1093,42 @@ test("runtime keeps seeded variants isolated in cache keys", async () => {
   assert.equal(third.output, "seed:12:call:2");
   assert.equal(third.cached, false);
   assert.deepEqual(calls, [11, 12]);
+});
+
+test("runtime skips caching payloads above the configured byte budget", async () => {
+  let calls = 0;
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "byte-budget-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async infer() {
+      calls += 1;
+      return {
+        output: `call:${calls}:${"x".repeat(1_024)}`,
+      };
+    },
+  };
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    cache: {
+      maxBytes: 512,
+    },
+  });
+  const runtime = createRayRuntime(config, { provider });
+
+  const first = await runtime.infer({ input: "hello world" });
+  const second = await runtime.infer({ input: "hello world" });
+  const metrics = runtime.metricsSnapshot();
+
+  assert.equal(first.cached, false);
+  assert.equal(second.cached, false);
+  assert.equal(calls, 2);
+  assert.equal(metrics.gauges["cache.entries"], 0);
+  assert.equal(metrics.gauges["cache.bytes"], 0);
+  assert.equal(metrics.gauges["cache.max_bytes"], 512);
 });
 
 test("runtime uses provider token preparation and exposes compiler diagnostics", async () => {

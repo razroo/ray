@@ -496,6 +496,9 @@ test("gateway metrics endpoint refreshes live runtime gauges", async (t) => {
   assert.equal(body.gauges["cache.entries"], 0);
   assert.equal(body.gauges["cache.max_entries"], config.cache.maxEntries);
   assert.equal(body.gauges["cache.entries_ratio"], 0);
+  assert.equal(body.gauges["cache.bytes"], 0);
+  assert.equal(body.gauges["cache.max_bytes"], config.cache.maxBytes);
+  assert.equal(body.gauges["cache.bytes_ratio"], 0);
   assert.equal(body.gauges["process.memory.rss_pressure_ratio"], 0.125);
   assert.equal(body.gauges["process.memory.cgroup_current_mib"], 640);
   assert.equal(body.gauges["process.memory.cgroup_high_mib"], 800);

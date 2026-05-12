@@ -73,6 +73,7 @@ function createContext(model: ModelConfig, signal: AbortSignal): ProviderContext
       cache: {
         enabled: true,
         maxEntries: 32,
+        maxBytes: 64 * 1024,
         ttlMs: 1_000,
         keyStrategy: "input+params",
       },

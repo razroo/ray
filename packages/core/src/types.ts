@@ -152,6 +152,7 @@ export interface AsyncQueueConfig {
 export interface CacheConfig {
   enabled: boolean;
   maxEntries: number;
+  maxBytes: number;
   ttlMs: number;
   keyStrategy: "input" | "input+params";
 }

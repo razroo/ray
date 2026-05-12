@@ -547,6 +547,7 @@ test("renderEnvironmentFileExample documents gateway behavior switches", () => {
   assert.match(envFile, /RAY_ASYNC_QUEUE_ENABLED=true/);
   assert.match(envFile, /RAY_CACHE_ENABLED=true/);
   assert.match(envFile, /RAY_CACHE_MAX_ENTRIES=256/);
+  assert.match(envFile, /RAY_CACHE_MAX_BYTES=2097152/);
   assert.match(envFile, /RAY_CACHE_TTL_MS=120000/);
   assert.match(envFile, /RAY_CACHE_KEY_STRATEGY=input\+params/);
   assert.match(envFile, /RAY_GRACEFUL_DEGRADATION_ENABLED=true/);
