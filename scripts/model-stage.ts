@@ -441,6 +441,9 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
   )})" || exit "$?"; test "\${binary_source_bytes:-0}" -le ${MAX_LLAMA_CPP_BINARY_SOURCE_BYTES} || { printf '%s\\n' ${shellQuote(
     `llama-server source must be at most ${MAX_LLAMA_CPP_BINARY_SOURCE_MIB} MiB before copying to ${plan.binaryPath}.`,
   )} >&2; exit 1; }`;
+  const binaryChecksumPreflight = plan.binarySha256
+    ? `printf '%s  %s\\n' ${shellQuote(plan.binarySha256)} ${shellQuote(binarySourcePath)} | timeout ${STAGE_BINARY_CHECKSUM_TIMEOUT_SECONDS}s sha256sum -c -`
+    : undefined;
   const modelStoragePreflight = `du_output="$(timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s du -m ${shellQuote(
     sourcePath,
   )})" || exit "$?"; df_output="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s df -Pm ${shellQuote(
@@ -462,9 +465,13 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
           sourcePath,
         )})" || exit "$?"; source_mib="$(((\${source_bytes:-0} + ${BYTES_PER_MIB - 1}) / ${BYTES_PER_MIB}))"; test "$source_mib" -ge 1 || source_mib=1; projected_mib="$((source_mib + ${plan.nonModelWorkingSetMiB}))"; test "$projected_mib" -le ${plan.safeMemoryBudgetMiB} || { printf '%s\\n' "Projected llama.cpp working set would be \${projected_mib} MiB, above the safe budget of ${plan.safeMemoryBudgetMiB} MiB on the ${plan.memoryBudgetMiB} MiB ${plan.memoryBudgetSource} memory target. Use a smaller GGUF or reduce cache/context before staging." >&2; exit 1; }`
       : undefined;
+  const modelChecksumPreflight = plan.sha256
+    ? `printf '%s  %s\\n' ${shellQuote(plan.sha256)} ${shellQuote(sourcePath)} | timeout ${STAGE_MODEL_CHECKSUM_TIMEOUT_SECONDS}s sha256sum -c -`
+    : undefined;
   const commands = [
     `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo install -d -m 0755 ${shellQuote(plan.binaryDirectory)}`,
     binarySourcePreflight,
+    ...(binaryChecksumPreflight ? [binaryChecksumPreflight] : []),
     `timeout ${STAGE_BINARY_COPY_TIMEOUT_SECONDS}s sudo install -D -m 0755 -- ${shellQuote(binarySourcePath)} ${shellQuote(plan.binaryPath)}`,
     `timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s sudo -u ${shellQuote(plan.serviceUser)} test -x ${shellQuote(plan.binaryPath)}`,
     `timeout ${STAGE_SERVICE_PROBE_TIMEOUT_SECONDS}s sudo -u ${shellQuote(plan.serviceUser)} timeout ${LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS}s ${shellQuote(plan.binaryPath)} --help >/dev/null`,
@@ -472,26 +479,11 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
     ...(modelMemoryPreflight ? [modelMemoryPreflight] : []),
     modelStoragePreflight,
     modelFormatPreflight,
+    ...(modelChecksumPreflight ? [modelChecksumPreflight] : []),
     `timeout ${STAGE_MODEL_COPY_TIMEOUT_SECONDS}s sudo install -D -m 0640 -- ${shellQuote(sourcePath)} ${shellQuote(plan.modelPath)}`,
     `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo chown ${shellQuote(owner)} ${shellQuote(plan.modelPath)}`,
     `timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s sudo -u ${shellQuote(plan.serviceUser)} test -r ${shellQuote(plan.modelPath)}`,
   ];
-
-  if (plan.binarySha256) {
-    commands.splice(
-      3,
-      0,
-      `printf '%s  %s\\n' ${shellQuote(plan.binarySha256)} ${shellQuote(plan.binaryPath)} | timeout ${STAGE_BINARY_CHECKSUM_TIMEOUT_SECONDS}s sha256sum -c -`,
-    );
-  }
-
-  if (plan.sha256) {
-    commands.splice(
-      commands.length - 1,
-      0,
-      `printf '%s  %s\\n' ${shellQuote(plan.sha256)} ${shellQuote(plan.modelPath)} | timeout ${STAGE_MODEL_CHECKSUM_TIMEOUT_SECONDS}s sudo sha256sum -c -`,
-    );
-  }
 
   return commands;
 }

@@ -205,17 +205,17 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
   assert.deepEqual(plan.commands, [
     "timeout 60s sudo install -d -m 0755 '/usr/local/bin'",
     `binary_source_bytes="$(timeout 30s stat -c %s -- './bin/llama-server')" || exit "$?"; test "\${binary_source_bytes:-0}" -le 536870912 || { printf '%s\\n' 'llama-server source must be at most 512 MiB before copying to /usr/local/bin/llama-server.' >&2; exit 1; }`,
+    "printf '%s  %s\\n' 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' './bin/llama-server' | timeout 120s sha256sum -c -",
     "timeout 120s sudo install -D -m 0755 -- './bin/llama-server' '/usr/local/bin/llama-server'",
-    "printf '%s  %s\\n' 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' '/usr/local/bin/llama-server' | timeout 120s sha256sum -c -",
     "timeout 30s sudo -u 'rayops' test -x '/usr/local/bin/llama-server'",
     "timeout 15s sudo -u 'rayops' timeout 5s '/usr/local/bin/llama-server' --help >/dev/null",
     "timeout 60s sudo install -d -m 0755 '/var/lib/ray/models'",
     `source_bytes="$(timeout 30s stat -c %s -- './models/portable-1b.gguf')" || exit "$?"; source_mib="$(((\${source_bytes:-0} + 1048575) / 1048576))"; test "$source_mib" -ge 1 || source_mib=1; projected_mib="$((source_mib + 1136))"; test "$projected_mib" -le 3276 || { printf '%s\\n' "Projected llama.cpp working set would be \${projected_mib} MiB, above the safe budget of 3276 MiB on the 4096 MiB config memory target. Use a smaller GGUF or reduce cache/context before staging." >&2; exit 1; }`,
     `du_output="$(timeout 60s du -m './models/portable-1b.gguf')" || exit "$?"; df_output="$(timeout 30s df -Pm '/var/lib/ray/models')" || exit "$?"; required_mib="$(printf '%s\\n' "$du_output" | awk 'NR==1 {print $1 + 256}')"; available_mib="$(printf '%s\\n' "$df_output" | awk 'NR==2 {print $4}')"; test "\${available_mib:-0}" -ge "\${required_mib:-0}" || { printf '%s\\n' 'Not enough free space in /var/lib/ray/models: keep at least 256 MiB free after copying the GGUF.' >&2; exit 1; }`,
     `magic="$(timeout 30s head -c 4 -- './models/portable-1b.gguf')" || exit "$?"; test "$magic" = 'GGUF' || { printf '%s\\n' 'GGUF source does not start with the GGUF header: ./models/portable-1b.gguf' >&2; exit 1; }`,
+    "printf '%s  %s\\n' 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' './models/portable-1b.gguf' | timeout 1800s sha256sum -c -",
     "timeout 1800s sudo install -D -m 0640 -- './models/portable-1b.gguf' '/var/lib/ray/models/portable-1b.gguf'",
     "timeout 60s sudo chown 'rayops:rayops' '/var/lib/ray/models/portable-1b.gguf'",
-    "printf '%s  %s\\n' 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' '/var/lib/ray/models/portable-1b.gguf' | timeout 1800s sudo sha256sum -c -",
     "timeout 30s sudo -u 'rayops' test -r '/var/lib/ray/models/portable-1b.gguf'",
   ]);
 });
@@ -244,6 +244,11 @@ test("createModelStagePlan reads staging sources and checksums from env", async 
     plan.commands.join("\n"),
     /timeout 30s stat -c %s -- '\/tmp\/ray-artifacts\/llama-server'/,
   );
+  assert.ok(
+    plan.commands.includes(
+      "printf '%s  %s\\n' 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' '/tmp/ray-artifacts/llama-server' | timeout 120s sha256sum -c -",
+    ),
+  );
   assert.match(
     plan.commands.join("\n"),
     /timeout 1800s sudo install -D -m 0640 -- '\/tmp\/ray-artifacts\/local-1b-q4\.gguf' '\/var\/lib\/ray\/models\/local-1b-q4\.gguf'/,
@@ -251,6 +256,11 @@ test("createModelStagePlan reads staging sources and checksums from env", async 
   assert.match(
     plan.commands.join("\n"),
     /timeout 30s stat -c %s -- '\/tmp\/ray-artifacts\/local-1b-q4\.gguf'/,
+  );
+  assert.ok(
+    plan.commands.includes(
+      "printf '%s  %s\\n' 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' '/tmp/ray-artifacts/local-1b-q4.gguf' | timeout 1800s sha256sum -c -",
+    ),
   );
   assert.match(plan.commands.join("\n"), /Projected llama\.cpp working set would be/);
   assert.match(plan.commands.join("\n"), /timeout 30s df -Pm '\/var\/lib\/ray\/models'/);
