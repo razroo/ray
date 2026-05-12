@@ -1868,6 +1868,38 @@ test("diagnoseConfig reports an available systemd host in strict mode", () => {
   assert.match(diagnostic.message, /systemd 255/);
 });
 
+test("diagnoseConfig errors when generated systemd units fail verification", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      systemdUnitStatus: "invalid",
+      systemdUnitError: "Unknown key MemorySwapMax",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "systemd_units_invalid");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /systemd-analyze/);
+  assert.match(diagnostic.message, /MemorySwapMax/);
+});
+
+test("diagnoseConfig reports verified generated systemd units in strict mode", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      systemdUnitStatus: "valid",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "systemd_units_ok");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+  assert.match(diagnostic.message, /systemd-analyze/);
+});
+
 test("diagnoseConfig errors when Caddy is missing in strict mode", () => {
   const config = createDefaultConfig("tiny");
   const diagnostics = diagnoseConfig(config, process.env, undefined, {

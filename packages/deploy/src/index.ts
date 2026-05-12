@@ -85,6 +85,7 @@ type EnvFileStatus = "found" | "missing" | "unreadable";
 type ServiceUserStatus = "found" | "missing" | "unreadable";
 type ServiceUserAccessStatus = "ok" | "blocked";
 type SystemdHostStatus = "available" | "missing" | "unreadable";
+type SystemdUnitStatus = "valid" | "invalid" | "unreadable";
 type SwapStatus = "available" | "missing" | "unreadable";
 type SwappinessStatus = "available" | "unreadable";
 
@@ -157,6 +158,8 @@ export interface DeploymentPreflight {
   systemdStatus?: SystemdHostStatus;
   systemdVersion?: string;
   systemdError?: string;
+  systemdUnitStatus?: SystemdUnitStatus;
+  systemdUnitError?: string;
   swapStatus?: SwapStatus;
   swapTotalMiB?: number;
   swapError?: string;
@@ -208,6 +211,8 @@ const GATEWAY_RUNTIME_VERSION_MAX_BUFFER_BYTES = 16 * 1024;
 const SYSTEMD_RUNTIME_DIRECTORY = "/run/systemd/system";
 const SYSTEMCTL_VERSION_TIMEOUT_MS = 3_000;
 const SYSTEMCTL_VERSION_MAX_BUFFER_BYTES = 16 * 1024;
+const SYSTEMD_ANALYZE_VERIFY_TIMEOUT_MS = 3_000;
+const SYSTEMD_ANALYZE_VERIFY_MAX_BUFFER_BYTES = 64 * 1024;
 const CADDY_VERSION_TIMEOUT_MS = 3_000;
 const CADDY_VERSION_MAX_BUFFER_BYTES = 16 * 1024;
 const CADDY_VALIDATE_TIMEOUT_MS = 3_000;
@@ -1863,6 +1868,28 @@ export function diagnoseConfig(
     }
   }
 
+  if (strictFilesystem && preflight?.systemdUnitStatus !== undefined) {
+    if (preflight.systemdUnitStatus === "invalid") {
+      diagnostics.push({
+        level: "error",
+        code: "systemd_units_invalid",
+        message: `The generated systemd units did not verify with systemd-analyze${preflight.systemdUnitError ? ` (${preflight.systemdUnitError})` : ""}. Fix the rendered gateway or llama.cpp unit before installing or restarting services.`,
+      });
+    } else if (preflight.systemdUnitStatus === "unreadable") {
+      diagnostics.push({
+        level: "error",
+        code: "systemd_units_unreadable",
+        message: `Doctor could not verify the generated systemd units${preflight.systemdUnitError ? ` (${preflight.systemdUnitError})` : ""}. Run systemd-analyze verify manually before installing or restarting Ray services.`,
+      });
+    } else {
+      diagnostics.push({
+        level: "info",
+        code: "systemd_units_ok",
+        message: "The generated systemd units verify with systemd-analyze on this host.",
+      });
+    }
+  }
+
   if (strictFilesystem && preflight?.caddyStatus !== undefined) {
     if (preflight.caddyStatus === "missing") {
       diagnostics.push({
@@ -2824,38 +2851,18 @@ export async function renderDeploymentBundle(options: {
       : {}),
     ...(allowMissingAuthKeys ? { allowMissingAuthKeys } : {}),
   });
-  const stateDirectory = inferRayStateDirectory(inspected.config);
-  const rendersLlamaCppService =
-    inspected.config.model.adapter.kind === "llama.cpp" &&
-    inspected.config.model.adapter.launchProfile !== undefined;
-  const gatewaySystemdControls = resolveGatewaySystemdControls(inspected.config);
-  const llamaCppSystemdControls =
-    inspected.config.model.adapter.kind === "llama.cpp" &&
-    inspected.config.model.adapter.launchProfile
-      ? resolveLlamaCppSystemdControls(
-          inspected.config.model.adapter.launchProfile,
-          inspected.preflight,
-        )
-      : undefined;
+  const renderedSystemd = renderDeploymentSystemdServices(inspected.config, inspected.preflight, {
+    cwd,
+    configPath: options.configPath,
+    user: options.user,
+    ...(options.runtimeBinary ? { runtimeBinary: options.runtimeBinary } : {}),
+    ...(options.nodeBinary ? { nodeBinary: options.nodeBinary } : {}),
+    ...(systemdEnvFile ? { envFile: systemdEnvFile } : {}),
+  });
   const summaryConfig = sanitizeDeploymentSummaryConfig(inspected.config);
 
   return {
-    service: renderSystemdService({
-      workingDirectory: cwd,
-      configPath: options.configPath,
-      user: options.user,
-      ...gatewaySystemdControls,
-      ...(options.runtimeBinary ? { runtimeBinary: options.runtimeBinary } : {}),
-      ...(options.nodeBinary ? { nodeBinary: options.nodeBinary } : {}),
-      ...(systemdEnvFile ? { envFile: systemdEnvFile } : {}),
-      ...(stateDirectory ? { stateDirectory } : {}),
-      ...(rendersLlamaCppService
-        ? {
-            after: [LLAMA_CPP_SYSTEMD_SERVICE],
-            wants: [LLAMA_CPP_SYSTEMD_SERVICE],
-          }
-        : {}),
-    }),
+    service: renderedSystemd.service,
     caddyfile: renderCaddyfile({
       domain: options.domain,
       upstreamPort: inspected.config.server.port,
@@ -2864,24 +2871,75 @@ export async function renderDeploymentBundle(options: {
         inspected.config.scheduler.requestTimeoutMs + CADDY_UPSTREAM_TIMEOUT_GRACE_MS,
     }),
     envFileExample: renderEnvironmentFileExample(inspected.config),
-    ...(inspected.config.model.adapter.kind === "llama.cpp" &&
-    inspected.config.model.adapter.launchProfile
+    ...(renderedSystemd.llamaCppService
       ? {
-          llamaCppService: renderLlamaCppService({
-            user: options.user,
-            launchProfile: inspected.config.model.adapter.launchProfile,
-            ...(llamaCppSystemdControls ? llamaCppSystemdControls : {}),
-          }),
+          llamaCppService: renderedSystemd.llamaCppService,
         }
       : {}),
     summary: {
       ...summaryConfig,
       diagnostics: inspected.diagnostics,
       preflight: inspected.preflight,
-      systemd: {
-        gateway: gatewaySystemdControls,
-        ...(llamaCppSystemdControls ? { llamaCpp: llamaCppSystemdControls } : {}),
-      },
+      systemd: renderedSystemd.systemd,
+    },
+  };
+}
+
+function renderDeploymentSystemdServices(
+  config: RayConfig,
+  preflight: Pick<DeploymentPreflight, "memoryBudgetMiB">,
+  options: {
+    cwd: string;
+    configPath: string;
+    user: string;
+    envFile?: string;
+    runtimeBinary?: string;
+    nodeBinary?: string;
+  },
+): {
+  service: string;
+  llamaCppService?: string;
+  systemd: DeploymentBundleSummary["systemd"];
+} {
+  const stateDirectory = inferRayStateDirectory(config);
+  const rendersLlamaCppService =
+    config.model.adapter.kind === "llama.cpp" && config.model.adapter.launchProfile !== undefined;
+  const gatewaySystemdControls = resolveGatewaySystemdControls(config);
+  const llamaCppSystemdControls =
+    config.model.adapter.kind === "llama.cpp" && config.model.adapter.launchProfile
+      ? resolveLlamaCppSystemdControls(config.model.adapter.launchProfile, preflight)
+      : undefined;
+  const service = renderSystemdService({
+    workingDirectory: options.cwd,
+    configPath: options.configPath,
+    user: options.user,
+    ...gatewaySystemdControls,
+    ...(options.runtimeBinary ? { runtimeBinary: options.runtimeBinary } : {}),
+    ...(options.nodeBinary ? { nodeBinary: options.nodeBinary } : {}),
+    ...(options.envFile ? { envFile: options.envFile } : {}),
+    ...(stateDirectory ? { stateDirectory } : {}),
+    ...(rendersLlamaCppService
+      ? {
+          after: [LLAMA_CPP_SYSTEMD_SERVICE],
+          wants: [LLAMA_CPP_SYSTEMD_SERVICE],
+        }
+      : {}),
+  });
+  const llamaCppService =
+    config.model.adapter.kind === "llama.cpp" && config.model.adapter.launchProfile
+      ? renderLlamaCppService({
+          user: options.user,
+          launchProfile: config.model.adapter.launchProfile,
+          ...(llamaCppSystemdControls ? llamaCppSystemdControls : {}),
+        })
+      : undefined;
+
+  return {
+    service,
+    ...(llamaCppService ? { llamaCppService } : {}),
+    systemd: {
+      gateway: gatewaySystemdControls,
+      ...(llamaCppSystemdControls ? { llamaCpp: llamaCppSystemdControls } : {}),
     },
   };
 }
@@ -3120,6 +3178,112 @@ async function collectSystemdPreflight(
       },
     );
   });
+}
+
+async function runSystemdAnalyzeVerify(
+  unitPaths: string[],
+  unitDirectory: string,
+): Promise<Partial<DeploymentPreflight>> {
+  return await new Promise<Partial<DeploymentPreflight>>((resolve) => {
+    execFile(
+      "systemd-analyze",
+      ["verify", ...unitPaths],
+      {
+        timeout: SYSTEMD_ANALYZE_VERIFY_TIMEOUT_MS,
+        maxBuffer: SYSTEMD_ANALYZE_VERIFY_MAX_BUFFER_BYTES,
+        windowsHide: true,
+        env: {
+          ...process.env,
+          SYSTEMD_UNIT_PATH: process.env.SYSTEMD_UNIT_PATH
+            ? `${unitDirectory}${path.delimiter}${process.env.SYSTEMD_UNIT_PATH}`
+            : `${unitDirectory}${path.delimiter}`,
+        },
+      },
+      (error, stdout, stderr) => {
+        const output = `${stdout}\n${stderr}`.trim();
+
+        if (error) {
+          const code =
+            error !== null && typeof error === "object" && "code" in error
+              ? (error as { code?: string }).code
+              : undefined;
+
+          resolve({
+            systemdUnitStatus: code === "ENOENT" ? "unreadable" : "invalid",
+            systemdUnitError: output
+              ? `${toErrorMessage(error)}; output: ${truncateRuntimeVersionOutput(output)}`
+              : toErrorMessage(error),
+          });
+          return;
+        }
+
+        resolve({ systemdUnitStatus: "valid" });
+      },
+    );
+  });
+}
+
+async function collectSystemdUnitPreflight(
+  config: RayConfig,
+  preflight: Pick<DeploymentPreflight, "memoryBudgetMiB">,
+  options: {
+    cwd: string;
+    configPath?: string;
+    envFile?: string;
+    runtimeBinary?: string;
+    user?: string;
+    nodeBinary?: string;
+    strictFilesystem?: boolean;
+  },
+  systemdStatus: SystemdHostStatus | undefined,
+): Promise<Partial<DeploymentPreflight>> {
+  if (
+    options.strictFilesystem !== true ||
+    systemdStatus !== "available" ||
+    options.user === undefined ||
+    options.configPath === undefined
+  ) {
+    return {};
+  }
+
+  let renderedSystemd: ReturnType<typeof renderDeploymentSystemdServices>;
+  try {
+    renderedSystemd = renderDeploymentSystemdServices(config, preflight, {
+      cwd: options.cwd,
+      configPath: options.configPath,
+      user: options.user,
+      ...(options.envFile ? { envFile: options.envFile } : {}),
+      ...(options.runtimeBinary ? { runtimeBinary: options.runtimeBinary } : {}),
+      ...(options.nodeBinary ? { nodeBinary: options.nodeBinary } : {}),
+    });
+  } catch (error) {
+    return {
+      systemdUnitStatus: "invalid",
+      systemdUnitError: toErrorMessage(error),
+    };
+  }
+
+  const tempDirectory = await mkdtemp(path.join(tmpdir(), "ray-systemd-verify-"));
+  try {
+    const gatewayUnitPath = path.join(tempDirectory, "ray-gateway.service");
+    await writeFile(gatewayUnitPath, renderedSystemd.service, "utf8");
+
+    const unitPaths = [gatewayUnitPath];
+    if (renderedSystemd.llamaCppService) {
+      const llamaUnitPath = path.join(tempDirectory, LLAMA_CPP_SYSTEMD_SERVICE);
+      await writeFile(llamaUnitPath, renderedSystemd.llamaCppService, "utf8");
+      unitPaths.push(llamaUnitPath);
+    }
+
+    return await runSystemdAnalyzeVerify(unitPaths, tempDirectory);
+  } catch (error) {
+    return {
+      systemdUnitStatus: "unreadable",
+      systemdUnitError: toErrorMessage(error),
+    };
+  } finally {
+    await rm(tempDirectory, { recursive: true, force: true });
+  }
 }
 
 async function collectCaddyPreflight(
@@ -3740,7 +3904,7 @@ async function collectDeploymentPreflight(
   const swapPreflight = await collectSwapPreflight();
 
   if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
-    return {
+    const preflight: DeploymentPreflight = {
       hostMemoryMiB,
       ...(hostCpuCount !== undefined ? { hostCpuCount } : {}),
       hostArchitecture,
@@ -3755,6 +3919,27 @@ async function collectDeploymentPreflight(
       ...gatewayEntrypointPreflight,
       ...runtimePreflight,
       ...swapPreflight,
+    };
+    const systemdUnitPreflight = await collectSystemdUnitPreflight(
+      config,
+      preflight,
+      {
+        cwd: options.cwd,
+        ...(options.configPath ? { configPath: options.configPath } : {}),
+        ...(options.envFile ? { envFile: options.envFile } : {}),
+        ...(runtimeBinary ? { runtimeBinary } : {}),
+        ...(options.user ? { user: options.user } : {}),
+        ...(options.nodeBinary ? { nodeBinary: options.nodeBinary } : {}),
+        ...(options.strictFilesystem !== undefined
+          ? { strictFilesystem: options.strictFilesystem }
+          : {}),
+      },
+      systemdPreflight.systemdStatus,
+    );
+
+    return {
+      ...preflight,
+      ...systemdUnitPreflight,
     };
   }
 
@@ -3791,12 +3976,32 @@ async function collectDeploymentPreflight(
     memoryBudgetSource: budget.memoryBudgetSource,
     modelFilePath: launchProfile.modelPath,
   };
+  const systemdUnitPreflight = await collectSystemdUnitPreflight(
+    config,
+    preflight,
+    {
+      cwd: options.cwd,
+      ...(options.configPath ? { configPath: options.configPath } : {}),
+      ...(options.envFile ? { envFile: options.envFile } : {}),
+      ...(runtimeBinary ? { runtimeBinary } : {}),
+      ...(options.user ? { user: options.user } : {}),
+      ...(options.nodeBinary ? { nodeBinary: options.nodeBinary } : {}),
+      ...(options.strictFilesystem !== undefined
+        ? { strictFilesystem: options.strictFilesystem }
+        : {}),
+    },
+    systemdPreflight.systemdStatus,
+  );
+  const preflightWithSystemdUnits: DeploymentPreflight = {
+    ...preflight,
+    ...systemdUnitPreflight,
+  };
 
   try {
     const fileStat = await stat(launchProfile.modelPath);
     if (!fileStat.isFile()) {
       return {
-        ...preflight,
+        ...preflightWithSystemdUnits,
         modelFileStatus: "unreadable",
         modelFileError: "not a regular file",
       };
@@ -3807,7 +4012,7 @@ async function collectDeploymentPreflight(
       : undefined;
 
     return {
-      ...preflight,
+      ...preflightWithSystemdUnits,
       modelFileBytes: fileStat.size,
       modelFileStatus: "found",
       ...(serviceUserAccess
@@ -3826,11 +4031,11 @@ async function collectDeploymentPreflight(
       (error as { code?: string }).code === "ENOENT";
 
     if (!options.strictFilesystem) {
-      return preflight;
+      return preflightWithSystemdUnits;
     }
 
     return {
-      ...preflight,
+      ...preflightWithSystemdUnits,
       modelFileStatus: isMissing ? "missing" : "unreadable",
       modelFileError: message,
     };
