@@ -38,7 +38,6 @@ RAY_MODEL_ID=local-1b-q4
 RAY_MODEL_REF=local-1b-q4
 RAY_MODEL_FAMILY=llama-compatible
 RAY_MODEL_QUANTIZATION=q4_k_m
-RAY_MODEL_API_KEY_ENV=RAY_UPSTREAM_API_KEY
 RAY_MODEL_PATH=/var/lib/ray/models/local-1b-q4.gguf
 RAY_MODEL_TIMEOUT_MS=28000
 RAY_LLAMA_CPP_BINARY_PATH=/usr/local/bin/llama-server
