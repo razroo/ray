@@ -2362,6 +2362,66 @@ test("loadAndDiagnoseDeployment reports an existing generated service user in st
   assert.equal(diagnostic.level, "info");
 });
 
+test("loadAndDiagnoseDeployment reports oversized host passwd as unreadable in strict mode", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-service-user-passwd-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  const passwdPath = join(tempDir, "passwd");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+  await writeFile(passwdPath, "x".repeat(256 * 1024 + 1));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    user: "ray",
+    strictFilesystem: true,
+    hostFiles: {
+      passwd: passwdPath,
+    },
+  });
+
+  assert.equal(inspected.preflight.serviceUserStatus, "unreadable");
+  assert.match(inspected.preflight.serviceUserError ?? "", /host passwd file must be at most/);
+  const diagnostic = inspected.diagnostics.find(
+    (entry) => entry.code === "service_user_unreadable",
+  );
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+});
+
+test("loadAndDiagnoseDeployment bounds host swap preflight files", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-host-swap-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  const meminfoPath = join(tempDir, "meminfo");
+  const swappinessPath = join(tempDir, "swappiness");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+  await writeFile(meminfoPath, "x".repeat(64 * 1024 + 1));
+  await writeFile(swappinessPath, "10\n");
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    hostFiles: {
+      meminfo: meminfoPath,
+      swappiness: swappinessPath,
+    },
+  });
+
+  assert.equal(inspected.preflight.swappinessStatus, "available");
+  assert.equal(inspected.preflight.swappiness, 10);
+  assert.equal(inspected.preflight.swapStatus, "unreadable");
+  assert.match(inspected.preflight.swapError ?? "", /host meminfo file must be at most/);
+});
+
 test("loadAndDiagnoseDeployment reports a service-readable gateway config in strict mode", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-config-file-ok-"));
   t.after(async () => {

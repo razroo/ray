@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { constants, type Stats } from "node:fs";
-import { access, mkdtemp, open, readFile, rm, stat, statfs, writeFile } from "node:fs/promises";
+import { access, mkdtemp, open, rm, stat, statfs, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { availableParallelism, tmpdir, totalmem } from "node:os";
 import path from "node:path";
@@ -191,6 +191,13 @@ export interface DiagnoseConfigOptions {
   allowMissingAuthKeys?: boolean;
 }
 
+export interface DeploymentHostFilePaths {
+  passwd?: string;
+  group?: string;
+  meminfo?: string;
+  swappiness?: string;
+}
+
 const BYTES_PER_MIB = 1024 * 1024;
 const DEFAULT_CACHE_RAM_MIB = 8_192;
 const RAY_RUNTIME_RESERVE_MIB = 192;
@@ -227,6 +234,13 @@ const CADDY_VALIDATE_TIMEOUT_MS = 3_000;
 const CADDY_VALIDATE_MAX_BUFFER_BYTES = 64 * 1024;
 const LLAMA_CPP_BINARY_PROBE_TIMEOUT_MS = 3_000;
 const LLAMA_CPP_BINARY_PROBE_MAX_BUFFER_BYTES = 64 * 1024;
+const HOST_PASSWD_PATH = "/etc/passwd";
+const HOST_GROUP_PATH = "/etc/group";
+const HOST_MEMINFO_PATH = "/proc/meminfo";
+const HOST_SWAPPINESS_PATH = "/proc/sys/vm/swappiness";
+const MAX_HOST_IDENTITY_FILE_BYTES = 256 * 1024;
+const MAX_HOST_MEMINFO_FILE_BYTES = 64 * 1024;
+const MAX_HOST_SWAPPINESS_FILE_BYTES = 1_024;
 const MAX_SYSTEMD_DEPENDENCY_UNITS = 32;
 const MAX_SYSTEMD_DEPENDENCY_UNIT_CHARS = 256;
 const MAX_SYSTEMD_MEMORY_MIB = 1_048_576;
@@ -810,6 +824,36 @@ function formatMiB(value: number): string {
 
 function formatFileMode(mode: number): string {
   return `0${(mode & 0o777).toString(8).padStart(3, "0")}`;
+}
+
+async function readTextFileBounded(
+  filePath: string,
+  maxBytes: number,
+  label: string,
+): Promise<string> {
+  let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
+
+  try {
+    fileHandle = await open(filePath, "r");
+    const buffer = Buffer.alloc(maxBytes + 1);
+    let offset = 0;
+
+    while (offset < buffer.length) {
+      const { bytesRead } = await fileHandle.read(buffer, offset, buffer.length - offset, offset);
+      if (bytesRead === 0) {
+        break;
+      }
+      offset += bytesRead;
+    }
+
+    if (offset > maxBytes) {
+      throw new Error(`${label} file must be at most ${maxBytes} bytes: ${filePath}`);
+    }
+
+    return buffer.subarray(0, offset).toString("utf8");
+  } finally {
+    await fileHandle?.close().catch(() => undefined);
+  }
 }
 
 function parseSwapTotalMiB(meminfo: string): number | undefined {
@@ -2869,6 +2913,7 @@ export async function loadAndDiagnoseDeployment(options: {
   strictFilesystem?: boolean;
   nodeBinary?: string;
   allowMissingAuthKeys?: boolean;
+  hostFiles?: DeploymentHostFilePaths;
 }): Promise<{
   config: RayConfig;
   configPath?: string;
@@ -2892,6 +2937,7 @@ export async function loadAndDiagnoseDeployment(options: {
     ...(options.strictFilesystem !== undefined
       ? { strictFilesystem: options.strictFilesystem }
       : {}),
+    ...(options.hostFiles !== undefined ? { hostFiles: options.hostFiles } : {}),
   });
 
   return {
@@ -3176,13 +3222,18 @@ async function collectEnvFilePreflight(
 async function collectServiceUserPreflight(
   user: string | undefined,
   strictFilesystem: boolean,
+  hostFiles: DeploymentHostFilePaths = {},
 ): Promise<Partial<DeploymentPreflight>> {
   if (user === undefined || !strictFilesystem) {
     return {};
   }
 
   try {
-    const passwd = await readFile("/etc/passwd", "utf8");
+    const passwd = await readTextFileBounded(
+      hostFiles.passwd ?? HOST_PASSWD_PATH,
+      MAX_HOST_IDENTITY_FILE_BYTES,
+      "host passwd",
+    );
     const identity = resolvePasswdUser(passwd, user);
 
     if (!identity) {
@@ -3195,7 +3246,11 @@ async function collectServiceUserPreflight(
     let serviceUserPrimaryGroup: string | undefined;
 
     try {
-      const groupFile = await readFile("/etc/group", "utf8");
+      const groupFile = await readTextFileBounded(
+        hostFiles.group ?? HOST_GROUP_PATH,
+        MAX_HOST_IDENTITY_FILE_BYTES,
+        "host group",
+      );
       serviceUserPrimaryGroup = resolveGroupNameByGid(groupFile, identity.gid);
       identity.groupIds = parseSupplementaryGroupIds(groupFile, identity.name, identity.gid);
     } catch {
@@ -3923,11 +3978,17 @@ async function collectLlamaCppBinaryProbePreflight(
   });
 }
 
-async function collectSwapPreflight(): Promise<Partial<DeploymentPreflight>> {
-  const swappinessPreflight = await collectSwappinessPreflight();
+async function collectSwapPreflight(
+  hostFiles: DeploymentHostFilePaths = {},
+): Promise<Partial<DeploymentPreflight>> {
+  const swappinessPreflight = await collectSwappinessPreflight(hostFiles);
 
   try {
-    const meminfo = await readFile("/proc/meminfo", "utf8");
+    const meminfo = await readTextFileBounded(
+      hostFiles.meminfo ?? HOST_MEMINFO_PATH,
+      MAX_HOST_MEMINFO_FILE_BYTES,
+      "host meminfo",
+    );
     const swapTotalMiB = parseSwapTotalMiB(meminfo);
 
     if (swapTotalMiB === undefined) {
@@ -3952,9 +4013,15 @@ async function collectSwapPreflight(): Promise<Partial<DeploymentPreflight>> {
   }
 }
 
-async function collectSwappinessPreflight(): Promise<Partial<DeploymentPreflight>> {
+async function collectSwappinessPreflight(
+  hostFiles: DeploymentHostFilePaths = {},
+): Promise<Partial<DeploymentPreflight>> {
   try {
-    const contents = await readFile("/proc/sys/vm/swappiness", "utf8");
+    const contents = await readTextFileBounded(
+      hostFiles.swappiness ?? HOST_SWAPPINESS_PATH,
+      MAX_HOST_SWAPPINESS_FILE_BYTES,
+      "host swappiness",
+    );
     const swappiness = parseNonNegativeInteger(contents.trim());
 
     if (swappiness === undefined) {
@@ -3988,6 +4055,7 @@ async function collectDeploymentPreflight(
     domain?: string;
     strictFilesystem?: boolean;
     nodeBinary?: string;
+    hostFiles?: DeploymentHostFilePaths;
   },
 ): Promise<DeploymentPreflight> {
   const hostMemoryMiB = Math.max(1, Math.floor(totalmem() / BYTES_PER_MIB));
@@ -4005,6 +4073,7 @@ async function collectDeploymentPreflight(
   const serviceUserPreflight = await collectServiceUserPreflight(
     options.user,
     options.strictFilesystem === true,
+    options.hostFiles,
   );
   const serviceUserIdentity =
     serviceUserPreflight.serviceUserStatus === "found" &&
@@ -4045,7 +4114,7 @@ async function collectDeploymentPreflight(
     serviceUserIdentity,
     options.strictFilesystem === true,
   );
-  const swapPreflight = await collectSwapPreflight();
+  const swapPreflight = await collectSwapPreflight(options.hostFiles);
 
   if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
     const preflight: DeploymentPreflight = {
