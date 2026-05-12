@@ -12,6 +12,7 @@ export interface CliOptions {
   user?: string;
   domain?: string;
   envFile?: string;
+  systemdEnvFile?: string;
   outputDir?: string;
   memoryBudgetMiB?: number;
   runtimeBinary?: string;
@@ -353,6 +354,12 @@ export function parseCliArgs(argv: string[]): CliOptions {
       continue;
     }
 
+    if (current === "--systemd-env-file") {
+      options.systemdEnvFile = requireFlagValue(current, next);
+      index += 1;
+      continue;
+    }
+
     if (current === "--gateway-runtime-binary") {
       options.runtimeBinary = requireFlagValue(current, next);
       index += 1;
@@ -398,8 +405,16 @@ export async function runCli(argv: string[]): Promise<void> {
     ...options,
     cwd,
     ...(options.envFile ? { envFile: path.resolve(cwd, options.envFile) } : {}),
+    ...(options.systemdEnvFile
+      ? { systemdEnvFile: path.resolve(cwd, options.systemdEnvFile) }
+      : {}),
     ...(options.outputDir ? { outputDir: path.resolve(cwd, options.outputDir) } : {}),
   };
+
+  if (resolvedOptions.systemdEnvFile && resolvedOptions.command !== "render") {
+    throw new Error("--systemd-env-file is only supported by render");
+  }
+
   const env = await loadEnvironment(resolvedOptions);
   const envRuntimeBinary = readNonEmptyEnvValue(env.RAY_GATEWAY_RUNTIME_BINARY);
   const envServiceUser =

@@ -2496,6 +2496,7 @@ export async function renderDeploymentBundle(options: {
   user: string;
   domain: string;
   envFile?: string;
+  systemdEnvFile?: string;
   env?: NodeJS.ProcessEnv;
   memoryBudgetMiB?: number;
   runtimeBinary?: string;
@@ -2510,10 +2511,18 @@ export async function renderDeploymentBundle(options: {
 }> {
   const cwd = path.resolve(options.cwd);
   const envFile = options.envFile ? path.resolve(cwd, options.envFile) : undefined;
+  const systemdEnvFile = options.systemdEnvFile
+    ? path.resolve(cwd, options.systemdEnvFile)
+    : envFile;
   const inspected = await loadAndDiagnoseDeployment({
-    ...options,
     cwd,
-    ...(envFile ? { envFile } : {}),
+    configPath: options.configPath,
+    ...(options.env ? { env: options.env } : {}),
+    ...(systemdEnvFile ? { envFile: systemdEnvFile } : {}),
+    ...(options.memoryBudgetMiB !== undefined ? { memoryBudgetMiB: options.memoryBudgetMiB } : {}),
+    ...(options.runtimeBinary !== undefined ? { runtimeBinary: options.runtimeBinary } : {}),
+    ...(options.nodeBinary !== undefined ? { nodeBinary: options.nodeBinary } : {}),
+    ...(options.user !== undefined ? { user: options.user } : {}),
     ...(options.strictFilesystem !== undefined
       ? { strictFilesystem: options.strictFilesystem }
       : {}),
@@ -2541,7 +2550,7 @@ export async function renderDeploymentBundle(options: {
       ...gatewaySystemdControls,
       ...(options.runtimeBinary ? { runtimeBinary: options.runtimeBinary } : {}),
       ...(options.nodeBinary ? { nodeBinary: options.nodeBinary } : {}),
-      ...(envFile ? { envFile } : {}),
+      ...(systemdEnvFile ? { envFile: systemdEnvFile } : {}),
       ...(stateDirectory ? { stateDirectory } : {}),
       ...(rendersLlamaCppService
         ? {

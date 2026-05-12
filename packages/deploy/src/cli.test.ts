@@ -86,6 +86,13 @@ test("parseCliArgs accepts the Ray-specific env-file alias", () => {
   assert.equal(options.envFile, "/etc/ray/ray.env");
 });
 
+test("parseCliArgs accepts render-only systemd env-file paths", () => {
+  const options = parseCliArgs(["render", "--systemd-env-file", "/etc/ray/ray.env"]);
+
+  assert.equal(options.command, "render");
+  assert.equal(options.systemdEnvFile, "/etc/ray/ray.env");
+});
+
 test("parseCliArgs accepts render output directories", () => {
   const options = parseCliArgs(["render", "--output-dir", "/tmp/ray-render"]);
 
@@ -189,6 +196,13 @@ test("runCli rejects missing explicit env files", async () => {
   await assert.rejects(
     () => runCli(["render", "--ray-env-file", "missing.ray.env"]),
     /Env file not found:/,
+  );
+});
+
+test("runCli rejects systemd env-file paths outside render", async () => {
+  await assert.rejects(
+    () => runCli(["doctor", "--systemd-env-file", "/etc/ray/ray.env"]),
+    /--systemd-env-file is only supported by render/,
   );
 });
 
@@ -590,6 +604,63 @@ test("runCli render writes deployment files when output-dir is provided", async 
   });
   assert.match(rendered, /ray-gateway\.service/);
   assert.doesNotMatch(rendered, /# Ray systemd service/);
+});
+
+test("runCli render can separate loaded env files from rendered systemd paths", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-systemd-env-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const outputDir = join(tempDir, "rendered");
+  const loadedEnvFile = join(tempDir, "loaded.env");
+  const systemdEnvFile = join(tempDir, "missing-systemd.env");
+  await writeFile(loadedEnvFile, "RAY_API_KEYS=test-key\n", "utf8");
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli([
+    "render",
+    "--cwd",
+    tempDir,
+    "--config",
+    join(process.cwd(), "examples/config/ray.1b.generic.public.json"),
+    "--env-file",
+    loadedEnvFile,
+    "--systemd-env-file",
+    systemdEnvFile,
+    "--memory-mib",
+    "4096",
+    "--gateway-runtime-binary",
+    "/usr/local/bin/bun",
+    "--output-dir",
+    "rendered",
+  ]);
+
+  const service = await readFile(join(outputDir, "ray-gateway.service"), "utf8");
+  const summary = JSON.parse(await readFile(join(outputDir, "summary.json"), "utf8"));
+  const diagnosticCodes = summary.diagnostics.map(
+    (diagnostic: { code: string }) => diagnostic.code,
+  );
+
+  assert.match(service, new RegExp(`EnvironmentFile=${escapeRegExp(systemdEnvFile)}`));
+  assert.doesNotMatch(service, new RegExp(escapeRegExp(loadedEnvFile)));
+  assert.equal(summary.preflight.envFilePath, systemdEnvFile);
+  assert.equal(summary.preflight.envFileStatus, "missing");
+  assert.ok(!diagnosticCodes.includes("env_file_missing"));
+  assert.deepEqual(
+    summary.diagnostics
+      .filter((diagnostic: { level: string }) => diagnostic.level === "error")
+      .map((diagnostic: { code: string }) => diagnostic.code),
+    [],
+  );
+  assert.match(output.join("\n"), /ray-gateway\.service/);
 });
 
 test("runCli render refuses to write deployment files when diagnostics contain errors", async (t) => {

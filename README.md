@@ -306,16 +306,19 @@ gateway itself: [.github/workflows/deploy-vps.yml](.github/workflows/deploy-vps.
 That workflow is generic and only uses repository secrets/variables supplied by
 the operator.
 
-### Validate config / doctor
+### Render / validate / doctor
 
 ```bash
+bun run render:service
+bun run render:service:1b:generic
+bun run render:service:1b:8gb:generic
 bun run validate:config
 bun run doctor
 bun run doctor:1b:generic
 bun run doctor:1b:8gb:generic
 ```
 
-`bun run doctor` targets the public `sub1b` deploy profile. The 1B doctor commands target the public generic 1B deploy profiles with explicit 4 GB and 8 GB memory budgets. Run them on the VPS after the GGUF exists at the configured path and `/etc/ray/ray.env` is populated. Doctor also verifies the generated systemd service user, service-user access to the rendered config file, Bun runtime (`/usr/local/bin/bun` by default, `RAY_GATEWAY_RUNTIME_BINARY`, or `--gateway-runtime-binary`) including identifiable Bun/Node version compatibility, WorkingDirectory, built gateway entrypoint, configured `llama-server` binary, GGUF model file, and async queue storage, env-file permissions, host CPU/thread headroom, async queue storage headroom, and small-VPS swap cushion.
+`bun run render:service*` prints deployable systemd/Caddy output with `EnvironmentFile=/etc/ray/ray.env` already wired into the gateway unit; use `--ray-env-file` only when the env file exists and render should load its values. `bun run doctor` targets the public `sub1b` deploy profile. The 1B render and doctor commands target the public generic 1B deploy profiles with explicit 4 GB and 8 GB memory budgets. Run doctor on the VPS after the GGUF exists at the configured path and `/etc/ray/ray.env` is populated. Doctor also verifies the generated systemd service user, service-user access to the rendered config file, Bun runtime (`/usr/local/bin/bun` by default, `RAY_GATEWAY_RUNTIME_BINARY`, or `--gateway-runtime-binary`) including identifiable Bun/Node version compatibility, WorkingDirectory, built gateway entrypoint, configured `llama-server` binary, GGUF model file, and async queue storage, env-file permissions, host CPU/thread headroom, async queue storage headroom, and small-VPS swap cushion.
 
 ### Benchmark Contract
 

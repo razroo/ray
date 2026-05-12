@@ -220,7 +220,10 @@ diagnostics are present; run validate or doctor to inspect those failures first.
 Pass `--strict-filesystem` on the VPS to make render check the same service-user,
 runtime, build-output, model-file, and storage paths that doctor checks. Adapter
 headers are redacted in this summary. Relative `--output-dir` values are resolved
-from the rendered `--cwd`.
+from the rendered `--cwd`. For dry rendering before `/etc/ray/ray.env` exists,
+use `--systemd-env-file` to control only the `EnvironmentFile=` path that is
+written into the unit; keep `--ray-env-file` for render or doctor runs that
+should load and validate a real env file.
 
 ```bash
 bun packages/deploy/dist/cli.js render \
