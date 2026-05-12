@@ -17,6 +17,7 @@ export interface ValidateConfigsArgs {
   configDir: string;
   failOnWarn: boolean;
   json: boolean;
+  verbose: boolean;
   help: boolean;
 }
 
@@ -47,6 +48,7 @@ Options:
   --config-dir <path>   Directory containing JSON config files. Default: ${DEFAULT_CONFIG_DIR}
   --fail-on-warn        Exit non-zero when any warning diagnostics are emitted.
   --json                Print machine-readable summary JSON.
+  --verbose             Print warning diagnostic details in text output.
   -h, --help            Show this help.
 `;
 
@@ -90,6 +92,7 @@ export function parseArgs(argv: string[]): ValidateConfigsArgs {
     configDir: DEFAULT_CONFIG_DIR,
     failOnWarn: false,
     json: false,
+    verbose: false,
     help: false,
   };
 
@@ -115,6 +118,11 @@ export function parseArgs(argv: string[]): ValidateConfigsArgs {
 
     if (current === "--json") {
       args.json = true;
+      continue;
+    }
+
+    if (current === "--verbose") {
+      args.verbose = true;
       continue;
     }
 
@@ -229,7 +237,11 @@ function displayPath(cwd: string, configPath: string): string {
     : configPath;
 }
 
-export function formatTextSummary(cwd: string, summary: ConfigValidationSummary): string {
+export function formatTextSummary(
+  cwd: string,
+  summary: ConfigValidationSummary,
+  options: { verbose?: boolean } = {},
+): string {
   const lines = [
     `Validated ${summary.configCount} Ray config file${summary.configCount === 1 ? "" : "s"}:`,
   ];
@@ -250,8 +262,15 @@ export function formatTextSummary(cwd: string, summary: ConfigValidationSummary)
       if (diagnostic.level === "info") {
         continue;
       }
+      if (diagnostic.level === "warn" && !options.verbose && !summary.failOnWarn) {
+        continue;
+      }
       lines.push(`  ${diagnostic.level} ${diagnostic.code}: ${diagnostic.message}`);
     }
+  }
+
+  if (summary.warningCount > 0 && !options.verbose && !summary.failOnWarn) {
+    lines.push("Run with --verbose to print warning diagnostics.");
   }
 
   lines.push(
@@ -284,7 +303,9 @@ export async function runValidateConfigsCli(
     });
 
     io.stdout.write(
-      args.json ? `${JSON.stringify(summary, null, 2)}\n` : `${formatTextSummary(cwd, summary)}\n`,
+      args.json
+        ? `${JSON.stringify(summary, null, 2)}\n`
+        : `${formatTextSummary(cwd, summary, { verbose: args.verbose })}\n`,
     );
     return summary.ok ? 0 : 1;
   } catch (error) {

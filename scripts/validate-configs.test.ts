@@ -18,12 +18,14 @@ test("parseArgs accepts strict config validation options", () => {
     "examples/config",
     "--fail-on-warn",
     "--json",
+    "--verbose",
   ]);
 
   assert.equal(args.cwd, "/srv/ray");
   assert.equal(args.configDir, "examples/config");
   assert.equal(args.failOnWarn, true);
   assert.equal(args.json, true);
+  assert.equal(args.verbose, true);
 });
 
 test("parseArgs rejects malformed config validation argv", () => {
@@ -74,5 +76,9 @@ test("validateConfigFiles accepts every checked-in example config", async () => 
         result.profile === "sub1b-cax11",
     ),
   );
-  assert.match(formatTextSummary(cwd, summary), /Summary: warnings=\d+ errors=0/);
+  const compactSummary = formatTextSummary(cwd, summary);
+  assert.match(compactSummary, /Run with --verbose to print warning diagnostics/);
+  assert.doesNotMatch(compactSummary, /warn auth_disabled:/);
+  assert.match(formatTextSummary(cwd, summary, { verbose: true }), /warn auth_disabled:/);
+  assert.match(compactSummary, /Summary: warnings=\d+ errors=0/);
 });
