@@ -576,13 +576,60 @@ function getRequestBodyLength(body: RequestInit["body"]): number | undefined {
   return undefined;
 }
 
+function describeRequestBody(body: RequestInit["body"]): string {
+  if (body === undefined || body === null) {
+    return "empty";
+  }
+
+  if (typeof body === "string") {
+    return "string";
+  }
+
+  if (body instanceof ArrayBuffer) {
+    return "ArrayBuffer";
+  }
+
+  if (ArrayBuffer.isView(body)) {
+    return body.constructor.name;
+  }
+
+  if (body instanceof URLSearchParams) {
+    return "URLSearchParams";
+  }
+
+  if (typeof Blob !== "undefined" && body instanceof Blob) {
+    return "Blob";
+  }
+
+  if (typeof FormData !== "undefined" && body instanceof FormData) {
+    return "FormData";
+  }
+
+  if (typeof ReadableStream !== "undefined" && body instanceof ReadableStream) {
+    return "ReadableStream";
+  }
+
+  return typeof body;
+}
+
 export function assertRequestBodyWithinLimit(
   init: RequestInit,
   limitBytes = BACKEND_REQUEST_BODY_LIMIT_BYTES,
 ): void {
   const bodyLength = getRequestBodyLength(init.body);
 
-  if (bodyLength === undefined || bodyLength <= limitBytes) {
+  if (bodyLength === undefined) {
+    throw new RayError("The backend request body must have a known byte length", {
+      code: "provider_request_body_unbounded",
+      status: 413,
+      details: {
+        bodyType: describeRequestBody(init.body),
+        limitBytes,
+      },
+    });
+  }
+
+  if (bodyLength <= limitBytes) {
     return;
   }
 

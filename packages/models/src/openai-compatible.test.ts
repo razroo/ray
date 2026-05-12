@@ -284,6 +284,60 @@ test("adapterRequest rejects oversized request bodies before dispatch", async (t
   assert.equal(requests, 0);
 });
 
+test("adapterRequest rejects unknown-size request bodies before dispatch", async (t) => {
+  let requests = 0;
+  const server = createServer((_request, response) => {
+    requests += 1;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end("{}");
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("streamed"));
+      controller.close();
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: `http://127.0.0.1:${address.port}`,
+          timeoutMs: 500,
+        },
+        "/v1/chat/completions",
+        {
+          method: "POST",
+          body,
+        },
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_request_body_unbounded");
+
+      const details = (error as { details?: unknown }).details;
+      assert.ok(details && typeof details === "object" && !Array.isArray(details));
+      assert.equal((details as { bodyType?: unknown }).bodyType, "ReadableStream");
+      assert.equal(
+        (details as { limitBytes?: unknown }).limitBytes,
+        BACKEND_REQUEST_BODY_LIMIT_BYTES,
+      );
+
+      return true;
+    },
+  );
+  assert.equal(requests, 0);
+});
+
 test("extractAssistantText tolerates malformed OpenAI content parts", () => {
   const text = extractAssistantText({
     choices: [
