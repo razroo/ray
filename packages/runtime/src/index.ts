@@ -2296,9 +2296,26 @@ export class RayRuntime {
     this.metrics.gauge("queue.depth", snapshot.queueDepth);
     this.metrics.gauge("queue.short_depth", snapshot.shortQueueDepth);
     this.metrics.gauge("queue.draft_depth", snapshot.draftQueueDepth);
+    this.metrics.gauge("queue.max_depth", snapshot.maxQueue);
+    this.metrics.gauge("queue.depth_ratio", snapshot.queueDepth / Math.max(1, snapshot.maxQueue));
     this.metrics.gauge("inference.in_flight", snapshot.inFlight);
+    this.metrics.gauge("inference.concurrency", snapshot.concurrency);
+    this.metrics.gauge(
+      "inference.in_flight_ratio",
+      snapshot.inFlight / Math.max(1, snapshot.concurrency),
+    );
     this.metrics.gauge("queue.tokens", snapshot.queuedTokens);
+    this.metrics.gauge("queue.max_tokens", snapshot.maxQueuedTokens);
+    this.metrics.gauge(
+      "queue.tokens_ratio",
+      snapshot.queuedTokens / Math.max(1, snapshot.maxQueuedTokens),
+    );
     this.metrics.gauge("inference.in_flight_tokens", snapshot.inFlightTokens);
+    this.metrics.gauge("inference.max_inflight_tokens", snapshot.maxInflightTokens);
+    this.metrics.gauge(
+      "inference.in_flight_tokens_ratio",
+      snapshot.inFlightTokens / Math.max(1, snapshot.maxInflightTokens),
+    );
   }
 
   private getProcessRssMiB(): number {

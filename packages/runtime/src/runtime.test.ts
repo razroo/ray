@@ -343,7 +343,8 @@ test("readCgroupCpuSnapshot reads legacy cgroup cpu.stat throttling", async (t) 
 });
 
 test("runtime collected metrics refresh live queue and cgroup pressure gauges", async () => {
-  const runtime = createRayRuntime(createDefaultConfig("tiny"), {
+  const config = createDefaultConfig("tiny");
+  const runtime = createRayRuntime(config, {
     memoryUsage: () => ({
       rss: 32 * 1024 * 1024,
       heapTotal: 0,
@@ -378,8 +379,16 @@ test("runtime collected metrics refresh live queue and cgroup pressure gauges", 
   const metrics = await runtime.collectMetricsSnapshot();
 
   assert.equal(metrics.gauges["queue.depth"], 0);
+  assert.equal(metrics.gauges["queue.max_depth"], config.scheduler.maxQueue);
+  assert.equal(metrics.gauges["queue.depth_ratio"], 0);
   assert.equal(metrics.gauges["queue.tokens"], 0);
+  assert.equal(metrics.gauges["queue.max_tokens"], config.scheduler.maxQueuedTokens);
+  assert.equal(metrics.gauges["queue.tokens_ratio"], 0);
   assert.equal(metrics.gauges["inference.in_flight"], 0);
+  assert.equal(metrics.gauges["inference.concurrency"], config.scheduler.concurrency);
+  assert.equal(metrics.gauges["inference.in_flight_ratio"], 0);
+  assert.equal(metrics.gauges["inference.max_inflight_tokens"], config.scheduler.maxInflightTokens);
+  assert.equal(metrics.gauges["inference.in_flight_tokens_ratio"], 0);
   assert.equal(metrics.gauges["cache.entries"], 0);
   assert.equal(metrics.gauges["process.memory.cgroup_current_mib"], 700);
   assert.equal(metrics.gauges["process.memory.cgroup_high_mib"], 800);
