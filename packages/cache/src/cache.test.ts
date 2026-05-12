@@ -55,6 +55,25 @@ test("ttl cache does not retain single entries above byte budget", () => {
   assert.equal(cache.sizeBytes(), 0);
 });
 
+test("ttl cache does not retain unmeasurable entries with a byte budget", () => {
+  const cache = new TtlCache<Record<string, unknown>>({
+    maxEntries: 10,
+    ttlMs: 10_000,
+    maxBytes: 1_024,
+  });
+  const circular: Record<string, unknown> = {
+    value: "cached",
+  };
+  circular.self = circular;
+
+  cache.set("a", { value: "cached" });
+  cache.set("a", circular);
+
+  assert.equal(cache.get("a"), undefined);
+  assert.equal(cache.size(), 0);
+  assert.equal(cache.sizeBytes(), 0);
+});
+
 test("ttl cache rejects invalid capacity and ttl options", () => {
   assert.throws(() => new TtlCache<string>({ maxEntries: 0, ttlMs: 10_000 }), /maxEntries/);
   assert.throws(() => new TtlCache<string>({ maxEntries: 2.5, ttlMs: 10_000 }), /maxEntries/);
@@ -74,6 +93,16 @@ test("ttl cache rejects invalid capacity and ttl options", () => {
         ttlMs: 10_000,
         maxBytes: 10,
         sizeOf: () => -1,
+      }).set("a", "one"),
+    /cache entry size/,
+  );
+  assert.throws(
+    () =>
+      new TtlCache<string>({
+        maxEntries: 2,
+        ttlMs: 10_000,
+        maxBytes: 10,
+        sizeOf: () => undefined as unknown as number,
       }).set("a", "one"),
     /cache entry size/,
   );

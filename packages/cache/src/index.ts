@@ -67,6 +67,10 @@ export class TtlCache<T> {
       this.deleteEntry(key);
     }
 
+    if (sizeBytes === undefined) {
+      return;
+    }
+
     if (this.options.maxBytes !== undefined && sizeBytes > this.options.maxBytes) {
       return;
     }
@@ -129,10 +133,26 @@ export class TtlCache<T> {
     return true;
   }
 
-  private resolveEntrySize(value: T, key: string): number {
-    const sizeBytes = this.options.sizeOf
-      ? this.options.sizeOf(value, key)
-      : estimateCacheEntryBytes(value, key);
+  private resolveEntrySize(value: T, key: string): number | undefined {
+    if (this.options.sizeOf) {
+      const sizeBytes = this.options.sizeOf(value, key);
+
+      if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
+        throw new RangeError("cache entry size must be a non-negative safe integer");
+      }
+
+      return sizeBytes;
+    }
+
+    const sizeBytes = estimateCacheEntryBytes(value, key);
+
+    if (sizeBytes === undefined && this.options.maxBytes !== undefined) {
+      return undefined;
+    }
+
+    if (sizeBytes === undefined) {
+      return Buffer.byteLength(key, "utf8");
+    }
 
     if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
       throw new RangeError("cache entry size must be a non-negative safe integer");
@@ -142,7 +162,7 @@ export class TtlCache<T> {
   }
 }
 
-function estimateCacheEntryBytes(value: unknown, key: string): number {
+function estimateCacheEntryBytes(value: unknown, key: string): number | undefined {
   const keyBytes = Buffer.byteLength(key, "utf8");
 
   if (typeof value === "string") {
@@ -164,6 +184,6 @@ function estimateCacheEntryBytes(value: unknown, key: string): number {
   try {
     return keyBytes + Buffer.byteLength(JSON.stringify(value) ?? "null", "utf8");
   } catch {
-    return keyBytes;
+    return undefined;
   }
 }
