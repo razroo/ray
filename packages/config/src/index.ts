@@ -254,6 +254,24 @@ function parsePositiveUnitInterval(value: string | undefined, label: string): nu
   return parsed;
 }
 
+function parseUnitInterval(value: string | undefined, label: string): number | undefined {
+  if (!isNonEmptyString(value)) {
+    return undefined;
+  }
+
+  const parsed = Number(value.trim());
+
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    throw new RayError(`Expected ${label} to be between 0 and 1`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { value },
+    });
+  }
+
+  return parsed;
+}
+
 function parseTcpPort(value: string | undefined, label: string): number | undefined {
   const parsed = parsePositiveInteger(value, label);
 
@@ -483,6 +501,50 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
   const adaptiveTuningEnabled = parseBoolean(
     env.RAY_ADAPTIVE_TUNING_ENABLED,
     "RAY_ADAPTIVE_TUNING_ENABLED",
+  );
+  const adaptiveSampleSize = parsePositiveInteger(
+    env.RAY_ADAPTIVE_SAMPLE_SIZE,
+    "RAY_ADAPTIVE_SAMPLE_SIZE",
+  );
+  const adaptiveQueueLatencyThresholdMs = parsePositiveInteger(
+    env.RAY_ADAPTIVE_QUEUE_LATENCY_THRESHOLD_MS,
+    "RAY_ADAPTIVE_QUEUE_LATENCY_THRESHOLD_MS",
+  );
+  const adaptiveMinCompletionTokensPerSecond = parsePositiveInteger(
+    env.RAY_ADAPTIVE_MIN_COMPLETION_TOKENS_PER_SECOND,
+    "RAY_ADAPTIVE_MIN_COMPLETION_TOKENS_PER_SECOND",
+  );
+  const adaptiveMaxOutputReductionRatio = parseUnitInterval(
+    env.RAY_ADAPTIVE_MAX_OUTPUT_REDUCTION_RATIO,
+    "RAY_ADAPTIVE_MAX_OUTPUT_REDUCTION_RATIO",
+  );
+  const adaptiveMinOutputTokens = parsePositiveInteger(
+    env.RAY_ADAPTIVE_MIN_OUTPUT_TOKENS,
+    "RAY_ADAPTIVE_MIN_OUTPUT_TOKENS",
+  );
+  const adaptiveLearnedFamilyCapEnabled = parseBoolean(
+    env.RAY_ADAPTIVE_LEARNED_FAMILY_CAP_ENABLED,
+    "RAY_ADAPTIVE_LEARNED_FAMILY_CAP_ENABLED",
+  );
+  const adaptiveFamilyHistorySize = parsePositiveInteger(
+    env.RAY_ADAPTIVE_FAMILY_HISTORY_SIZE,
+    "RAY_ADAPTIVE_FAMILY_HISTORY_SIZE",
+  );
+  const adaptiveLearnedCapMinSamples = parsePositiveInteger(
+    env.RAY_ADAPTIVE_LEARNED_CAP_MIN_SAMPLES,
+    "RAY_ADAPTIVE_LEARNED_CAP_MIN_SAMPLES",
+  );
+  const adaptiveDraftPercentile = parseUnitInterval(
+    env.RAY_ADAPTIVE_DRAFT_PERCENTILE,
+    "RAY_ADAPTIVE_DRAFT_PERCENTILE",
+  );
+  const adaptiveShortPercentile = parseUnitInterval(
+    env.RAY_ADAPTIVE_SHORT_PERCENTILE,
+    "RAY_ADAPTIVE_SHORT_PERCENTILE",
+  );
+  const adaptiveLearnedCapHeadroomTokens = parsePositiveInteger(
+    env.RAY_ADAPTIVE_LEARNED_CAP_HEADROOM_TOKENS,
+    "RAY_ADAPTIVE_LEARNED_CAP_HEADROOM_TOKENS",
   );
   const authEnabled = parseBoolean(env.RAY_AUTH_ENABLED, "RAY_AUTH_ENABLED");
   const rateLimitEnabled = parseBoolean(env.RAY_RATE_LIMIT_ENABLED, "RAY_RATE_LIMIT_ENABLED");
@@ -802,6 +864,50 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
 
   if (adaptiveTuningEnabled !== undefined) {
     next.adaptiveTuning.enabled = adaptiveTuningEnabled;
+  }
+
+  if (adaptiveSampleSize !== undefined) {
+    next.adaptiveTuning.sampleSize = adaptiveSampleSize;
+  }
+
+  if (adaptiveQueueLatencyThresholdMs !== undefined) {
+    next.adaptiveTuning.queueLatencyThresholdMs = adaptiveQueueLatencyThresholdMs;
+  }
+
+  if (adaptiveMinCompletionTokensPerSecond !== undefined) {
+    next.adaptiveTuning.minCompletionTokensPerSecond = adaptiveMinCompletionTokensPerSecond;
+  }
+
+  if (adaptiveMaxOutputReductionRatio !== undefined) {
+    next.adaptiveTuning.maxOutputReductionRatio = adaptiveMaxOutputReductionRatio;
+  }
+
+  if (adaptiveMinOutputTokens !== undefined) {
+    next.adaptiveTuning.minOutputTokens = adaptiveMinOutputTokens;
+  }
+
+  if (adaptiveLearnedFamilyCapEnabled !== undefined) {
+    next.adaptiveTuning.learnedFamilyCapEnabled = adaptiveLearnedFamilyCapEnabled;
+  }
+
+  if (adaptiveFamilyHistorySize !== undefined) {
+    next.adaptiveTuning.familyHistorySize = adaptiveFamilyHistorySize;
+  }
+
+  if (adaptiveLearnedCapMinSamples !== undefined) {
+    next.adaptiveTuning.learnedCapMinSamples = adaptiveLearnedCapMinSamples;
+  }
+
+  if (adaptiveDraftPercentile !== undefined) {
+    next.adaptiveTuning.draftPercentile = adaptiveDraftPercentile;
+  }
+
+  if (adaptiveShortPercentile !== undefined) {
+    next.adaptiveTuning.shortPercentile = adaptiveShortPercentile;
+  }
+
+  if (adaptiveLearnedCapHeadroomTokens !== undefined) {
+    next.adaptiveTuning.learnedCapHeadroomTokens = adaptiveLearnedCapHeadroomTokens;
   }
 
   if (authEnabled !== undefined) {

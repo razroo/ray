@@ -153,6 +153,17 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
       RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD: "0.35",
       RAY_PROMPT_COMPILER_ENABLED: "false",
       RAY_ADAPTIVE_TUNING_ENABLED: "off",
+      RAY_ADAPTIVE_SAMPLE_SIZE: "16",
+      RAY_ADAPTIVE_QUEUE_LATENCY_THRESHOLD_MS: "700",
+      RAY_ADAPTIVE_MIN_COMPLETION_TOKENS_PER_SECOND: "7",
+      RAY_ADAPTIVE_MAX_OUTPUT_REDUCTION_RATIO: "0.25",
+      RAY_ADAPTIVE_MIN_OUTPUT_TOKENS: "32",
+      RAY_ADAPTIVE_LEARNED_FAMILY_CAP_ENABLED: "false",
+      RAY_ADAPTIVE_FAMILY_HISTORY_SIZE: "32",
+      RAY_ADAPTIVE_LEARNED_CAP_MIN_SAMPLES: "4",
+      RAY_ADAPTIVE_DRAFT_PERCENTILE: "0.85",
+      RAY_ADAPTIVE_SHORT_PERCENTILE: "0.8",
+      RAY_ADAPTIVE_LEARNED_CAP_HEADROOM_TOKENS: "12",
       RAY_AUTH_ENABLED: "on",
       RAY_RATE_LIMIT_ENABLED: "no",
       RAY_RATE_LIMIT_WINDOW_MS: "30000",
@@ -209,6 +220,17 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
   assert.equal(loaded.config.gracefulDegradation.cpuThrottledRatioThreshold, 0.35);
   assert.equal(loaded.config.promptCompiler.enabled, false);
   assert.equal(loaded.config.adaptiveTuning.enabled, false);
+  assert.equal(loaded.config.adaptiveTuning.sampleSize, 16);
+  assert.equal(loaded.config.adaptiveTuning.queueLatencyThresholdMs, 700);
+  assert.equal(loaded.config.adaptiveTuning.minCompletionTokensPerSecond, 7);
+  assert.equal(loaded.config.adaptiveTuning.maxOutputReductionRatio, 0.25);
+  assert.equal(loaded.config.adaptiveTuning.minOutputTokens, 32);
+  assert.equal(loaded.config.adaptiveTuning.learnedFamilyCapEnabled, false);
+  assert.equal(loaded.config.adaptiveTuning.familyHistorySize, 32);
+  assert.equal(loaded.config.adaptiveTuning.learnedCapMinSamples, 4);
+  assert.equal(loaded.config.adaptiveTuning.draftPercentile, 0.85);
+  assert.equal(loaded.config.adaptiveTuning.shortPercentile, 0.8);
+  assert.equal(loaded.config.adaptiveTuning.learnedCapHeadroomTokens, 12);
   assert.equal(loaded.config.auth.enabled, true);
   assert.equal(loaded.config.rateLimit.enabled, false);
   assert.equal(loaded.config.rateLimit.windowMs, 30_000);
@@ -372,6 +394,17 @@ test("loadRayConfig rejects malformed environment overrides", async () => {
       },
     }),
     /Expected RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS to be comma-separated non-empty values/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_ADAPTIVE_MAX_OUTPUT_REDUCTION_RATIO: "1.5",
+      },
+    }),
+    /Expected RAY_ADAPTIVE_MAX_OUTPUT_REDUCTION_RATIO to be between 0 and 1/,
   );
 });
 

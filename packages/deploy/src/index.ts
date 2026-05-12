@@ -1437,6 +1437,29 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
   lines.push(`# RAY_GRACEFUL_DEGRADATION_ENABLED=${config.gracefulDegradation.enabled}`);
   lines.push(`# RAY_PROMPT_COMPILER_ENABLED=${config.promptCompiler.enabled}`);
   lines.push(`# RAY_ADAPTIVE_TUNING_ENABLED=${config.adaptiveTuning.enabled}`);
+  lines.push(`# RAY_ADAPTIVE_SAMPLE_SIZE=${config.adaptiveTuning.sampleSize}`);
+  lines.push(
+    `# RAY_ADAPTIVE_QUEUE_LATENCY_THRESHOLD_MS=${config.adaptiveTuning.queueLatencyThresholdMs}`,
+  );
+  lines.push(
+    `# RAY_ADAPTIVE_MIN_COMPLETION_TOKENS_PER_SECOND=${config.adaptiveTuning.minCompletionTokensPerSecond}`,
+  );
+  lines.push(
+    `# RAY_ADAPTIVE_MAX_OUTPUT_REDUCTION_RATIO=${config.adaptiveTuning.maxOutputReductionRatio}`,
+  );
+  lines.push(`# RAY_ADAPTIVE_MIN_OUTPUT_TOKENS=${config.adaptiveTuning.minOutputTokens}`);
+  lines.push(
+    `# RAY_ADAPTIVE_LEARNED_FAMILY_CAP_ENABLED=${config.adaptiveTuning.learnedFamilyCapEnabled}`,
+  );
+  lines.push(`# RAY_ADAPTIVE_FAMILY_HISTORY_SIZE=${config.adaptiveTuning.familyHistorySize}`);
+  lines.push(
+    `# RAY_ADAPTIVE_LEARNED_CAP_MIN_SAMPLES=${config.adaptiveTuning.learnedCapMinSamples}`,
+  );
+  lines.push(`# RAY_ADAPTIVE_DRAFT_PERCENTILE=${config.adaptiveTuning.draftPercentile}`);
+  lines.push(`# RAY_ADAPTIVE_SHORT_PERCENTILE=${config.adaptiveTuning.shortPercentile}`);
+  lines.push(
+    `# RAY_ADAPTIVE_LEARNED_CAP_HEADROOM_TOKENS=${config.adaptiveTuning.learnedCapHeadroomTokens}`,
+  );
   lines.push(`# RAY_AUTH_ENABLED=${config.auth.enabled}`);
   lines.push(`# RAY_RATE_LIMIT_ENABLED=${config.rateLimit.enabled}`);
   lines.push(`# RAY_RATE_LIMIT_WINDOW_MS=${config.rateLimit.windowMs}`);
