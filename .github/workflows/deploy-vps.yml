@@ -398,6 +398,9 @@ jobs:
             printf 'RAY_LOG_LEVEL=info\n' | $SUDO tee /etc/ray/ray.env >/dev/null
           fi
           if [ -n "${RAY_DEPLOY_MEMORY_MIB:-}" ] && ! $SUDO grep -Eq '^RAY_DEPLOY_MEMORY_MIB=' /etc/ray/ray.env; then
+            if [ -s /etc/ray/ray.env ] && [ -n "$($SUDO tail -c 1 /etc/ray/ray.env)" ]; then
+              printf '\n' | $SUDO tee -a /etc/ray/ray.env >/dev/null
+            fi
             printf 'RAY_DEPLOY_MEMORY_MIB=%s\n' "$RAY_DEPLOY_MEMORY_MIB" | $SUDO tee -a /etc/ray/ray.env >/dev/null
           fi
           $SUDO chmod 600 /etc/ray/ray.env
