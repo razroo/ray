@@ -486,6 +486,10 @@ export interface DegradationDiagnostics {
   cgroupMemoryHighMiB?: number;
   cgroupMemoryLimitMiB?: number;
   cgroupMemoryPressureRatio?: number;
+  cgroupMemoryHighEvents?: number;
+  cgroupMemoryMaxEvents?: number;
+  cgroupMemoryOomEvents?: number;
+  cgroupMemoryOomKillEvents?: number;
 }
 
 export interface InferenceDiagnostics {
@@ -535,6 +539,10 @@ export interface RuntimeHealthDiagnostics {
     cgroupMemoryHighMiB?: number;
     cgroupMemoryLimitMiB?: number;
     cgroupMemoryPressureRatio?: number;
+    cgroupMemoryHighEvents?: number;
+    cgroupMemoryMaxEvents?: number;
+    cgroupMemoryOomEvents?: number;
+    cgroupMemoryOomKillEvents?: number;
   };
 }
 

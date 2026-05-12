@@ -82,6 +82,10 @@ export interface CgroupMemorySnapshot {
   highMiB?: number;
   limitMiB?: number;
   pressureRatio?: number;
+  highEvents?: number;
+  maxEvents?: number;
+  oomEvents?: number;
+  oomKillEvents?: number;
 }
 
 export interface CgroupMemoryReaderOptions {
@@ -95,6 +99,7 @@ interface CgroupMemoryCandidate {
   currentPath: string;
   highPath?: string;
   limitPath: string;
+  eventsPath?: string;
 }
 
 interface MemoryPressureSnapshot {
@@ -103,6 +108,10 @@ interface MemoryPressureSnapshot {
   cgroupMemoryHighMiB?: number;
   cgroupMemoryLimitMiB?: number;
   cgroupMemoryPressureRatio?: number;
+  cgroupMemoryHighEvents?: number;
+  cgroupMemoryMaxEvents?: number;
+  cgroupMemoryOomEvents?: number;
+  cgroupMemoryOomKillEvents?: number;
 }
 
 export type CgroupMemoryReader = () =>
@@ -701,6 +710,18 @@ function buildDegradationDiagnostics(options: {
     ...(options.memoryPressure.cgroupMemoryPressureRatio !== undefined
       ? { cgroupMemoryPressureRatio: options.memoryPressure.cgroupMemoryPressureRatio }
       : {}),
+    ...(options.memoryPressure.cgroupMemoryHighEvents !== undefined
+      ? { cgroupMemoryHighEvents: options.memoryPressure.cgroupMemoryHighEvents }
+      : {}),
+    ...(options.memoryPressure.cgroupMemoryMaxEvents !== undefined
+      ? { cgroupMemoryMaxEvents: options.memoryPressure.cgroupMemoryMaxEvents }
+      : {}),
+    ...(options.memoryPressure.cgroupMemoryOomEvents !== undefined
+      ? { cgroupMemoryOomEvents: options.memoryPressure.cgroupMemoryOomEvents }
+      : {}),
+    ...(options.memoryPressure.cgroupMemoryOomKillEvents !== undefined
+      ? { cgroupMemoryOomKillEvents: options.memoryPressure.cgroupMemoryOomKillEvents }
+      : {}),
   };
 }
 
@@ -744,6 +765,18 @@ function buildRuntimeHealthDiagnostics(options: {
       ...(options.memoryPressure.cgroupMemoryPressureRatio !== undefined
         ? { cgroupMemoryPressureRatio: options.memoryPressure.cgroupMemoryPressureRatio }
         : {}),
+      ...(options.memoryPressure.cgroupMemoryHighEvents !== undefined
+        ? { cgroupMemoryHighEvents: options.memoryPressure.cgroupMemoryHighEvents }
+        : {}),
+      ...(options.memoryPressure.cgroupMemoryMaxEvents !== undefined
+        ? { cgroupMemoryMaxEvents: options.memoryPressure.cgroupMemoryMaxEvents }
+        : {}),
+      ...(options.memoryPressure.cgroupMemoryOomEvents !== undefined
+        ? { cgroupMemoryOomEvents: options.memoryPressure.cgroupMemoryOomEvents }
+        : {}),
+      ...(options.memoryPressure.cgroupMemoryOomKillEvents !== undefined
+        ? { cgroupMemoryOomKillEvents: options.memoryPressure.cgroupMemoryOomKillEvents }
+        : {}),
     },
   };
 }
@@ -778,6 +811,45 @@ function parseCgroupByteValue(raw: string, options: { allowMax: boolean }): numb
   }
 
   return bytes;
+}
+
+function parseCgroupMemoryEvents(raw: string): {
+  highEvents?: number;
+  maxEvents?: number;
+  oomEvents?: number;
+  oomKillEvents?: number;
+} {
+  const events: {
+    highEvents?: number;
+    maxEvents?: number;
+    oomEvents?: number;
+    oomKillEvents?: number;
+  } = {};
+  const keys = {
+    high: "highEvents",
+    max: "maxEvents",
+    oom: "oomEvents",
+    oom_kill: "oomKillEvents",
+  } as const;
+
+  for (const line of raw.split(/\r?\n/)) {
+    const match = /^([a-z_]+)\s+(\d+)$/.exec(line.trim());
+
+    if (!match) {
+      continue;
+    }
+
+    const key = keys[match[1] as keyof typeof keys];
+    const value = Number(match[2]);
+
+    if (!key || !Number.isSafeInteger(value) || value < 0) {
+      continue;
+    }
+
+    events[key] = value;
+  }
+
+  return events;
 }
 
 function resolveCgroupFile(root: string, cgroupPath: string, fileName: string): string | undefined {
@@ -838,12 +910,15 @@ function resolveCgroupMemoryCandidates(
     const highPath = isUnifiedCgroup
       ? resolveCgroupFile(root, cgroupPath, "memory.high")
       : undefined;
+    const eventsPath = isUnifiedCgroup
+      ? resolveCgroupFile(root, cgroupPath, "memory.events")
+      : undefined;
 
     if (!currentPath || !limitPath) {
       continue;
     }
 
-    const key = `${currentPath}\n${highPath ?? ""}\n${limitPath}`;
+    const key = `${currentPath}\n${highPath ?? ""}\n${limitPath}\n${eventsPath ?? ""}`;
 
     if (seen.has(key)) {
       continue;
@@ -854,6 +929,7 @@ function resolveCgroupMemoryCandidates(
       currentPath,
       ...(highPath ? { highPath } : {}),
       limitPath,
+      ...(eventsPath ? { eventsPath } : {}),
     });
   }
 
@@ -894,6 +970,10 @@ export async function readCgroupMemorySnapshot(
         : undefined;
       const highBytes =
         highRaw === undefined ? undefined : parseCgroupByteValue(highRaw, { allowMax: true });
+      const eventsRaw = candidate.eventsPath
+        ? await readTextFile(candidate.eventsPath).catch(() => undefined)
+        : undefined;
+      const events = eventsRaw === undefined ? undefined : parseCgroupMemoryEvents(eventsRaw);
       const snapshot: CgroupMemorySnapshot = {
         currentMiB: bytesToMiB(currentBytes),
       };
@@ -909,6 +989,22 @@ export async function readCgroupMemorySnapshot(
       const pressureLimitBytes = highBytes !== undefined && highBytes > 0 ? highBytes : limitBytes;
       if (pressureLimitBytes !== undefined && pressureLimitBytes > 0) {
         snapshot.pressureRatio = Number((currentBytes / pressureLimitBytes).toFixed(4));
+      }
+
+      if (events?.highEvents !== undefined) {
+        snapshot.highEvents = events.highEvents;
+      }
+
+      if (events?.maxEvents !== undefined) {
+        snapshot.maxEvents = events.maxEvents;
+      }
+
+      if (events?.oomEvents !== undefined) {
+        snapshot.oomEvents = events.oomEvents;
+      }
+
+      if (events?.oomKillEvents !== undefined) {
+        snapshot.oomKillEvents = events.oomKillEvents;
       }
 
       return snapshot;
@@ -1921,6 +2017,18 @@ export class RayRuntime {
             ...(cgroupMemory.pressureRatio !== undefined
               ? { cgroupMemoryPressureRatio: cgroupMemory.pressureRatio }
               : {}),
+            ...(cgroupMemory.highEvents !== undefined
+              ? { cgroupMemoryHighEvents: cgroupMemory.highEvents }
+              : {}),
+            ...(cgroupMemory.maxEvents !== undefined
+              ? { cgroupMemoryMaxEvents: cgroupMemory.maxEvents }
+              : {}),
+            ...(cgroupMemory.oomEvents !== undefined
+              ? { cgroupMemoryOomEvents: cgroupMemory.oomEvents }
+              : {}),
+            ...(cgroupMemory.oomKillEvents !== undefined
+              ? { cgroupMemoryOomKillEvents: cgroupMemory.oomKillEvents }
+              : {}),
           }
         : {}),
     };
@@ -1985,6 +2093,24 @@ export class RayRuntime {
       this.metrics.gauge(
         "process.memory.cgroup_pressure",
         memoryPressure.cgroupMemoryPressureRatio >= CGROUP_MEMORY_PRESSURE_RATIO ? 1 : 0,
+      );
+    }
+    if (memoryPressure.cgroupMemoryHighEvents !== undefined) {
+      this.metrics.gauge(
+        "process.memory.cgroup_high_events",
+        memoryPressure.cgroupMemoryHighEvents,
+      );
+    }
+    if (memoryPressure.cgroupMemoryMaxEvents !== undefined) {
+      this.metrics.gauge("process.memory.cgroup_max_events", memoryPressure.cgroupMemoryMaxEvents);
+    }
+    if (memoryPressure.cgroupMemoryOomEvents !== undefined) {
+      this.metrics.gauge("process.memory.cgroup_oom_events", memoryPressure.cgroupMemoryOomEvents);
+    }
+    if (memoryPressure.cgroupMemoryOomKillEvents !== undefined) {
+      this.metrics.gauge(
+        "process.memory.cgroup_oom_kill_events",
+        memoryPressure.cgroupMemoryOomKillEvents,
       );
     }
     this.metrics.gauge(

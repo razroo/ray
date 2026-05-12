@@ -147,6 +147,10 @@ test("runtime clamps output under cgroup memory pressure", async () => {
       highMiB: 900,
       limitMiB: 1_000,
       pressureRatio: 0.95,
+      highEvents: 3,
+      maxEvents: 2,
+      oomEvents: 1,
+      oomKillEvents: 0,
     }),
   });
 
@@ -168,6 +172,10 @@ test("runtime clamps output under cgroup memory pressure", async () => {
   assert.equal(result.diagnostics?.degradation?.cgroupMemoryHighMiB, 900);
   assert.equal(result.diagnostics?.degradation?.cgroupMemoryLimitMiB, 1_000);
   assert.equal(result.diagnostics?.degradation?.cgroupMemoryPressureRatio, 0.95);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemoryHighEvents, 3);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemoryMaxEvents, 2);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemoryOomEvents, 1);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemoryOomKillEvents, 0);
   assert.equal(health.status, "degraded");
   assert.equal(health.runtime?.queue.degraded, false);
   assert.equal(health.runtime?.queue.depth, 0);
@@ -188,11 +196,19 @@ test("runtime clamps output under cgroup memory pressure", async () => {
   assert.equal(health.runtime?.memory.cgroupMemoryHighMiB, 900);
   assert.equal(health.runtime?.memory.cgroupMemoryLimitMiB, 1_000);
   assert.equal(health.runtime?.memory.cgroupMemoryPressureRatio, 0.95);
+  assert.equal(health.runtime?.memory.cgroupMemoryHighEvents, 3);
+  assert.equal(health.runtime?.memory.cgroupMemoryMaxEvents, 2);
+  assert.equal(health.runtime?.memory.cgroupMemoryOomEvents, 1);
+  assert.equal(health.runtime?.memory.cgroupMemoryOomKillEvents, 0);
   assert.equal(metrics.gauges["process.memory.cgroup_current_mib"], 950);
   assert.equal(metrics.gauges["process.memory.cgroup_high_mib"], 900);
   assert.equal(metrics.gauges["process.memory.cgroup_limit_mib"], 1_000);
   assert.equal(metrics.gauges["process.memory.cgroup_pressure_ratio"], 0.95);
   assert.equal(metrics.gauges["process.memory.cgroup_pressure"], 1);
+  assert.equal(metrics.gauges["process.memory.cgroup_high_events"], 3);
+  assert.equal(metrics.gauges["process.memory.cgroup_max_events"], 2);
+  assert.equal(metrics.gauges["process.memory.cgroup_oom_events"], 1);
+  assert.equal(metrics.gauges["process.memory.cgroup_oom_kill_events"], 0);
   assert.equal(metrics.gauges["process.memory.pressure"], 1);
 });
 
@@ -209,6 +225,11 @@ test("readCgroupMemorySnapshot reads unified cgroup memory files", async (t) => 
   await writeFile(join(cgroupDir, "memory.current"), String(760 * 1024 * 1024), "utf8");
   await writeFile(join(cgroupDir, "memory.high"), String(800 * 1024 * 1024), "utf8");
   await writeFile(join(cgroupDir, "memory.max"), String(1_000 * 1024 * 1024), "utf8");
+  await writeFile(
+    join(cgroupDir, "memory.events"),
+    "low 0\nhigh 7\nmax 2\noom 1\noom_kill 0\noom_group_kill 0\n",
+    "utf8",
+  );
 
   const snapshot = await readCgroupMemorySnapshot({
     procSelfCgroupPath: procCgroupPath,
@@ -219,6 +240,10 @@ test("readCgroupMemorySnapshot reads unified cgroup memory files", async (t) => 
   assert.equal(snapshot?.highMiB, 800);
   assert.equal(snapshot?.limitMiB, 1_000);
   assert.equal(snapshot?.pressureRatio, 0.95);
+  assert.equal(snapshot?.highEvents, 7);
+  assert.equal(snapshot?.maxEvents, 2);
+  assert.equal(snapshot?.oomEvents, 1);
+  assert.equal(snapshot?.oomKillEvents, 0);
 });
 
 test("readCgroupMemorySnapshot falls back to memory.max when memory.high is unlimited", async (t) => {
@@ -244,6 +269,10 @@ test("readCgroupMemorySnapshot falls back to memory.max when memory.high is unli
   assert.equal(snapshot?.highMiB, undefined);
   assert.equal(snapshot?.limitMiB, 1_000);
   assert.equal(snapshot?.pressureRatio, 0.9);
+  assert.equal(snapshot?.highEvents, undefined);
+  assert.equal(snapshot?.maxEvents, undefined);
+  assert.equal(snapshot?.oomEvents, undefined);
+  assert.equal(snapshot?.oomKillEvents, undefined);
 });
 
 test("runtime returns chars and provider token usage explicitly", async () => {
