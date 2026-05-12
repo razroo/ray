@@ -1789,6 +1789,39 @@ test("diagnoseConfig errors when the generated service user is missing in strict
   assert.equal(diagnostic.level, "error");
 });
 
+test("diagnoseConfig errors when the target host cannot run systemd units", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      systemdStatus: "missing",
+      systemdError: "/run/systemd/system was not found",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "systemd_host_missing");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /systemd/);
+  assert.match(diagnostic.message, /ray-gateway\.service/);
+});
+
+test("diagnoseConfig reports an available systemd host in strict mode", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      systemdStatus: "available",
+      systemdVersion: "systemd 255",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "systemd_host_ok");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+  assert.match(diagnostic.message, /systemd 255/);
+});
+
 test("diagnoseConfig errors when the generated service user cannot access gateway paths", () => {
   const config = createDefaultConfig("tiny");
   const diagnostics = diagnoseConfig(config, process.env, undefined, {

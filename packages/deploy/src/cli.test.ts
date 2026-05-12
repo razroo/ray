@@ -1237,6 +1237,7 @@ test("runCli validate strict-filesystem prints host check diagnostics", async (t
   ]);
 
   const parsed = JSON.parse(output.join("\n"));
+  assert.ok(["available", "missing", "unreadable"].includes(parsed.preflight.systemdStatus));
   assert.equal(parsed.preflight.serviceUserStatus, "missing");
   assert.ok(
     parsed.diagnostics.some(

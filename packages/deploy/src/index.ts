@@ -81,6 +81,7 @@ type WorkingDirectoryStatus = "found" | "missing" | "not_directory" | "unreadabl
 type EnvFileStatus = "found" | "missing" | "unreadable";
 type ServiceUserStatus = "found" | "missing" | "unreadable";
 type ServiceUserAccessStatus = "ok" | "blocked";
+type SystemdHostStatus = "available" | "missing" | "unreadable";
 type SwapStatus = "available" | "missing" | "unreadable";
 type SwappinessStatus = "available" | "unreadable";
 
@@ -142,6 +143,9 @@ export interface DeploymentPreflight {
   serviceUserPrimaryGroup?: string;
   serviceUserGroupIds?: number[];
   serviceUserError?: string;
+  systemdStatus?: SystemdHostStatus;
+  systemdVersion?: string;
+  systemdError?: string;
   swapStatus?: SwapStatus;
   swapTotalMiB?: number;
   swapError?: string;
@@ -190,6 +194,9 @@ const MIN_GATEWAY_BUN_VERSION = "1.3.0";
 const MIN_GATEWAY_NODE_VERSION = "20.11.0";
 const GATEWAY_RUNTIME_VERSION_TIMEOUT_MS = 3_000;
 const GATEWAY_RUNTIME_VERSION_MAX_BUFFER_BYTES = 16 * 1024;
+const SYSTEMD_RUNTIME_DIRECTORY = "/run/systemd/system";
+const SYSTEMCTL_VERSION_TIMEOUT_MS = 3_000;
+const SYSTEMCTL_VERSION_MAX_BUFFER_BYTES = 16 * 1024;
 const MAX_SYSTEMD_DEPENDENCY_UNITS = 32;
 const MAX_SYSTEMD_DEPENDENCY_UNIT_CHARS = 256;
 const MAX_SYSTEMD_MEMORY_MIB = 1_048_576;
@@ -832,6 +839,15 @@ function minimumGatewayRuntimeVersion(kind: GatewayRuntimeKind): ParsedRuntimeVe
 function truncateRuntimeVersionOutput(value: string): string {
   const normalized = value.replace(/\s+/g, " ").trim();
   return normalized.length > 256 ? `${normalized.slice(0, 256)}...` : normalized;
+}
+
+function parseSystemctlVersionOutput(value: string): string | undefined {
+  const firstLine = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+
+  return firstLine ? truncateRuntimeVersionOutput(firstLine) : undefined;
 }
 
 function resolvePasswdUser(passwd: string, user: string): ServiceUserIdentity | undefined {
@@ -1792,6 +1808,28 @@ export function diagnoseConfig(
       message:
         "EnvironmentFile paths rendered into systemd units must be absolute. Pass an absolute --ray-env-file path or resolve it against --cwd before rendering.",
     });
+  }
+
+  if (strictFilesystem && preflight?.systemdStatus !== undefined) {
+    if (preflight.systemdStatus === "missing") {
+      diagnostics.push({
+        level: "error",
+        code: "systemd_host_missing",
+        message: `This host does not appear to be booted with systemd${preflight.systemdError ? ` (${preflight.systemdError})` : ""}. Generated Ray deployments install ray-gateway.service and ray-llama-cpp.service, so run doctor on the target systemd VPS before restarting services.`,
+      });
+    } else if (preflight.systemdStatus === "unreadable") {
+      diagnostics.push({
+        level: "error",
+        code: "systemd_host_unreadable",
+        message: `Doctor could not verify that this host can run systemd services${preflight.systemdError ? ` (${preflight.systemdError})` : ""}. Verify systemd and systemctl manually before installing the generated Ray units.`,
+      });
+    } else {
+      diagnostics.push({
+        level: "info",
+        code: "systemd_host_ok",
+        message: `systemd is available on this host${preflight.systemdVersion ? ` (${preflight.systemdVersion})` : ""}.`,
+      });
+    }
   }
 
   if (strictFilesystem && preflight?.workingDirectoryStatus !== undefined) {
@@ -2905,6 +2943,71 @@ async function collectServiceUserPreflight(
   }
 }
 
+async function collectSystemdPreflight(
+  strictFilesystem: boolean,
+): Promise<Partial<DeploymentPreflight>> {
+  if (!strictFilesystem) {
+    return {};
+  }
+
+  try {
+    const runtimeDirectoryStat = await stat(SYSTEMD_RUNTIME_DIRECTORY);
+
+    if (!runtimeDirectoryStat.isDirectory()) {
+      return {
+        systemdStatus: "missing",
+        systemdError: `${SYSTEMD_RUNTIME_DIRECTORY} is not a directory`,
+      };
+    }
+  } catch (error) {
+    const code =
+      error !== null && typeof error === "object" && "code" in error
+        ? (error as { code?: string }).code
+        : undefined;
+
+    return {
+      systemdStatus: code === "ENOENT" ? "missing" : "unreadable",
+      systemdError: toErrorMessage(error),
+    };
+  }
+
+  return await new Promise<Partial<DeploymentPreflight>>((resolve) => {
+    execFile(
+      "systemctl",
+      ["--version"],
+      {
+        timeout: SYSTEMCTL_VERSION_TIMEOUT_MS,
+        maxBuffer: SYSTEMCTL_VERSION_MAX_BUFFER_BYTES,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        const output = `${stdout}\n${stderr}`.trim();
+
+        if (error) {
+          const code =
+            error !== null && typeof error === "object" && "code" in error
+              ? (error as { code?: string }).code
+              : undefined;
+
+          resolve({
+            systemdStatus: code === "ENOENT" ? "missing" : "unreadable",
+            systemdError: output
+              ? `${toErrorMessage(error)}; output: ${truncateRuntimeVersionOutput(output)}`
+              : toErrorMessage(error),
+          });
+          return;
+        }
+
+        const systemdVersion = parseSystemctlVersionOutput(output);
+        resolve({
+          systemdStatus: "available",
+          ...(systemdVersion ? { systemdVersion } : {}),
+        });
+      },
+    );
+  });
+}
+
 async function collectWorkingDirectoryPreflight(
   cwd: string,
   strictFilesystem: boolean,
@@ -3310,6 +3413,7 @@ async function collectDeploymentPreflight(
 ): Promise<DeploymentPreflight> {
   const hostMemoryMiB = Math.max(1, Math.floor(totalmem() / BYTES_PER_MIB));
   const hostCpuCount = collectHostCpuCount();
+  const systemdPreflight = await collectSystemdPreflight(options.strictFilesystem === true);
   const envFilePreflight = await collectEnvFilePreflight(options.envFile);
   const serviceUserPreflight = await collectServiceUserPreflight(
     options.user,
@@ -3361,6 +3465,7 @@ async function collectDeploymentPreflight(
       hostMemoryMiB,
       ...(hostCpuCount !== undefined ? { hostCpuCount } : {}),
       ...storagePreflight,
+      ...systemdPreflight,
       ...envFilePreflight,
       ...serviceUserPreflight,
       ...configFilePreflight,
@@ -3387,6 +3492,7 @@ async function collectDeploymentPreflight(
     hostMemoryMiB,
     ...(hostCpuCount !== undefined ? { hostCpuCount } : {}),
     ...storagePreflight,
+    ...systemdPreflight,
     ...envFilePreflight,
     ...serviceUserPreflight,
     ...configFilePreflight,
