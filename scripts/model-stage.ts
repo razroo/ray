@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { constants, createReadStream } from "node:fs";
+import { constants, createReadStream, type Dirent } from "node:fs";
 import {
   access,
   chmod,
@@ -8,6 +8,7 @@ import {
   copyFile,
   mkdir,
   open,
+  readdir,
   rename,
   rm,
   stat,
@@ -45,6 +46,7 @@ const SYSTEMD_PRINCIPAL_PATTERN = /^(?:[A-Za-z_][A-Za-z0-9_-]{0,30}|[0-9]{1,10})
 const SHA256_PATTERN = /^[a-fA-F0-9]{64}$/;
 const NUMERIC_PRINCIPAL_PATTERN = /^[0-9]{1,10}$/;
 const ATOMIC_STAGE_TEMP_PREFIX = ".ray-stage-";
+const STALE_ATOMIC_STAGE_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 const execFileAsync = promisify(execFile);
 
@@ -722,6 +724,53 @@ function createAtomicStageTempPath(targetPath: string): string {
   );
 }
 
+async function removeStaleAtomicStageTempFiles(targetPath: string): Promise<void> {
+  const targetDirectory = path.dirname(targetPath);
+  const tempPrefix = `${ATOMIC_STAGE_TEMP_PREFIX}${path.basename(targetPath)}-`;
+  const staleBeforeMs = Date.now() - STALE_ATOMIC_STAGE_TEMP_MAX_AGE_MS;
+
+  let entries: Dirent[];
+  try {
+    entries = await readdir(targetDirectory, { withFileTypes: true });
+  } catch (error) {
+    if (
+      error !== null &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: string }).code === "ENOENT"
+    ) {
+      return;
+    }
+    throw error;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.startsWith(tempPrefix)) {
+      continue;
+    }
+
+    const entryPath = path.join(targetDirectory, entry.name);
+    let entryStats;
+    try {
+      entryStats = await stat(entryPath);
+    } catch (error) {
+      if (
+        error !== null &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error as { code?: string }).code === "ENOENT"
+      ) {
+        continue;
+      }
+      throw error;
+    }
+
+    if (entryStats.mtimeMs <= staleBeforeMs) {
+      await rm(entryPath, { force: true });
+    }
+  }
+}
+
 async function copyFileAtomicUnlessSame(
   sourcePath: string,
   targetPath: string,
@@ -731,6 +780,7 @@ async function copyFileAtomicUnlessSame(
     return false;
   }
 
+  await removeStaleAtomicStageTempFiles(targetPath);
   const tempPath = createAtomicStageTempPath(targetPath);
 
   try {

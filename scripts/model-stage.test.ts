@@ -9,6 +9,7 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -467,6 +468,58 @@ test("applyModelStagePlan atomically replaces GGUF target symlinks", async (t) =
   assert.equal(await readFile(linkedVictim, "utf8"), "GGUFexisting-model");
   assert.equal(await readFile(modelTarget, "utf8"), "GGUFnew-model");
   assert.equal((await lstat(modelTarget)).isSymbolicLink(), false);
+});
+
+test("applyModelStagePlan removes stale atomic stage temp files before copying", async (t) => {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) {
+    return;
+  }
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-stale-temp-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const binaryPath = path.join(tempDir, "sources", "llama-server");
+  const modelPath = path.join(tempDir, "sources", "model.gguf");
+  const binaryTarget = path.join(tempDir, "target", "bin", "llama-server");
+  const modelTarget = path.join(tempDir, "target", "models", "model.gguf");
+  const modelTargetDir = path.dirname(modelTarget);
+  const staleTemp = path.join(modelTargetDir, `.ray-stage-${path.basename(modelTarget)}-stale`);
+  const freshTemp = path.join(modelTargetDir, `.ray-stage-${path.basename(modelTarget)}-fresh`);
+
+  await mkdir(path.join(tempDir, "sources"), { recursive: true });
+  await mkdir(modelTargetDir, { recursive: true });
+  await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
+  await writeFile(modelPath, "GGUFnew-model", "utf8");
+  await writeFile(staleTemp, "stale partial copy", "utf8");
+  await writeFile(freshTemp, "fresh partial copy", "utf8");
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o644);
+
+  const staleDate = new Date(Date.now() - 25 * 60 * 60 * 1000);
+  await utimes(staleTemp, staleDate, staleDate);
+
+  const plan = await createModelStagePlan({
+    cwd: tempDir,
+    configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
+    env: {
+      RAY_LLAMA_CPP_BINARY_PATH: binaryTarget,
+      RAY_MODEL_PATH: modelTarget,
+    },
+    serviceUser: String(uid),
+    serviceGroup: String(gid),
+    binarySourcePath: "./sources/llama-server",
+    sourcePath: "./sources/model.gguf",
+  });
+
+  await applyModelStagePlan(tempDir, plan);
+
+  await assert.rejects(stat(staleTemp), /ENOENT/);
+  assert.equal(await readFile(freshTemp, "utf8"), "fresh partial copy");
+  assert.equal(await readFile(modelTarget, "utf8"), "GGUFnew-model");
 });
 
 test("applyModelStagePlan rejects source binaries that fail the startup probe", async (t) => {
