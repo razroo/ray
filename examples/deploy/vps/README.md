@@ -90,6 +90,8 @@ The same values may live in `/etc/ray/ray.env` as
 `RAY_LLAMA_CPP_BINARY_SOURCE_PATH`, `RAY_LLAMA_CPP_BINARY_SHA256`,
 `RAY_MODEL_SOURCE_PATH`, and `RAY_MODEL_SHA256`; source/checksum CLI flags
 override env-file values when both are present.
+Add `--commands-only` when you want reviewed shell commands without the
+explanatory staging summary.
 
 On an 8 GB node, [ray.1b.8gb.generic.public.json](../../config/ray.1b.8gb.generic.public.json) raises context to `4096`, batch threads to `4`, cache RAM to `768` MiB, async queue storage headroom to `512` MiB, and gateway RSS degradation headroom to `768` MiB, and uses two parallel slots. Set `RAY_PROFILE=1b-8gb` when selecting those defaults without a JSON config file. The Qwen-specific [ray.1b.public.json](../../config/ray.1b.public.json) and [ray.1b.8gb.public.json](../../config/ray.1b.8gb.public.json) profiles are reference baselines for benchmark reproducibility.
 

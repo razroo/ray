@@ -305,6 +305,8 @@ read/execute test commands for the resolved `llama-server` and
 Instead of passing source and checksum flags every time, `/etc/ray/ray.env` may
 include `RAY_LLAMA_CPP_BINARY_SOURCE_PATH`, `RAY_LLAMA_CPP_BINARY_SHA256`,
 `RAY_MODEL_SOURCE_PATH`, and `RAY_MODEL_SHA256`; explicit CLI flags still win.
+Use `--commands-only` when you want reviewed shell commands without the
+explanatory staging summary.
 
 Deployment walkthrough: [examples/deploy/vps/README.md](examples/deploy/vps/README.md).
 

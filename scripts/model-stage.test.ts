@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   createModelStagePlan,
+  formatCommandPlan,
   formatTextPlan,
   parseArgs,
   runModelStageCli,
@@ -62,6 +63,10 @@ test("parseArgs rejects malformed model staging argv", () => {
   assert.throws(
     () => parseArgs(["--binary-sha256", "bad"]),
     /--binary-sha256 must be a 64-character hexadecimal/,
+  );
+  assert.throws(
+    () => parseArgs(["--json", "--commands-only"]),
+    /--json and --commands-only cannot be used together/,
   );
   assert.throws(() => parseArgs(["--unknown"]), /Unknown option: --unknown/);
   assert.throws(() => parseArgs(["model.gguf"]), /Unexpected positional argument/);
@@ -152,6 +157,22 @@ test("formatTextPlan prints an operator-ready staging plan", async () => {
   assert.match(text, /Then run doctor on the VPS/);
 });
 
+test("formatCommandPlan prints shell commands only", async () => {
+  const plan = await createModelStagePlan({
+    cwd: repoRoot,
+    configPath: "./examples/config/ray.sub1b.public.json",
+    env: {},
+    binarySourcePath: "./llama-server",
+    sourcePath: "./model.gguf",
+  });
+  const text = formatCommandPlan(plan);
+
+  assert.equal(text, plan.commands.join("\n"));
+  assert.doesNotMatch(text, /Ray llama\.cpp artifact staging plan/);
+  assert.match(text, /^sudo install -d -m 0755/);
+  assert.match(text, /sudo -u 'ray' test -r/);
+});
+
 test("runModelStageCli loads ray env file overrides", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-"));
   t.after(async () => {
@@ -196,4 +217,33 @@ test("runModelStageCli loads ray env file overrides", async (t) => {
   assert.equal(parsed.modelId, "env-1b");
   assert.equal(parsed.modelPath, "/var/lib/ray/models/env-1b.gguf");
   assert.equal(parsed.serviceUser, "rayenv");
+});
+
+test("runModelStageCli can print commands only", async () => {
+  let stdout = "";
+  let stderr = "";
+  const exitCode = await runModelStageCli(
+    [
+      "--cwd",
+      repoRoot,
+      "--config",
+      "./examples/config/ray.1b.generic.public.json",
+      "--binary-source",
+      "./llama-server",
+      "--source",
+      "./local-1b-q4.gguf",
+      "--commands-only",
+    ],
+    {
+      stdout: { write: (chunk: string) => (stdout += chunk) },
+      stderr: { write: (chunk: string) => (stderr += chunk) },
+    },
+    {},
+  );
+
+  assert.equal(exitCode, 0);
+  assert.equal(stderr, "");
+  assert.doesNotMatch(stdout, /Ray llama\.cpp artifact staging plan/);
+  assert.match(stdout, /^sudo install -d -m 0755/);
+  assert.match(stdout, /sudo install -D -m 0640 -- '\.\/local-1b-q4\.gguf'/);
 });

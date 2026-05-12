@@ -29,6 +29,7 @@ export interface ModelStageArgs {
   sourcePath?: string;
   sha256?: string;
   json: boolean;
+  commandsOnly: boolean;
   help: boolean;
 }
 
@@ -70,6 +71,7 @@ Options:
   --binary-sha256 <hex>    Expected SHA-256 for the installed llama-server binary.
   --source <path>          Local GGUF path to install into the configured model path.
   --sha256 <hex>           Expected SHA-256 for the installed GGUF.
+  --commands-only          Print only shell commands, one per line.
   --json                   Print machine-readable staging plan JSON.
   -h, --help               Show this help.
 
@@ -151,6 +153,7 @@ export function parseArgs(argv: string[]): ModelStageArgs {
     cwd: process.cwd(),
     configPath: DEFAULT_CONFIG_PATH,
     json: false,
+    commandsOnly: false,
     help: false,
   };
 
@@ -225,6 +228,11 @@ export function parseArgs(argv: string[]): ModelStageArgs {
       continue;
     }
 
+    if (current === "--commands-only") {
+      args.commandsOnly = true;
+      continue;
+    }
+
     if (current === "-h" || current === "--help") {
       args.help = true;
       continue;
@@ -235,6 +243,10 @@ export function parseArgs(argv: string[]): ModelStageArgs {
     }
 
     throw new Error(`Unexpected positional argument: ${current ?? ""}`);
+  }
+
+  if (args.json && args.commandsOnly) {
+    throw new Error("--json and --commands-only cannot be used together");
   }
 
   return args;
@@ -448,6 +460,10 @@ export function formatTextPlan(cwd: string, plan: ModelStagePlan): string {
   return lines.join("\n");
 }
 
+export function formatCommandPlan(plan: ModelStagePlan): string {
+  return plan.commands.join("\n");
+}
+
 export async function runModelStageCli(
   argv = process.argv.slice(2),
   io: Pick<NodeJS.Process, "stdout" | "stderr"> = process,
@@ -476,9 +492,13 @@ export async function runModelStageCli(
       ...(args.sha256 ? { sha256: args.sha256 } : {}),
     });
 
-    io.stdout.write(
-      args.json ? `${JSON.stringify(plan, null, 2)}\n` : `${formatTextPlan(cwd, plan)}\n`,
-    );
+    const output = args.json
+      ? JSON.stringify(plan, null, 2)
+      : args.commandsOnly
+        ? formatCommandPlan(plan)
+        : formatTextPlan(cwd, plan);
+
+    io.stdout.write(`${output}\n`);
     return 0;
   } catch (error) {
     io.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

@@ -160,6 +160,8 @@ You can also put those staging inputs in `/etc/ray/ray.env` as
 `RAY_LLAMA_CPP_BINARY_SOURCE_PATH`, `RAY_LLAMA_CPP_BINARY_SHA256`,
 `RAY_MODEL_SOURCE_PATH`, and `RAY_MODEL_SHA256`; explicit source/checksum flags
 override env-file values.
+Use `--commands-only` when you want reviewed shell commands without the
+explanatory staging summary.
 
 Set `RAY_AUTH_API_KEY_ENV` when an existing secret manager or deployment workflow
 uses a different environment variable for the Bearer keys.
