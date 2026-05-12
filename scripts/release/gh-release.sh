@@ -35,8 +35,8 @@ for arg in "$@"; do
   esac
 done
 
-CORE_VER=$(node -p 'require("./packages/core/package.json").version')
-SDK_VER=$(node -p 'require("./packages/sdk/package.json").version')
+CORE_VER=$(bun --print 'require("./packages/core/package.json").version')
+SDK_VER=$(bun --print 'require("./packages/sdk/package.json").version')
 if [ "$CORE_VER" != "$SDK_VER" ]; then
   echo "error: linked packages must share version; core=$CORE_VER sdk=$SDK_VER" >&2
   exit 1
