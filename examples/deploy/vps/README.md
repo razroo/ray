@@ -397,15 +397,16 @@ before opening SSH, checks that `RAY_DEPLOY_KNOWN_HOSTS` contains an entry for
 the configured host and SSH port,
 installs missing remote deploy prerequisites such as `curl`, `ca-certificates`,
 `unzip`, and `rsync`, refreshes `/usr/local/bin/bun` when it is missing or older
-than the repo's supported Bun runtime, then runs `ray deploy doctor` on the VPS before
-restarting services. Missing API keys, missing GGUF files, memory-fit errors,
-exhausted async queue storage reserves, and unsupported gateway runtimes fail
-before systemd tries to start the generated units. The configured gateway
-runtime binary defaults to `/usr/local/bin/bun`. All workflow SSH and rsync
-calls run in batch mode with `StrictHostKeyChecking=yes`, `IdentitiesOnly=yes`,
-and the validated `RAY_DEPLOY_KNOWN_HOSTS` file. Remote sudo calls use
-`sudo -n` so a deploy user without passwordless sudo fails immediately instead
-of hanging in CI.
+than the repo's supported Bun runtime, prints the resolved llama.cpp binary and
+GGUF staging plan for llama.cpp deploy configs, then runs `ray deploy doctor` on
+the VPS before restarting services. Missing API keys, missing GGUF files,
+memory-fit errors, exhausted async queue storage reserves, and unsupported
+gateway runtimes fail before systemd tries to start the generated units. The
+configured gateway runtime binary defaults to `/usr/local/bin/bun`. All workflow
+SSH and rsync calls run in batch mode with `StrictHostKeyChecking=yes`,
+`IdentitiesOnly=yes`, and the validated `RAY_DEPLOY_KNOWN_HOSTS` file. Remote
+sudo calls use `sudo -n` so a deploy user without passwordless sudo fails
+immediately instead of hanging in CI.
 
 When `RAY_DEPLOY_INSTALL_CADDY=true`, the workflow installs Caddy if needed,
 validates the rendered Caddyfile before installing it to `/etc/caddy/Caddyfile`,

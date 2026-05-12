@@ -560,6 +560,38 @@ jobs:
           fi
           $SUDO chmod 600 /etc/ray/ray.env
 
+          if $SUDO /usr/local/bin/bun --eval '
+          import { readFileSync } from "node:fs";
+          import { loadRayConfig } from "/srv/ray/packages/config/dist/index.js";
+          import { parseEnvironmentFile } from "/srv/ray/packages/deploy/dist/cli.js";
+
+          const env = {
+            ...process.env,
+            ...parseEnvironmentFile(readFileSync("/etc/ray/ray.env", "utf8")),
+          };
+          const { config } = await loadRayConfig({
+            cwd: "/srv/ray",
+            configPath: "/etc/ray/ray.json",
+            env,
+          });
+          process.exit(
+            config.model.adapter.kind === "llama.cpp" && config.model.adapter.launchProfile
+              ? 0
+              : 1,
+          );
+          '; then
+            echo "::group::Resolved llama.cpp artifact staging plan"
+            $SUDO /usr/local/bin/bun /srv/ray/scripts/model-stage.ts \
+              --cwd /srv/ray \
+              --config /etc/ray/ray.json \
+              --user "$SERVICE_USER" \
+              --group "$SERVICE_GROUP" \
+              --ray-env-file /etc/ray/ray.env
+            echo "::endgroup::"
+          else
+            echo "No generated llama.cpp artifact staging plan for this config."
+          fi
+
           $SUDO /usr/local/bin/bun /srv/ray/packages/deploy/dist/cli.js doctor \
             --cwd /srv/ray \
             --config /etc/ray/ray.json \
