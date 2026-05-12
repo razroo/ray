@@ -282,7 +282,7 @@ For prompt-family quality checks across cold outreach, follow-up, classification
 bun run eval:prompt-families:1b
 ```
 
-The structured benchmark output includes provider diagnostics such as prompt format, request shape, model ref, launch preset, slot reuse, cached tokens, JSON repair attempts, and context window so a quality regression can be tied back to the backend path Ray chose. `/health` also exposes detected backend capabilities plus runtime queue and memory-pressure diagnostics, and `/v1/config` includes sanitized capability hints for the configured profile.
+The structured benchmark output includes provider diagnostics such as prompt format, request shape, model ref, launch preset, slot reuse, cached tokens, JSON repair attempts, and context window so a quality regression can be tied back to the backend path Ray chose. `/health` also exposes detected backend capabilities plus runtime queue depth, token headroom, and memory-pressure diagnostics, and `/v1/config` includes sanitized capability hints for the configured profile.
 
 ### Quality gate (matches CI)
 

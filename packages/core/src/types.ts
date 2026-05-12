@@ -515,7 +515,16 @@ export interface RuntimeHealthDiagnostics {
   queue: {
     degraded: boolean;
     depth: number;
+    shortDepth: number;
+    draftDepth: number;
     threshold: number;
+    maxQueue: number;
+    inFlight: number;
+    concurrency: number;
+    queuedTokens: number;
+    maxQueuedTokens: number;
+    inFlightTokens: number;
+    maxInflightTokens: number;
   };
   memory: {
     degraded: boolean;

@@ -706,7 +706,7 @@ function buildDegradationDiagnostics(options: {
 
 function buildRuntimeHealthDiagnostics(options: {
   queueDegraded: boolean;
-  queueDepth: number;
+  queueSnapshot: SchedulerSnapshot;
   queueDepthThreshold: number;
   memoryPressureSources: MemoryPressureSource[];
   memoryPressure: MemoryPressureSnapshot;
@@ -715,8 +715,17 @@ function buildRuntimeHealthDiagnostics(options: {
   return {
     queue: {
       degraded: options.queueDegraded,
-      depth: options.queueDepth,
+      depth: options.queueSnapshot.queueDepth,
+      shortDepth: options.queueSnapshot.shortQueueDepth,
+      draftDepth: options.queueSnapshot.draftQueueDepth,
       threshold: options.queueDepthThreshold,
+      maxQueue: options.queueSnapshot.maxQueue,
+      inFlight: options.queueSnapshot.inFlight,
+      concurrency: options.queueSnapshot.concurrency,
+      queuedTokens: options.queueSnapshot.queuedTokens,
+      maxQueuedTokens: options.queueSnapshot.maxQueuedTokens,
+      inFlightTokens: options.queueSnapshot.inFlightTokens,
+      maxInflightTokens: options.queueSnapshot.maxInflightTokens,
     },
     memory: {
       degraded: options.memoryPressureSources.length > 0,
@@ -1543,7 +1552,7 @@ export class RayRuntime {
     const memoryDegraded = memoryPressureSources.length > 0;
     const runtimeHealth = buildRuntimeHealthDiagnostics({
       queueDegraded,
-      queueDepth: snapshot.queueDepth,
+      queueSnapshot: snapshot,
       queueDepthThreshold: this.config.gracefulDegradation.queueDepthThreshold,
       memoryPressureSources,
       memoryPressure,

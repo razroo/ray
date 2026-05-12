@@ -170,7 +170,17 @@ test("runtime clamps output under cgroup memory pressure", async () => {
   assert.equal(result.diagnostics?.degradation?.cgroupMemoryPressureRatio, 0.95);
   assert.equal(health.status, "degraded");
   assert.equal(health.runtime?.queue.degraded, false);
+  assert.equal(health.runtime?.queue.depth, 0);
+  assert.equal(health.runtime?.queue.shortDepth, 0);
+  assert.equal(health.runtime?.queue.draftDepth, 0);
   assert.equal(health.runtime?.queue.threshold, config.gracefulDegradation.queueDepthThreshold);
+  assert.equal(health.runtime?.queue.maxQueue, config.scheduler.maxQueue);
+  assert.equal(health.runtime?.queue.inFlight, 0);
+  assert.equal(health.runtime?.queue.concurrency, config.scheduler.concurrency);
+  assert.equal(health.runtime?.queue.queuedTokens, 0);
+  assert.equal(health.runtime?.queue.maxQueuedTokens, config.scheduler.maxQueuedTokens);
+  assert.equal(health.runtime?.queue.inFlightTokens, 0);
+  assert.equal(health.runtime?.queue.maxInflightTokens, config.scheduler.maxInflightTokens);
   assert.equal(health.runtime?.memory.degraded, true);
   assert.deepEqual(health.runtime?.memory.sources, ["cgroup"]);
   assert.equal(health.runtime?.memory.processRssMiB, 32);
