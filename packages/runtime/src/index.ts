@@ -162,6 +162,7 @@ const MAX_METADATA_KEY_CHARS = 128;
 const MAX_METADATA_VALUE_CHARS = 1_024;
 const MAX_STOP_SEQUENCES = 16;
 const MAX_STOP_SEQUENCE_CHARS = 256;
+const MAX_PROVIDER_PREPARATION_AFFINITY_KEY_CHARS = 512;
 const BYTES_PER_MIB = 1024 * 1024;
 const CGROUP_V2_ROOT = "/sys/fs/cgroup";
 const CGROUP_V1_MEMORY_ROOT = "/sys/fs/cgroup/memory";
@@ -1913,9 +1914,28 @@ function assertProviderPreparationLane(value: unknown): asserts value is Schedul
   }
 }
 
-function assertProviderSlotSnapshots(value: unknown): void {
+function normalizeProviderPreparationAffinityKey(value: unknown): string | undefined {
   if (value === undefined) {
-    return;
+    return undefined;
+  }
+
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_PROVIDER_PREPARATION_AFFINITY_KEY_CHARS
+  ) {
+    throw createProviderPreparationError("affinityKey must be a bounded non-empty string", {
+      field: "affinityKey",
+      maxChars: MAX_PROVIDER_PREPARATION_AFFINITY_KEY_CHARS,
+    });
+  }
+
+  return value;
+}
+
+function normalizeProviderSlotSnapshots(value: unknown): SchedulerSlotSnapshot[] | undefined {
+  if (value === undefined) {
+    return undefined;
   }
 
   if (!Array.isArray(value)) {
@@ -1935,6 +1955,8 @@ function assertProviderSlotSnapshots(value: unknown): void {
     );
   }
 
+  const slots: SchedulerSlotSnapshot[] = [];
+
   for (const [index, slot] of value.entries()) {
     if (slot === null || typeof slot !== "object" || Array.isArray(slot)) {
       throw createProviderPreparationError(`slotSnapshots[${index}] must be an object`, {
@@ -1944,7 +1966,8 @@ function assertProviderSlotSnapshots(value: unknown): void {
 
     const snapshot = slot as Partial<SchedulerSlotSnapshot>;
     assertOptionalNonNegativeSafeInteger(snapshot.id, `slotSnapshots[${index}].id`);
-    if (snapshot.id === undefined) {
+    const id = snapshot.id;
+    if (id === undefined) {
       throw createProviderPreparationError(`slotSnapshots[${index}].id is required`, {
         field: `slotSnapshots[${index}].id`,
       });
@@ -1986,7 +2009,33 @@ function assertProviderSlotSnapshots(value: unknown): void {
       snapshot.cacheTokens,
       `slotSnapshots[${index}].cacheTokens`,
     );
+
+    const normalized: SchedulerSlotSnapshot = {
+      id,
+      isProcessing: snapshot.isProcessing,
+      updatedAt: snapshot.updatedAt,
+    };
+
+    if (snapshot.taskId !== undefined) {
+      normalized.taskId = snapshot.taskId;
+    }
+
+    if (snapshot.contextWindow !== undefined) {
+      normalized.contextWindow = snapshot.contextWindow;
+    }
+
+    if (snapshot.promptTokens !== undefined) {
+      normalized.promptTokens = snapshot.promptTokens;
+    }
+
+    if (snapshot.cacheTokens !== undefined) {
+      normalized.cacheTokens = snapshot.cacheTokens;
+    }
+
+    slots.push(normalized);
   }
+
+  return slots;
 }
 
 function normalizeProviderRequestPreparation(
@@ -2003,9 +2052,19 @@ function normalizeProviderRequestPreparation(
   assertOptionalPositiveSafeInteger(value.promptTokens, "promptTokens");
   assertProviderPreparationLane(value.lane);
   assertOptionalNonNegativeSafeInteger(value.preferredSlot, "preferredSlot");
-  assertProviderSlotSnapshots(value.slotSnapshots);
+  const affinityKey = normalizeProviderPreparationAffinityKey(value.affinityKey);
+  const slotSnapshots = normalizeProviderSlotSnapshots(value.slotSnapshots);
 
-  return value;
+  return {
+    request: value.request,
+    ...(value.promptTokens !== undefined ? { promptTokens: value.promptTokens } : {}),
+    ...(affinityKey !== undefined ? { affinityKey } : {}),
+    ...(value.lane !== undefined ? { lane: value.lane } : {}),
+    ...(value.preferredSlot !== undefined ? { preferredSlot: value.preferredSlot } : {}),
+    ...(slotSnapshots !== undefined ? { slotSnapshots } : {}),
+    ...(value.providerState !== undefined ? { providerState: value.providerState } : {}),
+    ...(value.diagnostics !== undefined ? { diagnostics: value.diagnostics } : {}),
+  };
 }
 
 function createProviderResultError(message: string, details?: Record<string, unknown>): RayError {

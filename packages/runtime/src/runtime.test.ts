@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
-import type { ModelProvider, ProviderDiagnostics } from "@razroo/ray-core";
+import type { ModelProvider, ProviderDiagnostics, SchedulerSlotSnapshot } from "@razroo/ray-core";
 import { createRayRuntime, readCgroupCpuSnapshot, readCgroupMemorySnapshot } from "./index.js";
 
 async function waitForCondition(predicate: () => boolean | Promise<boolean>): Promise<void> {
@@ -1292,6 +1292,103 @@ test("runtime rejects malformed provider slot snapshots before metrics", async (
         (error as { details?: { field?: string } }).details?.field,
         "slotSnapshots[0].id",
       );
+      return true;
+    },
+  );
+
+  assert.equal(inferCalled, false);
+});
+
+test("runtime stores sanitized provider preparation slot snapshots", async () => {
+  const extra = "x".repeat(10_000);
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "sanitized-preparation-slots-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async prepare(request) {
+      return {
+        request,
+        promptTokens: 8,
+        slotSnapshots: [
+          {
+            id: 7,
+            taskId: 3,
+            isProcessing: false,
+            contextWindow: 2048,
+            promptTokens: 128,
+            cacheTokens: 64,
+            updatedAt: new Date().toISOString(),
+            extra,
+          } as SchedulerSlotSnapshot & { extra: string },
+        ],
+      };
+    },
+    async infer() {
+      return {
+        output: "ok",
+      };
+    },
+  };
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+
+  await runtime.infer({
+    input: "hello world",
+    cache: false,
+  });
+
+  const schedulerState = runtime.scheduler as unknown as {
+    backendSlots: Map<number, SchedulerSlotSnapshot & { extra?: unknown }>;
+  };
+  const slot = schedulerState.backendSlots.get(7);
+
+  assert.equal(slot?.taskId, 3);
+  assert.equal(slot?.isProcessing, false);
+  assert.equal(slot?.contextWindow, 2048);
+  assert.equal(slot?.promptTokens, 128);
+  assert.equal(slot?.cacheTokens, 64);
+  assert.equal(slot?.extra, undefined);
+});
+
+test("runtime rejects oversized provider preparation affinity keys before scheduling", async () => {
+  let inferCalled = false;
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "bad-preparation-affinity-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async prepare(request) {
+      return {
+        request,
+        promptTokens: 8,
+        affinityKey: "x".repeat(513),
+      };
+    },
+    async infer() {
+      inferCalled = true;
+      return {
+        output: "should not run",
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      cache: false,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_preparation_invalid");
+      assert.equal((error as { details?: { field?: string } }).details?.field, "affinityKey");
       return true;
     },
   );
