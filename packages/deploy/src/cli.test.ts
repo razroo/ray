@@ -263,7 +263,7 @@ test("runCli render writes deployment files when output-dir is provided", async 
   const service = await readFile(join(outputDir, "ray-gateway.service"), "utf8");
   const llamaService = await readFile(join(outputDir, "ray-llama-cpp.service"), "utf8");
   const caddyfile = await readFile(join(outputDir, "Caddyfile"), "utf8");
-  const summary = await readFile(join(outputDir, "summary.json"), "utf8");
+  const summary = JSON.parse(await readFile(join(outputDir, "summary.json"), "utf8"));
   const rendered = output.join("\n");
 
   assert.match(service, /Description=Ray Gateway/);
@@ -274,9 +274,46 @@ test("runCli render writes deployment files when output-dir is provided", async 
   assert.match(llamaService, /Description=llama\.cpp Server for Ray/);
   assert.doesNotMatch(llamaService, /EnvironmentFile=/);
   assert.match(caddyfile, /reverse_proxy 127\.0\.0\.1:3000/);
-  assert.equal(JSON.parse(summary).profile, "1b");
+  assert.equal(summary.profile, "1b");
+  assert.equal(summary.preflight.memoryBudgetMiB, 4096);
+  assert.equal(summary.preflight.memoryBudgetSource, "override");
+  assert.deepEqual(summary.systemd.gateway, {
+    memoryHighMiB: 640,
+    memoryMaxMiB: 896,
+  });
+  assert.deepEqual(summary.systemd.llamaCpp, {
+    memoryHighMiB: 2775,
+    memoryMaxMiB: 3084,
+  });
   assert.match(rendered, /ray-gateway\.service/);
   assert.doesNotMatch(rendered, /# Ray systemd service/);
+});
+
+test("runCli validate prints deployment preflight details", async (t) => {
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli([
+    "validate",
+    "--cwd",
+    ".",
+    "--config",
+    "./examples/config/ray.1b.generic.public.json",
+    "--memory-mib",
+    "4096",
+  ]);
+
+  const parsed = JSON.parse(output.join("\n"));
+  assert.equal(parsed.profile, "1b");
+  assert.equal(parsed.preflight.memoryBudgetMiB, 4096);
+  assert.equal(parsed.preflight.memoryBudgetSource, "override");
+  assert.ok(Array.isArray(parsed.diagnostics));
 });
 
 test("runCli render removes stale llama.cpp service files from reused output directories", async (t) => {

@@ -509,6 +509,16 @@ test("renderDeploymentBundle includes llama.cpp service for generic 1b profiles"
   assert.match(bundle.service, /After=network\.target ray-llama-cpp\.service/);
   assert.match(bundle.service, /MemoryHigh=640M/);
   assert.match(bundle.service, /MemoryMax=896M/);
+  assert.equal(bundle.summary.preflight.memoryBudgetMiB, 4096);
+  assert.equal(bundle.summary.preflight.memoryBudgetSource, "override");
+  assert.deepEqual(bundle.summary.systemd.gateway, {
+    memoryHighMiB: 640,
+    memoryMaxMiB: 896,
+  });
+  assert.deepEqual(bundle.summary.systemd.llamaCpp, {
+    memoryHighMiB: 2775,
+    memoryMaxMiB: 3084,
+  });
   assert.match(bundle.caddyfile, /response_header_timeout 37s/);
   assert.match(bundle.caddyfile, /read_timeout 37s/);
   assert.match(bundle.llamaCppService ?? "", /llama\.cpp Server for Ray/);

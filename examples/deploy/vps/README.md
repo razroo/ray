@@ -154,6 +154,9 @@ for the gateway user before the async queue writes to `/var/lib/ray/async-queue`
 When the deploy renderer emits a llama.cpp unit, install it as
 `/etc/systemd/system/ray-llama-cpp.service`; the generated gateway unit includes
 `Wants=` and `After=` dependencies on that local backend service.
+The render output also includes `summary.json` with doctor diagnostics,
+preflight facts, and generated systemd memory ceilings; inspect it before
+copying units into place.
 
 ```bash
 bun packages/deploy/dist/cli.js render \
@@ -162,6 +165,7 @@ bun packages/deploy/dist/cli.js render \
   --gateway-runtime-binary /usr/local/bin/bun \
   --ray-env-file /etc/ray/ray.env \
   --output-dir /tmp/ray-rendered
+cat /tmp/ray-rendered/summary.json
 sudo cp /tmp/ray-rendered/ray-gateway.service /etc/systemd/system/ray-gateway.service
 if [ -f /tmp/ray-rendered/ray-llama-cpp.service ]; then
   sudo cp /tmp/ray-rendered/ray-llama-cpp.service /etc/systemd/system/ray-llama-cpp.service

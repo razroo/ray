@@ -386,6 +386,7 @@ export async function runCli(argv: string[]): Promise<void> {
           configPath: inspected.configPath,
           profile: inspected.config.profile,
           diagnostics: inspected.diagnostics,
+          preflight: inspected.preflight,
         },
         null,
         2,

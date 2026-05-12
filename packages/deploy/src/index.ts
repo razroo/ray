@@ -42,6 +42,23 @@ export interface DeploymentDiagnostic {
   message: string;
 }
 
+export interface SystemdMemoryControls {
+  memoryHighMiB: number;
+  memoryMaxMiB: number;
+}
+
+export interface DeploymentBundleSummary {
+  profile: RayConfig["profile"];
+  model: RayConfig["model"];
+  server: RayConfig["server"];
+  diagnostics: DeploymentDiagnostic[];
+  preflight: DeploymentPreflight;
+  systemd: {
+    gateway: SystemdMemoryControls;
+    llamaCpp?: SystemdMemoryControls;
+  };
+}
+
 type MemoryBudgetSource = "override" | "preset" | "host";
 type AsyncQueueStorageStatus = "directory" | "parent" | "not_directory" | "unreadable";
 type BinaryPreflightStatus = "found" | "missing" | "unreadable";
@@ -2261,7 +2278,7 @@ export async function renderDeploymentBundle(options: {
   caddyfile: string;
   envFileExample: string;
   llamaCppService?: string;
-  summary: Record<string, unknown>;
+  summary: DeploymentBundleSummary;
 }> {
   const cwd = path.resolve(options.cwd);
   const envFile = options.envFile ? path.resolve(cwd, options.envFile) : undefined;
@@ -2324,6 +2341,11 @@ export async function renderDeploymentBundle(options: {
       model: inspected.config.model,
       server: inspected.config.server,
       diagnostics: inspected.diagnostics,
+      preflight: inspected.preflight,
+      systemd: {
+        gateway: gatewayMemoryControls,
+        ...(llamaCppMemoryControls ? { llamaCpp: llamaCppMemoryControls } : {}),
+      },
     },
   };
 }
