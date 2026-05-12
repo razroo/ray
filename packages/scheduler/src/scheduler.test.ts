@@ -275,13 +275,17 @@ test("scheduler rejects work that exceeds token budgets", async () => {
 
 test("scheduler enforces requestTimeoutMs when work ignores abort", async () => {
   let releaseFirst!: () => void;
+  let markStarted!: () => void;
   let aborted = false;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
   const scheduler = new RequestScheduler<string>({
     concurrency: 1,
     maxQueue: 8,
     maxQueuedTokens: 128,
     maxInflightTokens: 64,
-    requestTimeoutMs: 20,
+    requestTimeoutMs: 50,
     dedupeInflight: true,
     batchWindowMs: 0,
     affinityLookahead: 8,
@@ -297,12 +301,15 @@ test("scheduler enforces requestTimeoutMs when work ignores abort", async () => 
         },
         { once: true },
       );
+      markStarted();
       await new Promise<void>((resolve) => {
         releaseFirst = resolve;
       });
       return "late";
     },
   });
+
+  await started;
 
   await assert.rejects(
     first,

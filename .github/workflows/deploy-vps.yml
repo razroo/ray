@@ -575,13 +575,29 @@ jobs:
 
           LLAMA_CONFIG_STATUS=0
           timeout 30s $SUDO /usr/local/bin/bun --eval '
-          import { readFileSync } from "node:fs";
+          import { readFileSync, statSync } from "node:fs";
           import { loadRayConfig } from "/srv/ray/packages/config/dist/index.js";
           import { parseEnvironmentFile } from "/srv/ray/packages/deploy/dist/cli.js";
 
+          const MAX_RAY_ENV_FILE_BYTES = 64 * 1024;
+          function readRayEnvFileBounded(filePath) {
+            const stats = statSync(filePath);
+            if (!stats.isFile()) {
+              throw new Error(`Ray env path must be a file: ${filePath}`);
+            }
+            if (stats.size > MAX_RAY_ENV_FILE_BYTES) {
+              throw new Error(`Ray env file must be at most ${MAX_RAY_ENV_FILE_BYTES} bytes`);
+            }
+            const contents = readFileSync(filePath, "utf8");
+            if (Buffer.byteLength(contents, "utf8") > MAX_RAY_ENV_FILE_BYTES) {
+              throw new Error(`Ray env file must be at most ${MAX_RAY_ENV_FILE_BYTES} bytes`);
+            }
+            return contents;
+          }
+
           const env = {
             ...process.env,
-            ...parseEnvironmentFile(readFileSync("/etc/ray/ray.env", "utf8")),
+            ...parseEnvironmentFile(readRayEnvFileBounded("/etc/ray/ray.env")),
           };
           const { config } = await loadRayConfig({
             cwd: "/srv/ray",
@@ -606,10 +622,26 @@ jobs:
 
             SOURCE_CHECK_STATUS=0
             timeout 30s $SUDO /usr/local/bin/bun --eval '
-            import { readFileSync } from "node:fs";
+            import { readFileSync, statSync } from "node:fs";
             import { parseEnvironmentFile } from "/srv/ray/packages/deploy/dist/cli.js";
 
-            const env = parseEnvironmentFile(readFileSync("/etc/ray/ray.env", "utf8"));
+            const MAX_RAY_ENV_FILE_BYTES = 64 * 1024;
+            function readRayEnvFileBounded(filePath) {
+              const stats = statSync(filePath);
+              if (!stats.isFile()) {
+                throw new Error(`Ray env path must be a file: ${filePath}`);
+              }
+              if (stats.size > MAX_RAY_ENV_FILE_BYTES) {
+                throw new Error(`Ray env file must be at most ${MAX_RAY_ENV_FILE_BYTES} bytes`);
+              }
+              const contents = readFileSync(filePath, "utf8");
+              if (Buffer.byteLength(contents, "utf8") > MAX_RAY_ENV_FILE_BYTES) {
+                throw new Error(`Ray env file must be at most ${MAX_RAY_ENV_FILE_BYTES} bytes`);
+              }
+              return contents;
+            }
+
+            const env = parseEnvironmentFile(readRayEnvFileBounded("/etc/ray/ray.env"));
             const hasBinarySource =
               typeof env.RAY_LLAMA_CPP_BINARY_SOURCE_PATH === "string" &&
               env.RAY_LLAMA_CPP_BINARY_SOURCE_PATH.trim().length > 0;

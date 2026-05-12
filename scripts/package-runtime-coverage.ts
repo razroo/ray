@@ -792,6 +792,32 @@ function validateDeployWorkflowRootCommandGuards(
   return diagnostics;
 }
 
+function validateDeployWorkflowRayEnvReadGuards(
+  workflowPath: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+    if (/\breadFileSync\(["']\/etc\/ray\/ray\.env["']/.test(line)) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_ray_env_read_unbounded",
+        workflowPath,
+        line: index + 1,
+        message:
+          "VPS deploy workflow must stat /etc/ray/ray.env before reading it so deploy-side Bun helpers cannot allocate an oversized env file on a small host.",
+      });
+    }
+  }
+
+  return diagnostics;
+}
+
 async function validateWorkflow(
   workflowPath: string,
 ): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
@@ -890,6 +916,7 @@ async function validateWorkflow(
   diagnostics.push(...validateDeployWorkflowRemoteBunInstallGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRemoteBunCommandGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRootCommandGuards(workflowPath, lines));
+  diagnostics.push(...validateDeployWorkflowRayEnvReadGuards(workflowPath, lines));
 
   return {
     lineCount: lines.length,

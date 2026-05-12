@@ -133,6 +133,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
       "      - run: ssh ray@example.com 'bash -s'",
       "      - run: /usr/local/bin/bun install --production --frozen-lockfile --ignore-scripts",
       "      - run: $SUDO /usr/local/bin/bun /srv/ray/packages/deploy/dist/cli.js doctor",
+      '      - run: bun --eval \'import { readFileSync } from "node:fs"; readFileSync("/etc/ray/ray.env", "utf8")\'',
       "      - run: sudo systemctl reload caddy",
       "      - run: sudo journalctl -n 120 -u ray-gateway.service",
       "",
@@ -185,6 +186,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("workflow_journalctl_timeout_missing"));
   assert.ok(codes.includes("workflow_remote_bun_install_unbounded"));
   assert.ok(codes.includes("workflow_remote_bun_command_unbounded"));
+  assert.ok(codes.includes("workflow_ray_env_read_unbounded"));
   assert.ok(codes.includes("vps_readme_curl_install_unbounded"));
   assert.ok(codes.includes("vps_readme_apt_get_unbounded"));
   assert.ok(codes.includes("vps_readme_command_timeout_missing"));
