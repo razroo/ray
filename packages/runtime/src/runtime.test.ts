@@ -1353,6 +1353,70 @@ test("runtime stores sanitized provider preparation slot snapshots", async () =>
   assert.equal(slot?.extra, undefined);
 });
 
+test("runtime stores bounded provider preparation diagnostics", async () => {
+  const longDiagnostic = `d${"x".repeat(600)}`;
+  let observedDiagnostics:
+    | (ProviderDiagnostics & {
+        extra?: unknown;
+      })
+    | undefined;
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "bounded-preparation-diagnostics-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async prepare(request) {
+      return {
+        request,
+        promptTokens: 8,
+        diagnostics: {
+          requestShape: "llama.cpp-completion",
+          promptFormat: "prompt-scaffold",
+          modelRef: longDiagnostic,
+          backendModel: longDiagnostic,
+          launchPreset: longDiagnostic,
+          slotRouteReason: longDiagnostic,
+          jsonRepairAttempted: true,
+          totalSlots: 2,
+          timings: {
+            completionTokensPerSecond: 12,
+          },
+          extra: "not retained",
+        } as ProviderDiagnostics & { extra: string },
+      };
+    },
+    async infer(_request, context) {
+      observedDiagnostics = context.preparation?.diagnostics as
+        | (ProviderDiagnostics & { extra?: unknown })
+        | undefined;
+      return {
+        output: "ok",
+      };
+    },
+  };
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+
+  await runtime.infer({
+    input: "hello world",
+    cache: false,
+  });
+
+  assert.equal(observedDiagnostics?.requestShape, "llama.cpp-completion");
+  assert.equal(observedDiagnostics?.promptFormat, "prompt-scaffold");
+  assert.equal(observedDiagnostics?.jsonRepairAttempted, true);
+  assert.equal(observedDiagnostics?.totalSlots, 2);
+  assert.equal(observedDiagnostics?.timings?.completionTokensPerSecond, 12);
+  assert.equal(observedDiagnostics?.modelRef?.length, 512);
+  assert.match(observedDiagnostics?.modelRef ?? "", /\[truncated 113 chars\]$/);
+  assert.equal(observedDiagnostics?.backendModel?.length, 512);
+  assert.equal(observedDiagnostics?.launchPreset?.length, 512);
+  assert.equal(observedDiagnostics?.slotRouteReason?.length, 512);
+  assert.equal(observedDiagnostics?.extra, undefined);
+});
+
 test("runtime rejects oversized provider preparation affinity keys before scheduling", async () => {
   let inferCalled = false;
   const provider: ModelProvider = {
@@ -1389,6 +1453,54 @@ test("runtime rejects oversized provider preparation affinity keys before schedu
       assert.ok(error instanceof Error);
       assert.equal((error as { code?: string }).code, "provider_preparation_invalid");
       assert.equal((error as { details?: { field?: string } }).details?.field, "affinityKey");
+      return true;
+    },
+  );
+
+  assert.equal(inferCalled, false);
+});
+
+test("runtime rejects malformed provider preparation diagnostics before scheduling", async () => {
+  let inferCalled = false;
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "bad-preparation-diagnostics-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async prepare(request) {
+      return {
+        request,
+        promptTokens: 8,
+        diagnostics: {
+          tokensCached: Number.NaN,
+        },
+      };
+    },
+    async infer() {
+      inferCalled = true;
+      return {
+        output: "should not run",
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      cache: false,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_preparation_invalid");
+      assert.equal(
+        (error as { details?: { field?: string } }).details?.field,
+        "diagnostics.tokensCached",
+      );
       return true;
     },
   );

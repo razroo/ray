@@ -1933,6 +1933,186 @@ function normalizeProviderPreparationAffinityKey(value: unknown): string | undef
   return value;
 }
 
+function truncateProviderDiagnosticString(value: string): string {
+  if (value.length <= MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS) {
+    return value;
+  }
+
+  let headChars = MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS;
+
+  for (;;) {
+    const omittedChars = value.length - headChars;
+    const suffix = `...[truncated ${omittedChars} chars]`;
+    const nextHeadChars = MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS - suffix.length;
+
+    if (nextHeadChars <= 0) {
+      return suffix.slice(0, MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS);
+    }
+
+    if (nextHeadChars === headChars) {
+      return `${value.slice(0, headChars)}${suffix}`;
+    }
+
+    headChars = nextHeadChars;
+  }
+}
+
+function assertOptionalProviderPreparationDiagnosticInteger(value: unknown, field: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw createProviderPreparationError(`${field} must be a non-negative safe integer`, {
+      field,
+    });
+  }
+}
+
+function assertOptionalProviderPreparationDiagnosticNumber(value: unknown, field: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw createProviderPreparationError(`${field} must be a non-negative finite number`, {
+      field,
+    });
+  }
+}
+
+function assertOptionalProviderPreparationDiagnosticBoolean(value: unknown, field: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "boolean") {
+    throw createProviderPreparationError(`${field} must be a boolean`, { field });
+  }
+}
+
+function assertOptionalProviderPreparationDiagnosticEnum<T extends string>(
+  value: unknown,
+  field: string,
+  allowed: readonly T[],
+): T | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" || !allowed.includes(value as T)) {
+    throw createProviderPreparationError(`${field} must be a valid provider diagnostic value`, {
+      field,
+    });
+  }
+
+  return value as T;
+}
+
+function normalizeOptionalProviderPreparationDiagnosticString(
+  value: unknown,
+  field: string,
+): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw createProviderPreparationError(`${field} must be a string`, { field });
+  }
+
+  return truncateProviderDiagnosticString(value);
+}
+
+function normalizeProviderPreparationTimings(
+  value: unknown,
+): ProviderDiagnostics["timings"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw createProviderPreparationError("diagnostics.timings must be an object", {
+      field: "diagnostics.timings",
+    });
+  }
+
+  const raw = value as ProviderDiagnostics["timings"];
+  const timings: NonNullable<ProviderDiagnostics["timings"]> = {};
+
+  for (const field of providerTimingFields) {
+    assertOptionalProviderPreparationDiagnosticNumber(raw?.[field], `diagnostics.timings.${field}`);
+
+    if (raw?.[field] !== undefined) {
+      timings[field] = raw[field];
+    }
+  }
+
+  return Object.keys(timings).length > 0 ? timings : undefined;
+}
+
+function normalizeProviderPreparationDiagnostics(value: unknown): ProviderDiagnostics | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw createProviderPreparationError("diagnostics must be an object", { field: "diagnostics" });
+  }
+
+  const raw = value as ProviderDiagnostics;
+  const diagnostics: ProviderDiagnostics = {};
+  const requestShape = assertOptionalProviderPreparationDiagnosticEnum(
+    raw.requestShape,
+    "diagnostics.requestShape",
+    ["openai-chat", "llama.cpp-completion"],
+  );
+  const promptFormat = assertOptionalProviderPreparationDiagnosticEnum(
+    raw.promptFormat,
+    "diagnostics.promptFormat",
+    ["llama.cpp-template", "prompt-scaffold", "ray-chat-fallback"],
+  );
+
+  if (requestShape !== undefined) {
+    diagnostics.requestShape = requestShape;
+  }
+
+  if (promptFormat !== undefined) {
+    diagnostics.promptFormat = promptFormat;
+  }
+
+  for (const field of providerDiagnosticStringFields) {
+    const normalized = normalizeOptionalProviderPreparationDiagnosticString(
+      raw[field],
+      `diagnostics.${field}`,
+    );
+    if (normalized !== undefined) {
+      diagnostics[field] = normalized;
+    }
+  }
+
+  for (const field of providerDiagnosticBooleanFields) {
+    assertOptionalProviderPreparationDiagnosticBoolean(raw[field], `diagnostics.${field}`);
+    if (raw[field] !== undefined) {
+      diagnostics[field] = raw[field];
+    }
+  }
+
+  for (const field of providerDiagnosticIntegerFields) {
+    assertOptionalProviderPreparationDiagnosticInteger(raw[field], `diagnostics.${field}`);
+    if (raw[field] !== undefined) {
+      diagnostics[field] = raw[field];
+    }
+  }
+
+  const timings = normalizeProviderPreparationTimings(raw.timings);
+  if (timings !== undefined) {
+    diagnostics.timings = timings;
+  }
+
+  return Object.keys(diagnostics).length > 0 ? diagnostics : undefined;
+}
+
 function normalizeProviderSlotSnapshots(value: unknown): SchedulerSlotSnapshot[] | undefined {
   if (value === undefined) {
     return undefined;
@@ -2054,6 +2234,7 @@ function normalizeProviderRequestPreparation(
   assertOptionalNonNegativeSafeInteger(value.preferredSlot, "preferredSlot");
   const affinityKey = normalizeProviderPreparationAffinityKey(value.affinityKey);
   const slotSnapshots = normalizeProviderSlotSnapshots(value.slotSnapshots);
+  const diagnostics = normalizeProviderPreparationDiagnostics(value.diagnostics);
 
   return {
     request: value.request,
@@ -2063,7 +2244,7 @@ function normalizeProviderRequestPreparation(
     ...(value.preferredSlot !== undefined ? { preferredSlot: value.preferredSlot } : {}),
     ...(slotSnapshots !== undefined ? { slotSnapshots } : {}),
     ...(value.providerState !== undefined ? { providerState: value.providerState } : {}),
-    ...(value.diagnostics !== undefined ? { diagnostics: value.diagnostics } : {}),
+    ...(diagnostics !== undefined ? { diagnostics } : {}),
   };
 }
 
@@ -2132,31 +2313,7 @@ function normalizeOptionalProviderResultString(value: unknown, field: string): s
     throw createProviderResultError(`${field} must be a string`, { field });
   }
 
-  return truncateProviderResultDiagnosticString(value);
-}
-
-function truncateProviderResultDiagnosticString(value: string): string {
-  if (value.length <= MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS) {
-    return value;
-  }
-
-  let headChars = MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS;
-
-  for (;;) {
-    const omittedChars = value.length - headChars;
-    const suffix = `...[truncated ${omittedChars} chars]`;
-    const nextHeadChars = MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS - suffix.length;
-
-    if (nextHeadChars <= 0) {
-      return suffix.slice(0, MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS);
-    }
-
-    if (nextHeadChars === headChars) {
-      return `${value.slice(0, headChars)}${suffix}`;
-    }
-
-    headChars = nextHeadChars;
-  }
+  return truncateProviderDiagnosticString(value);
 }
 
 function assertProviderUsageBreakdown(value: unknown, field: string): void {
