@@ -458,9 +458,9 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
     plan.memoryBudgetSource !== undefined &&
     plan.safeMemoryBudgetMiB !== undefined &&
     plan.nonModelWorkingSetMiB !== undefined
-      ? `source_mib="$(timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s du -m ${shellQuote(
+      ? `source_bytes="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s stat -c %s -- ${shellQuote(
           sourcePath,
-        )} | awk 'NR==1 {print $1}')" || exit "$?"; projected_mib="$((\${source_mib:-0} + ${plan.nonModelWorkingSetMiB}))"; test "$projected_mib" -le ${plan.safeMemoryBudgetMiB} || { printf '%s\\n' "Projected llama.cpp working set would be \${projected_mib} MiB, above the safe budget of ${plan.safeMemoryBudgetMiB} MiB on the ${plan.memoryBudgetMiB} MiB ${plan.memoryBudgetSource} memory target. Use a smaller GGUF or reduce cache/context before staging." >&2; exit 1; }`
+        )})" || exit "$?"; source_mib="$(((\${source_bytes:-0} + ${BYTES_PER_MIB - 1}) / ${BYTES_PER_MIB}))"; test "$source_mib" -ge 1 || source_mib=1; projected_mib="$((source_mib + ${plan.nonModelWorkingSetMiB}))"; test "$projected_mib" -le ${plan.safeMemoryBudgetMiB} || { printf '%s\\n' "Projected llama.cpp working set would be \${projected_mib} MiB, above the safe budget of ${plan.safeMemoryBudgetMiB} MiB on the ${plan.memoryBudgetMiB} MiB ${plan.memoryBudgetSource} memory target. Use a smaller GGUF or reduce cache/context before staging." >&2; exit 1; }`
       : undefined;
   const commands = [
     `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo install -d -m 0755 ${shellQuote(plan.binaryDirectory)}`,
