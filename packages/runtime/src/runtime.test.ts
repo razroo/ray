@@ -1098,6 +1098,90 @@ test("runtime rejects malformed provider slot snapshots before metrics", async (
   assert.equal(inferCalled, false);
 });
 
+test("runtime rejects malformed provider result output before caching", async () => {
+  let inferCalls = 0;
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "bad-result-output-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async infer() {
+      inferCalls += 1;
+      return {
+        output: 42 as unknown as string,
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_result_invalid");
+      assert.equal((error as { status?: number }).status, 502);
+      assert.equal((error as { details?: { field?: string } }).details?.field, "output");
+      return true;
+    },
+  );
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_result_invalid");
+      return true;
+    },
+  );
+  assert.equal(inferCalls, 2);
+});
+
+test("runtime rejects malformed provider result diagnostics before metrics", async () => {
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "bad-result-diagnostics-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async infer() {
+      return {
+        output: "ok",
+        diagnostics: {
+          tokensCached: Number.NaN,
+        },
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      cache: false,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_result_invalid");
+      assert.equal(
+        (error as { details?: { field?: string } }).details?.field,
+        "diagnostics.tokensCached",
+      );
+      return true;
+    },
+  );
+});
+
 test("runtime trims oversized prompts before prompt compilation", async () => {
   let observedInput = "";
   const provider: ModelProvider = {

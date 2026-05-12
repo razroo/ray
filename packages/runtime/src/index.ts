@@ -23,6 +23,7 @@ import {
   type MemoryPressureSource,
   type ModelProvider,
   type NormalizedInferenceRequest,
+  type PartialUsageStats,
   type PromptCompilerDiagnostics,
   type ProviderDiagnostics,
   type ProviderHealthSnapshot,
@@ -174,6 +175,22 @@ const unsafeMetadataKeys = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_LEARNED_FAMILY_HISTORY_KEYS = 512;
 const MAX_PROVIDER_PREPARATION_SLOT_SNAPSHOTS = 256;
 const MAX_PROVIDER_SLOT_UPDATED_AT_CHARS = 128;
+const providerDiagnosticIntegerFields = [
+  "totalSlots",
+  "slotId",
+  "preferredSlot",
+  "tokensCached",
+  "tokensEvaluated",
+  "contextWindow",
+] as const;
+const providerTimingFields = [
+  "ttftMs",
+  "totalMs",
+  "promptMs",
+  "completionMs",
+  "promptTokensPerSecond",
+  "completionTokensPerSecond",
+] as const;
 
 export interface CreateRayRuntimeOptions {
   provider?: ModelProvider;
@@ -1905,6 +1922,112 @@ function normalizeProviderRequestPreparation(
   return value;
 }
 
+function createProviderResultError(message: string, details?: Record<string, unknown>): RayError {
+  return new RayError(`Invalid provider result: ${message}`, {
+    code: "provider_result_invalid",
+    status: 502,
+    ...(details ? { details } : {}),
+  });
+}
+
+function assertOptionalProviderResultInteger(value: unknown, field: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw createProviderResultError(`${field} must be a non-negative safe integer`, { field });
+  }
+}
+
+function assertOptionalProviderResultNumber(value: unknown, field: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw createProviderResultError(`${field} must be a non-negative finite number`, { field });
+  }
+}
+
+function assertProviderUsageBreakdown(value: unknown, field: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw createProviderResultError(`${field} must be an object`, { field });
+  }
+
+  const breakdown = value as Partial<UsageBreakdown>;
+  assertOptionalProviderResultNumber(breakdown.prompt, `${field}.prompt`);
+  assertOptionalProviderResultNumber(breakdown.completion, `${field}.completion`);
+  assertOptionalProviderResultNumber(breakdown.total, `${field}.total`);
+}
+
+function assertProviderUsage(value: unknown): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw createProviderResultError("usage must be an object", { field: "usage" });
+  }
+
+  const usage = value as PartialUsageStats;
+  assertProviderUsageBreakdown(usage.chars, "usage.chars");
+  assertProviderUsageBreakdown(usage.tokens, "usage.tokens");
+}
+
+function assertProviderDiagnostics(value: unknown): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw createProviderResultError("diagnostics must be an object", { field: "diagnostics" });
+  }
+
+  const diagnostics = value as ProviderDiagnostics;
+  for (const field of providerDiagnosticIntegerFields) {
+    assertOptionalProviderResultInteger(diagnostics[field], `diagnostics.${field}`);
+  }
+
+  if (diagnostics.timings !== undefined) {
+    if (
+      diagnostics.timings === null ||
+      typeof diagnostics.timings !== "object" ||
+      Array.isArray(diagnostics.timings)
+    ) {
+      throw createProviderResultError("diagnostics.timings must be an object", {
+        field: "diagnostics.timings",
+      });
+    }
+
+    for (const field of providerTimingFields) {
+      assertOptionalProviderResultNumber(
+        diagnostics.timings[field],
+        `diagnostics.timings.${field}`,
+      );
+    }
+  }
+}
+
+function normalizeProviderResult(value: ProviderResult): ProviderResult {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw createProviderResultError("provider infer() must return an object");
+  }
+
+  if (typeof value.output !== "string") {
+    throw createProviderResultError("output must be a string", { field: "output" });
+  }
+
+  assertProviderUsage(value.usage);
+  assertProviderDiagnostics(value.diagnostics);
+
+  return value;
+}
+
 export class RayRuntime {
   readonly logger: Logger;
   readonly metrics: RuntimeMetrics;
@@ -2163,9 +2286,14 @@ export class RayRuntime {
                 : {}),
             },
       );
+      const providerResult = normalizeProviderResult(scheduled.value);
+      const normalizedScheduled = {
+        ...scheduled,
+        value: providerResult,
+      };
 
       const payload = this.toCachedPayload(
-        scheduled,
+        normalizedScheduled,
         requestForProvider,
         degraded.degraded,
         preparation,
@@ -2190,7 +2318,7 @@ export class RayRuntime {
       );
       this.metrics.gauge("queue.last_delay_ms", scheduled.queueTimeMs);
 
-      this.recordAdaptiveSample(scheduled.queueTimeMs, scheduled.value.diagnostics);
+      this.recordAdaptiveSample(scheduled.queueTimeMs, providerResult.diagnostics);
       this.recordFamilyCompletion(
         compiled.affinityKey,
         compiled.lane,
