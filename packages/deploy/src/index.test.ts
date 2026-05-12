@@ -1650,6 +1650,25 @@ test("diagnoseConfig errors when the generated service user cannot write async q
   assert.match(diagnostic.message, /write\/execute permission/);
 });
 
+test("diagnoseConfig errors when async queue storage is read-only under ProtectSystem", () => {
+  const config = mergeConfig(createDefaultConfig("1b"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir: "/etc/ray/async-queue",
+    },
+  });
+
+  const diagnostics = diagnoseConfig(config, process.env);
+  const diagnostic = diagnostics.find(
+    (entry) => entry.code === "async_queue_storage_protect_system_readonly",
+  );
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /ProtectSystem=full/);
+  assert.match(diagnostic.message, /\/var\/lib\/ray\/async-queue/);
+});
+
 test("diagnoseConfig errors when generated llama.cpp service paths are relative", () => {
   const config = createDefaultConfig("1b");
 

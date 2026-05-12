@@ -331,6 +331,15 @@ function isSystemdProtectHomePath(value: string): boolean {
   );
 }
 
+function isSystemdProtectSystemReadOnlyPath(value: string): boolean {
+  if (!path.isAbsolute(value)) {
+    return false;
+  }
+
+  const resolved = path.resolve(value);
+  return ["/etc", "/usr", "/boot"].some((protectedPath) => isPathInside(protectedPath, resolved));
+}
+
 function isLoopbackHost(value: string): boolean {
   const host = normalizeHostLiteral(value);
 
@@ -2240,6 +2249,15 @@ export function diagnoseConfig(
         code: "async_queue_storage_home_protected",
         message:
           "asyncQueue.storageDir is under /home, /root, or /run/user, but the generated gateway service uses ProtectHome=true. Use a service-readable path such as /var/lib/ray/async-queue.",
+      });
+    }
+
+    if (isSystemdProtectSystemReadOnlyPath(config.asyncQueue.storageDir)) {
+      diagnostics.push({
+        level: "error",
+        code: "async_queue_storage_protect_system_readonly",
+        message:
+          "asyncQueue.storageDir is under /etc, /usr, or /boot, but the generated gateway service uses ProtectSystem=full and cannot write there. Use writable service state such as /var/lib/ray/async-queue.",
       });
     }
 
