@@ -295,6 +295,7 @@ Optional repository variables:
 - `RAY_DEPLOY_SSH_USER` — defaults to `root`
 - `RAY_DEPLOY_SERVICE_USER` — generated systemd service account, defaults to `ray`; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--user` is omitted
 - `RAY_DEPLOY_DOMAIN` — Caddy site address to render, defaults to `ray.local`; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--domain` is omitted
+- `RAY_DEPLOY_MEMORY_MIB` — optional VPS memory class used by workflow doctor/render when `/etc/ray/ray.env` does not already set it; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--memory-mib` is omitted
 - `RAY_DEPLOY_INSTALL_CADDY` — set to `true` to install and reload the generated Caddyfile; requires `RAY_DEPLOY_DOMAIN`
 - `RAY_CONFIG_PATH` — repo-relative config path to install, defaults to `./examples/config/ray.sub1b.public.json`
 - `RAY_GATEWAY_RUNTIME_BINARY` — absolute JavaScript runtime path rendered into `ray-gateway.service`, defaults to `/usr/local/bin/bun`; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--gateway-runtime-binary` is omitted

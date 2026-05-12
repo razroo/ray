@@ -47,6 +47,7 @@ jobs:
       RAY_DEPLOY_SSH_USER: ${{ vars.RAY_DEPLOY_SSH_USER }}
       RAY_DEPLOY_SERVICE_USER: ${{ vars.RAY_DEPLOY_SERVICE_USER }}
       RAY_DEPLOY_DOMAIN: ${{ vars.RAY_DEPLOY_DOMAIN }}
+      RAY_DEPLOY_MEMORY_MIB: ${{ vars.RAY_DEPLOY_MEMORY_MIB }}
       RAY_DEPLOY_INSTALL_CADDY: ${{ vars.RAY_DEPLOY_INSTALL_CADDY }}
       RAY_CONFIG_PATH_VAR: ${{ vars.RAY_CONFIG_PATH }}
       RAY_GATEWAY_RUNTIME_BINARY: ${{ vars.RAY_GATEWAY_RUNTIME_BINARY }}
@@ -90,6 +91,11 @@ jobs:
 
           if [ -z "$DEPLOY_DOMAIN" ] || printf '%s' "$DEPLOY_DOMAIN" | grep -q '[[:space:]{}]'; then
             echo "::error::RAY_DEPLOY_DOMAIN must be a non-empty Caddy site address without whitespace or braces."
+            exit 1
+          fi
+
+          if [ -n "${RAY_DEPLOY_MEMORY_MIB:-}" ] && ! printf '%s' "$RAY_DEPLOY_MEMORY_MIB" | grep -Eq '^[1-9][0-9]*$'; then
+            echo "::error::RAY_DEPLOY_MEMORY_MIB must be a positive integer MiB value."
             exit 1
           fi
 
@@ -267,7 +273,7 @@ jobs:
           }
 
           ssh -i ~/.ssh/deploy_key "$TARGET" \
-            "CONFIG_SOURCE=$(shell_quote "$CONFIG_SOURCE") CONFIG_REL=$(shell_quote "$CONFIG_REL") CONFIG_B64=$(shell_quote "$CONFIG_B64") HEALTH_PORT=$(shell_quote "$HEALTH_PORT") DEPLOY_DOMAIN=$(shell_quote "$DEPLOY_DOMAIN") INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") SERVICE_USER=$(shell_quote "$SERVICE_USER") READY_TIMEOUT_SECONDS=$(shell_quote "$READY_TIMEOUT_SECONDS") GATEWAY_RUNTIME_BINARY=$(shell_quote "$GATEWAY_RUNTIME_BINARY") ENV_B64=$(shell_quote "$ENV_B64") bash -s" <<'ENDSSH'
+            "CONFIG_SOURCE=$(shell_quote "$CONFIG_SOURCE") CONFIG_REL=$(shell_quote "$CONFIG_REL") CONFIG_B64=$(shell_quote "$CONFIG_B64") HEALTH_PORT=$(shell_quote "$HEALTH_PORT") DEPLOY_DOMAIN=$(shell_quote "$DEPLOY_DOMAIN") INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") SERVICE_USER=$(shell_quote "$SERVICE_USER") READY_TIMEOUT_SECONDS=$(shell_quote "$READY_TIMEOUT_SECONDS") GATEWAY_RUNTIME_BINARY=$(shell_quote "$GATEWAY_RUNTIME_BINARY") RAY_DEPLOY_MEMORY_MIB=$(shell_quote "${RAY_DEPLOY_MEMORY_MIB:-}") ENV_B64=$(shell_quote "$ENV_B64") bash -s" <<'ENDSSH'
           set -euo pipefail
 
           SUDO=""
@@ -390,6 +396,9 @@ jobs:
             printf '%s' "$ENV_B64" | base64 -d | $SUDO tee /etc/ray/ray.env >/dev/null
           else
             printf 'RAY_LOG_LEVEL=info\n' | $SUDO tee /etc/ray/ray.env >/dev/null
+          fi
+          if [ -n "${RAY_DEPLOY_MEMORY_MIB:-}" ] && ! $SUDO grep -Eq '^RAY_DEPLOY_MEMORY_MIB=' /etc/ray/ray.env; then
+            printf 'RAY_DEPLOY_MEMORY_MIB=%s\n' "$RAY_DEPLOY_MEMORY_MIB" | $SUDO tee -a /etc/ray/ray.env >/dev/null
           fi
           $SUDO chmod 600 /etc/ray/ray.env
 
