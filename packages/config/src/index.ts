@@ -9,6 +9,7 @@ import {
   type Quantization,
   type RayConfig,
   type RayProfile,
+  type RateLimitKeyStrategy,
 } from "@razroo/ray-core";
 import { createDefaultConfig, mergeConfig, type DeepPartial } from "./defaults.js";
 
@@ -22,6 +23,7 @@ const llamaCppLaunchPresets = new Set<LlamaCppLaunchProfile["preset"]>([
 ]);
 const rayProfiles = new Set<RayProfile>(["tiny", "sub1b", "1b", "vps", "balanced"]);
 const logLevels = new Set<LogLevel>(["debug", "info", "warn", "error"]);
+const rateLimitKeyStrategies = new Set<RateLimitKeyStrategy>(["ip", "api-key", "ip+api-key"]);
 const quantizations = new Set<Quantization>([
   "q4_0",
   "q4_k_m",
@@ -266,6 +268,29 @@ function parseLogLevel(value: unknown, label: string): LogLevel | undefined {
   });
 }
 
+function parseRateLimitKeyStrategy(
+  value: string | undefined,
+  label: string,
+): RateLimitKeyStrategy | undefined {
+  if (!isNonEmptyString(value)) {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  if (rateLimitKeyStrategies.has(normalized as RateLimitKeyStrategy)) {
+    return normalized as RateLimitKeyStrategy;
+  }
+
+  throw new RayError(`Expected ${label} to be a supported rate-limit key strategy`, {
+    code: "config_validation_error",
+    status: 500,
+    details: {
+      value,
+      supported: [...rateLimitKeyStrategies],
+    },
+  });
+}
+
 function parseQuantization(value: string | undefined): Quantization | undefined {
   if (typeof value === "string" && quantizations.has(value as Quantization)) {
     return value as Quantization;
@@ -413,6 +438,22 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
   );
   const authEnabled = parseBoolean(env.RAY_AUTH_ENABLED, "RAY_AUTH_ENABLED");
   const rateLimitEnabled = parseBoolean(env.RAY_RATE_LIMIT_ENABLED, "RAY_RATE_LIMIT_ENABLED");
+  const rateLimitWindowMs = parsePositiveInteger(
+    env.RAY_RATE_LIMIT_WINDOW_MS,
+    "RAY_RATE_LIMIT_WINDOW_MS",
+  );
+  const rateLimitMaxRequests = parsePositiveInteger(
+    env.RAY_RATE_LIMIT_MAX_REQUESTS,
+    "RAY_RATE_LIMIT_MAX_REQUESTS",
+  );
+  const rateLimitMaxKeys = parsePositiveInteger(
+    env.RAY_RATE_LIMIT_MAX_KEYS,
+    "RAY_RATE_LIMIT_MAX_KEYS",
+  );
+  const rateLimitKeyStrategy = parseRateLimitKeyStrategy(
+    env.RAY_RATE_LIMIT_KEY_STRATEGY,
+    "RAY_RATE_LIMIT_KEY_STRATEGY",
+  );
   const rateLimitTrustProxyHeaders = parseBoolean(
     env.RAY_RATE_LIMIT_TRUST_PROXY_HEADERS,
     "RAY_RATE_LIMIT_TRUST_PROXY_HEADERS",
@@ -693,6 +734,22 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
 
   if (rateLimitEnabled !== undefined) {
     next.rateLimit.enabled = rateLimitEnabled;
+  }
+
+  if (rateLimitWindowMs !== undefined) {
+    next.rateLimit.windowMs = rateLimitWindowMs;
+  }
+
+  if (rateLimitMaxRequests !== undefined) {
+    next.rateLimit.maxRequests = rateLimitMaxRequests;
+  }
+
+  if (rateLimitMaxKeys !== undefined) {
+    next.rateLimit.maxKeys = rateLimitMaxKeys;
+  }
+
+  if (rateLimitKeyStrategy !== undefined) {
+    next.rateLimit.keyStrategy = rateLimitKeyStrategy;
   }
 
   if (rateLimitTrustProxyHeaders !== undefined) {
@@ -1553,11 +1610,7 @@ function validateConfig(config: RayConfig): RayConfig {
     new Set(["input", "input+params"]),
     "cache.keyStrategy",
   );
-  assertEnumValue(
-    config.rateLimit.keyStrategy,
-    new Set(["ip", "api-key", "ip+api-key"]),
-    "rateLimit.keyStrategy",
-  );
+  assertEnumValue(config.rateLimit.keyStrategy, rateLimitKeyStrategies, "rateLimit.keyStrategy");
   assertStringRecord(config.tags, "tags");
 
   assertNonEmptyStringLength(config.model.id, "model.id", MAX_CONFIG_IDENTIFIER_CHARS);

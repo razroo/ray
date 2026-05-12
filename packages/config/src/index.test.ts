@@ -148,6 +148,10 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
       RAY_ADAPTIVE_TUNING_ENABLED: "off",
       RAY_AUTH_ENABLED: "on",
       RAY_RATE_LIMIT_ENABLED: "no",
+      RAY_RATE_LIMIT_WINDOW_MS: "30000",
+      RAY_RATE_LIMIT_MAX_REQUESTS: "45",
+      RAY_RATE_LIMIT_MAX_KEYS: "1024",
+      RAY_RATE_LIMIT_KEY_STRATEGY: "api-key",
       RAY_RATE_LIMIT_TRUST_PROXY_HEADERS: "false",
     },
   });
@@ -190,6 +194,10 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
   assert.equal(loaded.config.adaptiveTuning.enabled, false);
   assert.equal(loaded.config.auth.enabled, true);
   assert.equal(loaded.config.rateLimit.enabled, false);
+  assert.equal(loaded.config.rateLimit.windowMs, 30_000);
+  assert.equal(loaded.config.rateLimit.maxRequests, 45);
+  assert.equal(loaded.config.rateLimit.maxKeys, 1_024);
+  assert.equal(loaded.config.rateLimit.keyStrategy, "api-key");
   assert.equal(loaded.config.rateLimit.trustProxyHeaders, false);
 });
 
@@ -325,6 +333,17 @@ test("loadRayConfig rejects malformed environment overrides", async () => {
       },
     }),
     /Expected RAY_AUTH_ENABLED to be a boolean/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_RATE_LIMIT_KEY_STRATEGY: "bearer",
+      },
+    }),
+    /Expected RAY_RATE_LIMIT_KEY_STRATEGY to be a supported rate-limit key strategy/,
   );
 });
 

@@ -1439,6 +1439,10 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
   lines.push(`# RAY_ADAPTIVE_TUNING_ENABLED=${config.adaptiveTuning.enabled}`);
   lines.push(`# RAY_AUTH_ENABLED=${config.auth.enabled}`);
   lines.push(`# RAY_RATE_LIMIT_ENABLED=${config.rateLimit.enabled}`);
+  lines.push(`# RAY_RATE_LIMIT_WINDOW_MS=${config.rateLimit.windowMs}`);
+  lines.push(`# RAY_RATE_LIMIT_MAX_REQUESTS=${config.rateLimit.maxRequests}`);
+  lines.push(`# RAY_RATE_LIMIT_MAX_KEYS=${config.rateLimit.maxKeys}`);
+  lines.push(`# RAY_RATE_LIMIT_KEY_STRATEGY=${config.rateLimit.keyStrategy}`);
   lines.push(`# RAY_RATE_LIMIT_TRUST_PROXY_HEADERS=${config.rateLimit.trustProxyHeaders}`);
 
   if (config.model.adapter.kind === "llama.cpp" && config.model.adapter.launchProfile) {

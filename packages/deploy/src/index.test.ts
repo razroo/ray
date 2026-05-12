@@ -495,6 +495,10 @@ test("renderEnvironmentFileExample documents gateway behavior switches", () => {
   assert.match(envFile, /RAY_ADAPTIVE_TUNING_ENABLED=true/);
   assert.match(envFile, /RAY_AUTH_ENABLED=true/);
   assert.match(envFile, /RAY_RATE_LIMIT_ENABLED=true/);
+  assert.match(envFile, /RAY_RATE_LIMIT_WINDOW_MS=60000/);
+  assert.match(envFile, /RAY_RATE_LIMIT_MAX_REQUESTS=75/);
+  assert.match(envFile, /RAY_RATE_LIMIT_MAX_KEYS=4096/);
+  assert.match(envFile, /RAY_RATE_LIMIT_KEY_STRATEGY=ip\+api-key/);
   assert.match(envFile, /RAY_RATE_LIMIT_TRUST_PROXY_HEADERS=true/);
 });
 
