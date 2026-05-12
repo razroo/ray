@@ -890,6 +890,115 @@ test("llama.cpp provider caps slot snapshots retained from backend", async (t) =
   assert.equal(preparation.slotSnapshots?.at(-1)?.id, 63);
 });
 
+test("llama.cpp provider ignores malformed slot snapshot fields", async (t) => {
+  const server = createServer((request, response) => {
+    if (request.url === "/slots") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          slots: [
+            null,
+            { id: -1, is_processing: false, n_ctx: 2048 },
+            { id: 1.5, is_processing: false },
+            {
+              id: 2,
+              is_processing: true,
+              task_id: -7,
+              n_ctx: -2048,
+              n_keep: "bad",
+              next_token: { n_past: 3.5 },
+            },
+            {
+              id: "bad",
+              id_slot: 3,
+              is_processing: false,
+              task_id: "bad",
+              id_task: 9,
+              n_ctx: 2048,
+              n_keep: 64,
+              next_token: { n_past: 128 },
+            },
+          ],
+        }),
+      );
+      return;
+    }
+
+    if (request.url === "/props") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          total_slots: 2,
+          chat_template: "{{ messages }}",
+          default_generation_settings: {
+            n_ctx: 2048,
+            model: "test-model-ref",
+          },
+        }),
+      );
+      return;
+    }
+
+    if (request.url === "/apply-template") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ prompt: "<s>hello" }));
+      return;
+    }
+
+    if (request.url === "/tokenize") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ tokens: [1, 2, 3] }));
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const model = createModel(`http://127.0.0.1:${address.port}`, 500, {
+    slotStateTtlMs: 0,
+  });
+  const provider = new LlamaCppProvider(model, model.adapter as LlamaCppProviderConfig);
+  const context = createContext(model, new AbortController().signal);
+  const preparation = await provider.prepare(
+    {
+      input: "Hello",
+      maxTokens: 32,
+      temperature: 0.2,
+      topP: 0.95,
+      cache: true,
+      metadata: {},
+    },
+    context,
+  );
+
+  assert.deepEqual(
+    preparation.slotSnapshots?.map((slot) => slot.id),
+    [2, 3],
+  );
+  assert.equal(preparation.slotSnapshots?.[0]?.taskId, undefined);
+  assert.equal(preparation.slotSnapshots?.[0]?.contextWindow, undefined);
+  assert.equal(preparation.slotSnapshots?.[0]?.cacheTokens, undefined);
+  assert.equal(preparation.slotSnapshots?.[0]?.promptTokens, undefined);
+  assert.deepEqual(preparation.slotSnapshots?.[1], {
+    id: 3,
+    taskId: 9,
+    isProcessing: false,
+    contextWindow: 2048,
+    promptTokens: 128,
+    cacheTokens: 64,
+    updatedAt: preparation.slotSnapshots?.[1]?.updatedAt,
+  });
+});
+
 test("llama.cpp provider bounds preferred slot affinity maps", async (t) => {
   let completionCalls = 0;
   const server = createServer((request, response) => {

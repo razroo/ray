@@ -287,6 +287,14 @@ function buildCompletionTimings(
   };
 }
 
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function firstNonNegativeSafeInteger(...values: unknown[]): number | undefined {
+  return values.find(isNonNegativeSafeInteger);
+}
+
 function parseSlotSnapshots(payload: unknown): SchedulerSlotSnapshot[] {
   const list = Array.isArray(payload)
     ? payload
@@ -308,22 +316,22 @@ function parseSlotSnapshots(payload: unknown): SchedulerSlotSnapshot[] {
     }
 
     const slot = rawSlot as LlamaCppSlotResponse;
-    const id = slot.id ?? slot.id_slot;
-    if (typeof id !== "number") {
+    const id = firstNonNegativeSafeInteger(slot.id, slot.id_slot);
+    if (id === undefined) {
       continue;
     }
+    const taskId = firstNonNegativeSafeInteger(slot.task_id, slot.id_task);
+    const contextWindow = firstNonNegativeSafeInteger(slot.n_ctx);
+    const promptTokens = firstNonNegativeSafeInteger(slot.next_token?.n_past);
+    const cacheTokens = firstNonNegativeSafeInteger(slot.n_keep);
 
     snapshots.push({
       id,
-      ...(typeof (slot.task_id ?? slot.id_task) === "number"
-        ? { taskId: slot.task_id ?? slot.id_task }
-        : {}),
+      ...(taskId !== undefined ? { taskId } : {}),
       isProcessing: slot.is_processing === true,
-      ...(typeof slot.n_ctx === "number" ? { contextWindow: slot.n_ctx } : {}),
-      ...(typeof slot.next_token?.n_past === "number"
-        ? { promptTokens: slot.next_token.n_past }
-        : {}),
-      ...(typeof slot.n_keep === "number" ? { cacheTokens: slot.n_keep } : {}),
+      ...(contextWindow !== undefined ? { contextWindow } : {}),
+      ...(promptTokens !== undefined ? { promptTokens } : {}),
+      ...(cacheTokens !== undefined ? { cacheTokens } : {}),
       updatedAt: new Date().toISOString(),
     });
   }
@@ -338,7 +346,7 @@ function assertOptionalBoolean(value: boolean | undefined, label: string): void 
 }
 
 function assertOptionalNonNegativeSafeInteger(value: number | undefined, label: string): void {
-  if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+  if (value !== undefined && !isNonNegativeSafeInteger(value)) {
     throw new RangeError(`${label} must be a non-negative safe integer when provided`);
   }
 }
