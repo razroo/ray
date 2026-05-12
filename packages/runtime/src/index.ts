@@ -20,6 +20,7 @@ import {
   type InferenceRequest,
   type InferenceResponse,
   type LearnedOutputCapDiagnostics,
+  type MemoryPressureSource,
   type ModelProvider,
   type NormalizedInferenceRequest,
   type PromptCompilerDiagnostics,
@@ -29,6 +30,7 @@ import {
   type ProviderResult,
   type RayConfig,
   type RuntimeMetricsSnapshot,
+  type RuntimeHealthDiagnostics,
   type ScheduleLane,
   type SchedulerSlotSnapshot,
   type SchedulerSnapshot,
@@ -100,7 +102,6 @@ interface MemoryPressureSnapshot {
   cgroupMemoryPressureRatio?: number;
 }
 
-type MemoryPressureSource = "process_rss" | "cgroup";
 export type CgroupMemoryReader = () =>
   | CgroupMemorySnapshot
   | Promise<CgroupMemorySnapshot | undefined>
@@ -694,6 +695,38 @@ function buildDegradationDiagnostics(options: {
     ...(options.memoryPressure.cgroupMemoryPressureRatio !== undefined
       ? { cgroupMemoryPressureRatio: options.memoryPressure.cgroupMemoryPressureRatio }
       : {}),
+  };
+}
+
+function buildRuntimeHealthDiagnostics(options: {
+  queueDegraded: boolean;
+  queueDepth: number;
+  queueDepthThreshold: number;
+  memoryPressureSources: MemoryPressureSource[];
+  memoryPressure: MemoryPressureSnapshot;
+  memoryRssThresholdMiB: number;
+}): RuntimeHealthDiagnostics {
+  return {
+    queue: {
+      degraded: options.queueDegraded,
+      depth: options.queueDepth,
+      threshold: options.queueDepthThreshold,
+    },
+    memory: {
+      degraded: options.memoryPressureSources.length > 0,
+      sources: options.memoryPressureSources,
+      processRssMiB: options.memoryPressure.processRssMiB,
+      memoryRssThresholdMiB: options.memoryRssThresholdMiB,
+      ...(options.memoryPressure.cgroupMemoryCurrentMiB !== undefined
+        ? { cgroupMemoryCurrentMiB: options.memoryPressure.cgroupMemoryCurrentMiB }
+        : {}),
+      ...(options.memoryPressure.cgroupMemoryLimitMiB !== undefined
+        ? { cgroupMemoryLimitMiB: options.memoryPressure.cgroupMemoryLimitMiB }
+        : {}),
+      ...(options.memoryPressure.cgroupMemoryPressureRatio !== undefined
+        ? { cgroupMemoryPressureRatio: options.memoryPressure.cgroupMemoryPressureRatio }
+        : {}),
+    },
   };
 }
 
@@ -1479,6 +1512,14 @@ export class RayRuntime {
     const queueDegraded =
       snapshot.queueDepth >= this.config.gracefulDegradation.queueDepthThreshold;
     const memoryDegraded = memoryPressureSources.length > 0;
+    const runtimeHealth = buildRuntimeHealthDiagnostics({
+      queueDegraded,
+      queueDepth: snapshot.queueDepth,
+      queueDepthThreshold: this.config.gracefulDegradation.queueDepthThreshold,
+      memoryPressureSources,
+      memoryPressure,
+      memoryRssThresholdMiB: this.config.gracefulDegradation.memoryRssThresholdMiB,
+    });
     this.recordMemoryPressureMetrics(memoryPressure, memoryPressureSources);
     const status =
       provider.status === "unavailable"
@@ -1499,6 +1540,7 @@ export class RayRuntime {
       profile: this.config.profile,
       modelId: this.provider.modelId,
       provider,
+      runtime: runtimeHealth,
     };
   }
 

@@ -468,6 +468,8 @@ export interface TaskRoutingDiagnostics {
   matchedActiveRole: boolean;
 }
 
+export type MemoryPressureSource = "process_rss" | "cgroup";
+
 export interface DegradationDiagnostics {
   applied: boolean;
   reasons: Array<"prompt_length" | "queue_depth" | "memory_pressure">;
@@ -475,7 +477,7 @@ export interface DegradationDiagnostics {
   appliedMaxTokens: number;
   queueDepth: number;
   queueDepthThreshold: number;
-  memoryPressureSources?: Array<"process_rss" | "cgroup">;
+  memoryPressureSources?: MemoryPressureSource[];
   processRssMiB?: number;
   memoryRssThresholdMiB?: number;
   cgroupMemoryCurrentMiB?: number;
@@ -506,6 +508,23 @@ export interface InferenceResponse {
   createdAt: string;
 }
 
+export interface RuntimeHealthDiagnostics {
+  queue: {
+    degraded: boolean;
+    depth: number;
+    threshold: number;
+  };
+  memory: {
+    degraded: boolean;
+    sources: MemoryPressureSource[];
+    processRssMiB: number;
+    memoryRssThresholdMiB: number;
+    cgroupMemoryCurrentMiB?: number;
+    cgroupMemoryLimitMiB?: number;
+    cgroupMemoryPressureRatio?: number;
+  };
+}
+
 export interface HealthSnapshot {
   status: "ok" | "degraded" | "unavailable";
   uptimeMs: number;
@@ -515,6 +534,7 @@ export interface HealthSnapshot {
   profile: RayProfile;
   modelId: string;
   provider: ProviderHealthSnapshot;
+  runtime?: RuntimeHealthDiagnostics;
   asyncQueue?: AsyncQueueSnapshot;
 }
 
