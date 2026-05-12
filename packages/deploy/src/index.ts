@@ -43,6 +43,7 @@ type BinaryPreflightStatus = "found" | "missing" | "unreadable";
 type GatewayRuntimeBinaryStatus = BinaryPreflightStatus;
 type LlamaCppBinaryStatus = BinaryPreflightStatus;
 type GatewayEntrypointStatus = BinaryPreflightStatus;
+type WorkingDirectoryStatus = "found" | "missing" | "not_directory" | "unreadable";
 type EnvFileStatus = "found" | "missing" | "unreadable";
 type ServiceUserStatus = "found" | "missing" | "unreadable";
 type SwapStatus = "available" | "missing" | "unreadable";
@@ -66,6 +67,9 @@ export interface DeploymentPreflight {
   gatewayEntrypointPath?: string;
   gatewayEntrypointStatus?: GatewayEntrypointStatus;
   gatewayEntrypointError?: string;
+  workingDirectoryPath?: string;
+  workingDirectoryStatus?: WorkingDirectoryStatus;
+  workingDirectoryError?: string;
   llamaCppBinaryPath?: string;
   llamaCppBinaryStatus?: LlamaCppBinaryStatus;
   llamaCppBinaryError?: string;
@@ -1092,6 +1096,37 @@ export function diagnoseConfig(
     });
   }
 
+  if (strictFilesystem && preflight?.workingDirectoryStatus !== undefined) {
+    const workingDirectoryPath =
+      preflight.workingDirectoryPath ?? "the configured WorkingDirectory";
+
+    if (preflight.workingDirectoryStatus === "missing") {
+      diagnostics.push({
+        level: "error",
+        code: "working_directory_missing",
+        message: `The generated systemd WorkingDirectory was not found at ${workingDirectoryPath}. Sync Ray to that path before rendering or restarting ray-gateway.service.`,
+      });
+    } else if (preflight.workingDirectoryStatus === "not_directory") {
+      diagnostics.push({
+        level: "error",
+        code: "working_directory_not_directory",
+        message: `The generated systemd WorkingDirectory path is not a directory at ${workingDirectoryPath}. Point --cwd at the Ray repository directory before rendering or restarting ray-gateway.service.`,
+      });
+    } else if (preflight.workingDirectoryStatus === "unreadable") {
+      diagnostics.push({
+        level: "error",
+        code: "working_directory_unreadable",
+        message: `The generated systemd WorkingDirectory at ${workingDirectoryPath} could not be inspected${preflight.workingDirectoryError ? ` (${preflight.workingDirectoryError})` : ""}. Doctor cannot verify that ray-gateway.service will start in the intended repository directory.`,
+      });
+    } else {
+      diagnostics.push({
+        level: "info",
+        code: "working_directory_ok",
+        message: `Generated systemd WorkingDirectory exists at ${workingDirectoryPath}.`,
+      });
+    }
+  }
+
   if (strictFilesystem && preflight?.envFileStatus !== undefined) {
     const checkedEnvFile = preflight.envFilePath ?? envFile ?? "the configured EnvironmentFile";
 
@@ -1882,6 +1917,45 @@ async function collectServiceUserPreflight(
   }
 }
 
+async function collectWorkingDirectoryPreflight(
+  cwd: string,
+  strictFilesystem: boolean,
+): Promise<Partial<DeploymentPreflight>> {
+  if (!strictFilesystem) {
+    return {};
+  }
+
+  const workingDirectoryPath = path.resolve(cwd);
+
+  try {
+    const workingDirectoryStat = await stat(workingDirectoryPath);
+
+    if (!workingDirectoryStat.isDirectory()) {
+      return {
+        workingDirectoryPath,
+        workingDirectoryStatus: "not_directory",
+        workingDirectoryError: "not a directory",
+      };
+    }
+
+    return {
+      workingDirectoryPath,
+      workingDirectoryStatus: "found",
+    };
+  } catch (error) {
+    const code =
+      error !== null && typeof error === "object" && "code" in error
+        ? (error as { code?: string }).code
+        : undefined;
+
+    return {
+      workingDirectoryPath,
+      workingDirectoryStatus: code === "ENOENT" ? "missing" : "unreadable",
+      workingDirectoryError: toErrorMessage(error),
+    };
+  }
+}
+
 async function collectGatewayRuntimePreflight(
   runtimeBinary: string | undefined,
 ): Promise<Partial<DeploymentPreflight>> {
@@ -2054,6 +2128,10 @@ async function collectDeploymentPreflight(
     options.user,
     options.strictFilesystem === true,
   );
+  const workingDirectoryPreflight = await collectWorkingDirectoryPreflight(
+    options.cwd,
+    options.strictFilesystem === true,
+  );
   const gatewayEntrypointPreflight = await collectGatewayEntrypointPreflight(
     options.cwd,
     options.strictFilesystem === true,
@@ -2069,6 +2147,7 @@ async function collectDeploymentPreflight(
       ...storagePreflight,
       ...envFilePreflight,
       ...serviceUserPreflight,
+      ...workingDirectoryPreflight,
       ...gatewayEntrypointPreflight,
       ...runtimePreflight,
       ...swapPreflight,
@@ -2089,6 +2168,7 @@ async function collectDeploymentPreflight(
     ...storagePreflight,
     ...envFilePreflight,
     ...serviceUserPreflight,
+    ...workingDirectoryPreflight,
     ...gatewayEntrypointPreflight,
     ...runtimePreflight,
     ...llamaBinaryPreflight,

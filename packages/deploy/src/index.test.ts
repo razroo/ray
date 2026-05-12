@@ -1236,6 +1236,57 @@ test("loadAndDiagnoseDeployment reports an existing generated service user in st
   assert.equal(diagnostic.level, "info");
 });
 
+test("loadAndDiagnoseDeployment errors when the generated working directory is missing in strict mode", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-working-directory-missing-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  const missingWorkingDirectory = join(tempDir, "missing-ray");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: missingWorkingDirectory,
+    configPath,
+    strictFilesystem: true,
+  });
+
+  const diagnostic = inspected.diagnostics.find(
+    (entry) => entry.code === "working_directory_missing",
+  );
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /WorkingDirectory/);
+  assert.match(
+    diagnostic.message,
+    new RegExp(missingWorkingDirectory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+  );
+});
+
+test("loadAndDiagnoseDeployment reports the generated working directory in strict mode", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-working-directory-ok-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    strictFilesystem: true,
+  });
+
+  const diagnostic = inspected.diagnostics.find((entry) => entry.code === "working_directory_ok");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+  assert.match(diagnostic.message, new RegExp(tempDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
 test("loadAndDiagnoseDeployment errors when the built gateway entrypoint is missing in strict mode", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-gateway-entrypoint-missing-"));
   t.after(async () => {
