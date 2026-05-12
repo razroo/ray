@@ -29,15 +29,15 @@ That keeps the gateway process small while still making self-hosted inference op
 ```bash
 sudo env DEBIAN_FRONTEND=noninteractive timeout 300s apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=60 update
 sudo env DEBIAN_FRONTEND=noninteractive timeout 300s apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=60 install -y --no-install-recommends ca-certificates curl unzip git build-essential caddy
-curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 https://bun.sh/install | bash -s "bun-v1.3.9"
-sudo install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
+curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 https://bun.sh/install | timeout 300s bash -s "bun-v1.3.9"
+timeout 60s sudo install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
 SERVICE_USER="${RAY_DEPLOY_SERVICE_USER:-ray}"
-id -u "$SERVICE_USER" >/dev/null 2>&1 || sudo useradd --system --home /srv/ray --shell /usr/sbin/nologin "$SERVICE_USER"
+id -u "$SERVICE_USER" >/dev/null 2>&1 || timeout 60s sudo useradd --system --home /srv/ray --shell /usr/sbin/nologin "$SERVICE_USER"
 SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
-sudo install -d -m 0755 /srv/ray /etc/ray
-sudo install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
-sudo chown "$(id -un):$(id -gn)" /srv/ray
-sudo chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
+timeout 60s sudo install -d -m 0755 /srv/ray /etc/ray
+timeout 60s sudo install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
+timeout 60s sudo chown "$(id -un):$(id -gn)" /srv/ray
+timeout 60s sudo chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
 ```
 
 ### 2. Prepare a local model backend
@@ -106,14 +106,14 @@ On an 8 GB node, [ray.1b.8gb.generic.public.json](../../config/ray.1b.8gb.generi
 ### 3. Build Ray
 
 ```bash
-git clone https://github.com/razroo/ray.git /srv/ray
+timeout 300s git clone https://github.com/razroo/ray.git /srv/ray
 cd /srv/ray
-bun install
-bun run build
+timeout 300s bun install --frozen-lockfile
+timeout 300s bun run build
 SERVICE_USER="${RAY_DEPLOY_SERVICE_USER:-ray}"
 SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
-sudo chmod -R a+rX /srv/ray
-sudo chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
+timeout 120s sudo chmod -R a+rX /srv/ray
+timeout 60s sudo chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
 ```
 
 ### 4. Place the config
@@ -137,10 +137,10 @@ Adjust:
 Put the final file somewhere stable, for example:
 
 ```bash
-sudo mkdir -p /etc/ray
+timeout 60s sudo mkdir -p /etc/ray
 SERVICE_USER="${RAY_DEPLOY_SERVICE_USER:-ray}"
 SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
-sudo install -m 0640 -o root -g "$SERVICE_GROUP" examples/config/ray.1b.generic.public.json /etc/ray/ray.json
+timeout 60s sudo install -m 0640 -o root -g "$SERVICE_GROUP" examples/config/ray.1b.generic.public.json /etc/ray/ray.json
 ```
 
 For portable deployments, keep model-specific and cheap-node sizing values in
@@ -261,7 +261,7 @@ RAY_RATE_LIMIT_TRUST_PROXY_HEADERS=true
 If you enable inference auth, populate the API keys env file before starting the gateway:
 
 ```bash
-sudo install -m 0600 -o root -g root /dev/stdin /etc/ray/ray.env <<'EOF'
+timeout 60s sudo install -m 0600 -o root -g root /dev/stdin /etc/ray/ray.env <<'EOF'
 RAY_AUTH_API_KEY_ENV=RAY_API_KEYS
 RAY_API_KEYS=replace-with-comma-separated-client-api-keys
 EOF
@@ -295,7 +295,7 @@ written into the unit; keep `--ray-env-file` for render or doctor runs that
 should load and validate a real env file.
 
 ```bash
-bun packages/deploy/dist/cli.js render \
+timeout 120s bun packages/deploy/dist/cli.js render \
   --cwd /srv/ray \
   --config /etc/ray/ray.json \
   --gateway-runtime-binary /usr/local/bin/bun \
@@ -303,20 +303,20 @@ bun packages/deploy/dist/cli.js render \
   --strict-filesystem \
   --output-dir /tmp/ray-rendered
 cat /tmp/ray-rendered/summary.json
-sudo cp /tmp/ray-rendered/ray-gateway.service /etc/systemd/system/ray-gateway.service
+timeout 60s sudo cp /tmp/ray-rendered/ray-gateway.service /etc/systemd/system/ray-gateway.service
 if [ -f /tmp/ray-rendered/ray-llama-cpp.service ]; then
-  sudo cp /tmp/ray-rendered/ray-llama-cpp.service /etc/systemd/system/ray-llama-cpp.service
+  timeout 60s sudo cp /tmp/ray-rendered/ray-llama-cpp.service /etc/systemd/system/ray-llama-cpp.service
 else
   if [ -f /etc/systemd/system/ray-llama-cpp.service ]; then
-    sudo systemctl disable --now ray-llama-cpp || true
+    timeout 120s sudo systemctl disable --now ray-llama-cpp || true
   fi
-  sudo rm -f /etc/systemd/system/ray-llama-cpp.service
+  timeout 60s sudo rm -f /etc/systemd/system/ray-llama-cpp.service
 fi
-sudo systemctl daemon-reload
+timeout 60s sudo systemctl daemon-reload
 if [ -f /etc/systemd/system/ray-llama-cpp.service ]; then
-  sudo systemctl enable --now ray-llama-cpp
+  timeout 120s sudo systemctl enable --now ray-llama-cpp
 fi
-sudo systemctl enable --now ray-gateway
+timeout 120s sudo systemctl enable --now ray-gateway
 ```
 
 ### 7. Install the reverse proxy
@@ -328,10 +328,10 @@ body cap, gateway port, and upstream response timeouts match the checked config.
 caddy_tmp="$(mktemp)"
 caddy_status=0
 cp /tmp/ray-rendered/Caddyfile "$caddy_tmp"
-sudo caddy validate --config "$caddy_tmp" &&
-  sudo install -m 0644 "$caddy_tmp" /etc/caddy/Caddyfile &&
-  sudo systemctl enable --now caddy &&
-  sudo systemctl reload caddy || caddy_status=$?
+timeout 30s sudo caddy validate --config "$caddy_tmp" &&
+  timeout 60s sudo install -m 0644 "$caddy_tmp" /etc/caddy/Caddyfile &&
+  timeout 120s sudo systemctl enable --now caddy &&
+  timeout 60s sudo systemctl reload caddy || caddy_status=$?
 rm -f "$caddy_tmp"
 test "$caddy_status" -eq 0
 ```
