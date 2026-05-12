@@ -273,6 +273,74 @@ test("scheduler rejects work that exceeds token budgets", async () => {
   );
 });
 
+test("scheduler rejects invalid task options before queueing", async () => {
+  const scheduler = new RequestScheduler<string>(createSchedulerConfig());
+
+  assert.throws(
+    () =>
+      scheduler.schedule({
+        lane: "bulk" as never,
+        handler: async () => "bad-lane",
+      }),
+    /schedule\.lane/,
+  );
+  assert.throws(
+    () =>
+      scheduler.schedule({
+        costTokens: Number.NaN,
+        handler: async () => "bad-cost",
+      }),
+    /schedule\.costTokens/,
+  );
+  assert.throws(
+    () =>
+      scheduler.schedule({
+        costTokens: 1.5,
+        handler: async () => "fractional-cost",
+      }),
+    /schedule\.costTokens/,
+  );
+  assert.throws(
+    () =>
+      scheduler.schedule({
+        preferredSlot: -1,
+        handler: async () => "bad-slot",
+      }),
+    /schedule\.preferredSlot/,
+  );
+
+  assert.equal(scheduler.snapshot().queueDepth, 0);
+  assert.equal(scheduler.snapshot().queuedTokens, 0);
+  assert.equal(scheduler.snapshot().inFlightTokens, 0);
+});
+
+test("scheduler does not retain dedupe entries for invalid task options", async () => {
+  const scheduler = new RequestScheduler<string>(createSchedulerConfig());
+
+  assert.throws(
+    () =>
+      scheduler.schedule({
+        key: "same",
+        lane: "bulk" as never,
+        handler: async () => "bad-lane",
+      }),
+    /schedule\.lane/,
+  );
+
+  const result = await Promise.race([
+    scheduler.schedule({
+      key: "same",
+      handler: async () => "ok",
+    }),
+    new Promise<never>((_resolve, reject) => {
+      setTimeout(() => reject(new Error("valid keyed work did not run")), 100);
+    }),
+  ]);
+
+  assert.equal(result.value, "ok");
+  assert.equal(result.deduplicated, false);
+});
+
 test("scheduler enforces requestTimeoutMs when work ignores abort", async () => {
   let releaseFirst!: () => void;
   let markStarted!: () => void;

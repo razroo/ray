@@ -38,6 +38,40 @@ function assertBoolean(value: boolean, label: string): void {
   }
 }
 
+function normalizeScheduleLane(value: unknown): ScheduleLane {
+  if (value === undefined) {
+    return "draft";
+  }
+
+  if (value !== "short" && value !== "draft") {
+    throw new TypeError("schedule.lane must be short or draft");
+  }
+
+  return value;
+}
+
+function normalizeCostTokens(value: unknown): number {
+  const costTokens = value ?? 1;
+
+  if (typeof costTokens !== "number" || !Number.isSafeInteger(costTokens) || costTokens <= 0) {
+    throw new RangeError("schedule.costTokens must be a positive safe integer");
+  }
+
+  return costTokens;
+}
+
+function normalizePreferredSlot(value: unknown): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError("schedule.preferredSlot must be a non-negative safe integer");
+  }
+
+  return value;
+}
+
 function normalizeSchedulerConfig(config: SchedulerConfig): SchedulerConfig {
   assertPositiveSafeInteger(config.concurrency, "scheduler.concurrency");
   assertPositiveSafeInteger(config.maxQueue, "scheduler.maxQueue");
@@ -121,6 +155,10 @@ export class RequestScheduler<T> {
   }
 
   schedule(options: ScheduleTaskOptions<T>): Promise<ScheduledTaskResult<T>> {
+    const lane = normalizeScheduleLane(options.lane);
+    const costTokens = normalizeCostTokens(options.costTokens);
+    const preferredSlot = normalizePreferredSlot(options.preferredSlot);
+
     if (options.key && this.config.dedupeInflight) {
       const existing = this.dedupeMap.get(options.key);
       if (existing) {
@@ -130,8 +168,6 @@ export class RequestScheduler<T> {
         }));
       }
     }
-
-    const costTokens = Math.max(1, Math.floor(options.costTokens ?? 1));
 
     if (costTokens > this.config.maxInflightTokens || costTokens > this.config.maxQueuedTokens) {
       throw new RayError("The request exceeds the scheduler token budget", {
@@ -156,7 +192,6 @@ export class RequestScheduler<T> {
     }
 
     let item!: QueueItem<T>;
-    const lane = options.lane ?? "draft";
 
     const promise = new Promise<ScheduledTaskResult<T>>((resolve, reject) => {
       item = {
@@ -168,7 +203,7 @@ export class RequestScheduler<T> {
         reject,
         ...(options.key ? { key: options.key } : {}),
         ...(options.affinityKey ? { affinityKey: options.affinityKey } : {}),
-        ...(options.preferredSlot !== undefined ? { preferredSlot: options.preferredSlot } : {}),
+        ...(preferredSlot !== undefined ? { preferredSlot } : {}),
       };
     });
 
