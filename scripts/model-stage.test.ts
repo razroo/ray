@@ -385,6 +385,7 @@ test("applyModelStagePlan installs verified artifacts into the resolved target p
     binaryPath: binaryTarget,
     binaryProbeStatus: "ok",
     modelPath: modelTarget,
+    modelReadStatus: "ok",
     serviceUser: String(uid),
     serviceGroup: String(gid),
   });
@@ -446,6 +447,7 @@ test("formatApplyResult prints the staged artifact summary", () => {
     binaryPath: "/usr/local/bin/llama-server",
     binaryProbeStatus: "ok",
     modelPath: "/var/lib/ray/models/local.gguf",
+    modelReadStatus: "ok",
     serviceUser: "ray",
     serviceGroup: "ray",
   });
@@ -454,6 +456,7 @@ test("formatApplyResult prints the staged artifact summary", () => {
   assert.match(text, /binary: \/usr\/local\/bin\/llama-server/);
   assert.match(text, /binary startup probe: ok/);
   assert.match(text, /GGUF: \/var\/lib\/ray\/models\/local\.gguf/);
+  assert.match(text, /GGUF service-user read: ok/);
   assert.match(text, /Run doctor before restarting ray-llama-cpp\.service/);
 });
 
@@ -583,10 +586,12 @@ test("runModelStageCli can apply verified artifacts", async (t) => {
   const parsed = JSON.parse(stdout) as {
     applied: true;
     binaryProbeStatus: "ok";
+    modelReadStatus: "ok";
     plan: { binaryPath: string };
   };
   assert.equal(parsed.applied, true);
   assert.equal(parsed.binaryProbeStatus, "ok");
+  assert.equal(parsed.modelReadStatus, "ok");
   assert.equal(parsed.plan.binaryPath, path.join(tempDir, "target", "bin", "llama-server"));
   assert.equal(
     await readFile(path.join(tempDir, "target", "models", "model.gguf"), "utf8"),

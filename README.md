@@ -316,7 +316,8 @@ the artifacts into the resolved binary and model locations with the generated
 service ownership, then run the staged `llama-server --help` probe as that
 service identity. Apply checks that the model source has a GGUF header and that
 the target model filesystem can hold the GGUF source while keeping a 256 MiB
-post-copy reserve.
+post-copy reserve, then verifies that the generated service identity can read
+the installed GGUF.
 
 Deployment walkthrough: [examples/deploy/vps/README.md](examples/deploy/vps/README.md).
 

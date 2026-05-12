@@ -170,7 +170,8 @@ Use `--apply` on the VPS after reviewing those source paths to verify and stage
 the configured `llama-server` and GGUF into their resolved target locations,
 then run the staged `llama-server --help` probe as the service identity. Apply
 checks that the model source has a GGUF header and that the model target
-filesystem can hold the GGUF source while keeping a 256 MiB post-copy reserve.
+filesystem can hold the GGUF source while keeping a 256 MiB post-copy reserve,
+then verifies that the generated service identity can read the installed GGUF.
 
 Set `RAY_AUTH_API_KEY_ENV` when an existing secret manager or deployment workflow
 uses a different environment variable for the Bearer keys.

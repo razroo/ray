@@ -21,6 +21,8 @@ const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_ENV_FILE_BYTES = 64 * 1024;
 const PRINCIPAL_LOOKUP_TIMEOUT_MS = 3_000;
 const PRINCIPAL_LOOKUP_MAX_BUFFER_BYTES = 16 * 1024;
+const MODEL_READ_CHECK_TIMEOUT_MS = 3_000;
+const MODEL_READ_CHECK_MAX_BUFFER_BYTES = 16 * 1024;
 const BYTES_PER_MIB = 1024 * 1024;
 const FALLBACK_STATFS_BLOCK_SIZE = 4096;
 const MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB = 256;
@@ -79,6 +81,7 @@ export interface ModelStageApplyResult {
   binaryPath: string;
   binaryProbeStatus: "ok";
   modelPath: string;
+  modelReadStatus: "ok";
   serviceUser: string;
   serviceGroup: string;
 }
@@ -94,6 +97,7 @@ export interface ModelStageStorageHeadroom {
 export interface ModelStageJsonApplyResult {
   applied: true;
   binaryProbeStatus: "ok";
+  modelReadStatus: "ok";
   plan: ModelStagePlan;
 }
 
@@ -813,6 +817,28 @@ async function assertLlamaCppBinaryStarts(
   }
 }
 
+async function assertModelReadableByServiceUser(
+  modelPath: string,
+  serviceIdentity: { uid: number; gid: number },
+): Promise<void> {
+  try {
+    await execFileAsync("test", ["-r", modelPath], {
+      timeout: MODEL_READ_CHECK_TIMEOUT_MS,
+      maxBuffer: MODEL_READ_CHECK_MAX_BUFFER_BYTES,
+      encoding: "utf8",
+      uid: serviceIdentity.uid,
+      gid: serviceIdentity.gid,
+    });
+  } catch (error) {
+    const output = getFailedProcessOutput(error);
+    throw new Error(
+      `installed GGUF model is not readable by the generated service identity at ${modelPath}: ${
+        error instanceof Error ? error.message : String(error)
+      }${output ? `; output: ${output}` : ""}`,
+    );
+  }
+}
+
 export async function applyModelStagePlan(
   cwd: string,
   plan: ModelStagePlan,
@@ -845,13 +871,14 @@ export async function applyModelStagePlan(
   if (plan.sha256) {
     await assertSha256(modelTargetPath, plan.sha256, "installed GGUF model");
   }
-  await access(modelTargetPath, constants.R_OK);
+  await assertModelReadableByServiceUser(modelTargetPath, { uid, gid });
 
   return {
     applied: true,
     binaryPath: plan.binaryPath,
     binaryProbeStatus: "ok",
     modelPath: plan.modelPath,
+    modelReadStatus: "ok",
     serviceUser: plan.serviceUser,
     serviceGroup: plan.serviceGroup,
   };
@@ -863,6 +890,7 @@ export function formatApplyResult(result: ModelStageApplyResult): string {
     `- binary: ${result.binaryPath}`,
     `- binary startup probe: ${result.binaryProbeStatus}`,
     `- GGUF: ${result.modelPath}`,
+    `- GGUF service-user read: ${result.modelReadStatus}`,
     `- service owner: ${result.serviceUser}:${result.serviceGroup}`,
     "Checksums were verified when configured. Run doctor before restarting ray-llama-cpp.service.",
   ].join("\n");
@@ -904,6 +932,7 @@ export async function runModelStageCli(
             {
               applied: true,
               binaryProbeStatus: result.binaryProbeStatus,
+              modelReadStatus: result.modelReadStatus,
               plan,
             } satisfies ModelStageJsonApplyResult,
             null,
