@@ -3,13 +3,16 @@ import { pathToFileURL } from "node:url";
 
 const DEFAULT_SWAP_PATH = "/swapfile";
 const DEFAULT_SWAP_SIZE_MIB = 1_024;
+const DEFAULT_SWAPPINESS = 10;
 const MAX_SWAP_SIZE_MIB = 65_536;
+const MAX_SWAPPINESS = 200;
 const MAX_CLI_ARGS = 8;
 const MAX_CLI_ARG_BYTES = 4_096;
 
 export interface SwapPlanArgs {
   path: string;
   sizeMiB: number;
+  swappiness: number;
   json: boolean;
   help: boolean;
 }
@@ -17,6 +20,7 @@ export interface SwapPlanArgs {
 export interface SwapPlan {
   path: string;
   sizeMiB: number;
+  swappiness: number;
   commands: string[];
 }
 
@@ -28,6 +32,7 @@ Usage:
 Options:
   --path <path>       Absolute swap file path. Default: ${DEFAULT_SWAP_PATH}
   --size-mib <n>      Swap file size in MiB. Default: ${DEFAULT_SWAP_SIZE_MIB}
+  --swappiness <n>    Linux vm.swappiness value from 0 to ${MAX_SWAPPINESS}. Default: ${DEFAULT_SWAPPINESS}
   --json              Print machine-readable plan JSON.
   -h, --help          Show this help.
 `;
@@ -100,12 +105,28 @@ function parseSwapSizeMiB(value: string): number {
   return parsed;
 }
 
+function parseSwappiness(value: string): number {
+  const normalized = value.trim();
+  const parsed = Number(normalized);
+
+  if (
+    !/^(?:0|[1-9][0-9]*)$/.test(normalized) ||
+    !Number.isSafeInteger(parsed) ||
+    parsed > MAX_SWAPPINESS
+  ) {
+    throw new Error(`swappiness must be an integer from 0 to ${MAX_SWAPPINESS}`);
+  }
+
+  return parsed;
+}
+
 export function parseArgs(argv: string[]): SwapPlanArgs {
   assertArgv(argv);
 
   const args: SwapPlanArgs = {
     path: DEFAULT_SWAP_PATH,
     sizeMiB: DEFAULT_SWAP_SIZE_MIB,
+    swappiness: DEFAULT_SWAPPINESS,
     json: false,
     help: false,
   };
@@ -115,6 +136,12 @@ export function parseArgs(argv: string[]): SwapPlanArgs {
 
     if (current === "--path") {
       args.path = normalizeSwapPath(requireFlagValue(current, argv[index + 1]));
+      index += 1;
+      continue;
+    }
+
+    if (current === "--swappiness") {
+      args.swappiness = parseSwappiness(requireFlagValue(current, argv[index + 1]));
       index += 1;
       continue;
     }
@@ -149,18 +176,26 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-export function createSwapPlan(options: { path?: string; sizeMiB?: number } = {}): SwapPlan {
+export function createSwapPlan(
+  options: { path?: string; sizeMiB?: number; swappiness?: number } = {},
+): SwapPlan {
   const swapPath = normalizeSwapPath(options.path ?? DEFAULT_SWAP_PATH);
   const sizeMiB =
     options.sizeMiB === undefined
       ? DEFAULT_SWAP_SIZE_MIB
       : parseSwapSizeMiB(String(options.sizeMiB));
+  const swappiness =
+    options.swappiness === undefined
+      ? DEFAULT_SWAPPINESS
+      : parseSwappiness(String(options.swappiness));
   const quotedPath = shellQuote(swapPath);
   const fstabLine = `${swapPath} none swap sw 0 0`;
+  const sysctlLine = `vm.swappiness=${swappiness}`;
 
   return {
     path: swapPath,
     sizeMiB,
+    swappiness,
     commands: [
       `sudo test ! -e ${quotedPath} || { echo 'Swap file already exists: ${swapPath}' >&2; exit 1; }`,
       `if command -v fallocate >/dev/null 2>&1; then sudo fallocate -l ${sizeMiB}M ${quotedPath}; else sudo dd if=/dev/zero of=${quotedPath} bs=1M count=${sizeMiB} status=progress; fi`,
@@ -168,6 +203,8 @@ export function createSwapPlan(options: { path?: string; sizeMiB?: number } = {}
       `sudo mkswap ${quotedPath}`,
       `sudo swapon ${quotedPath}`,
       `sudo grep -Fq ${shellQuote(fstabLine)} /etc/fstab || printf '%s\\n' ${shellQuote(fstabLine)} | sudo tee -a /etc/fstab >/dev/null`,
+      `printf '%s\\n' ${shellQuote(sysctlLine)} | sudo tee /etc/sysctl.d/99-ray-swap.conf >/dev/null`,
+      `sudo sysctl ${shellQuote(sysctlLine)}`,
       "swapon --show",
     ],
   };
@@ -178,6 +215,7 @@ export function formatTextPlan(plan: SwapPlan): string {
     "Ray small-VPS swap file plan:",
     `- swap file: ${plan.path}`,
     `- size: ${plan.sizeMiB} MiB`,
+    `- vm.swappiness: ${plan.swappiness}`,
     "",
     "Run on the VPS:",
     ...plan.commands,
@@ -203,6 +241,7 @@ export async function runSwapPlanCli(
     const plan = createSwapPlan({
       path: args.path,
       sizeMiB: args.sizeMiB,
+      swappiness: args.swappiness,
     });
     const output = args.json ? JSON.stringify(plan, null, 2) : formatTextPlan(plan);
     io.stdout.write(`${output}\n`);
