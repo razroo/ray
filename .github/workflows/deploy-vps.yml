@@ -696,7 +696,7 @@ jobs:
           live_deadline=$((SECONDS + 30))
           live_status=1
           while [ "$SECONDS" -lt "$live_deadline" ]; do
-            if curl -fsS "http://127.0.0.1:${HEALTH_PORT}/livez" >/dev/null; then
+            if curl -fsS --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/livez" >/dev/null; then
               live_status=0
               break
             fi
@@ -712,7 +712,7 @@ jobs:
           ready_deadline=$((SECONDS + READY_TIMEOUT_SECONDS))
           ready_status=1
           while [ "$SECONDS" -lt "$ready_deadline" ]; do
-            if curl -fsS "http://127.0.0.1:${HEALTH_PORT}/readyz" >/dev/null; then
+            if curl -fsS --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/readyz" >/dev/null; then
               ready_status=0
               break
             fi

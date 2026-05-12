@@ -315,6 +315,14 @@ function validateScripts(
   return diagnostics;
 }
 
+function isLocalHealthCurl(line: string): boolean {
+  return (
+    /\bcurl\b/.test(line) &&
+    line.includes("http://127.0.0.1:") &&
+    (line.includes("/livez") || line.includes("/readyz"))
+  );
+}
+
 async function validateWorkflow(
   workflowPath: string,
 ): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
@@ -339,6 +347,17 @@ async function validateWorkflow(
         line: index + 1,
         message:
           "Workflow command invokes pnpm/yarn/npx or npm install/run/test. Use bun, bunx, or a direct binary instead; npm publish is only allowed in release jobs.",
+      });
+    }
+
+    if (isLocalHealthCurl(line) && !line.includes("--max-time")) {
+      diagnostics.push({
+        level: "error",
+        code: "unbounded_workflow_health_probe",
+        workflowPath,
+        line: index + 1,
+        message:
+          "Workflow localhost health probes must pass curl --max-time so VPS deploy readiness loops honor their timeout windows.",
       });
     }
   }

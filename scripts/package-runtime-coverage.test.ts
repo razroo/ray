@@ -107,6 +107,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
       "      - run: npm run build",
       "      - run: yarn test",
       "      - run: npm publish ./pkg.tgz --access public",
+      "      - run: curl -fsS http://127.0.0.1:${HEALTH_PORT}/readyz",
       "",
     ].join("\n"),
   );
@@ -124,6 +125,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("root_bun_engine_missing"));
   assert.equal(codes.filter((code) => code === "non_bun_package_manager_script").length, 4);
   assert.equal(codes.filter((code) => code === "non_bun_workflow_package_manager").length, 2);
+  assert.ok(codes.includes("unbounded_workflow_health_probe"));
   assert.ok(codes.includes("non_bun_lockfile_present"));
 });
 
