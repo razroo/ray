@@ -57,6 +57,8 @@ export interface DeploymentPreflight {
   modelFilePath?: string;
   modelFileStatus?: "found" | "missing" | "unreadable";
   modelFileError?: string;
+  modelFileAccessStatus?: ServiceUserAccessStatus;
+  modelFileAccessError?: string;
   asyncQueueStoragePath?: string;
   asyncQueueStorageCheckPath?: string;
   asyncQueueStorageStatus?: AsyncQueueStorageStatus;
@@ -78,6 +80,8 @@ export interface DeploymentPreflight {
   llamaCppBinaryPath?: string;
   llamaCppBinaryStatus?: LlamaCppBinaryStatus;
   llamaCppBinaryError?: string;
+  llamaCppBinaryAccessStatus?: ServiceUserAccessStatus;
+  llamaCppBinaryAccessError?: string;
   envFilePath?: string;
   envFileStatus?: EnvFileStatus;
   envFileMode?: number;
@@ -1632,11 +1636,20 @@ export function diagnoseConfig(
             code: "llama_binary_unreadable",
             message: `The configured llama.cpp binary at ${binaryPath} could not be executed${preflight.llamaCppBinaryError ? ` (${preflight.llamaCppBinaryError})` : ""}. Doctor cannot verify that ray-llama-cpp.service will start.`,
           });
+        } else if (preflight.llamaCppBinaryAccessStatus === "blocked") {
+          diagnostics.push({
+            level: "error",
+            code: "llama_binary_service_user_inaccessible",
+            message: `The generated systemd service user "${preflight.serviceUser ?? "the configured service user"}" cannot execute the configured llama.cpp binary at ${binaryPath}${preflight.llamaCppBinaryAccessError ? ` (${preflight.llamaCppBinaryAccessError})` : ""}. Adjust ownership or mode bits before restarting ray-llama-cpp.service.`,
+          });
         } else {
           diagnostics.push({
             level: "info",
             code: "llama_binary_ok",
-            message: `llama.cpp binary is executable at ${binaryPath}.`,
+            message:
+              preflight.llamaCppBinaryAccessStatus === "ok"
+                ? `llama.cpp binary is executable by "${preflight.serviceUser ?? "the configured service user"}" at ${binaryPath}.`
+                : `llama.cpp binary is executable at ${binaryPath}.`,
           });
         }
       }
@@ -1768,6 +1781,16 @@ export function diagnoseConfig(
           level: "error",
           code: "model_file_unreadable",
           message: `The configured GGUF model file at ${preflight.modelFilePath} could not be read${preflight.modelFileError ? ` (${preflight.modelFileError})` : ""}. Doctor cannot estimate memory fit without the real model file.`,
+        });
+      } else if (
+        strictFilesystem &&
+        preflight?.modelFileStatus === "found" &&
+        preflight.modelFileAccessStatus === "blocked"
+      ) {
+        diagnostics.push({
+          level: "error",
+          code: "model_file_service_user_inaccessible",
+          message: `The generated systemd service user "${preflight.serviceUser ?? "the configured service user"}" cannot read the configured GGUF model file at ${preflight.modelFilePath}${preflight.modelFileAccessError ? ` (${preflight.modelFileAccessError})` : ""}. Adjust ownership or mode bits before restarting ray-llama-cpp.service.`,
         });
       }
 
@@ -2282,6 +2305,7 @@ async function collectGatewayEntrypointPreflight(
 
 async function collectLlamaCppBinaryPreflight(
   launchProfile: LlamaCppLaunchProfile,
+  serviceUserIdentity: ServiceUserIdentity | undefined,
 ): Promise<Partial<DeploymentPreflight>> {
   const binaryPath = launchProfile.binaryPath;
 
@@ -2306,9 +2330,21 @@ async function collectLlamaCppBinaryPreflight(
 
     await access(binaryPath, constants.X_OK);
 
+    const serviceUserAccess = serviceUserIdentity
+      ? await verifyServiceUserPathAccess(binaryPath, serviceUserIdentity, 0o1, "execute")
+      : undefined;
+
     return {
       llamaCppBinaryPath: binaryPath,
       llamaCppBinaryStatus: "found",
+      ...(serviceUserAccess
+        ? {
+            llamaCppBinaryAccessStatus: serviceUserAccess.status,
+            ...(serviceUserAccess.error
+              ? { llamaCppBinaryAccessError: serviceUserAccess.error }
+              : {}),
+          }
+        : {}),
     };
   } catch (error) {
     const code =
@@ -2410,7 +2446,10 @@ async function collectDeploymentPreflight(
   }
 
   const launchProfile = config.model.adapter.launchProfile;
-  const llamaBinaryPreflight = await collectLlamaCppBinaryPreflight(launchProfile);
+  const llamaBinaryPreflight = await collectLlamaCppBinaryPreflight(
+    launchProfile,
+    serviceUserIdentity,
+  );
   const budget = resolveMemoryBudget({
     preset: launchProfile.preset,
     ...(options.memoryBudgetMiB !== undefined
@@ -2443,10 +2482,20 @@ async function collectDeploymentPreflight(
       };
     }
 
+    const serviceUserAccess = serviceUserIdentity
+      ? await verifyServiceUserPathAccess(launchProfile.modelPath, serviceUserIdentity, 0o4, "read")
+      : undefined;
+
     return {
       ...preflight,
       modelFileBytes: fileStat.size,
       modelFileStatus: "found",
+      ...(serviceUserAccess
+        ? {
+            modelFileAccessStatus: serviceUserAccess.status,
+            ...(serviceUserAccess.error ? { modelFileAccessError: serviceUserAccess.error } : {}),
+          }
+        : {}),
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

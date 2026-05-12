@@ -1269,6 +1269,43 @@ test("diagnoseConfig errors when the generated service user cannot access gatewa
   assert.match(entrypointDiagnostic.message, /read permission/);
 });
 
+test("diagnoseConfig errors when the generated service user cannot access llama.cpp paths", () => {
+  const config = createDefaultConfig("1b");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      serviceUser: "ray",
+      llamaCppBinaryPath: "/usr/local/bin/llama-server",
+      llamaCppBinaryStatus: "found",
+      llamaCppBinaryAccessStatus: "blocked",
+      llamaCppBinaryAccessError: "execute permission is not granted on llama-server",
+      modelFilePath: "/var/lib/ray/models/local-1b.gguf",
+      modelFileStatus: "found",
+      modelFileBytes: 512 * 1_024 * 1_024,
+      modelFileAccessStatus: "blocked",
+      modelFileAccessError: "read permission is not granted on local-1b.gguf",
+      memoryBudgetMiB: 4_096,
+      memoryBudgetSource: "override",
+    },
+  });
+
+  const binaryDiagnostic = diagnostics.find(
+    (entry) => entry.code === "llama_binary_service_user_inaccessible",
+  );
+  assert.ok(binaryDiagnostic);
+  assert.equal(binaryDiagnostic.level, "error");
+  assert.match(binaryDiagnostic.message, /ray/);
+  assert.match(binaryDiagnostic.message, /execute permission/);
+
+  const modelDiagnostic = diagnostics.find(
+    (entry) => entry.code === "model_file_service_user_inaccessible",
+  );
+  assert.ok(modelDiagnostic);
+  assert.equal(modelDiagnostic.level, "error");
+  assert.match(modelDiagnostic.message, /ray/);
+  assert.match(modelDiagnostic.message, /read permission/);
+});
+
 test("loadAndDiagnoseDeployment reports an existing generated service user in strict mode", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-service-user-"));
   t.after(async () => {
