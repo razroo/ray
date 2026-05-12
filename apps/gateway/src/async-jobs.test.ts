@@ -590,6 +590,8 @@ test("durable inference queue persists bounded JSON-safe job error details", asy
       bytes: new Uint8Array(16),
       values: Array.from({ length: 40 }, (_value, index) => index),
     };
+    const longKey = `k${"x".repeat(140)}`;
+    details[longKey] = "bounded-key";
     details.self = details;
     Object.defineProperty(details, "explode", {
       enumerable: true,
@@ -600,11 +602,12 @@ test("durable inference queue persists bounded JSON-safe job error details", asy
     const runtime = {
       config,
       infer: async () => {
-        throw new RayError("backend returned hostile diagnostics", {
+        const error = new RayError("backend returned hostile diagnostics", {
           code: "provider_upstream_error",
           status: 502,
-          details,
         });
+        (error as unknown as { details: unknown }).details = details;
+        throw error;
       },
     } as unknown as ReturnType<typeof createRayRuntime>;
     const logger = new Logger("test", "error");
@@ -635,6 +638,7 @@ test("durable inference queue persists bounded JSON-safe job error details", asy
           explode?: string;
           bytes?: string;
           values?: unknown[];
+          [key: string]: unknown;
         };
       };
     };
@@ -647,6 +651,8 @@ test("durable inference queue persists bounded JSON-safe job error details", asy
     assert.equal(errorDetails?.explode, "[Thrown: getter boom]");
     assert.equal(errorDetails?.bytes, "[Uint8Array 16 bytes]");
     assert.equal(errorDetails?.values?.at(-1), "[Truncated 8 items]");
+    assert.equal(errorDetails?.[`${longKey.slice(0, 128)}...[truncated 13 chars]`], "bounded-key");
+    assert.equal(errorDetails?.[longKey], undefined);
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }

@@ -37,6 +37,7 @@ const MAX_CALLBACK_URL_CHARS = 2_048;
 const MAX_JOB_ERROR_MESSAGE_CHARS = 8_192;
 const MAX_JOB_ERROR_DETAIL_DEPTH = 5;
 const MAX_JOB_ERROR_DETAIL_KEYS = 32;
+const MAX_JOB_ERROR_DETAIL_KEY_CHARS = 128;
 const MAX_JOB_ERROR_DETAIL_ARRAY_ITEMS = 32;
 const MAX_JOB_ERROR_DETAIL_STRING_CHARS = 4_096;
 const MAX_JOB_ERROR_DETAIL_TOTAL_CHARS = 64 * 1024;
@@ -596,20 +597,22 @@ function sanitizeJobErrorDetail(
     const output: Record<string, unknown> = {};
 
     for (const key of keys.slice(0, MAX_JOB_ERROR_DETAIL_KEYS)) {
+      const safeKey = truncateJobErrorString(key, MAX_JOB_ERROR_DETAIL_KEY_CHARS);
+
       if (budget.nodes <= 0) {
         output.__truncatedValues = true;
         break;
       }
 
       try {
-        output[key] = sanitizeJobErrorDetail(
+        output[safeKey] = sanitizeJobErrorDetail(
           (value as Record<string, unknown>)[key],
           budget,
           seen,
           depth + 1,
         );
       } catch (error) {
-        output[key] = `[Thrown: ${truncateJobErrorString(toErrorMessage(error))}]`;
+        output[safeKey] = `[Thrown: ${truncateJobErrorString(toErrorMessage(error))}]`;
       }
     }
 
