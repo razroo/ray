@@ -13,6 +13,7 @@ import {
   formatCommandPlan,
   formatTextPlan,
   parseArgs,
+  resolveModelStageAvailableStorageMiB,
   runModelStageCli,
 } from "./model-stage.ts";
 
@@ -101,6 +102,18 @@ test("evaluateModelStageStorageHeadroom keeps a post-copy reserve", () => {
   assert.equal(evaluateModelStageStorageHeadroom(1 * MiB + 1, 257).ok, false);
   assert.throws(() => evaluateModelStageStorageHeadroom(-1, 258), /sourceBytes/);
   assert.throws(() => evaluateModelStageStorageHeadroom(1, -1), /availableMiB/);
+});
+
+test("resolveModelStageAvailableStorageMiB handles Bun statfs zero block size", () => {
+  assert.equal(
+    resolveModelStageAvailableStorageMiB({
+      bavail: 999_999,
+      bsize: 0,
+      blocks: 4096,
+      ffree: 32_512,
+    }),
+    127,
+  );
 });
 
 test("createModelStagePlan resolves config, env overrides, and install commands", async () => {

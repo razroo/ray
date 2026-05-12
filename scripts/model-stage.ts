@@ -24,7 +24,6 @@ const PRINCIPAL_LOOKUP_MAX_BUFFER_BYTES = 16 * 1024;
 const MODEL_READ_CHECK_TIMEOUT_MS = 3_000;
 const MODEL_READ_CHECK_MAX_BUFFER_BYTES = 16 * 1024;
 const BYTES_PER_MIB = 1024 * 1024;
-const FALLBACK_STATFS_BLOCK_SIZE = 4096;
 const MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB = 256;
 const GGUF_MAGIC = "GGUF";
 const LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS = 5;
@@ -99,6 +98,13 @@ export interface ModelStageJsonApplyResult {
   binaryProbeStatus: "ok";
   modelReadStatus: "ok";
   plan: ModelStagePlan;
+}
+
+export interface ModelStageStorageStats {
+  bavail?: number | bigint;
+  bsize?: number | bigint;
+  blocks?: number | bigint;
+  ffree?: number | bigint;
 }
 
 const HELP = `Stage local artifacts for a generated Ray llama.cpp service.
@@ -705,7 +711,11 @@ async function copyFileUnlessSame(sourcePath: string, targetPath: string): Promi
   await copyFile(sourcePath, targetPath);
 }
 
-function statValueToNumber(value: number | bigint): number | undefined {
+function statValueToNumber(value: number | bigint | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
   if (typeof value === "number") {
     return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
   }
@@ -716,6 +726,34 @@ function statValueToNumber(value: number | bigint): number | undefined {
   }
 
   return BigInt(asNumber) === value ? asNumber : undefined;
+}
+
+export function resolveModelStageAvailableStorageMiB(
+  stats: ModelStageStorageStats,
+): number | undefined {
+  let availableBlocks = statValueToNumber(stats.bavail);
+  let blockSize = statValueToNumber(stats.bsize);
+
+  if (blockSize === 0) {
+    const fallbackBlockSize = statValueToNumber(stats.blocks);
+    const fallbackAvailableBlocks = statValueToNumber(stats.ffree);
+
+    if (
+      fallbackBlockSize !== undefined &&
+      fallbackBlockSize > 0 &&
+      fallbackBlockSize <= BYTES_PER_MIB &&
+      fallbackAvailableBlocks !== undefined
+    ) {
+      blockSize = fallbackBlockSize;
+      availableBlocks = fallbackAvailableBlocks;
+    }
+  }
+
+  if (availableBlocks === undefined || blockSize === undefined || blockSize <= 0) {
+    return undefined;
+  }
+
+  return Math.floor((availableBlocks * blockSize) / BYTES_PER_MIB);
 }
 
 export function evaluateModelStageStorageHeadroom(
@@ -747,18 +785,12 @@ async function assertModelStageStorageHeadroom(
   targetDirectory: string,
 ): Promise<void> {
   const [sourceStats, targetStats] = await Promise.all([stat(sourcePath), statfs(targetDirectory)]);
-  const availableBlocks = statValueToNumber(targetStats.bavail);
-  const reportedBlockSize = statValueToNumber(targetStats.bsize);
-  const blockSize =
-    reportedBlockSize !== undefined && reportedBlockSize > 0
-      ? reportedBlockSize
-      : FALLBACK_STATFS_BLOCK_SIZE;
+  const availableMiB = resolveModelStageAvailableStorageMiB(targetStats);
 
-  if (availableBlocks === undefined) {
+  if (availableMiB === undefined) {
     throw new Error(`Could not inspect free space for model target directory: ${targetDirectory}`);
   }
 
-  const availableMiB = Math.floor((availableBlocks * blockSize) / BYTES_PER_MIB);
   const headroom = evaluateModelStageStorageHeadroom(sourceStats.size, availableMiB);
 
   if (!headroom.ok) {
