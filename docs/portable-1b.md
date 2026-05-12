@@ -154,8 +154,8 @@ bun run model:stage:1b:8gb:generic -- --ray-env-file /etc/ray/ray.env --binary-s
 Add `--sha256 <expected-hex-digest>` when the model source publishes a checksum.
 Add `--binary-sha256 <expected-hex-digest>` when the compiled `llama-server`
 source publishes or produces a checksum. The output includes the resolved binary
-and model paths, install commands, checksum commands, ownership, and service-user
-execute/read tests.
+and model paths, install commands, checksum commands, model target storage
+headroom, ownership, and service-user execute/read tests.
 You can also put those staging inputs in `/etc/ray/ray.env` as
 `RAY_LLAMA_CPP_BINARY_SOURCE_PATH`, `RAY_LLAMA_CPP_BINARY_SHA256`,
 `RAY_MODEL_SOURCE_PATH`, and `RAY_MODEL_SHA256`; explicit source/checksum flags
@@ -167,6 +167,8 @@ want the helper to verify file access and any provided checksums before printing
 the staging plan.
 Use `--apply` on the VPS after reviewing those source paths to verify and stage
 the configured `llama-server` and GGUF into their resolved target locations.
+Apply checks that the model target filesystem can hold the GGUF source while
+keeping a 256 MiB post-copy reserve.
 
 Set `RAY_AUTH_API_KEY_ENV` when an existing secret manager or deployment workflow
 uses a different environment variable for the Bearer keys.

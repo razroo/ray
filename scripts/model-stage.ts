@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { constants, createReadStream } from "node:fs";
-import { access, chmod, chown, copyFile, mkdir, open, stat } from "node:fs/promises";
+import { access, chmod, chown, copyFile, mkdir, open, stat, statfs } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -21,6 +21,9 @@ const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_ENV_FILE_BYTES = 64 * 1024;
 const PRINCIPAL_LOOKUP_TIMEOUT_MS = 3_000;
 const PRINCIPAL_LOOKUP_MAX_BUFFER_BYTES = 16 * 1024;
+const BYTES_PER_MIB = 1024 * 1024;
+const FALLBACK_STATFS_BLOCK_SIZE = 4096;
+const MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB = 256;
 const SYSTEMD_PRINCIPAL_PATTERN = /^(?:[A-Za-z_][A-Za-z0-9_-]{0,30}|[0-9]{1,10})$/;
 const SHA256_PATTERN = /^[a-fA-F0-9]{64}$/;
 const NUMERIC_PRINCIPAL_PATTERN = /^[0-9]{1,10}$/;
@@ -72,6 +75,14 @@ export interface ModelStageApplyResult {
   modelPath: string;
   serviceUser: string;
   serviceGroup: string;
+}
+
+export interface ModelStageStorageHeadroom {
+  sourceMiB: number;
+  reserveMiB: number;
+  requiredMiB: number;
+  availableMiB: number;
+  ok: boolean;
 }
 
 export interface ModelStageJsonApplyResult {
@@ -338,11 +349,19 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
   const binarySourcePath = plan.binarySourcePath ?? PLACEHOLDER_BINARY_SOURCE_PATH;
   const sourcePath = plan.sourcePath ?? PLACEHOLDER_SOURCE_PATH;
   const owner = `${plan.serviceUser}:${plan.serviceGroup}`;
+  const modelStoragePreflight = `required_mib="$(du -m ${shellQuote(
+    sourcePath,
+  )} | awk 'NR==1 {print $1 + ${MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB}}')"; available_mib="$(df -Pm ${shellQuote(
+    plan.modelDirectory,
+  )} | awk 'NR==2 {print $4}')"; test "\${available_mib:-0}" -ge "\${required_mib:-0}" || { printf '%s\\n' ${shellQuote(
+    `Not enough free space in ${plan.modelDirectory}: keep at least ${MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB} MiB free after copying the GGUF.`,
+  )} >&2; exit 1; }`;
   const commands = [
     `sudo install -d -m 0755 ${shellQuote(plan.binaryDirectory)}`,
     `sudo install -D -m 0755 -- ${shellQuote(binarySourcePath)} ${shellQuote(plan.binaryPath)}`,
     `sudo -u ${shellQuote(plan.serviceUser)} test -x ${shellQuote(plan.binaryPath)}`,
     `sudo install -d -m 0755 ${shellQuote(plan.modelDirectory)}`,
+    modelStoragePreflight,
     `sudo install -D -m 0640 -- ${shellQuote(sourcePath)} ${shellQuote(plan.modelPath)}`,
     `sudo chown ${shellQuote(owner)} ${shellQuote(plan.modelPath)}`,
     `sudo -u ${shellQuote(plan.serviceUser)} test -r ${shellQuote(plan.modelPath)}`,
@@ -639,6 +658,69 @@ async function copyFileUnlessSame(sourcePath: string, targetPath: string): Promi
   await copyFile(sourcePath, targetPath);
 }
 
+function statValueToNumber(value: number | bigint): number | undefined {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+  }
+
+  const asNumber = Number(value);
+  if (!Number.isSafeInteger(asNumber) || asNumber < 0) {
+    return undefined;
+  }
+
+  return BigInt(asNumber) === value ? asNumber : undefined;
+}
+
+export function evaluateModelStageStorageHeadroom(
+  sourceBytes: number,
+  availableMiB: number,
+): ModelStageStorageHeadroom {
+  if (!Number.isSafeInteger(sourceBytes) || sourceBytes < 0) {
+    throw new Error("sourceBytes must be a non-negative safe integer");
+  }
+
+  if (!Number.isSafeInteger(availableMiB) || availableMiB < 0) {
+    throw new Error("availableMiB must be a non-negative safe integer");
+  }
+
+  const sourceMiB = Math.max(1, Math.ceil(sourceBytes / BYTES_PER_MIB));
+  const requiredMiB = sourceMiB + MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB;
+
+  return {
+    sourceMiB,
+    reserveMiB: MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB,
+    requiredMiB,
+    availableMiB,
+    ok: availableMiB >= requiredMiB,
+  };
+}
+
+async function assertModelStageStorageHeadroom(
+  sourcePath: string,
+  targetDirectory: string,
+): Promise<void> {
+  const [sourceStats, targetStats] = await Promise.all([stat(sourcePath), statfs(targetDirectory)]);
+  const availableBlocks = statValueToNumber(targetStats.bavail);
+  const reportedBlockSize = statValueToNumber(targetStats.bsize);
+  const blockSize =
+    reportedBlockSize !== undefined && reportedBlockSize > 0
+      ? reportedBlockSize
+      : FALLBACK_STATFS_BLOCK_SIZE;
+
+  if (availableBlocks === undefined) {
+    throw new Error(`Could not inspect free space for model target directory: ${targetDirectory}`);
+  }
+
+  const availableMiB = Math.floor((availableBlocks * blockSize) / BYTES_PER_MIB);
+  const headroom = evaluateModelStageStorageHeadroom(sourceStats.size, availableMiB);
+
+  if (!headroom.ok) {
+    throw new Error(
+      `Not enough free space in ${targetDirectory}: GGUF source is ${headroom.sourceMiB} MiB and staging keeps a ${headroom.reserveMiB} MiB reserve, requiring ${headroom.requiredMiB} MiB free but only ${headroom.availableMiB} MiB is available.`,
+    );
+  }
+}
+
 async function chownIfNeeded(filePath: string, uid: number, gid: number): Promise<void> {
   const stats = await stat(filePath);
   if (stats.uid === uid && stats.gid === gid) {
@@ -669,6 +751,7 @@ export async function applyModelStagePlan(
   await access(binaryTargetPath, constants.X_OK);
 
   await mkdir(path.dirname(modelTargetPath), { recursive: true, mode: 0o755 });
+  await assertModelStageStorageHeadroom(modelSourcePath, path.dirname(modelTargetPath));
   await copyFileUnlessSame(modelSourcePath, modelTargetPath);
   await chmod(modelTargetPath, 0o640);
   await chownIfNeeded(modelTargetPath, uid, gid);

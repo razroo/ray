@@ -8,6 +8,7 @@ import {
   checkModelStageSources,
   applyModelStagePlan,
   createModelStagePlan,
+  evaluateModelStageStorageHeadroom,
   formatApplyResult,
   formatCommandPlan,
   formatTextPlan,
@@ -16,6 +17,7 @@ import {
 } from "./model-stage.ts";
 
 const repoRoot = process.cwd();
+const MiB = 1024 * 1024;
 
 function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
@@ -88,6 +90,19 @@ test("parseArgs rejects malformed model staging argv", () => {
   assert.throws(() => parseArgs(["model.gguf"]), /Unexpected positional argument/);
 });
 
+test("evaluateModelStageStorageHeadroom keeps a post-copy reserve", () => {
+  assert.deepEqual(evaluateModelStageStorageHeadroom(1 * MiB + 1, 258), {
+    sourceMiB: 2,
+    reserveMiB: 256,
+    requiredMiB: 258,
+    availableMiB: 258,
+    ok: true,
+  });
+  assert.equal(evaluateModelStageStorageHeadroom(1 * MiB + 1, 257).ok, false);
+  assert.throws(() => evaluateModelStageStorageHeadroom(-1, 258), /sourceBytes/);
+  assert.throws(() => evaluateModelStageStorageHeadroom(1, -1), /availableMiB/);
+});
+
 test("createModelStagePlan resolves config, env overrides, and install commands", async () => {
   const digest = "b".repeat(64);
   const binaryDigest = "c".repeat(64);
@@ -124,6 +139,7 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
     "printf '%s  %s\\n' 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' '/usr/local/bin/llama-server' | sha256sum -c -",
     "sudo -u 'rayops' test -x '/usr/local/bin/llama-server'",
     "sudo install -d -m 0755 '/var/lib/ray/models'",
+    `required_mib="$(du -m './models/portable-1b.gguf' | awk 'NR==1 {print $1 + 256}')"; available_mib="$(df -Pm '/var/lib/ray/models' | awk 'NR==2 {print $4}')"; test "\${available_mib:-0}" -ge "\${required_mib:-0}" || { printf '%s\\n' 'Not enough free space in /var/lib/ray/models: keep at least 256 MiB free after copying the GGUF.' >&2; exit 1; }`,
     "sudo install -D -m 0640 -- './models/portable-1b.gguf' '/var/lib/ray/models/portable-1b.gguf'",
     "sudo chown 'rayops:rayops' '/var/lib/ray/models/portable-1b.gguf'",
     "printf '%s  %s\\n' 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' '/var/lib/ray/models/portable-1b.gguf' | sha256sum -c -",
@@ -155,6 +171,7 @@ test("createModelStagePlan reads staging sources and checksums from env", async 
     plan.commands.join("\n"),
     /sudo install -D -m 0640 -- '\/tmp\/ray-artifacts\/local-1b-q4\.gguf' '\/var\/lib\/ray\/models\/local-1b-q4\.gguf'/,
   );
+  assert.match(plan.commands.join("\n"), /df -Pm '\/var\/lib\/ray\/models'/);
 });
 
 test("formatTextPlan prints an operator-ready staging plan", async () => {
@@ -169,6 +186,7 @@ test("formatTextPlan prints an operator-ready staging plan", async () => {
   assert.match(text, /binary source: pass --binary-source \/path\/to\/llama-server/);
   assert.match(text, /sudo install -D -m 0755 -- '\/path\/to\/llama-server'/);
   assert.match(text, /target GGUF: \/var\/lib\/ray\/models\/qwen2\.5-0\.5b-instruct-q4_k_m\.gguf/);
+  assert.match(text, /keep at least 256 MiB free after copying the GGUF/);
   assert.match(text, /sudo install -D -m 0640 -- '\/path\/to\/model\.gguf'/);
   assert.match(text, /Then run doctor on the VPS/);
 });
