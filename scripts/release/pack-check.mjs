@@ -2,11 +2,17 @@ import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { gunzipSync } from "node:zlib";
+import { pathToFileURL } from "node:url";
+import { createGunzip } from "node:zlib";
 
 const root = process.cwd();
 const destination = path.join(root, ".ray", "packs");
 const bunBin = process.platform === "win32" ? "bun.exe" : "bun";
+export const PACK_TIMEOUT_MS = 120_000;
+export const PACK_SHUTDOWN_GRACE_MS = 5_000;
+export const MAX_PACK_TARBALL_BYTES = 5 * 1024 * 1024;
+export const MAX_PACK_UNCOMPRESSED_BYTES = 20 * 1024 * 1024;
+export const MAX_PACK_TARBALL_ENTRIES = 512;
 const packages = [
   {
     name: "@razroo/ray-core",
@@ -20,28 +26,101 @@ const packages = [
   },
 ];
 
-async function runPack(packageConfig) {
+export async function runPack(packageConfig, options = {}) {
+  const timeoutMs = options.timeoutMs ?? PACK_TIMEOUT_MS;
   await new Promise((resolve, reject) => {
     const child = spawn(bunBin, ["pm", "pack", "--destination", destination], {
       cwd: packageConfig.cwd,
       stdio: "inherit",
     });
+    let timedOut = false;
+    let killed = false;
+    let killTimer;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      killed = child.kill("SIGTERM");
+      killTimer = setTimeout(() => {
+        if (child.exitCode === null) {
+          child.kill("SIGKILL");
+        }
+      }, PACK_SHUTDOWN_GRACE_MS);
+    }, timeoutMs);
 
-    child.on("error", reject);
-    child.on("exit", (code) => {
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      if (killTimer) {
+        clearTimeout(killTimer);
+      }
+      reject(error);
+    });
+    child.on("exit", (code, signal) => {
+      clearTimeout(timeout);
+      if (killTimer) {
+        clearTimeout(killTimer);
+      }
+      if (timedOut) {
+        reject(
+          new Error(
+            `${packageConfig.name} pack timed out after ${timeoutMs}ms${
+              killed ? "" : " and could not be signalled"
+            }`,
+          ),
+        );
+        return;
+      }
       if (code === 0) {
         resolve();
         return;
       }
 
-      reject(new Error(`${packageConfig.name} pack failed with exit code ${code ?? "unknown"}`));
+      reject(
+        new Error(
+          `${packageConfig.name} pack failed with exit code ${code ?? "unknown"} signal ${
+            signal ?? "unknown"
+          }`,
+        ),
+      );
     });
   });
 }
 
-async function listTarballEntries(filePath) {
+async function gunzipBounded(compressed, maxBytes, filePath) {
+  return await new Promise((resolve, reject) => {
+    const gunzip = createGunzip();
+    const chunks = [];
+    let total = 0;
+
+    gunzip.on("data", (chunk) => {
+      total += chunk.length;
+      if (total > maxBytes) {
+        gunzip.destroy(new Error(`Pack tarball expands beyond ${maxBytes} bytes: ${filePath}`));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    gunzip.on("error", reject);
+    gunzip.on("end", () => {
+      resolve(Buffer.concat(chunks, total));
+    });
+    gunzip.end(compressed);
+  });
+}
+
+export async function listTarballEntries(filePath, options = {}) {
+  const maxTarballBytes = options.maxTarballBytes ?? MAX_PACK_TARBALL_BYTES;
+  const maxUncompressedBytes = options.maxUncompressedBytes ?? MAX_PACK_UNCOMPRESSED_BYTES;
+  const maxEntries = options.maxEntries ?? MAX_PACK_TARBALL_ENTRIES;
+  const stats = await fs.stat(filePath);
+
+  if (!stats.isFile()) {
+    throw new Error(`Pack artifact must be a file: ${filePath}`);
+  }
+  if (stats.size > maxTarballBytes) {
+    throw new Error(`Pack tarball must be at most ${maxTarballBytes} bytes: ${filePath}`);
+  }
+
   const compressed = await fs.readFile(filePath);
-  const buffer = gunzipSync(compressed);
+  const buffer = await gunzipBounded(compressed, maxUncompressedBytes, filePath);
   const entries = [];
   let offset = 0;
 
@@ -56,43 +135,60 @@ async function listTarballEntries(filePath) {
     const name = header.toString("utf8", 0, 100).replace(/\0.*$/, "");
     const prefix = header.toString("utf8", 345, 500).replace(/\0.*$/, "");
     const sizeRaw = header.toString("utf8", 124, 136).replace(/\0.*$/, "").trim();
+
+    if (sizeRaw && !/^[0-7]+$/.test(sizeRaw)) {
+      throw new Error(`Pack tarball contains an invalid entry size: ${filePath}`);
+    }
+
     const size = Number.parseInt(sizeRaw || "0", 8);
 
     entries.push(prefix ? `${prefix}/${name}` : name);
+    if (entries.length > maxEntries) {
+      throw new Error(`Pack tarball must contain at most ${maxEntries} entries: ${filePath}`);
+    }
 
     const contentSize = Number.isFinite(size) ? size : 0;
     offset += 512 + Math.ceil(contentSize / 512) * 512;
+    if (offset > buffer.length) {
+      throw new Error(`Pack tarball entry extends past archive bounds: ${filePath}`);
+    }
   }
 
   return entries;
 }
 
-await fs.rm(destination, { recursive: true, force: true });
-await fs.mkdir(destination, { recursive: true });
+export async function runPackCheck() {
+  await fs.rm(destination, { recursive: true, force: true });
+  await fs.mkdir(destination, { recursive: true });
 
-for (const packageConfig of packages) {
-  await runPack(packageConfig);
-}
-
-const packedFiles = await fs.readdir(destination);
-
-for (const packageConfig of packages) {
-  const packedFile = packedFiles.find(
-    (file) => file.includes(packageConfig.expectedFragment) && file.endsWith(".tgz"),
-  );
-
-  if (!packedFile) {
-    throw new Error(`${packageConfig.name} did not produce an npm tarball`);
+  for (const packageConfig of packages) {
+    await runPack(packageConfig);
   }
 
-  const entries = await listTarballEntries(path.join(destination, packedFile));
-  const testEntries = entries.filter((entry) => entry.includes(".test."));
+  const packedFiles = await fs.readdir(destination);
 
-  if (testEntries.length > 0) {
-    throw new Error(
-      `${packageConfig.name} package includes test artifacts: ${testEntries.join(", ")}`,
+  for (const packageConfig of packages) {
+    const packedFile = packedFiles.find(
+      (file) => file.includes(packageConfig.expectedFragment) && file.endsWith(".tgz"),
     );
+
+    if (!packedFile) {
+      throw new Error(`${packageConfig.name} did not produce an npm tarball`);
+    }
+
+    const entries = await listTarballEntries(path.join(destination, packedFile));
+    const testEntries = entries.filter((entry) => entry.includes(".test."));
+
+    if (testEntries.length > 0) {
+      throw new Error(
+        `${packageConfig.name} package includes test artifacts: ${testEntries.join(", ")}`,
+      );
+    }
   }
+
+  console.log(`Packed npm artifacts: ${packedFiles.join(", ")}`);
 }
 
-console.log(`Packed npm artifacts: ${packedFiles.join(", ")}`);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await runPackCheck();
+}
