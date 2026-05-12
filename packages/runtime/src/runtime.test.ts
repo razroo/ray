@@ -1003,6 +1003,101 @@ test("runtime uses provider token preparation and exposes compiler diagnostics",
   assert.equal(result.diagnostics?.taskRouting?.recommendedModelRole, "drafter");
 });
 
+test("runtime rejects invalid provider preparation token counts before scheduling", async () => {
+  let inferCalled = false;
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "bad-preparation-tokens-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async prepare(request) {
+      return {
+        request,
+        promptTokens: Number.NaN,
+      };
+    },
+    async infer() {
+      inferCalled = true;
+      return {
+        output: "should not run",
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      cache: false,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_preparation_invalid");
+      assert.equal((error as { status?: number }).status, 502);
+      assert.equal((error as { details?: { field?: string } }).details?.field, "promptTokens");
+      return true;
+    },
+  );
+
+  assert.equal(inferCalled, false);
+});
+
+test("runtime rejects malformed provider slot snapshots before metrics", async () => {
+  let inferCalled = false;
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "bad-preparation-slots-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async prepare(request) {
+      return {
+        request,
+        promptTokens: 8,
+        slotSnapshots: [
+          {
+            id: -1,
+            isProcessing: false,
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      };
+    },
+    async infer() {
+      inferCalled = true;
+      return {
+        output: "should not run",
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      cache: false,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_preparation_invalid");
+      assert.equal(
+        (error as { details?: { field?: string } }).details?.field,
+        "slotSnapshots[0].id",
+      );
+      return true;
+    },
+  );
+
+  assert.equal(inferCalled, false);
+});
+
 test("runtime trims oversized prompts before prompt compilation", async () => {
   let observedInput = "";
   const provider: ModelProvider = {

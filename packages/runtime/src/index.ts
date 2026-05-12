@@ -172,6 +172,8 @@ const CGROUP_MEMORY_PRESSURE_RATIO = 0.9;
 const CGROUP_UNLIMITED_LIMIT_BYTES = 1024 ** 5;
 const unsafeMetadataKeys = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_LEARNED_FAMILY_HISTORY_KEYS = 512;
+const MAX_PROVIDER_PREPARATION_SLOT_SNAPSHOTS = 256;
+const MAX_PROVIDER_SLOT_UPDATED_AT_CHARS = 128;
 
 export interface CreateRayRuntimeOptions {
   provider?: ModelProvider;
@@ -1759,6 +1761,150 @@ function createPreparationTimeoutError(timeoutMs: number): RayError {
   });
 }
 
+function createProviderPreparationError(
+  message: string,
+  details?: Record<string, unknown>,
+): RayError {
+  return new RayError(`Invalid provider preparation: ${message}`, {
+    code: "provider_preparation_invalid",
+    status: 502,
+    ...(details ? { details } : {}),
+  });
+}
+
+function assertOptionalPositiveSafeInteger(
+  value: unknown,
+  field: string,
+): asserts value is number | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+    throw createProviderPreparationError(`${field} must be a positive safe integer`, { field });
+  }
+}
+
+function assertOptionalNonNegativeSafeInteger(
+  value: unknown,
+  field: string,
+): asserts value is number | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw createProviderPreparationError(`${field} must be a non-negative safe integer`, {
+      field,
+    });
+  }
+}
+
+function assertProviderPreparationLane(value: unknown): asserts value is ScheduleLane | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  if (value !== "short" && value !== "draft") {
+    throw createProviderPreparationError("lane must be short or draft", { field: "lane" });
+  }
+}
+
+function assertProviderSlotSnapshots(value: unknown): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!Array.isArray(value)) {
+    throw createProviderPreparationError("slotSnapshots must be an array", {
+      field: "slotSnapshots",
+    });
+  }
+
+  if (value.length > MAX_PROVIDER_PREPARATION_SLOT_SNAPSHOTS) {
+    throw createProviderPreparationError(
+      `slotSnapshots must contain at most ${MAX_PROVIDER_PREPARATION_SLOT_SNAPSHOTS} entries`,
+      {
+        field: "slotSnapshots",
+        maxEntries: MAX_PROVIDER_PREPARATION_SLOT_SNAPSHOTS,
+        actualEntries: value.length,
+      },
+    );
+  }
+
+  for (const [index, slot] of value.entries()) {
+    if (slot === null || typeof slot !== "object" || Array.isArray(slot)) {
+      throw createProviderPreparationError(`slotSnapshots[${index}] must be an object`, {
+        field: `slotSnapshots[${index}]`,
+      });
+    }
+
+    const snapshot = slot as Partial<SchedulerSlotSnapshot>;
+    assertOptionalNonNegativeSafeInteger(snapshot.id, `slotSnapshots[${index}].id`);
+    if (snapshot.id === undefined) {
+      throw createProviderPreparationError(`slotSnapshots[${index}].id is required`, {
+        field: `slotSnapshots[${index}].id`,
+      });
+    }
+
+    if (typeof snapshot.isProcessing !== "boolean") {
+      throw createProviderPreparationError(
+        `slotSnapshots[${index}].isProcessing must be a boolean`,
+        {
+          field: `slotSnapshots[${index}].isProcessing`,
+        },
+      );
+    }
+
+    if (
+      typeof snapshot.updatedAt !== "string" ||
+      snapshot.updatedAt.length === 0 ||
+      snapshot.updatedAt.length > MAX_PROVIDER_SLOT_UPDATED_AT_CHARS
+    ) {
+      throw createProviderPreparationError(
+        `slotSnapshots[${index}].updatedAt must be a bounded non-empty string`,
+        {
+          field: `slotSnapshots[${index}].updatedAt`,
+          maxChars: MAX_PROVIDER_SLOT_UPDATED_AT_CHARS,
+        },
+      );
+    }
+
+    assertOptionalNonNegativeSafeInteger(snapshot.taskId, `slotSnapshots[${index}].taskId`);
+    assertOptionalNonNegativeSafeInteger(
+      snapshot.contextWindow,
+      `slotSnapshots[${index}].contextWindow`,
+    );
+    assertOptionalNonNegativeSafeInteger(
+      snapshot.promptTokens,
+      `slotSnapshots[${index}].promptTokens`,
+    );
+    assertOptionalNonNegativeSafeInteger(
+      snapshot.cacheTokens,
+      `slotSnapshots[${index}].cacheTokens`,
+    );
+  }
+}
+
+function normalizeProviderRequestPreparation(
+  value: ProviderRequestPreparation | undefined,
+): ProviderRequestPreparation | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw createProviderPreparationError("prepare() must return an object");
+  }
+
+  assertOptionalPositiveSafeInteger(value.promptTokens, "promptTokens");
+  assertProviderPreparationLane(value.lane);
+  assertOptionalNonNegativeSafeInteger(value.preferredSlot, "preferredSlot");
+  assertProviderSlotSnapshots(value.slotSnapshots);
+
+  return value;
+}
+
 export class RayRuntime {
   readonly logger: Logger;
   readonly metrics: RuntimeMetrics;
@@ -2332,7 +2478,9 @@ export class RayRuntime {
 
       void preparationPromise.catch(() => undefined);
 
-      return await Promise.race([preparationPromise, timeoutPromise]);
+      return normalizeProviderRequestPreparation(
+        await Promise.race([preparationPromise, timeoutPromise]),
+      );
     } finally {
       if (timeout) {
         clearTimeout(timeout);
