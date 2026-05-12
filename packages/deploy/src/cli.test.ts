@@ -9,6 +9,7 @@ import {
   normalizeGatewayRuntimeBinaryPath,
   normalizeRepoConfigPath,
   parseDeploySshPort,
+  parseDeploySshUser,
   parseCliArgs,
   parseEnvironmentFile,
   runCli,
@@ -131,6 +132,21 @@ test("parseDeploySshPort rejects invalid deploy SSH ports", () => {
   assert.throws(() => parseDeploySshPort("65536"), /integer from 1 to 65535/);
   assert.throws(() => parseDeploySshPort("22/tcp"), /integer from 1 to 65535/);
   assert.throws(() => parseDeploySshPort("22.5"), /integer from 1 to 65535/);
+});
+
+test("parseDeploySshUser accepts safe deploy login users", () => {
+  assert.equal(parseDeploySshUser("root"), "root");
+  assert.equal(parseDeploySshUser("ubuntu"), "ubuntu");
+  assert.equal(parseDeploySshUser("deploy_ray"), "deploy_ray");
+  assert.equal(parseDeploySshUser("1001"), "1001");
+});
+
+test("parseDeploySshUser rejects malformed deploy login users", () => {
+  assert.throws(() => parseDeploySshUser(""), /non-empty SSH login user/);
+  assert.throws(() => parseDeploySshUser(" ubuntu"), /without surrounding whitespace/);
+  assert.throws(() => parseDeploySshUser("deploy user"), /system account name/);
+  assert.throws(() => parseDeploySshUser("deploy@example"), /system account name/);
+  assert.throws(() => parseDeploySshUser("-oProxyCommand=sh"), /system account name/);
 });
 
 test("formatDeployKnownHostLookup formats default and custom SSH ports", () => {

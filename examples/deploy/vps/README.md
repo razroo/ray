@@ -294,7 +294,7 @@ Set these GitHub secrets in your own repo or fork:
 
 Optional repository variables:
 
-- `RAY_DEPLOY_SSH_USER` — defaults to `root`
+- `RAY_DEPLOY_SSH_USER` — SSH login user, defaults to `root`; the workflow validates it as a simple system account name or numeric UID before opening SSH
 - `RAY_DEPLOY_SSH_PORT` — SSH port for deploy, defaults to `22`
 - `RAY_DEPLOY_SERVICE_USER` — generated systemd service account, defaults to `ray`; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--user` is omitted
 - `RAY_DEPLOY_DOMAIN` — Caddy site address to render, defaults to `ray.local`; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--domain` is omitted
@@ -328,9 +328,9 @@ RAY_AUTH_ENABLED=true
 RAY_RATE_LIMIT_MAX_REQUESTS=75
 ```
 
-The workflow validates the configured gateway runtime path before opening SSH,
-checks that `RAY_DEPLOY_KNOWN_HOSTS` contains an entry for the configured host
-and SSH port,
+The workflow validates the deploy SSH user and configured gateway runtime path
+before opening SSH, checks that `RAY_DEPLOY_KNOWN_HOSTS` contains an entry for
+the configured host and SSH port,
 installs missing remote deploy prerequisites such as `curl`, `ca-certificates`,
 and `rsync`, refreshes `/usr/local/bin/bun` when it is missing or older than the
 repo's supported Bun runtime, then runs `ray deploy doctor` on the VPS before

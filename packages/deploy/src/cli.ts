@@ -245,6 +245,18 @@ export function parseDeploySshPort(value: string, label = "RAY_DEPLOY_SSH_PORT")
   return parsed;
 }
 
+export function parseDeploySshUser(value: string, label = "RAY_DEPLOY_SSH_USER"): string {
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be a string`);
+  }
+
+  if (value.length === 0 || value.trim() !== value) {
+    throw new Error(`${label} must be a non-empty SSH login user without surrounding whitespace`);
+  }
+
+  return parseServiceUserValue(value, label);
+}
+
 export function formatDeployKnownHostLookup(
   host: string,
   port: number | string,

@@ -91,6 +91,7 @@ jobs:
           READY_TIMEOUT_SECONDS="${RAY_DEPLOY_READY_TIMEOUT_SECONDS:-120}"
           GATEWAY_RUNTIME_BINARY_INPUT="${RAY_GATEWAY_RUNTIME_BINARY:-/usr/local/bin/bun}"
           SSH_PORT_INPUT="${RAY_DEPLOY_SSH_PORT:-22}"
+          SSH_USER_INPUT="${RAY_DEPLOY_SSH_USER:-root}"
 
           if [ -z "$DEPLOY_DOMAIN" ] || printf '%s' "$DEPLOY_DOMAIN" | grep -q '[[:space:]{}]'; then
             echo "::error::RAY_DEPLOY_DOMAIN must be a non-empty Caddy site address without whitespace or braces."
@@ -142,6 +143,18 @@ jobs:
 
           try {
             process.stdout.write(String(parseDeploySshPort(process.env.SSH_PORT ?? "", "RAY_DEPLOY_SSH_PORT")));
+          } catch (error) {
+            process.stderr.write(
+              `::error::${error instanceof Error ? error.message : String(error)}\n`,
+            );
+            process.exit(1);
+          }
+          ')
+          SSH_USER=$(SSH_USER="$SSH_USER_INPUT" bun --eval '
+          import { parseDeploySshUser } from "./packages/deploy/dist/cli.js";
+
+          try {
+            process.stdout.write(parseDeploySshUser(process.env.SSH_USER ?? "", "RAY_DEPLOY_SSH_USER"));
           } catch (error) {
             process.stderr.write(
               `::error::${error instanceof Error ? error.message : String(error)}\n`,
@@ -239,6 +252,7 @@ jobs:
           echo "ready_timeout_seconds=$READY_TIMEOUT_SECONDS" >> "$GITHUB_OUTPUT"
           echo "gateway_runtime_binary=$GATEWAY_RUNTIME_BINARY" >> "$GITHUB_OUTPUT"
           echo "ssh_port=$SSH_PORT" >> "$GITHUB_OUTPUT"
+          echo "ssh_user=$SSH_USER" >> "$GITHUB_OUTPUT"
 
       - name: Set up SSH
         env:
@@ -273,7 +287,7 @@ jobs:
 
       - name: Bootstrap remote runtime
         env:
-          SSH_USER: ${{ vars.RAY_DEPLOY_SSH_USER }}
+          SSH_USER: ${{ steps.settings.outputs.ssh_user }}
           SSH_PORT: ${{ steps.settings.outputs.ssh_port }}
           SERVICE_USER: ${{ steps.settings.outputs.service_user }}
           INSTALL_CADDY: ${{ steps.settings.outputs.install_caddy }}
@@ -331,7 +345,7 @@ jobs:
 
       - name: Sync repository to VPS
         env:
-          SSH_USER: ${{ vars.RAY_DEPLOY_SSH_USER }}
+          SSH_USER: ${{ steps.settings.outputs.ssh_user }}
           SSH_PORT: ${{ steps.settings.outputs.ssh_port }}
         run: |
           set -euo pipefail
@@ -350,7 +364,7 @@ jobs:
 
       - name: Install config, env, and restart service
         env:
-          SSH_USER: ${{ vars.RAY_DEPLOY_SSH_USER }}
+          SSH_USER: ${{ steps.settings.outputs.ssh_user }}
           SSH_PORT: ${{ steps.settings.outputs.ssh_port }}
           CONFIG_SOURCE: ${{ steps.settings.outputs.config_source }}
           CONFIG_REL: ${{ steps.settings.outputs.config_rel }}
