@@ -794,6 +794,11 @@ export function renderSystemdService(options: SystemdServiceOptions): string {
   assertSystemdScalar(options.workingDirectory, "workingDirectory");
   assertAbsolutePath(runtimeBinary, "runtimeBinary");
   assertAbsolutePath(options.workingDirectory, "workingDirectory");
+  if (isSystemdProtectHomePath(options.workingDirectory)) {
+    throw new Error(
+      "workingDirectory is under /home, /root, or /run/user, but the generated gateway service uses ProtectHome=true",
+    );
+  }
   if (options.envFile !== undefined) {
     assertSystemdScalar(options.envFile, "envFile");
     assertAbsolutePath(options.envFile, "envFile");
@@ -1117,6 +1122,12 @@ export function diagnoseConfig(
         level: "error",
         code: "working_directory_unreadable",
         message: `The generated systemd WorkingDirectory at ${workingDirectoryPath} could not be inspected${preflight.workingDirectoryError ? ` (${preflight.workingDirectoryError})` : ""}. Doctor cannot verify that ray-gateway.service will start in the intended repository directory.`,
+      });
+    } else if (isSystemdProtectHomePath(workingDirectoryPath)) {
+      diagnostics.push({
+        level: "error",
+        code: "working_directory_home_protected",
+        message: `The generated systemd WorkingDirectory is under /home, /root, or /run/user at ${workingDirectoryPath}, but ray-gateway.service uses ProtectHome=true. Sync Ray to a service-readable path such as /srv/ray.`,
       });
     } else {
       diagnostics.push({

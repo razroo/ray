@@ -155,6 +155,16 @@ test("renderSystemdService rejects unsafe systemd execution directives", () => {
   assert.throws(
     () =>
       renderSystemdService({
+        workingDirectory: "/home/ray/current",
+        configPath: "/etc/ray/ray.json",
+        user: "ray",
+      }),
+    /workingDirectory is under \/home, \/root, or \/run\/user/,
+  );
+
+  assert.throws(
+    () =>
+      renderSystemdService({
         workingDirectory: "/srv/ray",
         configPath: "/etc/ray/ray.json",
         user: "ray",
@@ -1081,6 +1091,17 @@ test("diagnoseConfig errors when generated systemd paths are hidden by ProtectHo
   );
   assert.ok(
     diagnostics.some((diagnostic) => diagnostic.code === "llama_model_path_home_protected"),
+  );
+
+  const strictDiagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      workingDirectoryPath: "/home/ray/current",
+      workingDirectoryStatus: "found",
+    },
+  });
+  assert.ok(
+    strictDiagnostics.some((diagnostic) => diagnostic.code === "working_directory_home_protected"),
   );
 });
 
