@@ -82,6 +82,7 @@
     "render:service:1b:8gb:generic": "bun ./packages/deploy/dist/cli.js render --cwd . --config ./examples/config/ray.1b.8gb.generic.public.json --systemd-env-file /etc/ray/ray.env --memory-mib 8192",
     "render:service:vps": "bun ./packages/deploy/dist/cli.js render --cwd . --config ./examples/config/ray.vps.json --systemd-env-file /etc/ray/ray.env",
     "validate:config": "bun ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.sub1b.json",
+    "validate:config:all": "bun ./scripts/validate-configs.ts",
     "validate:config:sub1b:classifier": "bun ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.sub1b.classifier.json",
     "validate:config:sub1b:drafter": "bun ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.sub1b.drafter.json",
     "validate:config:1b": "bun ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.1b.json",

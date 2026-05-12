@@ -314,6 +314,7 @@ test "$caddy_status" -eq 0
 ### 8. Run the deployment checks
 
 ```bash
+RAY_API_KEYS=replace-with-real-key bun run validate:config:all
 RAY_API_KEYS=replace-with-real-key bun run validate:config:public
 RAY_API_KEYS=replace-with-real-key bun run validate:config:cax11:public
 RAY_API_KEYS=replace-with-real-key bun run validate:config:1b:generic:public

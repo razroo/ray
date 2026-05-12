@@ -314,6 +314,7 @@ bun run render:service:cax11
 bun run render:service:1b:generic
 bun run render:service:1b:8gb:generic
 bun run validate:config
+bun run validate:config:all
 bun run doctor
 bun run doctor:cax11
 bun run doctor:1b:generic
