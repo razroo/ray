@@ -1211,6 +1211,7 @@ export class DurableInferenceQueue {
       const filePath = this.getJobPath(normalizedId);
       const raw = await readPersistedJobFile(filePath);
       const parsed = validatePersistedJobRecord(JSON.parse(raw), normalizedId);
+      this.validatePersistedInferenceRequest(parsed);
 
       if (await this.pruneCompletedJob(parsed, filePath)) {
         return undefined;
@@ -1236,6 +1237,7 @@ export class DurableInferenceQueue {
           jobId: normalizedId,
           error: toErrorMessage(error),
         });
+        await this.removeInvalidPersistedJob(this.getJobPath(normalizedId));
         return undefined;
       }
 
@@ -1380,6 +1382,7 @@ export class DurableInferenceQueue {
 
         const raw = await readPersistedJobFile(filePath);
         const parsed = validatePersistedJobRecord(JSON.parse(raw), expectedJobId);
+        this.validatePersistedInferenceRequest(parsed);
 
         if (parsed.status === "running") {
           const recoveredAt = new Date().toISOString();
@@ -1475,6 +1478,16 @@ export class DurableInferenceQueue {
       ) {
         this.enqueueCallbackJobId(job.id);
       }
+    }
+  }
+
+  private validatePersistedInferenceRequest(job: InferenceJobRecord): void {
+    try {
+      normalizeInferenceRequest(this.options.runtime.config, job.request);
+    } catch (error) {
+      throw new PersistedJobValidationError(
+        `persisted async job request is invalid: ${toErrorMessage(error)}`,
+      );
     }
   }
 

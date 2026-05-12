@@ -765,6 +765,23 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
         },
       }),
     );
+    await writeFile(
+      join(jobsDir, "job_bad_request.json"),
+      JSON.stringify({
+        id: "job_bad_request",
+        status: "queued",
+        request: {
+          input: "bad request shape",
+          metadata: {
+            promptFamily: ["email"],
+          },
+        },
+        createdAt: now,
+        updatedAt: now,
+        attempts: 0,
+        maxAttempts: 2,
+      }),
+    );
 
     const runtime = createRayRuntime(config);
     const logger = new Logger("test", "error");
@@ -780,6 +797,7 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.equal(await queue.get("job_other"), undefined);
     assert.equal(await queue.get("job_id_too_long"), undefined);
     assert.equal(await queue.get("job_callback_too_long"), undefined);
+    assert.equal(await queue.get("job_bad_request"), undefined);
 
     const completedJob = await waitFor(
       async () => queue.get("job_good"),
@@ -794,6 +812,7 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.equal(entries.includes("job_mismatch.json"), false);
     assert.equal(entries.includes("job_id_too_long.json"), false);
     assert.equal(entries.includes("job_callback_too_long.json"), false);
+    assert.equal(entries.includes("job_bad_request.json"), false);
     assert.equal(entries.includes("job_good.json"), true);
   } finally {
     await rm(storageDir, { recursive: true, force: true });
