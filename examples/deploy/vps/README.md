@@ -268,7 +268,7 @@ Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 - Install Bun at `/usr/local/bin/bun` or pass the same `--gateway-runtime-binary` used at render time; doctor verifies the generated service user can execute the rendered gateway runtime before systemd uses it.
 - Keep the Ray checkout at the generated `WorkingDirectory` such as `/srv/ray`, not under `/home`, `/root`, or `/run/user`; doctor verifies the directory exists, is not hidden by `ProtectHome=true`, and has read/execute mode bits for the generated service user before systemd uses it.
 - Run `bun run build` before rendering or restarting services; doctor verifies the built gateway entrypoint exists under the generated `WorkingDirectory` and is readable by the generated service user.
-- Use `/livez` for reverse-proxy liveness checks, and `/readyz` when a dependent app needs a minimal backend-aware readiness check.
+- Use `/livez` for reverse-proxy liveness checks, and `/readyz` when a dependent app needs a minimal backend-aware readiness check; the gateway binds before provider warmup finishes, so a slow local model backend should not make systemd treat the gateway process itself as dead.
 - Let the generated Caddy upstream timeouts track `scheduler.requestTimeoutMs`; public proxy sockets should not outlive Ray's own request budget for long.
 - The generated systemd units enable CPU, memory, and IO accounting, so `systemctl show ray-gateway -p CPUUsageNSec -p MemoryCurrent -p IOReadBytes -p IOWriteBytes` can confirm pressure without extra agents.
 - The generated systemd units also set OOM policy and OOM score adjustments so the lightweight gateway is less kill-prone than the local model backend under last-resort memory pressure.

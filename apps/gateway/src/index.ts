@@ -50,6 +50,10 @@ export interface GatewayServer {
   logger: Logger;
 }
 
+export interface StartGatewayOptions extends CreateGatewayHandlerOptions {
+  configPath?: string;
+}
+
 function assertCliArgv(argv: unknown): asserts argv is string[] {
   if (!Array.isArray(argv)) {
     throw new Error("argv must be an array of strings");
@@ -802,16 +806,13 @@ export function createGatewayServer(options: CreateGatewayHandlerOptions): Gatew
   };
 }
 
-async function main(): Promise<void> {
-  const cli = parseCliArgs(process.argv.slice(2));
-  const { config, configPath } = await loadRayConfig({
-    cwd: process.cwd(),
-    ...(cli.configPath ? { configPath: cli.configPath } : {}),
+export async function startGateway(options: StartGatewayOptions): Promise<GatewayServer> {
+  const config = snapshotRayConfig(options.config);
+  const gateway = createGatewayServer({
+    ...options,
+    config,
   });
 
-  const gateway = createGatewayServer({ config });
-
-  await gateway.runtime.warm();
   await gateway.jobQueue?.start();
 
   await new Promise<void>((resolve) => {
@@ -823,7 +824,28 @@ async function main(): Promise<void> {
     port: config.server.port,
     profile: config.profile,
     model: config.model.id,
-    configPath: configPath ?? "defaults",
+    configPath: options.configPath ?? "defaults",
+  });
+
+  void gateway.runtime.warm().catch((error) => {
+    gateway.logger.error("provider warmup failed after gateway start", {
+      error: serializeError(error),
+    });
+  });
+
+  return gateway;
+}
+
+async function main(): Promise<void> {
+  const cli = parseCliArgs(process.argv.slice(2));
+  const { config, configPath } = await loadRayConfig({
+    cwd: process.cwd(),
+    ...(cli.configPath ? { configPath: cli.configPath } : {}),
+  });
+
+  const gateway = await startGateway({
+    config,
+    ...(configPath ? { configPath } : {}),
   });
 
   const shutdown = async (signal: NodeJS.Signals) => {

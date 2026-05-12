@@ -9,7 +9,7 @@ import { createDefaultConfig, mergeConfig } from "@ray/config";
 import type { RayRuntime } from "@ray/runtime";
 import { RayError, type HealthSnapshot } from "@razroo/ray-core";
 import type { LogFields, Logger } from "@ray/telemetry";
-import { createGatewayServer, parseCliArgs } from "./index.js";
+import { createGatewayServer, parseCliArgs, startGateway } from "./index.js";
 
 async function closeServer(server: Server): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -22,6 +22,18 @@ async function closeServer(server: Server): Promise<void> {
       resolve();
     });
   });
+}
+
+async function getAvailablePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+  const { port } = address;
+  await closeServer(server);
+  return port;
 }
 
 async function readRawUnfinishedRequestResponse(
@@ -473,6 +485,75 @@ test("gateway returns service unavailable when detailed health is unavailable", 
   const body = (await response.json()) as HealthSnapshot;
   assert.equal(body.status, "unavailable");
   assert.equal(body.provider.status, "unavailable");
+});
+
+test("startGateway exposes liveness while provider warmup fails in the background", async (t) => {
+  const port = await getAvailablePort();
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    server: {
+      port,
+    },
+  });
+  const errors: Array<{ message: string; fields: LogFields | undefined }> = [];
+  let warmCalled = false;
+  const runtime = {
+    async warm() {
+      warmCalled = true;
+      throw new Error("backend still booting");
+    },
+    async health() {
+      return {
+        status: "unavailable",
+        uptimeMs: 0,
+        queueDepth: 0,
+        inFlight: 0,
+        cacheEntries: 0,
+        profile: "tiny",
+        modelId: "warming-model",
+        provider: {
+          status: "unavailable",
+          checkedAt: new Date().toISOString(),
+        },
+      } satisfies HealthSnapshot;
+    },
+  } as unknown as RayRuntime;
+  const logger = {
+    debug() {},
+    info() {},
+    warn() {},
+    error(message: string, fields?: LogFields) {
+      errors.push({ message, fields });
+    },
+  } as unknown as Logger;
+
+  const gateway = await startGateway({
+    config,
+    runtime,
+    logger,
+  });
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const livez = await fetch(`http://127.0.0.1:${address.port}/livez`);
+  assert.equal(livez.status, 200);
+
+  const readyz = await fetch(`http://127.0.0.1:${address.port}/readyz`);
+  assert.equal(readyz.status, 503);
+  assert.equal(warmCalled, true);
+
+  for (let index = 0; index < 10 && errors.length === 0; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+
+  assert.equal(errors[0]?.message, "provider warmup failed after gateway start");
+  assert.match(
+    String((errors[0]?.fields?.error as { message?: string } | undefined)?.message),
+    /backend still booting/,
+  );
 });
 
 test("gateway logs client request failures as warnings without stacks", async (t) => {

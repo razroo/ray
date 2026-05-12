@@ -58,7 +58,7 @@ For `razroo-email-ai`, pass a deterministic `seed` per lead or per variant. That
 
 Use `stop` for hard section boundaries when you know the completion should terminate on a fixed delimiter, and `responseFormat: { "type": "json_object" }` for classification-style calls that need structured output from llama.cpp.
 
-If `razroo-email-ai` checks availability before sending inference, point a process-only check at `GET /livez` or a backend-aware check at `GET /readyz`. Public Ray profiles intentionally protect detailed `/health` with Bearer auth, while `/livez` and `/readyz` stay minimal and unauthenticated for health checks.
+If `razroo-email-ai` checks availability before sending inference, point a process-only check at `GET /livez` or a backend-aware check at `GET /readyz`. Public Ray profiles intentionally protect detailed `/health` with Bearer auth, while `/livez` and `/readyz` stay minimal and unauthenticated for health checks. The gateway starts listening before provider warmup finishes, so callers that need usable inference should prefer `/readyz` over process liveness alone.
 
 Benchmark the 1B email path with:
 

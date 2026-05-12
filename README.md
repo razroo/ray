@@ -191,6 +191,8 @@ curl -s http://127.0.0.1:3000/v1/jobs \
 
 The durable queue caps retained job records with `asyncQueue.maxJobs`, rejects new jobs when free queue storage falls below `asyncQueue.minFreeStorageMiB`, and prunes completed jobs after `asyncQueue.completedTtlMs`, while pending callbacks remain protected until delivery succeeds or callback attempts are exhausted.
 
+Gateway startup binds the HTTP listener before provider warmup finishes, so `/livez` can keep systemd and reverse proxies pointed at the running process while `/readyz` reports backend-aware readiness.
+
 ### Build
 
 ```bash
