@@ -1571,6 +1571,28 @@ test("diagnoseConfig errors when strict async queue storage is below reserved he
   assert.match(diagnostic.message, /256 MiB/);
 });
 
+test("diagnoseConfig skips non-strict async queue reserve results when free space is unresolved", () => {
+  const config = mergeConfig(createDefaultConfig("1b"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir: "/var/lib/ray/async-queue",
+      minFreeStorageMiB: 256,
+    },
+  });
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    preflight: {
+      asyncQueueStoragePath: "/var/lib/ray/async-queue",
+      asyncQueueStorageCheckPath: "/var/lib",
+      asyncQueueStorageStatus: "parent",
+    },
+  });
+
+  assert.ok(!diagnostics.some((entry) => entry.code === "async_queue_storage_low"));
+  assert.ok(!diagnostics.some((entry) => entry.code === "async_queue_storage_ok"));
+  assert.ok(!diagnostics.some((entry) => entry.code === "async_queue_storage_unreadable"));
+});
+
 test("diagnoseConfig warns when non-strict async queue storage is blocked by a file", () => {
   const config = mergeConfig(createDefaultConfig("1b"), {
     asyncQueue: {
