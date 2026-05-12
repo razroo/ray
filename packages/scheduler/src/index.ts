@@ -12,6 +12,8 @@ const SLOT_BUSY_PENALTY = 180;
 const RECENT_AFFINITY_BONUS = 80;
 const DOMINANT_AFFINITY_BONUS = 40;
 const WAIT_SCORE_DIVISOR = 25;
+const MAX_SCHEDULE_KEY_CHARS = 512;
+const MAX_SCHEDULE_AFFINITY_KEY_CHARS = 512;
 
 function createRequestTimeoutError(): RayError {
   return new RayError("The inference request exceeded the scheduler timeout", {
@@ -70,6 +72,54 @@ function normalizePreferredSlot(value: unknown): number | undefined {
   }
 
   return value;
+}
+
+function normalizeScheduleKey(value: unknown): string | undefined {
+  if (value === undefined || value === "") {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new TypeError("schedule.key must be a string");
+  }
+
+  if (value.length > MAX_SCHEDULE_KEY_CHARS) {
+    throw new RangeError(`schedule.key must be at most ${MAX_SCHEDULE_KEY_CHARS} characters`);
+  }
+
+  return value;
+}
+
+function normalizeScheduleAffinityKey(value: unknown): string | undefined {
+  if (value === undefined || value === "") {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new TypeError("schedule.affinityKey must be a string");
+  }
+
+  if (value.length > MAX_SCHEDULE_AFFINITY_KEY_CHARS) {
+    throw new RangeError(
+      `schedule.affinityKey must be at most ${MAX_SCHEDULE_AFFINITY_KEY_CHARS} characters`,
+    );
+  }
+
+  return value;
+}
+
+function assertScheduleOptions<T>(value: unknown): asserts value is ScheduleTaskOptions<T> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("schedule options must be an object");
+  }
+}
+
+function assertScheduleHandler<T>(
+  value: unknown,
+): asserts value is (signal: AbortSignal) => Promise<T> {
+  if (typeof value !== "function") {
+    throw new TypeError("schedule.handler must be a function");
+  }
 }
 
 function normalizeSchedulerConfig(config: SchedulerConfig): SchedulerConfig {
@@ -155,12 +205,16 @@ export class RequestScheduler<T> {
   }
 
   schedule(options: ScheduleTaskOptions<T>): Promise<ScheduledTaskResult<T>> {
+    assertScheduleOptions<T>(options);
+    assertScheduleHandler<T>(options.handler);
+    const key = normalizeScheduleKey(options.key);
+    const affinityKey = normalizeScheduleAffinityKey(options.affinityKey);
     const lane = normalizeScheduleLane(options.lane);
     const costTokens = normalizeCostTokens(options.costTokens);
     const preferredSlot = normalizePreferredSlot(options.preferredSlot);
 
-    if (options.key && this.config.dedupeInflight) {
-      const existing = this.dedupeMap.get(options.key);
+    if (key && this.config.dedupeInflight) {
+      const existing = this.dedupeMap.get(key);
       if (existing) {
         return existing.then((result) => ({
           ...result,
@@ -201,18 +255,17 @@ export class RequestScheduler<T> {
         handler: options.handler,
         resolve,
         reject,
-        ...(options.key ? { key: options.key } : {}),
-        ...(options.affinityKey ? { affinityKey: options.affinityKey } : {}),
+        ...(key ? { key } : {}),
+        ...(affinityKey ? { affinityKey } : {}),
         ...(preferredSlot !== undefined ? { preferredSlot } : {}),
       };
     });
 
-    if (options.key && this.config.dedupeInflight) {
-      const dedupeKey = options.key;
-      this.dedupeMap.set(dedupeKey, promise);
+    if (key && this.config.dedupeInflight) {
+      this.dedupeMap.set(key, promise);
       void promise
         .finally(() => {
-          this.dedupeMap.delete(dedupeKey);
+          this.dedupeMap.delete(key);
         })
         .catch(() => undefined);
     }

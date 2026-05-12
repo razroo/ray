@@ -276,6 +276,14 @@ test("scheduler rejects work that exceeds token budgets", async () => {
 test("scheduler rejects invalid task options before queueing", async () => {
   const scheduler = new RequestScheduler<string>(createSchedulerConfig());
 
+  assert.throws(() => scheduler.schedule(null as never), /schedule options/);
+  assert.throws(
+    () =>
+      scheduler.schedule({
+        handler: "not-a-handler" as never,
+      }),
+    /schedule\.handler/,
+  );
   assert.throws(
     () =>
       scheduler.schedule({
@@ -307,6 +315,38 @@ test("scheduler rejects invalid task options before queueing", async () => {
         handler: async () => "bad-slot",
       }),
     /schedule\.preferredSlot/,
+  );
+  assert.throws(
+    () =>
+      scheduler.schedule({
+        key: 123 as never,
+        handler: async () => "bad-key",
+      }),
+    /schedule\.key/,
+  );
+  assert.throws(
+    () =>
+      scheduler.schedule({
+        key: "x".repeat(513),
+        handler: async () => "long-key",
+      }),
+    /schedule\.key must be at most 512 characters/,
+  );
+  assert.throws(
+    () =>
+      scheduler.schedule({
+        affinityKey: 123 as never,
+        handler: async () => "bad-affinity",
+      }),
+    /schedule\.affinityKey/,
+  );
+  assert.throws(
+    () =>
+      scheduler.schedule({
+        affinityKey: "x".repeat(513),
+        handler: async () => "long-affinity",
+      }),
+    /schedule\.affinityKey must be at most 512 characters/,
   );
 
   assert.equal(scheduler.snapshot().queueDepth, 0);
