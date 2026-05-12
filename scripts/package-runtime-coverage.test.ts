@@ -239,6 +239,48 @@ test("validatePackageRuntimeCoverage rejects oversized runtime coverage inputs",
   );
 });
 
+test("collectPackageJsonPaths rejects excessive package manifests while streaming", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-many-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  for (let index = 0; index < 129; index += 1) {
+    const packageDir = path.join(tempDir, `package-${String(index).padStart(3, "0")}`);
+    await mkdir(packageDir, { recursive: true });
+    await writeFile(path.join(packageDir, "package.json"), "{}\n");
+  }
+
+  await assert.rejects(
+    () => collectPackageJsonPaths(tempDir),
+    /Repository must contain at most 128 package\.json files/,
+  );
+});
+
+test("validatePackageRuntimeCoverage rejects excessive workflow manifests while streaming", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-workflows-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const workflowDir = path.join(tempDir, ".github", "workflows");
+  await mkdir(workflowDir, { recursive: true });
+  const rootPackageJson = path.join(tempDir, "package.json");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify({ name: "ray-test", packageManager: "bun@1.3.0", engines: { bun: ">=1.3" } }),
+  );
+
+  for (let index = 0; index < 65; index += 1) {
+    await writeFile(path.join(workflowDir, `quality-${String(index).padStart(3, "0")}.yml`), "");
+  }
+
+  await assert.rejects(
+    () => validatePackageRuntimeCoverage({ cwd: tempDir, packageJsonPaths: [rootPackageJson] }),
+    /Repository must contain at most 64 GitHub workflow files/,
+  );
+});
+
 test("formatTextSummary prints operator-readable runtime coverage results", async () => {
   const summary = await validatePackageRuntimeCoverage({
     cwd: repoRoot,

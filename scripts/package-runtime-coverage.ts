@@ -1,4 +1,4 @@
-import { access, open, readdir } from "node:fs/promises";
+import { access, open, opendir } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -9,8 +9,12 @@ const MAX_CLI_ARGS = 8;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_PACKAGE_JSON_BYTES = 512 * 1024;
 const MAX_PACKAGE_JSON_FILES = 128;
+const MAX_PACKAGE_DISCOVERY_DIRECTORIES = 4_096;
+const MAX_PACKAGE_DISCOVERY_FILES = 32_768;
+const MAX_DISCOVERY_PATH_BYTES = 4_096;
 const MAX_WORKFLOW_BYTES = 512 * 1024;
 const MAX_WORKFLOW_FILES = 64;
+const MAX_WORKFLOW_DIRECTORY_ENTRIES = 1_024;
 const MAX_DEPLOY_DOC_BYTES = 512 * 1024;
 const skipDirectoryNames = new Set([".git", ".ray", "dist", "node_modules"]);
 const forbiddenLockfiles = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"] as const;
@@ -179,40 +183,94 @@ async function readTextFileBounded(
   }
 }
 
+interface PackageDiscoveryState {
+  root: string;
+  packageJsonPaths: string[];
+  directoryCount: number;
+  fileCount: number;
+}
+
+function assertDiscoveryPathWithinLimit(root: string, absolutePath: string): void {
+  const displayPath = path.relative(root, absolutePath) || absolutePath;
+  if (Buffer.byteLength(displayPath, "utf8") > MAX_DISCOVERY_PATH_BYTES) {
+    throw new Error(
+      `Package runtime coverage discovery path must be at most ${MAX_DISCOVERY_PATH_BYTES} bytes: ${displayPath}`,
+    );
+  }
+}
+
 async function collectPackageJsonPathsFromDirectory(
   currentDirectory: string,
-  packageJsonPaths: string[],
+  state: PackageDiscoveryState,
 ): Promise<void> {
-  const entries = await readdir(currentDirectory, { withFileTypes: true });
+  state.directoryCount += 1;
+  if (state.directoryCount > MAX_PACKAGE_DISCOVERY_DIRECTORIES) {
+    throw new Error(
+      `Package runtime coverage discovery visited more than ${MAX_PACKAGE_DISCOVERY_DIRECTORIES} directories`,
+    );
+  }
 
-  for (const entry of entries) {
-    if (skipDirectoryNames.has(entry.name)) {
-      continue;
+  let directory: Awaited<ReturnType<typeof opendir>> | undefined;
+
+  try {
+    directory = await opendir(currentDirectory);
+    for await (const entry of directory) {
+      if (skipDirectoryNames.has(entry.name)) {
+        continue;
+      }
+
+      const absolutePath = path.join(currentDirectory, entry.name);
+      assertDiscoveryPathWithinLimit(state.root, absolutePath);
+
+      if (entry.isDirectory()) {
+        await collectPackageJsonPathsFromDirectory(absolutePath, state);
+        continue;
+      }
+
+      if (!entry.isFile()) {
+        continue;
+      }
+
+      state.fileCount += 1;
+      if (state.fileCount > MAX_PACKAGE_DISCOVERY_FILES) {
+        throw new Error(
+          `Package runtime coverage discovery visited more than ${MAX_PACKAGE_DISCOVERY_FILES} files`,
+        );
+      }
+
+      if (entry.name === DEFAULT_ROOT_PACKAGE_JSON) {
+        state.packageJsonPaths.push(absolutePath);
+        if (state.packageJsonPaths.length > MAX_PACKAGE_JSON_FILES) {
+          throw new Error(
+            `Repository must contain at most ${MAX_PACKAGE_JSON_FILES} package.json files`,
+          );
+        }
+      }
     }
-
-    const absolutePath = path.join(currentDirectory, entry.name);
-    if (entry.isDirectory()) {
-      await collectPackageJsonPathsFromDirectory(absolutePath, packageJsonPaths);
-      continue;
-    }
-
-    if (entry.isFile() && entry.name === DEFAULT_ROOT_PACKAGE_JSON) {
-      packageJsonPaths.push(absolutePath);
+  } finally {
+    if (directory) {
+      try {
+        await directory.close();
+      } catch {
+        // The async iterator closes the directory after normal completion.
+      }
     }
   }
 }
 
 export async function collectPackageJsonPaths(cwd: string): Promise<string[]> {
-  const packageJsonPaths: string[] = [];
-  await collectPackageJsonPathsFromDirectory(cwd, packageJsonPaths);
-  packageJsonPaths.sort();
+  const resolvedCwd = path.resolve(cwd);
+  const state: PackageDiscoveryState = {
+    root: resolvedCwd,
+    packageJsonPaths: [],
+    directoryCount: 0,
+    fileCount: 0,
+  };
+  await collectPackageJsonPathsFromDirectory(resolvedCwd, state);
+  const packageJsonPaths = state.packageJsonPaths.sort();
 
   if (packageJsonPaths.length === 0) {
-    throw new Error(`No package.json files found in ${cwd}`);
-  }
-
-  if (packageJsonPaths.length > MAX_PACKAGE_JSON_FILES) {
-    throw new Error(`Repository must contain at most ${MAX_PACKAGE_JSON_FILES} package.json files`);
+    throw new Error(`No package.json files found in ${resolvedCwd}`);
   }
 
   return packageJsonPaths;
@@ -221,20 +279,33 @@ export async function collectPackageJsonPaths(cwd: string): Promise<string[]> {
 async function collectWorkflowPaths(cwd: string): Promise<string[]> {
   const workflowDirectory = path.join(cwd, DEFAULT_WORKFLOW_DIR);
 
-  try {
-    const entries = await readdir(workflowDirectory, { withFileTypes: true });
-    const workflowPaths = entries
-      .filter((entry) => entry.isFile() && /\.ya?ml$/i.test(entry.name))
-      .map((entry) => path.join(workflowDirectory, entry.name))
-      .sort();
+  let directory: Awaited<ReturnType<typeof opendir>> | undefined;
+  const workflowPaths: string[] = [];
+  let entryCount = 0;
 
-    if (workflowPaths.length > MAX_WORKFLOW_FILES) {
-      throw new Error(
-        `Repository must contain at most ${MAX_WORKFLOW_FILES} GitHub workflow files`,
-      );
+  try {
+    directory = await opendir(workflowDirectory);
+    for await (const entry of directory) {
+      entryCount += 1;
+      if (entryCount > MAX_WORKFLOW_DIRECTORY_ENTRIES) {
+        throw new Error(
+          `GitHub workflow discovery visited more than ${MAX_WORKFLOW_DIRECTORY_ENTRIES} entries`,
+        );
+      }
+
+      if (!entry.isFile() || !/\.ya?ml$/i.test(entry.name)) {
+        continue;
+      }
+
+      workflowPaths.push(path.join(workflowDirectory, entry.name));
+      if (workflowPaths.length > MAX_WORKFLOW_FILES) {
+        throw new Error(
+          `Repository must contain at most ${MAX_WORKFLOW_FILES} GitHub workflow files`,
+        );
+      }
     }
 
-    return workflowPaths;
+    return workflowPaths.sort();
   } catch (error) {
     const code =
       error !== null && typeof error === "object" && "code" in error
@@ -246,6 +317,14 @@ async function collectWorkflowPaths(cwd: string): Promise<string[]> {
     }
 
     throw error;
+  } finally {
+    if (directory) {
+      try {
+        await directory.close();
+      } catch {
+        // The async iterator closes the directory after normal completion.
+      }
+    }
   }
 }
 
