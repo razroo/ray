@@ -329,8 +329,9 @@ RAY_RATE_LIMIT_MAX_REQUESTS=75
 ```
 
 The workflow validates the configured gateway runtime path before opening SSH,
-refreshes `/usr/local/bin/bun` when it is missing or older than the repo's
-supported Bun runtime, then runs `ray deploy doctor` on the VPS before
+installs missing remote deploy prerequisites such as `curl`, `ca-certificates`,
+and `rsync`, refreshes `/usr/local/bin/bun` when it is missing or older than the
+repo's supported Bun runtime, then runs `ray deploy doctor` on the VPS before
 restarting services. Missing API keys, missing GGUF files, memory-fit errors,
 exhausted async queue storage reserves, and unsupported gateway runtimes fail
 before systemd tries to start the generated units. The configured gateway

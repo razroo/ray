@@ -279,9 +279,20 @@ jobs:
           DEPLOY_USER="$(id -un)"
           DEPLOY_GROUP="$(id -gn)"
 
+          missing_packages=""
+          if ! command -v curl >/dev/null 2>&1; then
+            missing_packages="$missing_packages curl ca-certificates"
+          fi
+          if ! command -v rsync >/dev/null 2>&1; then
+            missing_packages="$missing_packages rsync"
+          fi
           if [ "${INSTALL_CADDY:-false}" = "true" ] && ! command -v caddy >/dev/null 2>&1; then
+            missing_packages="$missing_packages caddy"
+          fi
+          if [ -n "$missing_packages" ]; then
             $SUDO apt-get update
-            $SUDO apt-get install -y caddy
+            # shellcheck disable=SC2086
+            $SUDO apt-get install -y $missing_packages
           fi
 
           SERVICE_USER="${SERVICE_USER:-ray}"
