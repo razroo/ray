@@ -59,7 +59,10 @@ test("parseArgs rejects malformed model staging argv", () => {
   assert.throws(() => parseArgs(["--binary-source"]), /--binary-source requires a value/);
   assert.throws(() => parseArgs(["--user", "ray user"]), /system account name/);
   assert.throws(() => parseArgs(["--sha256", "bad"]), /64-character hexadecimal/);
-  assert.throws(() => parseArgs(["--binary-sha256", "bad"]), /64-character hexadecimal/);
+  assert.throws(
+    () => parseArgs(["--binary-sha256", "bad"]),
+    /--binary-sha256 must be a 64-character hexadecimal/,
+  );
   assert.throws(() => parseArgs(["--unknown"]), /Unknown option: --unknown/);
   assert.throws(() => parseArgs(["model.gguf"]), /Unexpected positional argument/);
 });
@@ -105,6 +108,32 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
     "printf '%s  %s\\n' 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' '/var/lib/ray/models/portable-1b.gguf' | sha256sum -c -",
     "sudo -u 'rayops' test -r '/var/lib/ray/models/portable-1b.gguf'",
   ]);
+});
+
+test("createModelStagePlan reads staging sources and checksums from env", async () => {
+  const plan = await createModelStagePlan({
+    cwd: repoRoot,
+    configPath: "./examples/config/ray.1b.generic.public.json",
+    env: {
+      RAY_LLAMA_CPP_BINARY_SOURCE_PATH: "/tmp/ray-artifacts/llama-server",
+      RAY_LLAMA_CPP_BINARY_SHA256: "C".repeat(64),
+      RAY_MODEL_SOURCE_PATH: "/tmp/ray-artifacts/local-1b-q4.gguf",
+      RAY_MODEL_SHA256: "B".repeat(64),
+    },
+  });
+
+  assert.equal(plan.binarySourcePath, "/tmp/ray-artifacts/llama-server");
+  assert.equal(plan.binarySha256, "c".repeat(64));
+  assert.equal(plan.sourcePath, "/tmp/ray-artifacts/local-1b-q4.gguf");
+  assert.equal(plan.sha256, "b".repeat(64));
+  assert.match(
+    plan.commands.join("\n"),
+    /sudo install -D -m 0755 -- '\/tmp\/ray-artifacts\/llama-server' '\/usr\/local\/bin\/llama-server'/,
+  );
+  assert.match(
+    plan.commands.join("\n"),
+    /sudo install -D -m 0640 -- '\/tmp\/ray-artifacts\/local-1b-q4\.gguf' '\/var\/lib\/ray\/models\/local-1b-q4\.gguf'/,
+  );
 });
 
 test("formatTextPlan prints an operator-ready staging plan", async () => {

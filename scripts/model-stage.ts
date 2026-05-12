@@ -8,6 +8,10 @@ const DEFAULT_CONFIG_PATH = "./examples/config/ray.sub1b.public.json";
 const DEFAULT_SERVICE_USER = "ray";
 const PLACEHOLDER_BINARY_SOURCE_PATH = "/path/to/llama-server";
 const PLACEHOLDER_SOURCE_PATH = "/path/to/model.gguf";
+const BINARY_SOURCE_ENV = "RAY_LLAMA_CPP_BINARY_SOURCE_PATH";
+const BINARY_SHA256_ENV = "RAY_LLAMA_CPP_BINARY_SHA256";
+const MODEL_SOURCE_ENV = "RAY_MODEL_SOURCE_PATH";
+const MODEL_SHA256_ENV = "RAY_MODEL_SHA256";
 const MAX_CLI_ARGS = 28;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_ENV_FILE_BYTES = 64 * 1024;
@@ -50,7 +54,7 @@ export interface ModelStagePlan {
   commands: string[];
 }
 
-const HELP = `Stage a local GGUF for a generated Ray llama.cpp service.
+const HELP = `Stage local artifacts for a generated Ray llama.cpp service.
 
 Usage:
   bun ./scripts/model-stage.ts [options]
@@ -68,6 +72,9 @@ Options:
   --sha256 <hex>           Expected SHA-256 for the installed GGUF.
   --json                   Print machine-readable staging plan JSON.
   -h, --help               Show this help.
+
+Artifact source paths and checksums may also come from ${BINARY_SOURCE_ENV},
+${BINARY_SHA256_ENV}, ${MODEL_SOURCE_ENV}, and ${MODEL_SHA256_ENV}. CLI flags win.
 `;
 
 function assertArgv(argv: unknown): asserts argv is string[] {
@@ -128,10 +135,10 @@ function normalizeOptionalPath(value: string, label: string): string {
   return value;
 }
 
-function normalizeSha256(value: string): string {
+function normalizeSha256(value: string, label: string): string {
   const normalized = value.trim().toLowerCase();
   if (!SHA256_PATTERN.test(normalized)) {
-    throw new Error("--sha256 must be a 64-character hexadecimal SHA-256 digest");
+    throw new Error(`${label} must be a 64-character hexadecimal SHA-256 digest`);
   }
 
   return normalized;
@@ -202,13 +209,13 @@ export function parseArgs(argv: string[]): ModelStageArgs {
     }
 
     if (current === "--binary-sha256") {
-      args.binarySha256 = normalizeSha256(requireFlagValue(current, argv[index + 1]));
+      args.binarySha256 = normalizeSha256(requireFlagValue(current, argv[index + 1]), current);
       index += 1;
       continue;
     }
 
     if (current === "--sha256") {
-      args.sha256 = normalizeSha256(requireFlagValue(current, argv[index + 1]));
+      args.sha256 = normalizeSha256(requireFlagValue(current, argv[index + 1]), current);
       index += 1;
       continue;
     }
@@ -342,14 +349,26 @@ export async function createModelStagePlan(options: {
   );
   const modelPath = normalizeOptionalPath(adapter.launchProfile.modelPath, "model path");
   const binaryPath = normalizeOptionalPath(adapter.launchProfile.binaryPath, "binary path");
-  const binarySourcePath = options.binarySourcePath
-    ? normalizeOptionalPath(options.binarySourcePath, "binary source path")
+  const binarySourcePathValue =
+    options.binarySourcePath ?? readNonEmptyEnvValue(env[BINARY_SOURCE_ENV]);
+  const binarySha256Value = options.binarySha256 ?? readNonEmptyEnvValue(env[BINARY_SHA256_ENV]);
+  const sourcePathValue = options.sourcePath ?? readNonEmptyEnvValue(env[MODEL_SOURCE_ENV]);
+  const sha256Value = options.sha256 ?? readNonEmptyEnvValue(env[MODEL_SHA256_ENV]);
+  const binarySourcePath = binarySourcePathValue
+    ? normalizeOptionalPath(binarySourcePathValue, "binary source path")
     : undefined;
-  const binarySha256 = options.binarySha256 ? normalizeSha256(options.binarySha256) : undefined;
-  const sourcePath = options.sourcePath
-    ? normalizeOptionalPath(options.sourcePath, "source path")
+  const binarySha256 = binarySha256Value
+    ? normalizeSha256(
+        binarySha256Value,
+        options.binarySha256 ? "--binary-sha256" : BINARY_SHA256_ENV,
+      )
     : undefined;
-  const sha256 = options.sha256 ? normalizeSha256(options.sha256) : undefined;
+  const sourcePath = sourcePathValue
+    ? normalizeOptionalPath(sourcePathValue, "source path")
+    : undefined;
+  const sha256 = sha256Value
+    ? normalizeSha256(sha256Value, options.sha256 ? "--sha256" : MODEL_SHA256_ENV)
+    : undefined;
 
   const planWithoutCommands: Omit<ModelStagePlan, "commands"> = {
     configPath: loaded.configPath ?? path.resolve(cwd, options.configPath),
