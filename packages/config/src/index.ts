@@ -425,6 +425,23 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
     env.RAY_SCHEDULER_REQUEST_TIMEOUT_MS,
     "RAY_SCHEDULER_REQUEST_TIMEOUT_MS",
   );
+  const schedulerDedupeInflight = parseBoolean(
+    env.RAY_SCHEDULER_DEDUPE_INFLIGHT,
+    "RAY_SCHEDULER_DEDUPE_INFLIGHT",
+  );
+  const schedulerBatchWindowMs = parseIntegerAtLeast(
+    env.RAY_SCHEDULER_BATCH_WINDOW_MS,
+    0,
+    "RAY_SCHEDULER_BATCH_WINDOW_MS",
+  );
+  const schedulerAffinityLookahead = parsePositiveInteger(
+    env.RAY_SCHEDULER_AFFINITY_LOOKAHEAD,
+    "RAY_SCHEDULER_AFFINITY_LOOKAHEAD",
+  );
+  const schedulerShortJobMaxTokens = parsePositiveInteger(
+    env.RAY_SCHEDULER_SHORT_JOB_MAX_TOKENS,
+    "RAY_SCHEDULER_SHORT_JOB_MAX_TOKENS",
+  );
   const asyncQueueStorageDir = env.RAY_ASYNC_QUEUE_STORAGE_DIR;
   const asyncQueueMaxJobs = parsePositiveInteger(
     env.RAY_ASYNC_QUEUE_MAX_JOBS,
@@ -772,6 +789,22 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
 
   if (schedulerRequestTimeoutMs !== undefined) {
     next.scheduler.requestTimeoutMs = schedulerRequestTimeoutMs;
+  }
+
+  if (schedulerDedupeInflight !== undefined) {
+    next.scheduler.dedupeInflight = schedulerDedupeInflight;
+  }
+
+  if (schedulerBatchWindowMs !== undefined) {
+    next.scheduler.batchWindowMs = schedulerBatchWindowMs;
+  }
+
+  if (schedulerAffinityLookahead !== undefined) {
+    next.scheduler.affinityLookahead = schedulerAffinityLookahead;
+  }
+
+  if (schedulerShortJobMaxTokens !== undefined) {
+    next.scheduler.shortJobMaxTokens = schedulerShortJobMaxTokens;
   }
 
   if (isNonEmptyString(asyncQueueStorageDir)) {

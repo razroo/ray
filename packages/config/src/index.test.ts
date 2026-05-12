@@ -132,6 +132,10 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
       RAY_LLAMA_CPP_THREADS: "2",
       RAY_LLAMA_CPP_CACHE_RAM_MIB: "256",
       RAY_REQUEST_BODY_LIMIT_BYTES: "36000",
+      RAY_SCHEDULER_DEDUPE_INFLIGHT: "false",
+      RAY_SCHEDULER_BATCH_WINDOW_MS: "12",
+      RAY_SCHEDULER_AFFINITY_LOOKAHEAD: "8",
+      RAY_SCHEDULER_SHORT_JOB_MAX_TOKENS: "48",
       RAY_SCHEDULER_MAX_INFLIGHT_TOKENS: "2048",
       RAY_ASYNC_QUEUE_ENABLED: "yes",
       RAY_ASYNC_QUEUE_STORAGE_DIR: ".ray/test-async-queue",
@@ -197,6 +201,10 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
   assert.equal(loaded.config.model.adapter.launchProfile.cacheRamMiB, 256);
   assert.equal(loaded.config.model.operational?.preferredCtxSize, 1536);
   assert.equal(loaded.config.scheduler.maxInflightTokens, 2048);
+  assert.equal(loaded.config.scheduler.dedupeInflight, false);
+  assert.equal(loaded.config.scheduler.batchWindowMs, 12);
+  assert.equal(loaded.config.scheduler.affinityLookahead, 8);
+  assert.equal(loaded.config.scheduler.shortJobMaxTokens, 48);
   assert.equal(loaded.config.asyncQueue.enabled, true);
   assert.equal(loaded.config.asyncQueue.storageDir, join(process.cwd(), ".ray/test-async-queue"));
   assert.equal(loaded.config.asyncQueue.maxJobs, 250);
@@ -394,6 +402,17 @@ test("loadRayConfig rejects malformed environment overrides", async () => {
       },
     }),
     /Expected RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS to be comma-separated non-empty values/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_SCHEDULER_BATCH_WINDOW_MS: "-1",
+      },
+    }),
+    /Expected RAY_SCHEDULER_BATCH_WINDOW_MS to be an integer greater than or equal to 0/,
   );
 
   await assert.rejects(

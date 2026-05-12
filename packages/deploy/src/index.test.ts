@@ -511,6 +511,13 @@ test("renderEnvironmentFileExample documents gateway behavior switches", () => {
   assert.match(envFile, /RAY_RATE_LIMIT_MAX_KEYS=4096/);
   assert.match(envFile, /RAY_RATE_LIMIT_KEY_STRATEGY=ip\+api-key/);
   assert.match(envFile, /RAY_RATE_LIMIT_TRUST_PROXY_HEADERS=true/);
+  assert.match(envFile, /RAY_SCHEDULER_MAX_QUEUE=40/);
+  assert.match(envFile, /RAY_SCHEDULER_MAX_QUEUED_TOKENS=18000/);
+  assert.match(envFile, /RAY_SCHEDULER_REQUEST_TIMEOUT_MS=32000/);
+  assert.match(envFile, /RAY_SCHEDULER_DEDUPE_INFLIGHT=true/);
+  assert.match(envFile, /RAY_SCHEDULER_BATCH_WINDOW_MS=5/);
+  assert.match(envFile, /RAY_SCHEDULER_AFFINITY_LOOKAHEAD=12/);
+  assert.match(envFile, /RAY_SCHEDULER_SHORT_JOB_MAX_TOKENS=96/);
 });
 
 test("renderEnvironmentFileExample documents portable llama.cpp model overrides", () => {

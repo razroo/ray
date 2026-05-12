@@ -1486,7 +1486,14 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
       `# RAY_LLAMA_CPP_CACHE_RAM_MIB=${config.model.adapter.launchProfile.cacheRamMiB ?? ""}`,
     );
     lines.push(`# RAY_SCHEDULER_CONCURRENCY=${config.scheduler.concurrency}`);
+    lines.push(`# RAY_SCHEDULER_MAX_QUEUE=${config.scheduler.maxQueue}`);
+    lines.push(`# RAY_SCHEDULER_MAX_QUEUED_TOKENS=${config.scheduler.maxQueuedTokens}`);
     lines.push(`# RAY_SCHEDULER_MAX_INFLIGHT_TOKENS=${config.scheduler.maxInflightTokens}`);
+    lines.push(`# RAY_SCHEDULER_REQUEST_TIMEOUT_MS=${config.scheduler.requestTimeoutMs}`);
+    lines.push(`# RAY_SCHEDULER_DEDUPE_INFLIGHT=${config.scheduler.dedupeInflight}`);
+    lines.push(`# RAY_SCHEDULER_BATCH_WINDOW_MS=${config.scheduler.batchWindowMs}`);
+    lines.push(`# RAY_SCHEDULER_AFFINITY_LOOKAHEAD=${config.scheduler.affinityLookahead}`);
+    lines.push(`# RAY_SCHEDULER_SHORT_JOB_MAX_TOKENS=${config.scheduler.shortJobMaxTokens}`);
     lines.push(
       `# RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB=${config.gracefulDegradation.memoryRssThresholdMiB}`,
     );
