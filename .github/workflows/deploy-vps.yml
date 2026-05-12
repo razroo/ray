@@ -396,6 +396,7 @@ jobs:
             --domain "$DEPLOY_DOMAIN" \
             --gateway-runtime-binary "$GATEWAY_RUNTIME_BINARY" \
             --ray-env-file /etc/ray/ray.env \
+            --strict-filesystem \
             --output-dir "$RENDER_DIR" >/dev/null
 
           $SUDO cp "$RENDER_DIR/ray-gateway.service" /etc/systemd/system/ray-gateway.service
