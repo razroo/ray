@@ -1550,7 +1550,7 @@ export class DurableInferenceQueue {
       job.updatedAt = callback.deliveredAt;
       await this.persistJob(job);
     } catch (error) {
-      callback.lastError = toErrorMessage(error);
+      callback.lastError = truncateJobErrorString(toErrorMessage(error));
       job.updatedAt = new Date().toISOString();
 
       if (callback.attempts < this.options.config.maxCallbackAttempts) {

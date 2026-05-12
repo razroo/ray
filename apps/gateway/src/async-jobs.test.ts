@@ -1587,3 +1587,65 @@ test("durable inference queue delivers callbacks without following redirects", a
     await rm(storageDir, { recursive: true, force: true });
   }
 });
+
+test("durable inference queue persists bounded callback failure errors", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-callback-error-"));
+
+  try {
+    const config = mergeConfig(createDefaultConfig("tiny"), {
+      asyncQueue: {
+        enabled: true,
+        storageDir,
+        pollIntervalMs: 20,
+        dispatchConcurrency: 1,
+        maxAttempts: 1,
+        callbackTimeoutMs: 500,
+        maxCallbackAttempts: 1,
+      },
+      model: {
+        adapter: {
+          kind: "mock",
+          latencyMs: 5,
+        },
+      },
+    });
+    const runtime = createRayRuntime(config);
+    const logger = new Logger("test", "error");
+    const queue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+      fetchImpl: async () => {
+        throw new Error(`Callback failed: ${"x".repeat(PERSISTED_JOB_FILE_LIMIT_BYTES)}`);
+      },
+    });
+    const job = await queue.enqueue({
+      input: "Callback failure should stay persisted",
+      callbackUrl: "http://93.184.216.34/ray-callback",
+    });
+
+    await queue.start();
+
+    await waitFor(
+      async () => queue.get(job.id),
+      (value) => value.callback?.status === "failed",
+    );
+
+    await queue.stop();
+
+    const raw = await fs.readFile(join(storageDir, "jobs", `${job.id}.json`), "utf8");
+    const persisted = JSON.parse(raw) as {
+      callback?: {
+        status?: string;
+        lastError?: string;
+      };
+    };
+
+    assert.equal(persisted.callback?.status, "failed");
+    assert.match(persisted.callback?.lastError ?? "", /\[truncated \d+ chars\]/);
+    assert.ok((persisted.callback?.lastError ?? "").length < 9_000);
+    assert.ok(Buffer.byteLength(raw, "utf8") < PERSISTED_JOB_FILE_LIMIT_BYTES);
+  } finally {
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});
