@@ -73,6 +73,17 @@ For a conservative 4 GB / 2 vCPU 1B-class box, start close to:
 
 Put the GGUF at the configured `model.adapter.launchProfile.modelPath`, usually
 under `/var/lib/ray/models`, before starting the generated llama.cpp service.
+After `/etc/ray/ray.env` contains the final model overrides, print the exact
+staging commands from the same resolved config:
+
+```bash
+bun run model:stage:1b:generic -- --ray-env-file /etc/ray/ray.env --source ./local-1b-q4.gguf
+```
+
+Add `--sha256 <expected-hex-digest>` when the model publisher provides one. The
+helper does not download models; it keeps the operator's chosen source explicit
+and prints the install, ownership, checksum, and service-user read-test commands
+needed before doctor or systemd restart.
 
 On an 8 GB node, [ray.1b.8gb.generic.public.json](../../config/ray.1b.8gb.generic.public.json) raises context to `4096`, batch threads to `4`, cache RAM to `768` MiB, async queue storage headroom to `512` MiB, and gateway RSS degradation headroom to `768` MiB, and uses two parallel slots. Set `RAY_PROFILE=1b-8gb` when selecting those defaults without a JSON config file. The Qwen-specific [ray.1b.public.json](../../config/ray.1b.public.json) and [ray.1b.8gb.public.json](../../config/ray.1b.8gb.public.json) profiles are reference baselines for benchmark reproducibility.
 
@@ -426,6 +437,7 @@ Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 - The generated systemd units also drop Linux capabilities, restrict address families to local/IP sockets, deny realtime scheduling, and hide host devices and kernel controls. Keep custom service overrides equally narrow unless a backend explicitly needs broader access.
 - The generated gateway unit intentionally does not set `MemoryDenyWriteExecute=true`; Bun and Node can need executable memory for their JavaScript runtimes. Keep that directive limited to native backend units such as the generated `ray-llama-cpp.service`.
 - Keep generated-service paths out of `/home`, `/root`, and `/run/user`; the units use `ProtectHome=true`, so put GGUF files under `/var/lib/ray/models` and `llama-server` under `/usr/local/bin`.
+- Use `bun run model:stage*` after writing `/etc/ray/ray.env` to stage the GGUF at the resolved `RAY_MODEL_PATH` with service-user-readable ownership before restarting the generated backend unit.
 - Doctor verifies that `model.adapter.launchProfile.binaryPath` points at an executable `llama-server` and that the generated service user can execute it and read the GGUF model before the generated backend service is restarted.
 - Keep `cacheRamMiB` pinned for `llama.cpp`. The upstream default is too large for a 4 GB VPS.
 - Tune `scheduler.concurrency` conservatively. Tiny hardware collapses faster from overcommit than underutilization.

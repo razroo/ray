@@ -298,6 +298,10 @@ rendering units or running doctor. Explicit CLI flags win over env-file values.
 Create `/var/lib/ray/models` on the VPS and put the GGUF at `RAY_MODEL_PATH`
 before starting the generated llama.cpp service or running doctor.
 
+Use `bun run model:stage -- --config ./examples/config/ray.1b.generic.public.json --ray-env-file /etc/ray/ray.env --source ./local-1b-q4.gguf`
+to print the exact install, ownership, optional checksum, and service-user read
+test commands for the resolved `RAY_MODEL_PATH`.
+
 Deployment walkthrough: [examples/deploy/vps/README.md](examples/deploy/vps/README.md).
 
 The repo also includes an opt-in GitHub Actions VPS deploy workflow for the
@@ -316,13 +320,15 @@ bun run render:service:1b:8gb:generic
 bun run validate:config
 bun run validate:config:all
 bun run deploy:smoke
+bun run model:stage
+bun run model:stage:1b:generic
 bun run doctor
 bun run doctor:cax11
 bun run doctor:1b:generic
 bun run doctor:1b:8gb:generic
 ```
 
-`bun run render:service*` prints deployable systemd/Caddy output with `EnvironmentFile=/etc/ray/ray.env` already wired into the gateway unit and does not require local secret material. Use `--ray-env-file` only when the env file exists and render should load its values. `bun run validate:config:all` scans every checked-in example config and prints compact warning/error counts; run `bun ./scripts/validate-configs.ts --verbose` when warning details are needed. `bun run deploy:smoke` dry-renders every public deploy profile into systemd/Caddy bundles without loading local secrets, so config changes can be checked before touching a VPS. `bun run doctor` targets the public CX23-class `sub1b` deploy profile. `bun run render:service:cax11` and `bun run doctor:cax11` target the public ARM CAX11 `sub1b` deploy profile. The 1B render and doctor commands target the public generic 1B deploy profiles with explicit 4 GB and 8 GB memory budgets. Run doctor on the VPS after the GGUF exists at the configured path and `/etc/ray/ray.env` is populated. Doctor also verifies the generated systemd service user, service-user access to the rendered config file, Bun runtime (`/usr/local/bin/bun` by default, `RAY_GATEWAY_RUNTIME_BINARY`, or `--gateway-runtime-binary`) including identifiable Bun/Node version compatibility, WorkingDirectory, built gateway entrypoint, configured `llama-server` binary, GGUF model file, and async queue storage, env-file permissions, host CPU/thread headroom, async queue storage headroom, and small-VPS swap cushion.
+`bun run render:service*` prints deployable systemd/Caddy output with `EnvironmentFile=/etc/ray/ray.env` already wired into the gateway unit and does not require local secret material. Use `--ray-env-file` only when the env file exists and render should load its values. `bun run validate:config:all` scans every checked-in example config and prints compact warning/error counts; run `bun ./scripts/validate-configs.ts --verbose` when warning details are needed. `bun run deploy:smoke` dry-renders every public deploy profile into systemd/Caddy bundles without loading local secrets, so config changes can be checked before touching a VPS. `bun run model:stage*` reads the same config and optional `/etc/ray/ray.env` overrides, then prints the concrete GGUF install, ownership, checksum, and service-user read-test commands for the generated llama.cpp service. `bun run doctor` targets the public CX23-class `sub1b` deploy profile. `bun run render:service:cax11` and `bun run doctor:cax11` target the public ARM CAX11 `sub1b` deploy profile. The 1B render, model staging, and doctor commands target the public generic 1B deploy profiles with explicit 4 GB and 8 GB memory budgets. Run doctor on the VPS after the GGUF exists at the configured path and `/etc/ray/ray.env` is populated. Doctor also verifies the generated systemd service user, service-user access to the rendered config file, Bun runtime (`/usr/local/bin/bun` by default, `RAY_GATEWAY_RUNTIME_BINARY`, or `--gateway-runtime-binary`) including identifiable Bun/Node version compatibility, WorkingDirectory, built gateway entrypoint, configured `llama-server` binary, GGUF model file, and async queue storage, env-file permissions, host CPU/thread headroom, async queue storage headroom, and small-VPS swap cushion.
 
 ### Benchmark Contract
 
