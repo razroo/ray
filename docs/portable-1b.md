@@ -63,6 +63,7 @@ RAY_LLAMA_CPP_PORT=8081
 RAY_LLAMA_CPP_CTX_SIZE=2048
 RAY_LLAMA_CPP_PARALLEL=1
 RAY_LLAMA_CPP_THREADS=2
+RAY_LLAMA_CPP_THREADS_BATCH=2
 RAY_LLAMA_CPP_THREADS_HTTP=2
 RAY_LLAMA_CPP_BATCH_SIZE=192
 RAY_LLAMA_CPP_UBATCH_SIZE=96
@@ -149,11 +150,11 @@ Set `RAY_MODEL_API_KEY_ENV` only when the local or OpenAI-compatible model
 backend expects an upstream Bearer token.
 
 The generated `ray.env.example` from `bun run render:service:1b:generic` includes
-the same categories of overrides as comments, including optional values such as
-`RAY_LLAMA_CPP_THREADS_BATCH` for llama.cpp builds where batch-thread pinning is
-useful.
+the same categories of overrides as comments. Keep `RAY_LLAMA_CPP_THREADS` and
+`RAY_LLAMA_CPP_THREADS_BATCH` within the VPS vCPU count when retuning the launch
+profile.
 
-For 8 GB nodes, start by raising context, slots, and cache RAM through the 8 GB generic profile before adding more overrides.
+For 8 GB nodes, start by raising context, slots, batch threads, and cache RAM through the 8 GB generic profile before adding more overrides.
 
 ## Validate On The VPS
 

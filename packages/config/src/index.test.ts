@@ -88,6 +88,7 @@ test("loadRayConfig accepts the 1b 8gb launch preset", async () => {
   }
 
   assert.equal(loaded.config.model.adapter.launchProfile.preset, "single-vps-1b-8gb");
+  assert.equal(loaded.config.model.adapter.launchProfile.threadsBatch, 4);
   assert.equal(loaded.config.model.operational?.memoryClassMiB, 8192);
 });
 
@@ -124,7 +125,9 @@ test("loadRayConfig accepts generic 1b model profiles", async () => {
     "/var/lib/ray/models/local-1b-q4.gguf",
   );
   assert.equal(generic4gb.config.model.adapter.launchProfile.preset, "single-vps-1b-cx23");
+  assert.equal(generic4gb.config.model.adapter.launchProfile.threadsBatch, 2);
   assert.equal(generic8gb.config.model.adapter.launchProfile.preset, "single-vps-1b-8gb");
+  assert.equal(generic8gb.config.model.adapter.launchProfile.threadsBatch, 4);
   assert.equal(
     generic8gb.config.model.adapter.launchProfile.modelPath,
     "/var/lib/ray/models/local-1b-q4.gguf",

@@ -611,7 +611,7 @@ test("renderEnvironmentFileExample documents portable llama.cpp model overrides"
   assert.match(envFile, /RAY_LLAMA_CPP_CTX_SIZE=/);
   assert.match(envFile, /RAY_LLAMA_CPP_PARALLEL=/);
   assert.match(envFile, /RAY_LLAMA_CPP_THREADS=/);
-  assert.match(envFile, /RAY_LLAMA_CPP_THREADS_BATCH=/);
+  assert.match(envFile, /RAY_LLAMA_CPP_THREADS_BATCH=2/);
   assert.match(envFile, /RAY_LLAMA_CPP_THREADS_HTTP=/);
   assert.match(envFile, /RAY_LLAMA_CPP_BATCH_SIZE=/);
   assert.match(envFile, /RAY_LLAMA_CPP_UBATCH_SIZE=/);
@@ -805,6 +805,7 @@ test("renderLlamaCppService emits a single-vps launch profile", () => {
           ctxSize: 3072,
           parallel: 2,
           threads: 2,
+          threadsBatch: 2,
           threadsHttp: 2,
           batchSize: 256,
           ubatchSize: 128,
@@ -836,6 +837,7 @@ test("renderLlamaCppService emits a single-vps launch profile", () => {
   });
   assert.match(service, /LLAMA_ARG_CTX_SIZE=3072/);
   assert.match(service, /LLAMA_ARG_N_PARALLEL=2/);
+  assert.match(service, /LLAMA_ARG_THREADS_BATCH=2/);
   assert.match(service, /LLAMA_ARG_CACHE_RAM=512/);
   assert.match(service, /LLAMA_ARG_WARMUP=1/);
   assert.match(service, /LLAMA_ARG_KV_UNIFIED=1/);
@@ -1075,6 +1077,7 @@ test("buildLlamaCppEnvironment emits cache and slot flags explicitly", () => {
     ctxSize: 3072,
     parallel: 2,
     threads: 2,
+    threadsBatch: 2,
     threadsHttp: 2,
     batchSize: 256,
     ubatchSize: 128,
@@ -1091,6 +1094,7 @@ test("buildLlamaCppEnvironment emits cache and slot flags explicitly", () => {
   });
 
   assert.equal(environment.LLAMA_ARG_CACHE_RAM, "512");
+  assert.equal(environment.LLAMA_ARG_THREADS_BATCH, "2");
   assert.equal(environment.LLAMA_ARG_KV_UNIFIED, "1");
   assert.equal(environment.LLAMA_ARG_CACHE_IDLE_SLOTS, "1");
 });

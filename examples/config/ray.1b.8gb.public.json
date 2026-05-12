@@ -40,6 +40,7 @@
         "ctxSize": 4096,
         "parallel": 2,
         "threads": 4,
+        "threadsBatch": 4,
         "threadsHttp": 2,
         "batchSize": 256,
         "ubatchSize": 128,

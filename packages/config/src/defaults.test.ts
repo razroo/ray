@@ -139,6 +139,7 @@ test("1b profile defaults to a conservative llama.cpp launch profile", () => {
 
   assert.equal(config.model.adapter.launchProfile.preset, "single-vps-1b-cx23");
   assert.equal(config.model.adapter.launchProfile.parallel, 1);
+  assert.equal(config.model.adapter.launchProfile.threadsBatch, 2);
   assert.equal(config.model.adapter.launchProfile.cacheRamMiB, 384);
   assert.equal(config.scheduler.concurrency, 1);
   assert.equal(config.asyncQueue.minFreeStorageMiB, 256);
