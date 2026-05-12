@@ -337,7 +337,9 @@ than the repo's supported Bun runtime, then runs `ray deploy doctor` on the VPS 
 restarting services. Missing API keys, missing GGUF files, memory-fit errors,
 exhausted async queue storage reserves, and unsupported gateway runtimes fail
 before systemd tries to start the generated units. The configured gateway
-runtime binary defaults to `/usr/local/bin/bun`.
+runtime binary defaults to `/usr/local/bin/bun`. All workflow SSH and rsync
+calls run in batch mode with `StrictHostKeyChecking=yes`, `IdentitiesOnly=yes`,
+and the validated `RAY_DEPLOY_KNOWN_HOSTS` file.
 
 When `RAY_DEPLOY_INSTALL_CADDY=true`, the workflow installs Caddy if needed,
 validates the rendered Caddyfile before installing it to `/etc/caddy/Caddyfile`,
