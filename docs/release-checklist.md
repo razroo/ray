@@ -40,6 +40,7 @@ Aligned with [roadmap Phase 1 exit criteria](roadmap.md) and day-one operator ex
    ```bash
    bun run validate:config
    bun run validate:config:all
+   bun run deploy:smoke
    RAY_API_KEYS=smoke bun run validate:config:public
    ```
 
