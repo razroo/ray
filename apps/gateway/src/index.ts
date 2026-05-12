@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
 import { loadRayConfig, resolveAuthApiKeys, snapshotRayConfig } from "@ray/config";
 import {
@@ -39,6 +40,7 @@ const MAX_RESPONSE_OBJECT_KEYS = 256;
 const MAX_RESPONSE_ARRAY_ITEMS = 512;
 const MAX_RESPONSE_OBJECT_KEY_CHARS = 128;
 const MAX_RESPONSE_STRING_CHARS = 65_536;
+const GATEWAY_HOST_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export interface CreateGatewayHandlerOptions {
   config: RayConfig;
@@ -373,6 +375,106 @@ function getDeclaredContentLength(request: IncomingMessage): number | undefined 
   return /^\d+$/.test(normalized) && Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
+function createInvalidGatewayHostHeaderError(): RayError {
+  return new RayError("Host header is invalid", {
+    code: "invalid_request",
+    status: 400,
+  });
+}
+
+function assertGatewayHostHeaderPort(value: string | undefined): void {
+  if (value === undefined) {
+    return;
+  }
+
+  const parsed = Number(value);
+
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(parsed) || parsed < 1 || parsed > 65_535) {
+    throw createInvalidGatewayHostHeaderError();
+  }
+}
+
+function hasInvalidGatewayHostHeaderChar(value: string): boolean {
+  for (const char of value) {
+    if (char.charCodeAt(0) <= 32 || char === "/" || char === "?" || char === "#") {
+      return true;
+    }
+
+    if (char === "@" || char === "\\") {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function assertGatewayHostHeader(hostHeader: string | undefined): void {
+  if (hostHeader === undefined) {
+    return;
+  }
+
+  if (hostHeader.length === 0) {
+    throw new RayError("Host header must be non-empty when provided", {
+      code: "invalid_request",
+      status: 400,
+    });
+  }
+
+  if (hostHeader.length > MAX_GATEWAY_HOST_HEADER_CHARS) {
+    throw new RayError(`Host header must be at most ${MAX_GATEWAY_HOST_HEADER_CHARS} characters`, {
+      code: "invalid_request",
+      status: 400,
+      details: {
+        maxChars: MAX_GATEWAY_HOST_HEADER_CHARS,
+        actualChars: hostHeader.length,
+      },
+    });
+  }
+
+  if (hasInvalidGatewayHostHeaderChar(hostHeader) || hostHeader.includes("://")) {
+    throw createInvalidGatewayHostHeaderError();
+  }
+
+  if (hostHeader.startsWith("[")) {
+    const match = /^\[([0-9a-fA-F:.]+)\](?::(\d+))?$/.exec(hostHeader);
+
+    if (!match || isIP(match[1] ?? "") !== 6) {
+      throw createInvalidGatewayHostHeaderError();
+    }
+
+    assertGatewayHostHeaderPort(match[2]);
+    return;
+  }
+
+  const parts = hostHeader.split(":");
+
+  if (parts.length > 2) {
+    throw createInvalidGatewayHostHeaderError();
+  }
+
+  const hostname = parts[0] ?? "";
+  const port = parts[1];
+  assertGatewayHostHeaderPort(port);
+
+  if (isIP(hostname) === 6) {
+    throw createInvalidGatewayHostHeaderError();
+  }
+
+  if (isIP(hostname) === 4) {
+    return;
+  }
+
+  const normalizedHostname = hostname.toLowerCase().replace(/\.$/, "");
+
+  if (
+    normalizedHostname.length === 0 ||
+    normalizedHostname.length > 253 ||
+    !normalizedHostname.split(".").every((label) => GATEWAY_HOST_LABEL_PATTERN.test(label))
+  ) {
+    throw createInvalidGatewayHostHeaderError();
+  }
+}
+
 function parseGatewayRequestUrl(request: IncomingMessage): URL {
   const requestTarget = request.url ?? "/";
 
@@ -398,24 +500,7 @@ function parseGatewayRequestUrl(request: IncomingMessage): URL {
   }
 
   const hostHeader = request.headers.host;
-
-  if (hostHeader !== undefined && hostHeader.length === 0) {
-    throw new RayError("Host header must be non-empty when provided", {
-      code: "invalid_request",
-      status: 400,
-    });
-  }
-
-  if (hostHeader !== undefined && hostHeader.length > MAX_GATEWAY_HOST_HEADER_CHARS) {
-    throw new RayError(`Host header must be at most ${MAX_GATEWAY_HOST_HEADER_CHARS} characters`, {
-      code: "invalid_request",
-      status: 400,
-      details: {
-        maxChars: MAX_GATEWAY_HOST_HEADER_CHARS,
-        actualChars: hostHeader.length,
-      },
-    });
-  }
+  assertGatewayHostHeader(hostHeader);
 
   try {
     return new URL(requestTarget, `http://${hostHeader ?? "127.0.0.1"}`);

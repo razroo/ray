@@ -188,6 +188,48 @@ test("gateway rejects malformed request targets without leaking sockets", async 
   assert.match(response, /"code": "invalid_request"/);
 });
 
+test("gateway rejects malformed Host headers without leaking sockets", async (t) => {
+  const gateway = createGatewayServer({
+    config: createDefaultConfig("tiny"),
+  });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const response = await readRawUnfinishedRequestResponse(gateway.server, [
+    "GET /livez HTTP/1.1",
+    "Host: http://example.com",
+    "Content-Length: 32",
+    "",
+    "",
+  ]);
+
+  assert.match(response, /^HTTP\/1\.1 400 /);
+  assert.match(response, /\r\nconnection: close\r\n/i);
+  assert.match(response, /"code": "invalid_request"/);
+});
+
+test("gateway accepts bracketed IPv6 Host headers", async (t) => {
+  const gateway = createGatewayServer({
+    config: createDefaultConfig("tiny"),
+  });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const response = await readRawUnfinishedRequestResponse(gateway.server, [
+    "GET /livez HTTP/1.1",
+    "Host: [::1]:3000",
+    "Content-Length: 32",
+    "",
+    "",
+  ]);
+
+  assert.match(response, /^HTTP\/1\.1 200 /);
+  assert.match(response, /\r\nconnection: close\r\n/i);
+  assert.match(response, /"status": "ok"/);
+});
+
 test("gateway rejects oversized request targets before route matching", async (t) => {
   const gateway = createGatewayServer({
     config: createDefaultConfig("tiny"),
