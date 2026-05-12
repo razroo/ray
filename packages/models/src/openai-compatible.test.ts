@@ -195,6 +195,43 @@ test("adapterRequest rejects invalid direct adapter config before dispatch", asy
       ),
     /adapter\.headers must not contain unreadable properties/,
   );
+
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: "http://127.0.0.1:8080",
+          timeoutMs: 500,
+        },
+        "v1/models",
+        {},
+      ),
+    /adapter\.pathname/,
+  );
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: "http://127.0.0.1:8080",
+          timeoutMs: 500,
+        },
+        "//metadata",
+        {},
+      ),
+    /adapter\.pathname/,
+  );
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: "http://127.0.0.1:8080",
+          timeoutMs: 500,
+        },
+        `/${"x".repeat(2_048)}`,
+        {},
+      ),
+    /adapter\.pathname must be at most 2048 characters/,
+  );
 });
 
 test("adapterRequest rejects oversized request bodies before dispatch", async (t) => {

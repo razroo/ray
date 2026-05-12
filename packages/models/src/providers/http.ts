@@ -41,6 +41,7 @@ export const MAX_ADAPTER_TIMEOUT_MS = 120_000;
 export const MAX_ADAPTER_MODEL_REF_CHARS = 256;
 
 const MAX_ADAPTER_URL_CHARS = 2_048;
+const MAX_ADAPTER_PATHNAME_CHARS = 2_048;
 const MAX_ADAPTER_HEADERS = 64;
 const MAX_ADAPTER_HEADER_KEY_CHARS = 128;
 const MAX_ADAPTER_HEADER_VALUE_CHARS = 4_096;
@@ -199,6 +200,26 @@ function assertHttpBaseUrl(value: string, label: string): void {
 
   if (parsed.search || parsed.hash) {
     throw new TypeError(`${label} must not include a query string or fragment`);
+  }
+}
+
+function assertAdapterPathname(value: string): void {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    !value.startsWith("/") ||
+    value.startsWith("//") ||
+    /[\0-\x20\x7f]/.test(value)
+  ) {
+    throw new TypeError(
+      "adapter.pathname must be an absolute path starting with / and contain no control characters",
+    );
+  }
+
+  if (value.length > MAX_ADAPTER_PATHNAME_CHARS) {
+    throw new RangeError(
+      `adapter.pathname must be at most ${MAX_ADAPTER_PATHNAME_CHARS} characters`,
+    );
   }
 }
 
@@ -608,6 +629,7 @@ export async function adapterRequest(
   parentSignal?: AbortSignal,
 ): Promise<unknown> {
   assertHttpAdapterConfig(adapter);
+  assertAdapterPathname(pathname);
   assertPositiveSafeIntegerAtMost(timeoutMs, "adapter.timeoutMs", MAX_ADAPTER_TIMEOUT_MS);
   assertRequestBodyWithinLimit(init);
 
