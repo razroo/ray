@@ -158,6 +158,24 @@ interface BenchmarkSample {
   wallTimeMs: number;
 }
 
+interface BenchmarkAccumulator {
+  requests: number;
+  responseCacheHits: number;
+  promptCacheHits: number;
+  qualityPasses: number;
+  jsonRequests: number;
+  validJsonResponses: number;
+  promptEchoRejects: number;
+  latencyValues: number[];
+  queueValues: number[];
+  ttftValues: number[];
+  throughputValues: number[];
+  promptCacheRatios: number[];
+  clientLatencyValues: number[];
+  qualityScores: number[];
+  providerDiagnostics: BenchmarkProviderDiagnostics[];
+}
+
 interface BenchmarkProviderDiagnosticsSummary {
   requestShapes: Record<string, number>;
   promptFormats: Record<string, number>;
@@ -1536,105 +1554,99 @@ async function invoke(
   };
 }
 
-export async function runBenchmark(options: {
-  baseUrl: string;
-  workload: BenchmarkWorkloadItem[];
-  concurrency: number;
-  requests: number;
-  label: string;
-  apiKey?: string;
-}): Promise<BenchmarkSummary> {
-  if (options.workload.length === 0) {
-    throw new Error("Benchmark workload must contain at least one request");
+function createBenchmarkAccumulator(): BenchmarkAccumulator {
+  return {
+    requests: 0,
+    responseCacheHits: 0,
+    promptCacheHits: 0,
+    qualityPasses: 0,
+    jsonRequests: 0,
+    validJsonResponses: 0,
+    promptEchoRejects: 0,
+    latencyValues: [],
+    queueValues: [],
+    ttftValues: [],
+    throughputValues: [],
+    promptCacheRatios: [],
+    clientLatencyValues: [],
+    qualityScores: [],
+    providerDiagnostics: [],
+  };
+}
+
+function requestRequiresValidJson(request: BenchmarkWorkloadItem): boolean {
+  return (
+    request.responseFormat?.type === "json_object" || request.benchmark?.requiresValidJson === true
+  );
+}
+
+function recordBenchmarkSample(accumulator: BenchmarkAccumulator, sample: BenchmarkSample): void {
+  const { request, response } = sample;
+  const providerDiagnostics = response.diagnostics?.provider;
+  const qualityFailures = evaluateQuality(request, response);
+
+  accumulator.requests += 1;
+  accumulator.clientLatencyValues.push(sample.wallTimeMs);
+  accumulator.latencyValues.push(response.latencyMs);
+  accumulator.queueValues.push(response.queueTimeMs);
+  accumulator.qualityScores.push(scoreQualityFailures(qualityFailures));
+
+  if (response.cached) {
+    accumulator.responseCacheHits += 1;
+  }
+  if ((providerDiagnostics?.tokensCached ?? 0) > 0) {
+    accumulator.promptCacheHits += 1;
+  }
+  if (qualityFailures.length === 0) {
+    accumulator.qualityPasses += 1;
+  }
+  if (qualityFailures.includes("prompt_echo")) {
+    accumulator.promptEchoRejects += 1;
   }
 
-  const queue = Array.from(
-    { length: options.requests },
-    (_, index) => options.workload[index % options.workload.length],
-  );
-  const results: BenchmarkSample[] = [];
-  const startedAt = Date.now();
-  let cursor = 0;
-
-  const workers = Array.from({ length: options.concurrency }, async () => {
-    while (cursor < queue.length) {
-      const nextIndex = cursor;
-      cursor += 1;
-      const request = queue[nextIndex];
-      if (!request) {
-        break;
-      }
-
-      const sample = await invoke(options.baseUrl, request, options.apiKey);
-      results.push(sample);
-    }
-  });
-
-  await Promise.all(workers);
-
-  const wallTimeMs = Date.now() - startedAt;
-  const responses = results.map((sample) => sample.response);
-  const qualityResults = results.map((sample) => evaluateQuality(sample.request, sample.response));
-  const qualityScores = qualityResults.map(scoreQualityFailures);
-  const latencyValues = responses.map((response) => response.latencyMs);
-  const queueValues = responses.map((response) => response.queueTimeMs);
-  const ttftValues = responses
-    .map((response) => response.diagnostics?.provider?.timings?.ttftMs)
-    .filter((value): value is number => typeof value === "number" && value >= 0);
-  const throughputValues = responses
-    .map((response) => response.diagnostics?.provider?.timings?.completionTokensPerSecond)
-    .filter((value): value is number => typeof value === "number" && value > 0);
-  const promptCacheRatios = responses
-    .map((response) => {
-      const promptTokens = response.usage.tokens?.prompt;
-      const cachedTokens = response.diagnostics?.provider?.tokensCached;
-      if (
-        typeof promptTokens !== "number" ||
-        promptTokens <= 0 ||
-        typeof cachedTokens !== "number" ||
-        cachedTokens <= 0
-      ) {
-        return undefined;
-      }
-      return cachedTokens / promptTokens;
-    })
-    .filter((value): value is number => typeof value === "number" && value > 0);
-  const responseCacheHits = responses.filter((response) => response.cached).length;
-  const promptCacheHits = responses.filter(
-    (response) => (response.diagnostics?.provider?.tokensCached ?? 0) > 0,
-  ).length;
-  const qualityPasses = qualityResults.filter((failures) => failures.length === 0).length;
-  const jsonRequests = results
-    .map((sample) => sample.request)
-    .filter(
-      (request) =>
-        request?.responseFormat?.type === "json_object" ||
-        request?.benchmark?.requiresValidJson === true,
-    ).length;
-  const validJsonResponses = results.filter((sample) => {
-    const request = sample.request;
-    if (
-      request?.responseFormat?.type !== "json_object" &&
-      request?.benchmark?.requiresValidJson !== true
-    ) {
-      return false;
-    }
-
+  if (requestRequiresValidJson(request)) {
+    accumulator.jsonRequests += 1;
     try {
-      JSON.parse(sample.response.output);
-      return true;
+      JSON.parse(response.output);
+      accumulator.validJsonResponses += 1;
     } catch {
-      return false;
+      // evaluateQuality already records the invalid_json failure.
     }
-  }).length;
-  const promptEchoRejects = qualityResults.filter((failures) =>
-    failures.includes("prompt_echo"),
-  ).length;
-  const providerDiagnostics = responses
-    .map((response) => response.diagnostics?.provider)
-    .filter(
-      (diagnostics): diagnostics is BenchmarkProviderDiagnostics => diagnostics !== undefined,
-    );
+  }
+
+  if (providerDiagnostics) {
+    accumulator.providerDiagnostics.push(providerDiagnostics);
+  }
+
+  const ttftMs = providerDiagnostics?.timings?.ttftMs;
+  if (typeof ttftMs === "number" && ttftMs >= 0) {
+    accumulator.ttftValues.push(ttftMs);
+  }
+
+  const completionTokensPerSecond = providerDiagnostics?.timings?.completionTokensPerSecond;
+  if (typeof completionTokensPerSecond === "number" && completionTokensPerSecond > 0) {
+    accumulator.throughputValues.push(completionTokensPerSecond);
+  }
+
+  const promptTokens = response.usage.tokens?.prompt;
+  const cachedTokens = providerDiagnostics?.tokensCached;
+  if (
+    typeof promptTokens === "number" &&
+    promptTokens > 0 &&
+    typeof cachedTokens === "number" &&
+    cachedTokens > 0
+  ) {
+    accumulator.promptCacheRatios.push(cachedTokens / promptTokens);
+  }
+}
+
+function summarizeBenchmarkProviderDiagnostics(
+  providerDiagnostics: BenchmarkProviderDiagnostics[],
+): BenchmarkProviderDiagnosticsSummary | undefined {
+  if (providerDiagnostics.length === 0) {
+    return undefined;
+  }
+
   const cachedTokenValues = providerDiagnostics
     .map((diagnostics) => diagnostics.tokensCached)
     .filter((value): value is number => typeof value === "number" && value >= 0);
@@ -1657,71 +1669,115 @@ export async function runBenchmark(options: {
   const jsonRepairSuccesses = providerDiagnostics.filter(
     (diagnostics) => diagnostics.jsonRepairSucceeded === true,
   ).length;
-  const providerDiagnosticsSummary: BenchmarkProviderDiagnosticsSummary | undefined =
-    providerDiagnostics.length > 0
-      ? {
-          requestShapes: countOccurrences(
-            providerDiagnostics.map((diagnostics) => diagnostics.requestShape),
-          ),
-          promptFormats: countOccurrences(
-            providerDiagnostics.map((diagnostics) => diagnostics.promptFormat),
-          ),
-          promptFormatReasons: countOccurrences(
-            providerDiagnostics.map((diagnostics) => diagnostics.promptFormatReason),
-          ),
-          slotRouteReasons: countOccurrences(
-            providerDiagnostics.map((diagnostics) => diagnostics.slotRouteReason),
-          ),
-          modelRefs: countOccurrences(
-            providerDiagnostics.map((diagnostics) => diagnostics.modelRef),
-          ),
-          backendModels: countOccurrences(
-            providerDiagnostics.map((diagnostics) => diagnostics.backendModel),
-          ),
-          launchPresets: countOccurrences(
-            providerDiagnostics.map((diagnostics) => diagnostics.launchPreset),
-          ),
-          ...(jsonRepairAttempts > 0 ? { jsonRepairAttempts, jsonRepairSuccesses } : {}),
-          ...(typeof totalSlots === "number" ? { totalSlots } : {}),
-          contextWindowP50: quantile(contextWindowValues, 0.5),
-          slotReuseRate:
-            routedSlotSamples.length > 0
-              ? (reusedSlotSamples.length / routedSlotSamples.length) * 100
-              : undefined,
-          cachedTokensAvg: mean(cachedTokenValues),
-        }
-      : undefined;
+
+  return {
+    requestShapes: countOccurrences(
+      providerDiagnostics.map((diagnostics) => diagnostics.requestShape),
+    ),
+    promptFormats: countOccurrences(
+      providerDiagnostics.map((diagnostics) => diagnostics.promptFormat),
+    ),
+    promptFormatReasons: countOccurrences(
+      providerDiagnostics.map((diagnostics) => diagnostics.promptFormatReason),
+    ),
+    slotRouteReasons: countOccurrences(
+      providerDiagnostics.map((diagnostics) => diagnostics.slotRouteReason),
+    ),
+    modelRefs: countOccurrences(providerDiagnostics.map((diagnostics) => diagnostics.modelRef)),
+    backendModels: countOccurrences(
+      providerDiagnostics.map((diagnostics) => diagnostics.backendModel),
+    ),
+    launchPresets: countOccurrences(
+      providerDiagnostics.map((diagnostics) => diagnostics.launchPreset),
+    ),
+    ...(jsonRepairAttempts > 0 ? { jsonRepairAttempts, jsonRepairSuccesses } : {}),
+    ...(typeof totalSlots === "number" ? { totalSlots } : {}),
+    contextWindowP50: quantile(contextWindowValues, 0.5),
+    slotReuseRate:
+      routedSlotSamples.length > 0
+        ? (reusedSlotSamples.length / routedSlotSamples.length) * 100
+        : undefined,
+    cachedTokensAvg: mean(cachedTokenValues),
+  };
+}
+
+export async function runBenchmark(options: {
+  baseUrl: string;
+  workload: BenchmarkWorkloadItem[];
+  concurrency: number;
+  requests: number;
+  label: string;
+  apiKey?: string;
+}): Promise<BenchmarkSummary> {
+  if (options.workload.length === 0) {
+    throw new Error("Benchmark workload must contain at least one request");
+  }
+
+  const queue = Array.from(
+    { length: options.requests },
+    (_, index) => options.workload[index % options.workload.length],
+  );
+  const accumulator = createBenchmarkAccumulator();
+  const startedAt = Date.now();
+  let cursor = 0;
+
+  const workers = Array.from({ length: options.concurrency }, async () => {
+    while (cursor < queue.length) {
+      const nextIndex = cursor;
+      cursor += 1;
+      const request = queue[nextIndex];
+      if (!request) {
+        break;
+      }
+
+      const sample = await invoke(options.baseUrl, request, options.apiKey);
+      recordBenchmarkSample(accumulator, sample);
+    }
+  });
+
+  await Promise.all(workers);
+
+  const wallTimeMs = Date.now() - startedAt;
+  const providerDiagnosticsSummary = summarizeBenchmarkProviderDiagnostics(
+    accumulator.providerDiagnostics,
+  );
 
   const summary: BenchmarkSummary = {
     label: options.label,
     baseUrl: options.baseUrl,
     concurrency: options.concurrency,
-    requests: responses.length,
+    requests: accumulator.requests,
     responseCacheHitRate:
-      responses.length > 0 ? (responseCacheHits / responses.length) * 100 : undefined,
+      accumulator.requests > 0
+        ? (accumulator.responseCacheHits / accumulator.requests) * 100
+        : undefined,
     promptCacheHitRate:
-      responses.length > 0 ? (promptCacheHits / responses.length) * 100 : undefined,
-    promptCacheReuseRatio: mean(promptCacheRatios),
-    latencyP50Ms: quantile(latencyValues, 0.5),
-    latencyP95Ms: quantile(latencyValues, 0.95),
-    queueDelayP50Ms: quantile(queueValues, 0.5),
-    queueDelayP95Ms: quantile(queueValues, 0.95),
-    ttftP50Ms: quantile(ttftValues, 0.5),
-    ttftP95Ms: quantile(ttftValues, 0.95),
-    completionTokensPerSecondAvg: mean(throughputValues),
-    emailsPerHour: wallTimeMs > 0 ? (responses.length / wallTimeMs) * 3_600_000 : undefined,
+      accumulator.requests > 0
+        ? (accumulator.promptCacheHits / accumulator.requests) * 100
+        : undefined,
+    promptCacheReuseRatio: mean(accumulator.promptCacheRatios),
+    latencyP50Ms: quantile(accumulator.latencyValues, 0.5),
+    latencyP95Ms: quantile(accumulator.latencyValues, 0.95),
+    queueDelayP50Ms: quantile(accumulator.queueValues, 0.5),
+    queueDelayP95Ms: quantile(accumulator.queueValues, 0.95),
+    ttftP50Ms: quantile(accumulator.ttftValues, 0.5),
+    ttftP95Ms: quantile(accumulator.ttftValues, 0.95),
+    completionTokensPerSecondAvg: mean(accumulator.throughputValues),
+    emailsPerHour: wallTimeMs > 0 ? (accumulator.requests / wallTimeMs) * 3_600_000 : undefined,
     wallTimeMs,
-    clientLatencyP50Ms: quantile(
-      results.map((sample) => sample.wallTimeMs),
-      0.5,
-    ),
+    clientLatencyP50Ms: quantile(accumulator.clientLatencyValues, 0.5),
     qualityPassRate:
-      qualityResults.length > 0 ? (qualityPasses / qualityResults.length) * 100 : undefined,
-    qualityScoreAvg: mean(qualityScores),
-    qualityScoreP50: quantile(qualityScores, 0.5),
-    validJsonRate: jsonRequests > 0 ? (validJsonResponses / jsonRequests) * 100 : undefined,
-    promptEchoRejects,
-    qualityFailures: qualityResults.length - qualityPasses,
+      accumulator.requests > 0
+        ? (accumulator.qualityPasses / accumulator.requests) * 100
+        : undefined,
+    qualityScoreAvg: mean(accumulator.qualityScores),
+    qualityScoreP50: quantile(accumulator.qualityScores, 0.5),
+    validJsonRate:
+      accumulator.jsonRequests > 0
+        ? (accumulator.validJsonResponses / accumulator.jsonRequests) * 100
+        : undefined,
+    promptEchoRejects: accumulator.promptEchoRejects,
+    qualityFailures: accumulator.requests - accumulator.qualityPasses,
     ...(providerDiagnosticsSummary ? { providerDiagnostics: providerDiagnosticsSummary } : {}),
   };
   summary.score = scoreSummary(summary);

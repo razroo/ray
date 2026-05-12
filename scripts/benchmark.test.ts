@@ -377,6 +377,98 @@ test("runBenchmark accepts bounded gateway inference responses", async () => {
   );
 });
 
+test("runBenchmark streams summary metrics without retaining sample payloads", async () => {
+  await withTestServer(
+    (request, response) => {
+      let raw = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        raw += chunk;
+      });
+      request.on("end", () => {
+        const body = JSON.parse(raw) as {
+          input?: string;
+          responseFormat?: { type?: string };
+        };
+        const wantsJson = body.responseFormat?.type === "json_object";
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            id: wantsJson ? "inf_json" : "inf_echo",
+            output: wantsJson ? '{"ok":true}' : body.input,
+            cached: wantsJson,
+            deduplicated: false,
+            queueTimeMs: wantsJson ? 2 : 4,
+            latencyMs: wantsJson ? 10 : 30,
+            degraded: false,
+            usage: {
+              tokens: {
+                prompt: 10,
+                completion: 2,
+                total: 12,
+              },
+            },
+            diagnostics: {
+              provider: {
+                requestShape: "llama.cpp-completion",
+                promptFormat: "prompt-scaffold",
+                promptFormatReason: "benchmark",
+                slotRouteReason: "preferred",
+                modelRef: "local-test",
+                backendModel: "test.gguf",
+                launchPreset: "single-vps-sub1b",
+                tokensCached: wantsJson ? 5 : 0,
+                slotId: 1,
+                preferredSlot: 1,
+                totalSlots: 2,
+                contextWindow: wantsJson ? 2048 : 1024,
+                timings: {
+                  ttftMs: wantsJson ? 7 : 9,
+                  completionTokensPerSecond: wantsJson ? 12 : 6,
+                },
+              },
+            },
+          }),
+        );
+      });
+    },
+    async (baseUrl) => {
+      const summary = await runBenchmark({
+        baseUrl,
+        workload: [
+          {
+            input: "return a compact json object",
+            responseFormat: { type: "json_object" },
+          },
+          {
+            input: "please do not repeat this benchmark prompt exactly in the output",
+            benchmark: { noPromptEcho: true },
+          },
+        ],
+        concurrency: 2,
+        requests: 2,
+        label: "streamed-summary",
+      });
+
+      assert.equal(summary.requests, 2);
+      assert.equal(summary.responseCacheHitRate, 50);
+      assert.equal(summary.promptCacheHitRate, 50);
+      assert.equal(summary.promptCacheReuseRatio, 0.5);
+      assert.equal(summary.validJsonRate, 100);
+      assert.equal(summary.qualityFailures, 1);
+      assert.equal(summary.promptEchoRejects, 1);
+      assert.equal(summary.latencyP50Ms, 10);
+      assert.equal(summary.latencyP95Ms, 10);
+      assert.equal(summary.providerDiagnostics?.requestShapes["llama.cpp-completion"], 2);
+      assert.equal(summary.providerDiagnostics?.promptFormats["prompt-scaffold"], 2);
+      assert.equal(summary.providerDiagnostics?.slotReuseRate, 100);
+      assert.equal(summary.providerDiagnostics?.cachedTokensAvg, 2.5);
+      assert.equal(summary.providerDiagnostics?.contextWindowP50, 1024);
+      assert.equal(summary.providerDiagnostics?.totalSlots, 2);
+    },
+  );
+});
+
 test("runBenchmark rejects oversized gateway error responses", async () => {
   await withTestServer(
     (_request, response) => {
