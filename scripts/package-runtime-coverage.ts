@@ -1,4 +1,4 @@
-import { access, readdir, readFile } from "node:fs/promises";
+import { access, open, readdir } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -149,6 +149,36 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
+async function readTextFileBounded(
+  filePath: string,
+  maxBytes: number,
+  label: string,
+): Promise<string> {
+  let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
+
+  try {
+    fileHandle = await open(filePath, "r");
+    const stats = await fileHandle.stat();
+
+    if (!stats.isFile()) {
+      throw new Error(`${label} path must be a file: ${filePath}`);
+    }
+
+    if (stats.size > maxBytes) {
+      throw new Error(`${label} must be at most ${maxBytes} bytes`);
+    }
+
+    const contents = await fileHandle.readFile("utf8");
+    if (Buffer.byteLength(contents, "utf8") > maxBytes) {
+      throw new Error(`${label} must be at most ${maxBytes} bytes`);
+    }
+
+    return contents;
+  } finally {
+    await fileHandle?.close().catch(() => undefined);
+  }
+}
+
 async function collectPackageJsonPathsFromDirectory(
   currentDirectory: string,
   packageJsonPaths: string[],
@@ -225,11 +255,11 @@ async function collectDeploymentDocPaths(cwd: string): Promise<string[]> {
 }
 
 async function readPackageJson(packageJsonPath: string): Promise<Record<string, unknown>> {
-  const contents = await readFile(packageJsonPath, "utf8");
-  if (Buffer.byteLength(contents, "utf8") > MAX_PACKAGE_JSON_BYTES) {
-    throw new Error(`package.json must be at most ${MAX_PACKAGE_JSON_BYTES} bytes`);
-  }
-
+  const contents = await readTextFileBounded(
+    packageJsonPath,
+    MAX_PACKAGE_JSON_BYTES,
+    "package.json",
+  );
   const parsed = JSON.parse(contents) as unknown;
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new Error("package.json must contain an object");
@@ -686,11 +716,7 @@ function validateDeployWorkflowRootCommandGuards(
 async function validateWorkflow(
   workflowPath: string,
 ): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
-  const contents = await readFile(workflowPath, "utf8");
-  if (Buffer.byteLength(contents, "utf8") > MAX_WORKFLOW_BYTES) {
-    throw new Error(`GitHub workflow must be at most ${MAX_WORKFLOW_BYTES} bytes`);
-  }
-
+  const contents = await readTextFileBounded(workflowPath, MAX_WORKFLOW_BYTES, "GitHub workflow");
   const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
   const lines = contents.split(/\r?\n/);
   for (const [index, rawLine] of lines.entries()) {
@@ -813,11 +839,7 @@ function isVpsReadmeCommandRequiringTimeout(line: string): boolean {
 async function validateDeploymentDoc(
   docPath: string,
 ): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
-  const contents = await readFile(docPath, "utf8");
-  if (Buffer.byteLength(contents, "utf8") > MAX_DEPLOY_DOC_BYTES) {
-    throw new Error(`Deployment doc must be at most ${MAX_DEPLOY_DOC_BYTES} bytes`);
-  }
-
+  const contents = await readTextFileBounded(docPath, MAX_DEPLOY_DOC_BYTES, "Deployment doc");
   const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
   const lines = contents.split(/\r?\n/);
   let inShellBlock = false;

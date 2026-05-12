@@ -193,6 +193,52 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("non_bun_lockfile_present"));
 });
 
+test("validatePackageRuntimeCoverage rejects oversized runtime coverage inputs", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-size-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const workflowDir = path.join(tempDir, ".github", "workflows");
+  const vpsDocDir = path.join(tempDir, "examples", "deploy", "vps");
+  await mkdir(workflowDir, { recursive: true });
+  await mkdir(vpsDocDir, { recursive: true });
+
+  const rootPackageJson = path.join(tempDir, "package.json");
+  await writeFile(rootPackageJson, "x".repeat(512 * 1024 + 1));
+  await writeFile(path.join(workflowDir, "quality.yml"), "x".repeat(512 * 1024 + 1));
+  await writeFile(path.join(vpsDocDir, "README.md"), "x".repeat(512 * 1024 + 1));
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson],
+  });
+  const diagnostics = summary.results.flatMap((result) => result.diagnostics);
+
+  assert.equal(summary.ok, false);
+  assert.ok(
+    diagnostics.some(
+      (diagnostic) =>
+        diagnostic.code === "package_json_invalid" &&
+        /package\.json must be at most 524288 bytes/.test(diagnostic.message),
+    ),
+  );
+  assert.ok(
+    diagnostics.some(
+      (diagnostic) =>
+        diagnostic.code === "workflow_invalid" &&
+        /GitHub workflow must be at most 524288 bytes/.test(diagnostic.message),
+    ),
+  );
+  assert.ok(
+    diagnostics.some(
+      (diagnostic) =>
+        diagnostic.code === "deployment_doc_invalid" &&
+        /Deployment doc must be at most 524288 bytes/.test(diagnostic.message),
+    ),
+  );
+});
+
 test("formatTextSummary prints operator-readable runtime coverage results", async () => {
   const summary = await validatePackageRuntimeCoverage({
     cwd: repoRoot,
