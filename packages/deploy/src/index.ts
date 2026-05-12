@@ -1,4 +1,5 @@
-import { stat, statfs } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, stat, statfs } from "node:fs/promises";
 import { isIP } from "node:net";
 import { tmpdir, totalmem } from "node:os";
 import path from "node:path";
@@ -38,6 +39,7 @@ export interface DeploymentDiagnostic {
 
 type MemoryBudgetSource = "override" | "preset" | "host";
 type AsyncQueueStorageStatus = "directory" | "parent" | "not_directory" | "unreadable";
+type GatewayRuntimeBinaryStatus = "found" | "missing" | "unreadable";
 
 export interface DeploymentPreflight {
   hostMemoryMiB?: number;
@@ -52,6 +54,9 @@ export interface DeploymentPreflight {
   asyncQueueStorageStatus?: AsyncQueueStorageStatus;
   asyncQueueStorageAvailableMiB?: number;
   asyncQueueStorageError?: string;
+  gatewayRuntimeBinaryPath?: string;
+  gatewayRuntimeBinaryStatus?: GatewayRuntimeBinaryStatus;
+  gatewayRuntimeBinaryError?: string;
 }
 
 export interface LlamaCppMemoryEstimate {
@@ -1015,6 +1020,30 @@ export function diagnoseConfig(
     });
   }
 
+  if (strictFilesystem && preflight?.gatewayRuntimeBinaryStatus !== undefined) {
+    const runtimePath = preflight.gatewayRuntimeBinaryPath ?? "the configured gateway runtime";
+
+    if (preflight.gatewayRuntimeBinaryStatus === "missing") {
+      diagnostics.push({
+        level: "error",
+        code: "gateway_runtime_missing",
+        message: `The configured gateway runtime binary was not found at ${runtimePath}. Install Bun at that path or pass --gateway-runtime-binary with the absolute runtime used by ray-gateway.service.`,
+      });
+    } else if (preflight.gatewayRuntimeBinaryStatus === "unreadable") {
+      diagnostics.push({
+        level: "error",
+        code: "gateway_runtime_unreadable",
+        message: `The configured gateway runtime binary at ${runtimePath} could not be used${preflight.gatewayRuntimeBinaryError ? ` (${preflight.gatewayRuntimeBinaryError})` : ""}. Doctor cannot verify that ray-gateway.service will start.`,
+      });
+    } else {
+      diagnostics.push({
+        level: "info",
+        code: "gateway_runtime_ok",
+        message: `Gateway runtime binary is executable at ${runtimePath}.`,
+      });
+    }
+  }
+
   if (!config.rateLimit.enabled) {
     diagnostics.push({
       level: "warn",
@@ -1401,7 +1430,9 @@ export async function loadAndDiagnoseDeployment(options: {
   env?: NodeJS.ProcessEnv;
   envFile?: string;
   memoryBudgetMiB?: number;
+  runtimeBinary?: string;
   strictFilesystem?: boolean;
+  nodeBinary?: string;
 }): Promise<{
   config: RayConfig;
   configPath?: string;
@@ -1414,6 +1445,8 @@ export async function loadAndDiagnoseDeployment(options: {
   });
   const preflight = await collectDeploymentPreflight(loaded.config, {
     ...(options.memoryBudgetMiB !== undefined ? { memoryBudgetMiB: options.memoryBudgetMiB } : {}),
+    ...(options.runtimeBinary !== undefined ? { runtimeBinary: options.runtimeBinary } : {}),
+    ...(options.nodeBinary !== undefined ? { nodeBinary: options.nodeBinary } : {}),
     ...(options.strictFilesystem !== undefined
       ? { strictFilesystem: options.strictFilesystem }
       : {}),
@@ -1564,20 +1597,72 @@ async function collectAsyncQueueStoragePreflight(
   }
 }
 
+async function collectGatewayRuntimePreflight(
+  runtimeBinary: string | undefined,
+): Promise<Partial<DeploymentPreflight>> {
+  if (runtimeBinary === undefined) {
+    return {};
+  }
+
+  if (!path.isAbsolute(runtimeBinary)) {
+    return {
+      gatewayRuntimeBinaryPath: runtimeBinary,
+      gatewayRuntimeBinaryStatus: "unreadable",
+      gatewayRuntimeBinaryError: "runtime binary path must be absolute",
+    };
+  }
+
+  try {
+    const runtimeStat = await stat(runtimeBinary);
+
+    if (!runtimeStat.isFile()) {
+      return {
+        gatewayRuntimeBinaryPath: runtimeBinary,
+        gatewayRuntimeBinaryStatus: "unreadable",
+        gatewayRuntimeBinaryError: "not a regular file",
+      };
+    }
+
+    await access(runtimeBinary, constants.X_OK);
+
+    return {
+      gatewayRuntimeBinaryPath: runtimeBinary,
+      gatewayRuntimeBinaryStatus: "found",
+    };
+  } catch (error) {
+    const code =
+      error !== null && typeof error === "object" && "code" in error
+        ? (error as { code?: string }).code
+        : undefined;
+
+    return {
+      gatewayRuntimeBinaryPath: runtimeBinary,
+      gatewayRuntimeBinaryStatus: code === "ENOENT" ? "missing" : "unreadable",
+      gatewayRuntimeBinaryError: toErrorMessage(error),
+    };
+  }
+}
+
 async function collectDeploymentPreflight(
   config: RayConfig,
   options: {
     memoryBudgetMiB?: number;
+    runtimeBinary?: string;
     strictFilesystem?: boolean;
+    nodeBinary?: string;
   },
 ): Promise<DeploymentPreflight> {
   const hostMemoryMiB = Math.max(1, Math.floor(totalmem() / BYTES_PER_MIB));
   const storagePreflight = await collectAsyncQueueStoragePreflight(config);
+  const runtimePreflight = await collectGatewayRuntimePreflight(
+    options.runtimeBinary ?? options.nodeBinary,
+  );
 
   if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
     return {
       hostMemoryMiB,
       ...storagePreflight,
+      ...runtimePreflight,
     };
   }
 
@@ -1592,6 +1677,7 @@ async function collectDeploymentPreflight(
   const preflight: DeploymentPreflight = {
     hostMemoryMiB,
     ...storagePreflight,
+    ...runtimePreflight,
     memoryBudgetMiB: budget.memoryBudgetMiB,
     memoryBudgetSource: budget.memoryBudgetSource,
     modelFilePath: launchProfile.modelPath,

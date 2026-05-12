@@ -246,6 +246,8 @@ RAY_LOG_LEVEL=info
 The workflow runs `ray deploy doctor` on the VPS before restarting services, so
 missing API keys, missing GGUF files, memory-fit errors, and exhausted async
 queue storage reserves fail before systemd tries to start the generated units.
+It also verifies the configured gateway runtime binary, which defaults to
+`/usr/local/bin/bun`.
 
 When `RAY_DEPLOY_INSTALL_CADDY=true`, the workflow installs Caddy if needed,
 validates the rendered Caddyfile before installing it to `/etc/caddy/Caddyfile`,

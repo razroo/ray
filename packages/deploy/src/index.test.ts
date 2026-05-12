@@ -1,4 +1,4 @@
-import { mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -1226,6 +1226,56 @@ test("loadAndDiagnoseDeployment errors when the configured model file is missing
   const diagnostic = inspected.diagnostics.find((entry) => entry.code === "model_file_missing");
   assert.ok(diagnostic);
   assert.match(diagnostic.message, /was not found/);
+});
+
+test("loadAndDiagnoseDeployment errors when the configured gateway runtime is missing in strict mode", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-runtime-missing-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    runtimeBinary: join(tempDir, "missing-bun"),
+    strictFilesystem: true,
+  });
+
+  const diagnostic = inspected.diagnostics.find(
+    (entry) => entry.code === "gateway_runtime_missing",
+  );
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+});
+
+test("loadAndDiagnoseDeployment reports an executable gateway runtime in strict mode", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-runtime-ok-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const runtimePath = join(tempDir, "bun");
+  await writeFile(runtimePath, "#!/bin/sh\n");
+  await chmod(runtimePath, 0o755);
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    runtimeBinary: runtimePath,
+    strictFilesystem: true,
+  });
+
+  const diagnostic = inspected.diagnostics.find((entry) => entry.code === "gateway_runtime_ok");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
 });
 
 test("loadAndDiagnoseDeployment reports async queue storage headroom from the nearest existing parent", async (t) => {
