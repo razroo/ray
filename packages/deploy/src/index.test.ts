@@ -1370,6 +1370,48 @@ test("diagnoseConfig errors when the configured gateway runtime is hidden by Pro
   assert.match(diagnostic.message, /\/usr\/local\/bin\/bun/);
 });
 
+test("diagnoseConfig errors when the configured Bun runtime is too old", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      gatewayRuntimeBinaryPath: "/usr/local/bin/bun",
+      gatewayRuntimeBinaryStatus: "found",
+      gatewayRuntimeKind: "bun",
+      gatewayRuntimeVersion: "1.2.9",
+      gatewayRuntimeVersionStatus: "too_old",
+    },
+  });
+
+  const diagnostic = diagnostics.find(
+    (entry) => entry.code === "gateway_runtime_version_unsupported",
+  );
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /Bun/);
+  assert.match(diagnostic.message, /1\.2\.9/);
+  assert.match(diagnostic.message, />= 1\.3\.0/);
+});
+
+test("diagnoseConfig reports a compatible configured Bun runtime", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      gatewayRuntimeBinaryPath: "/usr/local/bin/bun",
+      gatewayRuntimeBinaryStatus: "found",
+      gatewayRuntimeKind: "bun",
+      gatewayRuntimeVersion: "1.3.9",
+      gatewayRuntimeVersionStatus: "ok",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "gateway_runtime_version_ok");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+  assert.match(diagnostic.message, /Bun version 1\.3\.9/);
+});
+
 test("diagnoseConfig errors when the generated service user cannot access llama.cpp paths", () => {
   const config = createDefaultConfig("1b");
   const diagnostics = diagnoseConfig(config, process.env, undefined, {
@@ -1767,7 +1809,7 @@ test("loadAndDiagnoseDeployment reports an executable gateway runtime in strict 
   });
 
   const runtimePath = join(tempDir, "bun");
-  await writeFile(runtimePath, "#!/bin/sh\n");
+  await writeFile(runtimePath, "#!/bin/sh\necho 1.3.9\n");
   await chmod(runtimePath, 0o755);
 
   const config = createDefaultConfig("tiny");
@@ -1786,6 +1828,42 @@ test("loadAndDiagnoseDeployment reports an executable gateway runtime in strict 
   assert.ok(diagnostic);
   assert.equal(diagnostic.level, "info");
   assert.match(diagnostic.message, /by "root"/);
+
+  const versionDiagnostic = inspected.diagnostics.find(
+    (entry) => entry.code === "gateway_runtime_version_ok",
+  );
+  assert.ok(versionDiagnostic);
+  assert.equal(versionDiagnostic.level, "info");
+  assert.match(versionDiagnostic.message, /Bun version 1\.3\.9/);
+});
+
+test("loadAndDiagnoseDeployment errors when the configured Bun runtime is too old in strict mode", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-runtime-old-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const runtimePath = join(tempDir, "bun");
+  await writeFile(runtimePath, "#!/bin/sh\necho 1.2.9\n");
+  await chmod(runtimePath, 0o755);
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    runtimeBinary: runtimePath,
+    strictFilesystem: true,
+  });
+
+  const diagnostic = inspected.diagnostics.find(
+    (entry) => entry.code === "gateway_runtime_version_unsupported",
+  );
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /1\.2\.9/);
 });
 
 test("loadAndDiagnoseDeployment reports async queue storage headroom from the nearest existing parent", async (t) => {

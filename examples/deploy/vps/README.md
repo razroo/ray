@@ -246,11 +246,12 @@ RAY_API_KEYS=replace-with-comma-separated-client-keys
 RAY_LOG_LEVEL=info
 ```
 
-The workflow runs `ray deploy doctor` on the VPS before restarting services, so
-missing API keys, missing GGUF files, memory-fit errors, and exhausted async
-queue storage reserves fail before systemd tries to start the generated units.
-It also verifies the configured gateway runtime binary, which defaults to
-`/usr/local/bin/bun`.
+The workflow refreshes `/usr/local/bin/bun` when it is missing or older than the
+repo's supported Bun runtime, then runs `ray deploy doctor` on the VPS before
+restarting services. Missing API keys, missing GGUF files, memory-fit errors,
+exhausted async queue storage reserves, and unsupported gateway runtimes fail
+before systemd tries to start the generated units. The configured gateway
+runtime binary defaults to `/usr/local/bin/bun`.
 
 When `RAY_DEPLOY_INSTALL_CADDY=true`, the workflow installs Caddy if needed,
 validates the rendered Caddyfile before installing it to `/etc/caddy/Caddyfile`,
@@ -271,7 +272,7 @@ Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 - Enable `auth.enabled` before exposing Ray publicly; it also protects detailed `/health`, `/metrics`, and `/v1/config` responses.
 - Keep `/etc/ray/ray.env` private, for example with `sudo chmod 600 /etc/ray/ray.env`; doctor warns when the env file is group/world-readable.
 - Create the generated service user before manual render/restart steps; doctor verifies the configured `--user` exists before systemd uses it.
-- Install Bun at `/usr/local/bin/bun` or pass the same `--gateway-runtime-binary` used at render time; doctor verifies the generated service user can execute the rendered gateway runtime before systemd uses it.
+- Install Bun 1.3+ at `/usr/local/bin/bun` or pass the same `--gateway-runtime-binary` used at render time; doctor verifies the generated service user can execute the rendered gateway runtime and, for identifiable Bun/Node binaries, that its version satisfies Ray's engine requirements before systemd uses it.
 - Keep `/etc/ray/ray.json` readable by the generated service user, for example with `root:ray` ownership and mode `0640`; doctor verifies this before systemd uses it.
 - Keep the Ray checkout at the generated `WorkingDirectory` such as `/srv/ray`, not under `/home`, `/root`, or `/run/user`; doctor verifies the directory exists, is not hidden by `ProtectHome=true`, and has read/execute mode bits for the generated service user before systemd uses it.
 - Run `bun run build` before rendering or restarting services; doctor verifies the built gateway entrypoint exists under the generated `WorkingDirectory` and is readable by the generated service user.

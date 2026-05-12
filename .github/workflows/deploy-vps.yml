@@ -281,18 +281,80 @@ jobs:
             fi
           }
 
-          if [ ! -x /usr/local/bin/bun ]; then
-            if command -v bun >/dev/null 2>&1; then
-              $SUDO install -m 0755 "$(command -v bun)" /usr/local/bin/bun
-            else
-              curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.9"
-              if [ ! -x "$HOME/.bun/bin/bun" ]; then
-                echo "Bun install completed but $HOME/.bun/bin/bun was not found."
-                exit 1
-              fi
-              $SUDO install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
+          bun_version_at_least() {
+            local current="$1"
+            local minimum="$2"
+            if ! printf '%s\n' "$current" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+              return 1
             fi
-          fi
+
+            local current_major="${current%%.*}"
+            local current_rest="${current#*.}"
+            local current_minor="${current_rest%%.*}"
+            local current_patch="${current_rest#*.}"
+            local minimum_major="${minimum%%.*}"
+            local minimum_rest="${minimum#*.}"
+            local minimum_minor="${minimum_rest%%.*}"
+            local minimum_patch="${minimum_rest#*.}"
+
+            if [ "$((10#$current_major))" -ne "$((10#$minimum_major))" ]; then
+              [ "$((10#$current_major))" -gt "$((10#$minimum_major))" ]
+              return
+            fi
+            if [ "$((10#$current_minor))" -ne "$((10#$minimum_minor))" ]; then
+              [ "$((10#$current_minor))" -gt "$((10#$minimum_minor))" ]
+              return
+            fi
+            [ "$((10#$current_patch))" -ge "$((10#$minimum_patch))" ]
+          }
+
+          bun_runtime_version() {
+            local binary="$1"
+            if [ -x "$binary" ]; then
+              "$binary" --version 2>/dev/null | head -n 1 || true
+            fi
+          }
+
+          ensure_bun_runtime() {
+            local minimum_bun_version="1.3.0"
+            local install_bun_version="1.3.9"
+            local current_version
+            current_version="$(bun_runtime_version /usr/local/bin/bun)"
+            if bun_version_at_least "$current_version" "$minimum_bun_version"; then
+              return
+            fi
+
+            if [ -n "$current_version" ]; then
+              echo "Updating /usr/local/bin/bun from $current_version to Bun ${install_bun_version}+."
+            else
+              echo "Installing Bun ${install_bun_version}+ at /usr/local/bin/bun."
+            fi
+
+            local candidate=""
+            candidate="$(command -v bun 2>/dev/null || true)"
+            if [ -n "$candidate" ] && [ "$candidate" != "/usr/local/bin/bun" ]; then
+              local candidate_version
+              candidate_version="$(bun_runtime_version "$candidate")"
+              if bun_version_at_least "$candidate_version" "$minimum_bun_version"; then
+                $SUDO install -m 0755 "$candidate" /usr/local/bin/bun
+                return
+              fi
+            fi
+
+            curl -fsSL https://bun.sh/install | bash -s "bun-v${install_bun_version}"
+            if [ ! -x "$HOME/.bun/bin/bun" ]; then
+              echo "Bun install completed but $HOME/.bun/bin/bun was not found."
+              exit 1
+            fi
+            current_version="$(bun_runtime_version "$HOME/.bun/bin/bun")"
+            if ! bun_version_at_least "$current_version" "$minimum_bun_version"; then
+              echo "Bun install produced unsupported version: ${current_version:-unknown}."
+              exit 1
+            fi
+            $SUDO install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
+          }
+
+          ensure_bun_runtime
 
           cd /srv/ray
           /usr/local/bin/bun install --production --frozen-lockfile --ignore-scripts

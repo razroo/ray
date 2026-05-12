@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { constants, type Stats } from "node:fs";
 import { access, readFile, stat, statfs } from "node:fs/promises";
 import { isIP } from "node:net";
@@ -40,7 +41,9 @@ export interface DeploymentDiagnostic {
 type MemoryBudgetSource = "override" | "preset" | "host";
 type AsyncQueueStorageStatus = "directory" | "parent" | "not_directory" | "unreadable";
 type BinaryPreflightStatus = "found" | "missing" | "unreadable";
+type GatewayRuntimeKind = "bun" | "node";
 type GatewayRuntimeBinaryStatus = BinaryPreflightStatus;
+type GatewayRuntimeVersionStatus = "ok" | "too_old" | "unreadable";
 type LlamaCppBinaryStatus = BinaryPreflightStatus;
 type GatewayEntrypointStatus = BinaryPreflightStatus;
 type ConfigFileStatus = BinaryPreflightStatus;
@@ -72,6 +75,10 @@ export interface DeploymentPreflight {
   gatewayRuntimeBinaryError?: string;
   gatewayRuntimeBinaryAccessStatus?: ServiceUserAccessStatus;
   gatewayRuntimeBinaryAccessError?: string;
+  gatewayRuntimeKind?: GatewayRuntimeKind;
+  gatewayRuntimeVersion?: string;
+  gatewayRuntimeVersionStatus?: GatewayRuntimeVersionStatus;
+  gatewayRuntimeVersionError?: string;
   gatewayEntrypointPath?: string;
   gatewayEntrypointStatus?: GatewayEntrypointStatus;
   gatewayEntrypointError?: string;
@@ -138,6 +145,10 @@ const TIGHT_MEMORY_RATIO = 0.9;
 const LLAMA_CPP_SYSTEMD_SERVICE = "ray-llama-cpp.service";
 const GATEWAY_ENTRYPOINT_RELATIVE_PATH = "apps/gateway/dist/index.js";
 const DEFAULT_GATEWAY_RUNTIME_BINARY = "/usr/local/bin/bun";
+const MIN_GATEWAY_BUN_VERSION = "1.3.0";
+const MIN_GATEWAY_NODE_VERSION = "20.11.0";
+const GATEWAY_RUNTIME_VERSION_TIMEOUT_MS = 3_000;
+const GATEWAY_RUNTIME_VERSION_MAX_BUFFER_BYTES = 16 * 1024;
 const MAX_SYSTEMD_DEPENDENCY_UNITS = 32;
 const MAX_SYSTEMD_DEPENDENCY_UNIT_CHARS = 256;
 const MAX_LLAMA_CPP_EXTRA_ARGS = 64;
@@ -158,6 +169,13 @@ interface ServiceUserIdentity {
   uid: number;
   gid: number;
   groupIds: number[];
+}
+
+type SemverTuple = readonly [number, number, number];
+
+interface ParsedRuntimeVersion {
+  raw: string;
+  tuple: SemverTuple;
 }
 
 const llamaCppLaunchPresets = new Set<LlamaCppLaunchProfile["preset"]>([
@@ -626,6 +644,82 @@ function parseNonNegativeInteger(value: string): number | undefined {
 
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function parseRuntimeVersion(value: string): ParsedRuntimeVersion | undefined {
+  const match = /(?:^|[^\d])((\d+)\.(\d+)\.(\d+))(?:[^\d]|$)/.exec(value.trim());
+  if (!match) {
+    return undefined;
+  }
+
+  const raw = match[1];
+  const majorValue = match[2];
+  const minorValue = match[3];
+  const patchValue = match[4];
+  if (
+    raw === undefined ||
+    majorValue === undefined ||
+    minorValue === undefined ||
+    patchValue === undefined
+  ) {
+    return undefined;
+  }
+
+  const major = Number(majorValue);
+  const minor = Number(minorValue);
+  const patch = Number(patchValue);
+  if (![major, minor, patch].every((part) => Number.isSafeInteger(part) && part >= 0)) {
+    return undefined;
+  }
+
+  return {
+    raw,
+    tuple: [major, minor, patch],
+  };
+}
+
+function compareRuntimeVersions(left: SemverTuple, right: SemverTuple): number {
+  for (let index = 0; index < left.length; index += 1) {
+    const leftPart = left[index] ?? 0;
+    const rightPart = right[index] ?? 0;
+    if (leftPart !== rightPart) {
+      return leftPart - rightPart;
+    }
+  }
+
+  return 0;
+}
+
+function identifyGatewayRuntimeKind(runtimeBinary: string): GatewayRuntimeKind | undefined {
+  const baseName = path.basename(runtimeBinary).toLowerCase();
+  if (baseName === "bun" || baseName === "bun.exe") {
+    return "bun";
+  }
+
+  if (baseName === "node" || baseName === "node.exe") {
+    return "node";
+  }
+
+  return undefined;
+}
+
+function formatGatewayRuntimeKind(kind: GatewayRuntimeKind): string {
+  return kind === "bun" ? "Bun" : "Node.js";
+}
+
+function minimumGatewayRuntimeVersion(kind: GatewayRuntimeKind): ParsedRuntimeVersion {
+  const minimum = kind === "bun" ? MIN_GATEWAY_BUN_VERSION : MIN_GATEWAY_NODE_VERSION;
+  const parsed = parseRuntimeVersion(minimum);
+  if (!parsed) {
+    throw new Error(`Invalid built-in gateway runtime minimum version: ${minimum}`);
+  }
+
+  return parsed;
+}
+
+function truncateRuntimeVersionOutput(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > 256 ? `${normalized.slice(0, 256)}...` : normalized;
 }
 
 function resolvePasswdUser(passwd: string, user: string): ServiceUserIdentity | undefined {
@@ -1447,6 +1541,43 @@ export function diagnoseConfig(
         message: `The generated systemd service user "${preflight.serviceUser ?? "the configured service user"}" cannot execute the configured gateway runtime binary at ${runtimePath}${preflight.gatewayRuntimeBinaryAccessError ? ` (${preflight.gatewayRuntimeBinaryAccessError})` : ""}. Install Bun in a service-readable path such as ${DEFAULT_GATEWAY_RUNTIME_BINARY} or adjust ownership and mode bits before restarting ray-gateway.service.`,
       });
     } else {
+      if (preflight.gatewayRuntimeKind && preflight.gatewayRuntimeVersionStatus === "too_old") {
+        const runtimeKind = formatGatewayRuntimeKind(preflight.gatewayRuntimeKind);
+        const minimum = minimumGatewayRuntimeVersion(preflight.gatewayRuntimeKind).raw;
+        diagnostics.push({
+          level: "error",
+          code: "gateway_runtime_version_unsupported",
+          message: `Gateway runtime ${runtimeKind} at ${runtimePath} reports version ${
+            preflight.gatewayRuntimeVersion ?? "unknown"
+          }, but Ray requires ${runtimeKind} >= ${minimum}. Install a compatible runtime before restarting ray-gateway.service.`,
+        });
+      } else if (
+        preflight.gatewayRuntimeKind &&
+        preflight.gatewayRuntimeVersionStatus === "unreadable"
+      ) {
+        const runtimeKind = formatGatewayRuntimeKind(preflight.gatewayRuntimeKind);
+        const minimum = minimumGatewayRuntimeVersion(preflight.gatewayRuntimeKind).raw;
+        diagnostics.push({
+          level: "error",
+          code: "gateway_runtime_version_unreadable",
+          message: `Doctor could not verify the ${runtimeKind} version from ${runtimePath}${
+            preflight.gatewayRuntimeVersionError ? ` (${preflight.gatewayRuntimeVersionError})` : ""
+          }. Ray requires ${runtimeKind} >= ${minimum} for the generated gateway service.`,
+        });
+      } else if (
+        preflight.gatewayRuntimeKind &&
+        preflight.gatewayRuntimeVersionStatus === "ok" &&
+        preflight.gatewayRuntimeVersion
+      ) {
+        const runtimeKind = formatGatewayRuntimeKind(preflight.gatewayRuntimeKind);
+        const minimum = minimumGatewayRuntimeVersion(preflight.gatewayRuntimeKind).raw;
+        diagnostics.push({
+          level: "info",
+          code: "gateway_runtime_version_ok",
+          message: `Gateway runtime ${runtimeKind} version ${preflight.gatewayRuntimeVersion} satisfies >= ${minimum} at ${runtimePath}.`,
+        });
+      }
+
       diagnostics.push({
         level: "info",
         code: "gateway_runtime_ok",
@@ -2315,6 +2446,7 @@ async function collectWorkingDirectoryPreflight(
 async function collectGatewayRuntimePreflight(
   runtimeBinary: string | undefined,
   serviceUserIdentity: ServiceUserIdentity | undefined,
+  strictFilesystem: boolean,
 ): Promise<Partial<DeploymentPreflight>> {
   if (runtimeBinary === undefined) {
     return {};
@@ -2329,6 +2461,7 @@ async function collectGatewayRuntimePreflight(
   }
 
   try {
+    const runtimeKind = identifyGatewayRuntimeKind(runtimeBinary);
     const runtimeStat = await stat(runtimeBinary);
 
     if (!runtimeStat.isFile()) {
@@ -2343,10 +2476,17 @@ async function collectGatewayRuntimePreflight(
     const serviceUserAccess = serviceUserIdentity
       ? await verifyServiceUserPathAccess(runtimeBinary, serviceUserIdentity, 0o1, "execute")
       : undefined;
+    const versionPreflight =
+      strictFilesystem && runtimeKind
+        ? await collectGatewayRuntimeVersionPreflight(runtimeBinary, runtimeKind)
+        : runtimeKind
+          ? { gatewayRuntimeKind: runtimeKind }
+          : {};
 
     return {
       gatewayRuntimeBinaryPath: runtimeBinary,
       gatewayRuntimeBinaryStatus: "found",
+      ...versionPreflight,
       ...(serviceUserAccess
         ? {
             gatewayRuntimeBinaryAccessStatus: serviceUserAccess.status,
@@ -2368,6 +2508,60 @@ async function collectGatewayRuntimePreflight(
       gatewayRuntimeBinaryError: toErrorMessage(error),
     };
   }
+}
+
+async function collectGatewayRuntimeVersionPreflight(
+  runtimeBinary: string,
+  runtimeKind: GatewayRuntimeKind,
+): Promise<Partial<DeploymentPreflight>> {
+  return await new Promise<Partial<DeploymentPreflight>>((resolve) => {
+    execFile(
+      runtimeBinary,
+      ["--version"],
+      {
+        timeout: GATEWAY_RUNTIME_VERSION_TIMEOUT_MS,
+        maxBuffer: GATEWAY_RUNTIME_VERSION_MAX_BUFFER_BYTES,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        const output = `${stdout}\n${stderr}`.trim();
+        const basePreflight = {
+          gatewayRuntimeKind: runtimeKind,
+        };
+
+        if (error) {
+          resolve({
+            ...basePreflight,
+            gatewayRuntimeVersionStatus: "unreadable",
+            gatewayRuntimeVersionError: output
+              ? `${toErrorMessage(error)}; output: ${truncateRuntimeVersionOutput(output)}`
+              : toErrorMessage(error),
+          });
+          return;
+        }
+
+        const parsed = parseRuntimeVersion(output);
+        if (!parsed) {
+          resolve({
+            ...basePreflight,
+            gatewayRuntimeVersionStatus: "unreadable",
+            gatewayRuntimeVersionError: output
+              ? `could not parse version output: ${truncateRuntimeVersionOutput(output)}`
+              : "runtime produced no version output",
+          });
+          return;
+        }
+
+        const minimum = minimumGatewayRuntimeVersion(runtimeKind);
+        resolve({
+          ...basePreflight,
+          gatewayRuntimeVersion: parsed.raw,
+          gatewayRuntimeVersionStatus:
+            compareRuntimeVersions(parsed.tuple, minimum.tuple) < 0 ? "too_old" : "ok",
+        });
+      },
+    );
+  });
 }
 
 async function collectGatewayEntrypointPreflight(
@@ -2606,7 +2800,11 @@ async function collectDeploymentPreflight(
     options.runtimeBinary ??
     options.nodeBinary ??
     (options.strictFilesystem === true ? DEFAULT_GATEWAY_RUNTIME_BINARY : undefined);
-  const runtimePreflight = await collectGatewayRuntimePreflight(runtimeBinary, serviceUserIdentity);
+  const runtimePreflight = await collectGatewayRuntimePreflight(
+    runtimeBinary,
+    serviceUserIdentity,
+    options.strictFilesystem === true,
+  );
   const swapPreflight = await collectSwapPreflight();
 
   if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
