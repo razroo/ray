@@ -257,6 +257,30 @@ jobs:
             SUDO="sudo"
           fi
 
+          dump_service_debug() {
+            unit="$1"
+            echo "::group::${unit} diagnostics"
+            $SUDO systemctl --no-pager --full status "$unit" || true
+            $SUDO systemctl --no-pager show "$unit" \
+              -p ActiveState \
+              -p SubState \
+              -p Result \
+              -p ExecMainCode \
+              -p ExecMainStatus \
+              -p NRestarts \
+              -p MemoryCurrent \
+              -p CPUUsageNSec || true
+            $SUDO journalctl --no-pager --output=short-iso -n 120 -u "$unit" || true
+            echo "::endgroup::"
+          }
+
+          dump_ray_debug() {
+            dump_service_debug ray-gateway.service
+            if [ -f /etc/systemd/system/ray-llama-cpp.service ]; then
+              dump_service_debug ray-llama-cpp.service
+            fi
+          }
+
           if [ ! -x /usr/local/bin/bun ]; then
             if command -v bun >/dev/null 2>&1; then
               $SUDO install -m 0755 "$(command -v bun)" /usr/local/bin/bun
@@ -332,11 +356,27 @@ jobs:
           $SUDO chown -R ray:ray /var/lib/ray
           $SUDO systemctl daemon-reload
           if [ -f /etc/systemd/system/ray-llama-cpp.service ]; then
-            $SUDO systemctl enable --now ray-llama-cpp.service
-            $SUDO systemctl restart ray-llama-cpp.service
+            if ! $SUDO systemctl enable ray-llama-cpp.service; then
+              echo "Failed to enable ray-llama-cpp.service."
+              dump_service_debug ray-llama-cpp.service
+              exit 1
+            fi
+            if ! $SUDO systemctl restart ray-llama-cpp.service; then
+              echo "Failed to restart ray-llama-cpp.service."
+              dump_service_debug ray-llama-cpp.service
+              exit 1
+            fi
           fi
-          $SUDO systemctl enable --now ray-gateway.service
-          $SUDO systemctl restart ray-gateway.service
+          if ! $SUDO systemctl enable ray-gateway.service; then
+            echo "Failed to enable ray-gateway.service."
+            dump_service_debug ray-gateway.service
+            exit 1
+          fi
+          if ! $SUDO systemctl restart ray-gateway.service; then
+            echo "Failed to restart ray-gateway.service."
+            dump_ray_debug
+            exit 1
+          fi
 
           live_deadline=$((SECONDS + 30))
           live_status=1
@@ -350,7 +390,7 @@ jobs:
 
           if [ "$live_status" -ne 0 ]; then
             echo "Ray gateway did not expose /livez within 30s."
-            $SUDO systemctl --no-pager --full status ray-gateway.service || true
+            dump_ray_debug
             exit 1
           fi
 
@@ -366,15 +406,26 @@ jobs:
 
           if [ "$ready_status" -ne 0 ]; then
             echo "Ray gateway did not become backend-ready within ${READY_TIMEOUT_SECONDS}s."
-            $SUDO systemctl --no-pager --full status ray-gateway.service || true
-            if [ -f /etc/systemd/system/ray-llama-cpp.service ]; then
-              $SUDO systemctl --no-pager --full status ray-llama-cpp.service || true
-            fi
+            echo "::group::Ray health snapshots"
+            curl -sS --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/livez" || true
+            echo
+            curl -sS --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/readyz" || true
+            echo
+            echo "::endgroup::"
+            dump_ray_debug
             exit 1
           fi
 
           if [ "${INSTALL_CADDY:-false}" = "true" ]; then
-            $SUDO systemctl enable --now caddy
-            $SUDO systemctl reload caddy
+            if ! $SUDO systemctl enable --now caddy; then
+              echo "Failed to enable or start caddy.service."
+              dump_service_debug caddy.service
+              exit 1
+            fi
+            if ! $SUDO systemctl reload caddy; then
+              echo "Failed to reload caddy.service."
+              dump_service_debug caddy.service
+              exit 1
+            fi
           fi
           ENDSSH
