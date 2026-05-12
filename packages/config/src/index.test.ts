@@ -438,6 +438,28 @@ test("loadRayConfig rejects malformed environment overrides", async () => {
       cwd: process.cwd(),
       configPath: "./examples/config/ray.1b.json",
       env: {
+        RAY_AUTH_API_KEY_ENV: "RAY-API-KEYS",
+      },
+    }),
+    /auth\.apiKeyEnv must be a valid environment variable name/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_MODEL_API_KEY_ENV: "RAY UPSTREAM KEY",
+      },
+    }),
+    /model\.adapter\.apiKeyEnv must be a valid environment variable name/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
         RAY_RATE_LIMIT_KEY_STRATEGY: "bearer",
       },
     }),

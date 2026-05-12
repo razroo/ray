@@ -94,6 +94,8 @@ const MAX_AUTH_API_KEY_ENV_CHARS = 64 * 1024;
 const MAX_AUTH_API_KEYS = 128;
 const MAX_AUTH_API_KEY_CHARS = 1_024;
 const DNS_HOST_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const unsafeEnvironmentVariableNames = new Set(["__proto__", "constructor", "prototype"]);
 
 export interface LoadRayConfigOptions {
   configPath?: string;
@@ -1353,6 +1355,33 @@ function assertOptionalStringLength(value: unknown, label: string, maxChars: num
   assertStringLength(value, label, maxChars);
 }
 
+function assertEnvironmentVariableName(value: unknown, label: string): void {
+  assertNonEmptyStringLength(value, label, MAX_CONFIG_ENV_NAME_CHARS);
+
+  if (
+    typeof value !== "string" ||
+    !ENVIRONMENT_VARIABLE_NAME_PATTERN.test(value) ||
+    unsafeEnvironmentVariableNames.has(value)
+  ) {
+    throw new RayError(`${label} must be a valid environment variable name`, {
+      code: "config_validation_error",
+      status: 500,
+      details: {
+        value,
+        pattern: ENVIRONMENT_VARIABLE_NAME_PATTERN.source,
+      },
+    });
+  }
+}
+
+function assertOptionalEnvironmentVariableName(value: unknown, label: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  assertEnvironmentVariableName(value, label);
+}
+
 function assertBoolean(value: boolean, label: string): void {
   if (typeof value !== "boolean") {
     throw new RayError(`${label} must be a boolean`, {
@@ -2032,9 +2061,9 @@ function validateConfig(config: RayConfig): RayConfig {
   );
 
   if (config.auth.enabled) {
-    assertNonEmptyStringLength(config.auth.apiKeyEnv, "auth.apiKeyEnv", MAX_CONFIG_ENV_NAME_CHARS);
+    assertEnvironmentVariableName(config.auth.apiKeyEnv, "auth.apiKeyEnv");
   } else {
-    assertOptionalStringLength(config.auth.apiKeyEnv, "auth.apiKeyEnv", MAX_CONFIG_ENV_NAME_CHARS);
+    assertOptionalEnvironmentVariableName(config.auth.apiKeyEnv, "auth.apiKeyEnv");
   }
 
   if (config.model.adapter.kind === "openai-compatible") {
@@ -2048,10 +2077,9 @@ function validateConfig(config: RayConfig): RayConfig {
       "model.adapter.modelRef",
       MAX_CONFIG_IDENTIFIER_CHARS,
     );
-    assertOptionalStringLength(
+    assertOptionalEnvironmentVariableName(
       config.model.adapter.apiKeyEnv,
       "model.adapter.apiKeyEnv",
-      MAX_CONFIG_ENV_NAME_CHARS,
     );
 
     assertHttpBaseUrl(config.model.adapter.baseUrl, "model.adapter.baseUrl");
@@ -2095,10 +2123,9 @@ function validateConfig(config: RayConfig): RayConfig {
       "model.adapter.modelRef",
       MAX_CONFIG_IDENTIFIER_CHARS,
     );
-    assertOptionalStringLength(
+    assertOptionalEnvironmentVariableName(
       config.model.adapter.apiKeyEnv,
       "model.adapter.apiKeyEnv",
-      MAX_CONFIG_ENV_NAME_CHARS,
     );
 
     assertHttpBaseUrl(config.model.adapter.baseUrl, "model.adapter.baseUrl");
