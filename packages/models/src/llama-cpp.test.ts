@@ -339,6 +339,87 @@ test("llama.cpp provider uses native completion diagnostics and exact tokenizati
   assert.ok(seenPaths.includes("/completion"));
 });
 
+test("llama.cpp provider ignores malformed native completion metadata", async (t) => {
+  const server = createServer((request, response) => {
+    if (request.url === "/completion") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          content: "ok",
+          tokens_cached: -3,
+          tokens_evaluated: -4,
+          truncated: "yes",
+          generation_settings: {
+            id_slot: -1,
+            n_ctx: -2048,
+          },
+          timings: {
+            prompt_n: -4,
+            prompt_ms: -30,
+            prompt_per_second: -50,
+            predicted_n: -5,
+            predicted_ms: -60,
+            predicted_per_second: -100,
+            total_ms: -90,
+          },
+        }),
+      );
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const model = createModel(`http://127.0.0.1:${address.port}`, 500);
+  const provider = new LlamaCppProvider(model, model.adapter as LlamaCppProviderConfig);
+  const context = createContext(model, new AbortController().signal);
+  const request = {
+    input: "Hello",
+    maxTokens: 32,
+    temperature: 0.2,
+    topP: 0.95,
+    cache: true,
+    metadata: {},
+  };
+  const preparation = {
+    request,
+    promptTokens: 4,
+    providerState: {
+      prompt: "Hello",
+    },
+  } satisfies ProviderRequestPreparation;
+  const result = await provider.infer(request, {
+    ...context,
+    preparation,
+  });
+
+  assert.equal(result.output, "ok");
+  assert.deepEqual(result.usage?.tokens, {
+    prompt: 4,
+    completion: 0,
+    total: 4,
+  });
+  assert.equal(result.diagnostics?.slotId, undefined);
+  assert.equal(result.diagnostics?.tokensCached, undefined);
+  assert.equal(result.diagnostics?.tokensEvaluated, undefined);
+  assert.equal(result.diagnostics?.truncated, undefined);
+  assert.equal(result.diagnostics?.contextWindow, model.contextWindow);
+  assert.equal(result.diagnostics?.timings?.promptMs, undefined);
+  assert.equal(result.diagnostics?.timings?.completionMs, undefined);
+  assert.equal(result.diagnostics?.timings?.totalMs, 0);
+  assert.equal(result.diagnostics?.timings?.promptTokensPerSecond, undefined);
+  assert.equal(result.diagnostics?.timings?.completionTokensPerSecond, undefined);
+});
+
 test("llama.cpp provider caps oversized health response bodies", async (t) => {
   const server = createServer((request, response) => {
     if (request.url === "/health?include_slots=1") {

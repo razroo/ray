@@ -213,6 +213,22 @@ function resolvePromptFormatOverride(
   return undefined;
 }
 
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function firstNonNegativeFiniteNumber(...values: unknown[]): number | undefined {
+  return values.find(isNonNegativeFiniteNumber);
+}
+
+function firstNonNegativeSafeInteger(...values: unknown[]): number | undefined {
+  return values.find(isNonNegativeSafeInteger);
+}
+
 function mergeUsage(
   left: ChatCompletionInferenceResult["usage"],
   right: ChatCompletionInferenceResult["usage"],
@@ -241,58 +257,44 @@ function buildCompletionTimings(
     return undefined;
   }
 
-  const promptMs = timings.prompt_ms;
-  const completionMs = timings.predicted_ms;
-  const completionTokens = timings.predicted_n;
-  const promptTokens = timings.prompt_n;
+  const promptMs = firstNonNegativeFiniteNumber(timings.prompt_ms);
+  const completionMs = firstNonNegativeFiniteNumber(timings.predicted_ms);
+  const completionTokens = firstNonNegativeSafeInteger(timings.predicted_n);
+  const promptTokens = firstNonNegativeSafeInteger(timings.prompt_n);
+  const totalMs =
+    firstNonNegativeFiniteNumber(timings.total_ms) ?? (promptMs ?? 0) + (completionMs ?? 0);
   const promptTokensPerSecond =
-    timings.prompt_per_second ??
-    (typeof promptMs === "number" &&
-    promptMs > 0 &&
-    typeof promptTokens === "number" &&
-    promptTokens > 0
+    firstNonNegativeFiniteNumber(timings.prompt_per_second) ??
+    (promptMs !== undefined && promptMs > 0 && promptTokens !== undefined && promptTokens > 0
       ? (promptTokens / promptMs) * 1_000
       : undefined);
   const completionTokensPerSecond =
-    timings.predicted_per_second ??
-    (typeof completionMs === "number" &&
+    firstNonNegativeFiniteNumber(timings.predicted_per_second) ??
+    (completionMs !== undefined &&
     completionMs > 0 &&
-    typeof completionTokens === "number" &&
+    completionTokens !== undefined &&
     completionTokens > 0
       ? (completionTokens / completionMs) * 1_000
       : undefined);
 
   return {
     timings: {
-      ...(typeof promptMs === "number" ? { promptMs } : {}),
-      ...(typeof completionMs === "number" ? { completionMs } : {}),
-      totalMs:
-        timings.total_ms ??
-        (typeof promptMs === "number" ? promptMs : 0) +
-          (typeof completionMs === "number" ? completionMs : 0),
-      ...(typeof promptMs === "number"
+      ...(promptMs !== undefined ? { promptMs } : {}),
+      ...(completionMs !== undefined ? { completionMs } : {}),
+      totalMs,
+      ...(promptMs !== undefined
         ? {
             ttftMs:
               promptMs +
-              (typeof completionMs === "number" &&
-              typeof completionTokens === "number" &&
-              completionTokens > 0
+              (completionMs !== undefined && completionTokens !== undefined && completionTokens > 0
                 ? completionMs / completionTokens
                 : 0),
           }
         : {}),
-      ...(typeof promptTokensPerSecond === "number" ? { promptTokensPerSecond } : {}),
-      ...(typeof completionTokensPerSecond === "number" ? { completionTokensPerSecond } : {}),
+      ...(promptTokensPerSecond !== undefined ? { promptTokensPerSecond } : {}),
+      ...(completionTokensPerSecond !== undefined ? { completionTokensPerSecond } : {}),
     },
   };
-}
-
-function isNonNegativeSafeInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-}
-
-function firstNonNegativeSafeInteger(...values: unknown[]): number | undefined {
-  return values.find(isNonNegativeSafeInteger);
 }
 
 function parseSlotSnapshots(payload: unknown): SchedulerSlotSnapshot[] {
@@ -947,13 +949,24 @@ export class LlamaCppProvider implements ModelProvider {
     }
 
     const promptTokens =
-      preparation.promptTokens ?? payload.timings?.prompt_n ?? payload.tokens_evaluated ?? 0;
-    const completionTokens = payload.timings?.predicted_n ?? 0;
+      preparation.promptTokens ??
+      firstNonNegativeSafeInteger(payload.timings?.prompt_n, payload.tokens_evaluated) ??
+      0;
+    const completionTokens = firstNonNegativeSafeInteger(payload.timings?.predicted_n) ?? 0;
     const timingDiagnostics = buildCompletionTimings(payload.timings);
-    const tokensEvaluated = payload.tokens_evaluated ?? payload.timings?.prompt_n;
-    const slotId = payload.generation_settings?.id_slot ?? preparation.preferredSlot;
+    const tokensEvaluated = firstNonNegativeSafeInteger(
+      payload.tokens_evaluated,
+      payload.timings?.prompt_n,
+    );
+    const slotId = firstNonNegativeSafeInteger(
+      payload.generation_settings?.id_slot,
+      preparation.preferredSlot,
+    );
+    const tokensCached = firstNonNegativeSafeInteger(payload.tokens_cached);
+    const contextWindow =
+      firstNonNegativeSafeInteger(payload.generation_settings?.n_ctx) ?? this.model.contextWindow;
 
-    if (typeof slotId === "number" && context.affinityKey) {
+    if (slotId !== undefined && context.affinityKey) {
       this.rememberFamilyPreferredSlot(context.affinityKey, slotId);
     }
 
@@ -990,13 +1003,13 @@ export class LlamaCppProvider implements ModelProvider {
         ...(preparation.preferredSlot !== undefined
           ? { preferredSlot: preparation.preferredSlot }
           : {}),
-        ...(payload.tokens_cached !== undefined ? { tokensCached: payload.tokens_cached } : {}),
-        ...(typeof tokensEvaluated === "number" ? { tokensEvaluated } : {}),
-        ...(payload.truncated !== undefined ? { truncated: payload.truncated } : {}),
+        ...(tokensCached !== undefined ? { tokensCached } : {}),
+        ...(tokensEvaluated !== undefined ? { tokensEvaluated } : {}),
+        ...(typeof payload.truncated === "boolean" ? { truncated: payload.truncated } : {}),
         ...(preparation.diagnostics?.slotRouteReason
           ? { slotRouteReason: preparation.diagnostics.slotRouteReason }
           : {}),
-        contextWindow: payload.generation_settings?.n_ctx ?? this.model.contextWindow,
+        contextWindow,
         ...timingDiagnostics,
       },
       raw: payload,
