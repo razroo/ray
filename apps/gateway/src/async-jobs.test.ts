@@ -162,6 +162,8 @@ test("durable inference queue snapshots config at construction", async () => {
     );
 
     assert.equal(queue.snapshot().maxJobs, 1);
+    assert.equal(queue.snapshot().jobsRatio, 1);
+    assert.equal(queue.snapshot().degraded, true);
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }
@@ -207,6 +209,8 @@ test("durable inference queue rejects new jobs when storage reserve is exhausted
     assert.equal(snapshot.minFreeStorageMiB, 128);
     assert.equal(snapshot.availableStorageMiB, 127);
     assert.equal(snapshot.storageReserveRatio, 0.9922);
+    assert.equal(snapshot.storageLow, true);
+    assert.equal(snapshot.degraded, true);
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }

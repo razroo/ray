@@ -1046,13 +1046,19 @@ export class DurableInferenceQueue {
       }
     }
 
+    const jobsRatio = Number(
+      (this.jobs.size / Math.max(1, this.options.config.maxJobs)).toFixed(4),
+    );
+
     return {
       enabled: true,
+      degraded: jobsRatio >= 1,
       queued: this.queuedJobIds.length,
       running,
       callbackPending,
       totalJobs: this.jobs.size,
       maxJobs: this.options.config.maxJobs,
+      jobsRatio,
       minFreeStorageMiB: this.options.config.minFreeStorageMiB,
       completedTtlMs: this.options.config.completedTtlMs,
       dispatchConcurrency: this.options.config.dispatchConcurrency,
@@ -1068,6 +1074,8 @@ export class DurableInferenceQueue {
       snapshot.storageReserveRatio = Number(
         (availableStorageMiB / Math.max(1, snapshot.minFreeStorageMiB)).toFixed(4),
       );
+      snapshot.storageLow = availableStorageMiB < snapshot.minFreeStorageMiB;
+      snapshot.degraded = snapshot.degraded || snapshot.storageLow;
     }
 
     return snapshot;

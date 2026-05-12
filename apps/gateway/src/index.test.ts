@@ -553,6 +553,7 @@ test("gateway metrics endpoint exposes async queue saturation", async (t) => {
   const body = (await response.json()) as RuntimeMetricsSnapshot;
 
   assert.equal(body.gauges["async_queue.enabled"], 1);
+  assert.equal(body.gauges["async_queue.degraded"], 0);
   assert.equal(body.gauges["async_queue.queued"], 0);
   assert.equal(body.gauges["async_queue.running"], 0);
   assert.equal(body.gauges["async_queue.callback_pending"], 0);
@@ -562,14 +563,63 @@ test("gateway metrics endpoint exposes async queue saturation", async (t) => {
   assert.equal(body.gauges["async_queue.available_storage_mib"], 256);
   assert.equal(body.gauges["async_queue.min_free_storage_mib"], 64);
   assert.equal(body.gauges["async_queue.storage_reserve_ratio"], 4);
+  assert.equal(body.gauges["async_queue.storage_low"], 0);
   assert.equal(body.gauges["async_queue.completed_ttl_ms"], config.asyncQueue.completedTtlMs);
   assert.equal(body.gauges["async_queue.dispatch_concurrency"], 2);
 
   const healthResponse = await fetch(`http://127.0.0.1:${address.port}/health`);
   assert.equal(healthResponse.status, 200);
   const health = (await healthResponse.json()) as HealthSnapshot;
+  assert.equal(health.status, "ok");
+  assert.equal(health.asyncQueue?.degraded, false);
   assert.equal(health.asyncQueue?.availableStorageMiB, 256);
   assert.equal(health.asyncQueue?.storageReserveRatio, 4);
+  assert.equal(health.asyncQueue?.storageLow, false);
+});
+
+test("gateway detailed health degrades when async queue storage is low", async (t) => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-gateway-health-queue-storage-"));
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir,
+      minFreeStorageMiB: 128,
+    },
+  });
+  const runtime = createRayRuntime(config);
+  const logger = new Logger("test", "error");
+  const jobQueue = new DurableInferenceQueue({
+    config: config.asyncQueue,
+    runtime,
+    logger,
+    statfsImpl: async () => ({
+      bavail: 64,
+      bsize: 1024 * 1024,
+    }),
+  });
+  const gateway = createGatewayServer({ config, runtime, jobQueue, logger });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    await closeServer(gateway.server);
+    await rm(storageDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/health`);
+  assert.equal(response.status, 200);
+  const health = (await response.json()) as HealthSnapshot;
+
+  assert.equal(health.status, "degraded");
+  assert.equal(health.asyncQueue?.degraded, true);
+  assert.equal(health.asyncQueue?.availableStorageMiB, 64);
+  assert.equal(health.asyncQueue?.minFreeStorageMiB, 128);
+  assert.equal(health.asyncQueue?.storageReserveRatio, 0.5);
+  assert.equal(health.asyncQueue?.storageLow, true);
 });
 
 test("gateway returns service unavailable when detailed health is unavailable", async (t) => {

@@ -301,14 +301,17 @@ export interface InferenceJobAcceptedResponse {
 
 export interface AsyncQueueSnapshot {
   enabled: boolean;
+  degraded: boolean;
   queued: number;
   running: number;
   callbackPending: number;
   totalJobs: number;
   maxJobs: number;
+  jobsRatio: number;
   availableStorageMiB?: number;
   minFreeStorageMiB: number;
   storageReserveRatio?: number;
+  storageLow?: boolean;
   completedTtlMs: number;
   dispatchConcurrency: number;
 }
