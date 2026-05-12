@@ -37,6 +37,7 @@ const MAX_SCHEDULER_QUEUED_TOKENS = 262_144;
 const MAX_SCHEDULER_INFLIGHT_TOKENS = 65_536;
 const MAX_ASYNC_DISPATCH_CONCURRENCY = 8;
 const MAX_ASYNC_QUEUE_JOBS = 2_000;
+const MAX_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB = 1_048_576;
 const MAX_CACHE_ENTRIES = 4_096;
 const MAX_RATE_LIMIT_KEYS = 16_384;
 const MAX_CONFIG_RECORD_ENTRIES = 64;
@@ -313,6 +314,10 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
     env.RAY_ASYNC_QUEUE_MAX_JOBS,
     "RAY_ASYNC_QUEUE_MAX_JOBS",
   );
+  const asyncQueueMinFreeStorageMiB = parsePositiveInteger(
+    env.RAY_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB,
+    "RAY_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB",
+  );
   const asyncQueueCompletedTtlMs = parsePositiveInteger(
     env.RAY_ASYNC_QUEUE_COMPLETED_TTL_MS,
     "RAY_ASYNC_QUEUE_COMPLETED_TTL_MS",
@@ -539,6 +544,10 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
 
   if (asyncQueueMaxJobs !== undefined) {
     next.asyncQueue.maxJobs = asyncQueueMaxJobs;
+  }
+
+  if (asyncQueueMinFreeStorageMiB !== undefined) {
+    next.asyncQueue.minFreeStorageMiB = asyncQueueMinFreeStorageMiB;
   }
 
   if (asyncQueueCompletedTtlMs !== undefined) {
@@ -1205,6 +1214,11 @@ function validateConfig(config: RayConfig): RayConfig {
     config.asyncQueue.maxJobs,
     "asyncQueue.maxJobs",
     MAX_ASYNC_QUEUE_JOBS,
+  );
+  assertPositiveIntegerAtMost(
+    config.asyncQueue.minFreeStorageMiB,
+    "asyncQueue.minFreeStorageMiB",
+    MAX_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB,
   );
   assertPositiveIntegerAtMost(
     config.asyncQueue.completedTtlMs,

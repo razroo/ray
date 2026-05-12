@@ -1552,6 +1552,7 @@ export class LlamaCppProvider implements ModelProvider {
           enabled: false,
           storageDir: "",
           maxJobs: 1,
+          minFreeStorageMiB: 1,
           completedTtlMs: 1,
           pollIntervalMs: 1,
           dispatchConcurrency: 1,

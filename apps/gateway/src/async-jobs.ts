@@ -48,11 +48,20 @@ const MAX_ASYNC_POLL_INTERVAL_MS = 60_000;
 const MAX_CALLBACK_TIMEOUT_MS = 30_000;
 const MAX_CALLBACK_ALLOWED_HOSTS = 64;
 const MAX_CALLBACK_ALLOWED_HOST_CHARS = 253;
+const MAX_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB = 1_048_576;
+const BYTES_PER_MIB = 1024 * 1024;
 
 export type CallbackAddressLookup = (
   hostname: string,
   options: { all: true; verbatim: true },
 ) => Promise<Array<{ address: string }>>;
+
+export interface StorageStats {
+  bavail: number | bigint;
+  bsize: number | bigint;
+}
+
+export type StorageStatsReader = (filePath: string) => Promise<StorageStats>;
 
 export interface CreateDurableInferenceQueueOptions {
   config: AsyncQueueConfig;
@@ -60,6 +69,7 @@ export interface CreateDurableInferenceQueueOptions {
   logger: Logger;
   fetchImpl?: typeof fetch;
   lookupImpl?: CallbackAddressLookup;
+  statfsImpl?: StorageStatsReader;
 }
 
 export interface StopDurableInferenceQueueOptions {
@@ -252,6 +262,11 @@ function snapshotAsyncQueueConfig(config: AsyncQueueConfig): AsyncQueueConfig {
 
   assertPositiveSafeIntegerAtMost(config.maxJobs, "asyncQueue.maxJobs", MAX_ASYNC_QUEUE_JOBS);
   assertPositiveSafeIntegerAtMost(
+    config.minFreeStorageMiB,
+    "asyncQueue.minFreeStorageMiB",
+    MAX_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB,
+  );
+  assertPositiveSafeIntegerAtMost(
     config.completedTtlMs,
     "asyncQueue.completedTtlMs",
     MAX_ASYNC_COMPLETED_TTL_MS,
@@ -292,6 +307,7 @@ function snapshotAsyncQueueConfig(config: AsyncQueueConfig): AsyncQueueConfig {
     enabled: config.enabled,
     storageDir: config.storageDir,
     maxJobs: config.maxJobs,
+    minFreeStorageMiB: config.minFreeStorageMiB,
     completedTtlMs: config.completedTtlMs,
     pollIntervalMs: config.pollIntervalMs,
     dispatchConcurrency: config.dispatchConcurrency,
@@ -837,6 +853,22 @@ function stringifyPersistedJob(job: InferenceJobRecord): string {
   return body;
 }
 
+function statValueToNumber(value: number | bigint): number | undefined {
+  const numberValue = typeof value === "bigint" ? Number(value) : value;
+  return Number.isFinite(numberValue) && numberValue >= 0 ? numberValue : undefined;
+}
+
+function resolveAvailableStorageMiB(stats: StorageStats): number | undefined {
+  const availableBlocks = statValueToNumber(stats.bavail);
+  const blockSize = statValueToNumber(stats.bsize);
+
+  if (availableBlocks === undefined || blockSize === undefined) {
+    return undefined;
+  }
+
+  return Math.floor((availableBlocks * blockSize) / BYTES_PER_MIB);
+}
+
 async function writeJsonAtomic(filePath: string, body: string): Promise<void> {
   const directory = path.dirname(filePath);
   const tempPath = path.join(
@@ -881,6 +913,7 @@ export class DurableInferenceQueue {
   private readonly activeTasks = new Set<Promise<void>>();
   private readonly fetchImpl: typeof fetch;
   private readonly lookupImpl: CallbackAddressLookup;
+  private readonly statfsImpl: StorageStatsReader;
   private readonly jobsDir: string;
   private readonly options: CreateDurableInferenceQueueOptions;
   private readyPromise: Promise<void> | undefined;
@@ -896,6 +929,7 @@ export class DurableInferenceQueue {
     };
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.lookupImpl = options.lookupImpl ?? (lookup as CallbackAddressLookup);
+    this.statfsImpl = options.statfsImpl ?? fs.statfs;
     this.jobsDir = path.join(this.options.config.storageDir, "jobs");
   }
 
@@ -948,6 +982,7 @@ export class DurableInferenceQueue {
       callbackPending,
       totalJobs: this.jobs.size,
       maxJobs: this.options.config.maxJobs,
+      minFreeStorageMiB: this.options.config.minFreeStorageMiB,
       completedTtlMs: this.options.config.completedTtlMs,
       dispatchConcurrency: this.options.config.dispatchConcurrency,
     };
@@ -957,6 +992,7 @@ export class DurableInferenceQueue {
     await this.ensureReady();
     normalizeInferenceRequest(this.options.runtime.config, cloneRequest(request));
     await this.pruneCompletedJobs();
+    await this.ensureStorageReserve();
 
     this.reserveJobAdmission();
 
@@ -1065,6 +1101,41 @@ export class DurableInferenceQueue {
   private async ensureReady(): Promise<void> {
     this.readyPromise ??= fs.mkdir(this.jobsDir, { recursive: true }).then(() => undefined);
     await this.readyPromise;
+  }
+
+  private async ensureStorageReserve(): Promise<void> {
+    let stats: StorageStats;
+
+    try {
+      stats = await this.statfsImpl(this.options.config.storageDir);
+    } catch (error) {
+      this.options.logger.warn("failed to inspect async queue storage capacity", {
+        storageDir: this.options.config.storageDir,
+        error: toErrorMessage(error),
+      });
+      return;
+    }
+
+    const availableMiB = resolveAvailableStorageMiB(stats);
+
+    if (availableMiB === undefined) {
+      this.options.logger.warn("failed to resolve async queue free storage", {
+        storageDir: this.options.config.storageDir,
+      });
+      return;
+    }
+
+    if (availableMiB < this.options.config.minFreeStorageMiB) {
+      throw new RayError("The async job store has insufficient free disk space", {
+        code: "async_queue_storage_low",
+        status: 503,
+        details: {
+          storageDir: this.options.config.storageDir,
+          availableMiB,
+          minFreeStorageMiB: this.options.config.minFreeStorageMiB,
+        },
+      });
+    }
   }
 
   private reserveJobAdmission(): void {

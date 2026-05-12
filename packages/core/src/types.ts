@@ -138,6 +138,7 @@ export interface AsyncQueueConfig {
   enabled: boolean;
   storageDir: string;
   maxJobs: number;
+  minFreeStorageMiB: number;
   completedTtlMs: number;
   pollIntervalMs: number;
   dispatchConcurrency: number;
@@ -304,6 +305,7 @@ export interface AsyncQueueSnapshot {
   callbackPending: number;
   totalJobs: number;
   maxJobs: number;
+  minFreeStorageMiB: number;
   completedTtlMs: number;
   dispatchConcurrency: number;
 }

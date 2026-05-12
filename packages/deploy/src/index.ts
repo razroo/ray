@@ -910,6 +910,7 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
     lines.push("# Optional async durable queue overrides:");
     lines.push(`# RAY_ASYNC_QUEUE_STORAGE_DIR=${config.asyncQueue.storageDir}`);
     lines.push(`# RAY_ASYNC_QUEUE_MAX_JOBS=${config.asyncQueue.maxJobs}`);
+    lines.push(`# RAY_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB=${config.asyncQueue.minFreeStorageMiB}`);
     lines.push(`# RAY_ASYNC_QUEUE_COMPLETED_TTL_MS=${config.asyncQueue.completedTtlMs}`);
   }
 

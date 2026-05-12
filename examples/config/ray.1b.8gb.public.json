@@ -4,6 +4,7 @@
     "enabled": true,
     "storageDir": "/var/lib/ray/async-queue",
     "maxJobs": 1000,
+    "minFreeStorageMiB": 512,
     "completedTtlMs": 86400000
   },
   "auth": {

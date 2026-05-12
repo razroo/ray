@@ -414,6 +414,7 @@ test("renderEnvironmentFileExample documents async queue retention overrides", (
       enabled: true,
       storageDir: "/var/lib/ray/async-queue",
       maxJobs: 500,
+      minFreeStorageMiB: 192,
       completedTtlMs: 3_600_000,
     },
   });
@@ -421,6 +422,7 @@ test("renderEnvironmentFileExample documents async queue retention overrides", (
 
   assert.match(envFile, /RAY_ASYNC_QUEUE_STORAGE_DIR=\/var\/lib\/ray\/async-queue/);
   assert.match(envFile, /RAY_ASYNC_QUEUE_MAX_JOBS=500/);
+  assert.match(envFile, /RAY_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB=192/);
   assert.match(envFile, /RAY_ASYNC_QUEUE_COMPLETED_TTL_MS=3600000/);
 });
 

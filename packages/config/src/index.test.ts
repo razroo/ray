@@ -133,6 +133,7 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
       RAY_SCHEDULER_MAX_INFLIGHT_TOKENS: "2048",
       RAY_ASYNC_QUEUE_STORAGE_DIR: ".ray/test-async-queue",
       RAY_ASYNC_QUEUE_MAX_JOBS: "250",
+      RAY_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB: "192",
       RAY_ASYNC_QUEUE_COMPLETED_TTL_MS: "3600000",
       RAY_CACHE_MAX_ENTRIES: "128",
       RAY_DEGRADATION_MAX_PROMPT_CHARS: "4200",
@@ -163,6 +164,7 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
   assert.equal(loaded.config.scheduler.maxInflightTokens, 2048);
   assert.equal(loaded.config.asyncQueue.storageDir, join(process.cwd(), ".ray/test-async-queue"));
   assert.equal(loaded.config.asyncQueue.maxJobs, 250);
+  assert.equal(loaded.config.asyncQueue.minFreeStorageMiB, 192);
   assert.equal(loaded.config.asyncQueue.completedTtlMs, 3_600_000);
   assert.equal(loaded.config.cache.maxEntries, 128);
   assert.equal(loaded.config.gracefulDegradation.maxPromptChars, 4200);
@@ -321,7 +323,7 @@ test("loadRayConfig rejects invalid async queue storage caps", async (t) => {
     JSON.stringify({
       profile: "tiny",
       asyncQueue: {
-        maxJobs: 0,
+        minFreeStorageMiB: 0,
       },
     }),
   );
@@ -332,7 +334,7 @@ test("loadRayConfig rejects invalid async queue storage caps", async (t) => {
       configPath,
       env: {},
     }),
-    /asyncQueue.maxJobs must be a positive integer/,
+    /asyncQueue.minFreeStorageMiB must be a positive integer/,
   );
 });
 

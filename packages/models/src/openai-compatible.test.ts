@@ -62,6 +62,7 @@ function createContext(signal: AbortSignal): ProviderContext {
         enabled: false,
         storageDir: "/tmp/ray-test-async-queue",
         maxJobs: 1_000,
+        minFreeStorageMiB: 128,
         completedTtlMs: 86_400_000,
         pollIntervalMs: 50,
         dispatchConcurrency: 1,

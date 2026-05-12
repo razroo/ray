@@ -189,7 +189,7 @@ curl -s http://127.0.0.1:3000/v1/jobs \
   -d '{"input":"Draft a follow-up email body.","callbackUrl":"https://example.com/ray-callback"}'
 ```
 
-The durable queue caps retained job records with `asyncQueue.maxJobs` and prunes completed jobs after `asyncQueue.completedTtlMs`, while pending callbacks remain protected until delivery succeeds or callback attempts are exhausted.
+The durable queue caps retained job records with `asyncQueue.maxJobs`, rejects new jobs when free queue storage falls below `asyncQueue.minFreeStorageMiB`, and prunes completed jobs after `asyncQueue.completedTtlMs`, while pending callbacks remain protected until delivery succeeds or callback attempts are exhausted.
 
 ### Build
 
@@ -235,6 +235,7 @@ RAY_SCHEDULER_CONCURRENCY=1
 RAY_SCHEDULER_MAX_INFLIGHT_TOKENS=2560
 RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB=512
 RAY_ASYNC_QUEUE_MAX_JOBS=1000
+RAY_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB=256
 RAY_ASYNC_QUEUE_COMPLETED_TTL_MS=86400000
 ```
 

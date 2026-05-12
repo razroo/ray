@@ -65,6 +65,18 @@ test("durable inference queue rejects invalid direct config", () => {
       new DurableInferenceQueue({
         config: {
           ...config,
+          minFreeStorageMiB: 0,
+        },
+        runtime,
+        logger,
+      }),
+    /asyncQueue\.minFreeStorageMiB/,
+  );
+  assert.throws(
+    () =>
+      new DurableInferenceQueue({
+        config: {
+          ...config,
           callbackAllowPrivateNetwork: "true" as unknown as boolean,
         },
         runtime,
@@ -110,6 +122,48 @@ test("durable inference queue snapshots config at construction", async () => {
     );
 
     assert.equal(queue.snapshot().maxJobs, 1);
+  } finally {
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});
+
+test("durable inference queue rejects new jobs when storage reserve is exhausted", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-storage-"));
+
+  try {
+    const config = mergeConfig(createDefaultConfig("tiny"), {
+      asyncQueue: {
+        enabled: true,
+        storageDir,
+        minFreeStorageMiB: 128,
+      },
+    });
+    const runtime = createRayRuntime(config);
+    const logger = new Logger("test", "error");
+    const queue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+      statfsImpl: async () => ({
+        bavail: 127,
+        bsize: 1024 * 1024,
+      }),
+    });
+
+    await assert.rejects(
+      () =>
+        queue.enqueue({
+          input: "should be rejected before disk is exhausted",
+        }),
+      (error: unknown) =>
+        error instanceof RayError &&
+        error.code === "async_queue_storage_low" &&
+        error.status === 503 &&
+        (error.details as { availableMiB?: number }).availableMiB === 127 &&
+        (error.details as { minFreeStorageMiB?: number }).minFreeStorageMiB === 128,
+    );
+    assert.equal(queue.snapshot().totalJobs, 0);
+    assert.equal(queue.snapshot().minFreeStorageMiB, 128);
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }
