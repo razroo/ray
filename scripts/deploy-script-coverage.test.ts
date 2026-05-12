@@ -61,6 +61,7 @@ test("validateDeployScriptCoverage accepts every checked-in public deploy profil
       (result) =>
         result.configPath.endsWith("ray.hetzner-cx23-qwen0.6b.public.json") &&
         result.renderScript === "render:service:hetzner-email-ai" &&
+        result.validateScript === "validate:config:hetzner:public" &&
         result.doctorScript === "doctor:hetzner-email-ai" &&
         result.modelStageScript === "model:stage:hetzner-email-ai",
     ),
@@ -73,6 +74,8 @@ test("validateDeployScriptCoverage catches missing and mistargeted package alias
   const configPaths = await collectPublicConfigPaths(cwd, "examples/config");
   const scripts = await loadPackageScripts();
   delete scripts["doctor:1b:generic"];
+  scripts["validate:config:1b:8gb:generic:public"] =
+    "bun ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.1b.public.json";
   scripts["model:stage:hetzner-email-ai"] =
     "bun ./scripts/model-stage.ts --config ./examples/config/ray.sub1b.public.json";
 

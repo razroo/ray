@@ -9,11 +9,12 @@ const MAX_CLI_ARGS = 12;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_PACKAGE_JSON_BYTES = 512 * 1024;
 
-type ScriptKind = "render" | "doctor" | "modelStage";
+type ScriptKind = "render" | "validate" | "doctor" | "modelStage";
 
 interface ProfileScriptSpec {
   configFile: string;
   render: string;
+  validate: string;
   doctor: string;
   modelStage: string;
   memoryMiB?: number;
@@ -37,6 +38,7 @@ export interface DeployScriptCoverageDiagnostic {
 export interface DeployScriptCoverageResult {
   configPath: string;
   renderScript?: string;
+  validateScript?: string;
   doctorScript?: string;
   modelStageScript?: string;
   diagnostics: DeployScriptCoverageDiagnostic[];
@@ -54,6 +56,7 @@ const PUBLIC_PROFILE_SCRIPT_MATRIX: ProfileScriptSpec[] = [
   {
     configFile: "ray.sub1b.public.json",
     render: "render:service",
+    validate: "validate:config:public",
     doctor: "doctor",
     modelStage: "model:stage",
     modelStageUsesDefaultConfig: true,
@@ -61,12 +64,14 @@ const PUBLIC_PROFILE_SCRIPT_MATRIX: ProfileScriptSpec[] = [
   {
     configFile: "ray.sub1b.cax11.public.json",
     render: "render:service:cax11",
+    validate: "validate:config:cax11:public",
     doctor: "doctor:cax11",
     modelStage: "model:stage:cax11",
   },
   {
     configFile: "ray.hetzner-cx23-qwen0.6b.public.json",
     render: "render:service:hetzner-email-ai",
+    validate: "validate:config:hetzner:public",
     doctor: "doctor:hetzner-email-ai",
     modelStage: "model:stage:hetzner-email-ai",
     memoryMiB: 4_096,
@@ -74,6 +79,7 @@ const PUBLIC_PROFILE_SCRIPT_MATRIX: ProfileScriptSpec[] = [
   {
     configFile: "ray.1b.public.json",
     render: "render:service:1b",
+    validate: "validate:config:1b:public",
     doctor: "doctor:1b",
     modelStage: "model:stage:1b",
     memoryMiB: 4_096,
@@ -81,6 +87,7 @@ const PUBLIC_PROFILE_SCRIPT_MATRIX: ProfileScriptSpec[] = [
   {
     configFile: "ray.1b.generic.public.json",
     render: "render:service:1b:generic",
+    validate: "validate:config:1b:generic:public",
     doctor: "doctor:1b:generic",
     modelStage: "model:stage:1b:generic",
     memoryMiB: 4_096,
@@ -88,6 +95,7 @@ const PUBLIC_PROFILE_SCRIPT_MATRIX: ProfileScriptSpec[] = [
   {
     configFile: "ray.1b.8gb.public.json",
     render: "render:service:1b:8gb",
+    validate: "validate:config:1b:8gb:public",
     doctor: "doctor:1b:8gb",
     modelStage: "model:stage:1b:8gb",
     memoryMiB: 8_192,
@@ -95,6 +103,7 @@ const PUBLIC_PROFILE_SCRIPT_MATRIX: ProfileScriptSpec[] = [
   {
     configFile: "ray.1b.8gb.generic.public.json",
     render: "render:service:1b:8gb:generic",
+    validate: "validate:config:1b:8gb:generic:public",
     doctor: "doctor:1b:8gb:generic",
     modelStage: "model:stage:1b:8gb:generic",
     memoryMiB: 8_192,
@@ -236,6 +245,8 @@ function scriptCommandPrefix(kind: ScriptKind): string {
   switch (kind) {
     case "render":
       return "bun ./packages/deploy/dist/cli.js render";
+    case "validate":
+      return "bun ./packages/deploy/dist/cli.js validate";
     case "doctor":
       return "bun ./packages/deploy/dist/cli.js doctor";
     case "modelStage":
@@ -247,6 +258,8 @@ function expectedScriptName(spec: ProfileScriptSpec, kind: ScriptKind): string {
   switch (kind) {
     case "render":
       return spec.render;
+    case "validate":
+      return spec.validate;
     case "doctor":
       return spec.doctor;
     case "modelStage":
@@ -355,12 +368,14 @@ export function validateDeployScriptCoverage(options: {
     }
 
     diagnostics.push(...validateProfileScript(options.scripts, spec, "render"));
+    diagnostics.push(...validateProfileScript(options.scripts, spec, "validate"));
     diagnostics.push(...validateProfileScript(options.scripts, spec, "doctor"));
     diagnostics.push(...validateProfileScript(options.scripts, spec, "modelStage"));
 
     results.push({
       configPath: configPath ?? path.join(options.cwd, DEFAULT_CONFIG_DIR, spec.configFile),
       renderScript: spec.render,
+      validateScript: spec.validate,
       doctorScript: spec.doctor,
       modelStageScript: spec.modelStage,
       diagnostics,
@@ -408,8 +423,8 @@ export function formatTextSummary(cwd: string, summary: DeployScriptCoverageSumm
   for (const result of summary.results) {
     const status = result.errorCount > 0 ? "FAIL" : "OK";
     const scripts =
-      result.renderScript && result.doctorScript && result.modelStageScript
-        ? ` render=${result.renderScript} doctor=${result.doctorScript} modelStage=${result.modelStageScript}`
+      result.renderScript && result.validateScript && result.doctorScript && result.modelStageScript
+        ? ` render=${result.renderScript} validate=${result.validateScript} doctor=${result.doctorScript} modelStage=${result.modelStageScript}`
         : "";
     lines.push(
       `- ${status} ${displayPath(cwd, result.configPath)}${scripts} errors=${result.errorCount}`,
