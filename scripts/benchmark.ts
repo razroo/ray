@@ -38,6 +38,7 @@ const MAX_BENCHMARK_ERROR_RESPONSE_BYTES = 64 * 1024;
 const MAX_BENCHMARK_SUCCESS_RESPONSE_BYTES = 2 * 1024 * 1024;
 const BENCHMARK_REQUEST_TIMEOUT_MS = 180_000;
 const BENCHMARK_HEALTH_REQUEST_TIMEOUT_MS = 3_000;
+const BUN_RUNTIME_BINARY = process.env.RAY_BUN_BINARY ?? "bun";
 const unsafeObjectKeys = new Set(["__proto__", "constructor", "prototype"]);
 const baselineAssertionKeys = new Set<keyof BenchmarkBaselineAssertions>([
   "maxLatencyP95Ms",
@@ -1889,15 +1890,8 @@ async function waitForHealth(
 
 async function startGateway(configPath: string): Promise<ChildProcess> {
   const child = spawn(
-    process.execPath,
-    [
-      "--conditions=development",
-      "--import",
-      "tsx",
-      "./apps/gateway/src/index.ts",
-      "--config",
-      configPath,
-    ],
+    BUN_RUNTIME_BINARY,
+    ["--conditions=development", "./apps/gateway/src/index.ts", "--config", configPath],
     {
       cwd: process.cwd(),
       stdio: "ignore",
