@@ -298,6 +298,7 @@ Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 - Doctor verifies that `model.adapter.launchProfile.binaryPath` points at an executable `llama-server` and that the generated service user can execute it and read the GGUF model before the generated backend service is restarted.
 - Keep `cacheRamMiB` pinned for `llama.cpp`. The upstream default is too large for a 4 GB VPS.
 - Tune `scheduler.concurrency` conservatively. Tiny hardware collapses faster from overcommit than underutilization.
+- Keep `RAY_LLAMA_CPP_THREADS` and `RAY_LLAMA_CPP_THREADS_BATCH` at or below the VPS vCPU count. Doctor records detected host CPU count and warns when the launch profile overcommits compute threads.
 - Keep `scheduler.requestTimeoutMs` slightly above `model.adapter.timeoutMs` so provider timeouts remain visible.
 - Use `RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB` when the gateway process needs to clamp output before RSS pressure becomes a swap or OOM problem.
 - Keep a modest swap file on 4 GB llama.cpp VPS targets. Doctor reads `/proc/meminfo` and warns when the small-VPS profile has no swap cushion.

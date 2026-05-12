@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { constants, type Stats } from "node:fs";
 import { access, readFile, stat, statfs } from "node:fs/promises";
 import { isIP } from "node:net";
-import { tmpdir, totalmem } from "node:os";
+import { availableParallelism, tmpdir, totalmem } from "node:os";
 import path from "node:path";
 import { loadRayConfig, resolveAuthApiKeys, sanitizeConfig } from "@ray/config";
 import { toErrorMessage, type LlamaCppLaunchProfile, type RayConfig } from "@razroo/ray-core";
@@ -82,6 +82,7 @@ type SwapStatus = "available" | "missing" | "unreadable";
 
 export interface DeploymentPreflight {
   hostMemoryMiB?: number;
+  hostCpuCount?: number;
   memoryBudgetMiB?: number;
   memoryBudgetSource?: MemoryBudgetSource;
   modelFileBytes?: number;
@@ -980,6 +981,14 @@ function resolveAvailableStorageMiB(stats: StorageStats): number | undefined {
 
 function getPresetMemoryBudgetMiB(preset: LlamaCppLaunchProfile["preset"]): number {
   return isSmallVpsPreset(preset) ? 4_096 : 8_192;
+}
+
+function collectHostCpuCount(): number | undefined {
+  try {
+    return Math.max(1, availableParallelism());
+  } catch {
+    return undefined;
+  }
 }
 
 function estimateKvBytesPerToken(preset: LlamaCppLaunchProfile["preset"]): number {
@@ -2129,6 +2138,16 @@ export function diagnoseConfig(
         });
       }
 
+      const hostCpuCount = preflight?.hostCpuCount;
+      const llamaComputeThreads = Math.max(launchProfile.threads, launchProfile.threadsBatch ?? 0);
+      if (hostCpuCount !== undefined && llamaComputeThreads > hostCpuCount) {
+        diagnostics.push({
+          level: "warn",
+          code: "llama_threads_exceed_host_cpu",
+          message: `llama.cpp is configured for ${llamaComputeThreads} compute thread(s), above the detected ${hostCpuCount} vCPU host. Lower RAY_LLAMA_CPP_THREADS or RAY_LLAMA_CPP_THREADS_BATCH on cheap VPS nodes to reduce CPU contention.`,
+        });
+      }
+
       if (perSlotContext >= 4096) {
         diagnostics.push({
           level: "warn",
@@ -2949,6 +2968,7 @@ async function collectDeploymentPreflight(
   },
 ): Promise<DeploymentPreflight> {
   const hostMemoryMiB = Math.max(1, Math.floor(totalmem() / BYTES_PER_MIB));
+  const hostCpuCount = collectHostCpuCount();
   const envFilePreflight = await collectEnvFilePreflight(options.envFile);
   const serviceUserPreflight = await collectServiceUserPreflight(
     options.user,
@@ -2998,6 +3018,7 @@ async function collectDeploymentPreflight(
   if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
     return {
       hostMemoryMiB,
+      ...(hostCpuCount !== undefined ? { hostCpuCount } : {}),
       ...storagePreflight,
       ...envFilePreflight,
       ...serviceUserPreflight,
@@ -3023,6 +3044,7 @@ async function collectDeploymentPreflight(
   });
   const preflight: DeploymentPreflight = {
     hostMemoryMiB,
+    ...(hostCpuCount !== undefined ? { hostCpuCount } : {}),
     ...storagePreflight,
     ...envFilePreflight,
     ...serviceUserPreflight,

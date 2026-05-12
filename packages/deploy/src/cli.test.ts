@@ -285,6 +285,8 @@ test("runCli render writes deployment files when output-dir is provided", async 
   assert.equal(summary.profile, "1b");
   assert.equal(summary.preflight.memoryBudgetMiB, 4096);
   assert.equal(summary.preflight.memoryBudgetSource, "override");
+  assert.equal(typeof summary.preflight.hostCpuCount, "number");
+  assert.ok(summary.preflight.hostCpuCount >= 1);
   assert.deepEqual(summary.systemd.gateway, {
     memoryHighMiB: 640,
     memoryMaxMiB: 896,

@@ -532,6 +532,8 @@ test("renderDeploymentBundle includes llama.cpp service for generic 1b profiles"
   assert.match(bundle.service, /CPUWeight=200/);
   assert.equal(bundle.summary.preflight.memoryBudgetMiB, 4096);
   assert.equal(bundle.summary.preflight.memoryBudgetSource, "override");
+  assert.equal(typeof bundle.summary.preflight.hostCpuCount, "number");
+  assert.ok((bundle.summary.preflight.hostCpuCount ?? 0) >= 1);
   assert.deepEqual(bundle.summary.systemd.gateway, {
     memoryHighMiB: 640,
     memoryMaxMiB: 896,
@@ -1044,6 +1046,39 @@ test("diagnoseConfig warns when the cax11 preset is overcommitted", () => {
   const diagnostics = diagnoseConfig(config, process.env);
 
   assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "cax11_parallel_high"));
+});
+
+test("diagnoseConfig warns when llama.cpp compute threads exceed host CPUs", () => {
+  const config = createDefaultConfig("sub1b");
+  assert.equal(config.model.adapter.kind, "llama.cpp");
+  assert.ok(config.model.adapter.launchProfile);
+
+  config.model.adapter.launchProfile.threads = 4;
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    preflight: {
+      hostCpuCount: 2,
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "llama_threads_exceed_host_cpu");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+});
+
+test("diagnoseConfig accepts default sub1b thread count on a 2 vCPU host", () => {
+  const config = createDefaultConfig("sub1b");
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    preflight: {
+      hostCpuCount: 2,
+    },
+  });
+
+  assert.equal(
+    diagnostics.some((entry) => entry.code === "llama_threads_exceed_host_cpu"),
+    false,
+  );
 });
 
 test("diagnoseConfig warns when a small VPS llama.cpp profile has no swap cushion", () => {
