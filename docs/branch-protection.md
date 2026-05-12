@@ -22,4 +22,4 @@ GitHub branch rules are **not stored in git**; a repo admin applies them in the 
 
 5. Save the ruleset.
 
-After this, contributors cannot merge PRs until lint, format check, tests, and Bun pack smoke checks match what `bun run release:gate` runs locally.
+After this, contributors cannot merge PRs until lint, format check, tests, public deploy bundle smoke rendering, and Bun pack smoke checks match what `bun run release:gate` runs locally.

@@ -354,7 +354,7 @@ Same command **[Quality checks](.github/workflows/quality.yml)** runs on **`main
 bun run release:gate
 ```
 
-That runs lint, Prettier `--check`, tests (`bun run test` builds, runs the compiled Tap suite, then runs script tests with Bun), and Bun pack smoke checks for the public packages.
+That runs lint, Prettier `--check`, tests (`bun run test` builds, runs the compiled Tap suite, then runs script tests with Bun), public deploy bundle smoke rendering, and Bun pack smoke checks for the public packages.
 
 ## Example config profiles
 
