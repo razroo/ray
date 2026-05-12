@@ -280,6 +280,6 @@ Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 - Use `RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB` when the gateway process needs to clamp output before RSS pressure becomes a swap or OOM problem.
 - Keep a modest swap file on 4 GB llama.cpp VPS targets. Doctor reads `/proc/meminfo` and warns when the small-VPS profile has no swap cushion.
 - Ray also samples Linux cgroup memory files when available and marks memory pressure when the service or container reaches 90% of its configured cgroup memory limit.
-- Use `RAY_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB` to preserve local disk headroom before accepting more durable async jobs. Doctor checks the nearest existing parent of `RAY_ASYNC_QUEUE_STORAGE_DIR`, so it catches a too-small VPS disk even before the queue directory exists.
+- Use `RAY_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB` to preserve local disk headroom before accepting more durable async jobs. Doctor checks the nearest existing parent of `RAY_ASYNC_QUEUE_STORAGE_DIR`, so it catches a too-small VPS disk even before the queue directory exists, and verifies the generated service user can write there.
 - Keep the cache bounded. Ray is designed to stay predictable under memory pressure.
 - Prefer quantized models that fit comfortably rather than models that technically boot.

@@ -1050,6 +1050,36 @@ test("diagnoseConfig errors when async queue storage is blocked by a file", () =
   assert.equal(diagnostic.level, "error");
 });
 
+test("diagnoseConfig errors when the generated service user cannot write async queue storage", () => {
+  const config = mergeConfig(createDefaultConfig("1b"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir: "/var/lib/ray/async-queue",
+    },
+  });
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      serviceUser: "ray",
+      asyncQueueStoragePath: "/var/lib/ray/async-queue",
+      asyncQueueStorageCheckPath: "/var/lib/ray",
+      asyncQueueStorageStatus: "parent",
+      asyncQueueStorageAvailableMiB: 8_192,
+      asyncQueueStorageAccessStatus: "blocked",
+      asyncQueueStorageAccessError: "write/execute permission is not granted on /var/lib/ray",
+    },
+  });
+
+  const diagnostic = diagnostics.find(
+    (entry) => entry.code === "async_queue_storage_service_user_inaccessible",
+  );
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /ray/);
+  assert.match(diagnostic.message, /write\/execute permission/);
+});
+
 test("diagnoseConfig errors when generated llama.cpp service paths are relative", () => {
   const config = createDefaultConfig("1b");
 

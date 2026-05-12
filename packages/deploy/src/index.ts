@@ -64,6 +64,8 @@ export interface DeploymentPreflight {
   asyncQueueStorageStatus?: AsyncQueueStorageStatus;
   asyncQueueStorageAvailableMiB?: number;
   asyncQueueStorageError?: string;
+  asyncQueueStorageAccessStatus?: ServiceUserAccessStatus;
+  asyncQueueStorageAccessError?: string;
   gatewayRuntimeBinaryPath?: string;
   gatewayRuntimeBinaryStatus?: GatewayRuntimeBinaryStatus;
   gatewayRuntimeBinaryError?: string;
@@ -1480,6 +1482,20 @@ export function diagnoseConfig(
         code: "async_queue_storage_unreadable",
         message: `asyncQueue.storageDir free space could not be resolved at ${preflight.asyncQueueStorageCheckPath ?? preflight.asyncQueueStoragePath ?? config.asyncQueue.storageDir}. Doctor cannot verify the async queue storage reserve.`,
       });
+    } else if (
+      strictFilesystem &&
+      preflight?.asyncQueueStorageAccessStatus === "blocked" &&
+      preflight.asyncQueueStorageStatus !== undefined
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "async_queue_storage_service_user_inaccessible",
+        message: `The generated systemd service user "${preflight.serviceUser ?? "the configured service user"}" cannot ${
+          preflight.asyncQueueStorageStatus === "directory"
+            ? "write to asyncQueue.storageDir"
+            : "create asyncQueue.storageDir from the nearest existing parent"
+        } at ${preflight.asyncQueueStorageCheckPath ?? preflight.asyncQueueStoragePath ?? config.asyncQueue.storageDir}${preflight.asyncQueueStorageAccessError ? ` (${preflight.asyncQueueStorageAccessError})` : ""}. Adjust ownership or mode bits before accepting durable async jobs.`,
+      });
     } else if (preflight?.asyncQueueStorageAvailableMiB !== undefined) {
       const storagePath = preflight.asyncQueueStoragePath ?? config.asyncQueue.storageDir;
       const checkedPath = preflight.asyncQueueStorageCheckPath ?? storagePath;
@@ -1494,7 +1510,11 @@ export function diagnoseConfig(
         diagnostics.push({
           level: "info",
           code: "async_queue_storage_ok",
-          message: `Async queue storage has ${formatMiB(preflight.asyncQueueStorageAvailableMiB)} free at ${checkedPath}, satisfying asyncQueue.minFreeStorageMiB (${formatMiB(config.asyncQueue.minFreeStorageMiB)}) for ${storagePath}.`,
+          message: `Async queue storage has ${formatMiB(preflight.asyncQueueStorageAvailableMiB)} free at ${checkedPath}, satisfying asyncQueue.minFreeStorageMiB (${formatMiB(config.asyncQueue.minFreeStorageMiB)}) for ${storagePath}${
+            preflight.asyncQueueStorageAccessStatus === "ok"
+              ? `, and is writable by "${preflight.serviceUser ?? "the configured service user"}"`
+              : ""
+          }.`,
         });
       }
     }
@@ -2001,6 +2021,7 @@ export async function renderDeploymentBundle(options: {
 
 async function collectAsyncQueueStoragePreflight(
   config: RayConfig,
+  serviceUserIdentity: ServiceUserIdentity | undefined,
 ): Promise<Partial<DeploymentPreflight>> {
   if (!config.asyncQueue.enabled) {
     return {};
@@ -2024,12 +2045,29 @@ async function collectAsyncQueueStoragePreflight(
 
       const storageStats = await statfs(checkPath);
       const availableMiB = resolveAvailableStorageMiB(storageStats);
+      const storageStatus = checkPath === storagePath ? "directory" : "parent";
+      const serviceUserAccess = serviceUserIdentity
+        ? await verifyServiceUserPathAccess(
+            checkPath,
+            serviceUserIdentity,
+            storageStatus === "directory" ? 0o7 : 0o3,
+            storageStatus === "directory" ? "read/write/execute" : "write/execute",
+          )
+        : undefined;
 
       return {
         asyncQueueStoragePath: storagePath,
         asyncQueueStorageCheckPath: checkPath,
-        asyncQueueStorageStatus: checkPath === storagePath ? "directory" : "parent",
+        asyncQueueStorageStatus: storageStatus,
         ...(availableMiB !== undefined ? { asyncQueueStorageAvailableMiB: availableMiB } : {}),
+        ...(serviceUserAccess
+          ? {
+              asyncQueueStorageAccessStatus: serviceUserAccess.status,
+              ...(serviceUserAccess.error
+                ? { asyncQueueStorageAccessError: serviceUserAccess.error }
+                : {}),
+            }
+          : {}),
       };
     } catch (error) {
       const code =
@@ -2397,7 +2435,6 @@ async function collectDeploymentPreflight(
   },
 ): Promise<DeploymentPreflight> {
   const hostMemoryMiB = Math.max(1, Math.floor(totalmem() / BYTES_PER_MIB));
-  const storagePreflight = await collectAsyncQueueStoragePreflight(config);
   const envFilePreflight = await collectEnvFilePreflight(options.envFile);
   const serviceUserPreflight = await collectServiceUserPreflight(
     options.user,
@@ -2417,6 +2454,7 @@ async function collectDeploymentPreflight(
           ],
         }
       : undefined;
+  const storagePreflight = await collectAsyncQueueStoragePreflight(config, serviceUserIdentity);
   const workingDirectoryPreflight = await collectWorkingDirectoryPreflight(
     options.cwd,
     options.strictFilesystem === true,
