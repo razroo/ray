@@ -10,8 +10,22 @@ export interface TtlCacheOptions {
 
 export class TtlCache<T> {
   private readonly store = new Map<string, CacheEntry<T>>();
+  private readonly options: TtlCacheOptions;
 
-  constructor(private readonly options: TtlCacheOptions) {}
+  constructor(options: TtlCacheOptions) {
+    if (!Number.isSafeInteger(options.maxEntries) || options.maxEntries <= 0) {
+      throw new RangeError("maxEntries must be a positive safe integer");
+    }
+
+    if (!Number.isSafeInteger(options.ttlMs) || options.ttlMs <= 0) {
+      throw new RangeError("ttlMs must be a positive safe integer");
+    }
+
+    this.options = {
+      maxEntries: options.maxEntries,
+      ttlMs: options.ttlMs,
+    };
+  }
 
   get(key: string): T | undefined {
     const entry = this.store.get(key);

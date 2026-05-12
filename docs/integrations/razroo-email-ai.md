@@ -4,7 +4,7 @@ This describes a **single-node** setup for **razroo-email-ai**: a **~0.6B Qwen**
 
 ## Target hardware
 
-Typical match: **Hetzner CX23** (2 vCPU, 4 GB RAM) with the defaults in [ray.sub1b.public.json](../../examples/config/ray.sub1b.public.json), or **CAX11** (2 vCPU, 4 GB ARM) with the tighter single-slot defaults in [ray.sub1b.cax11.public.json](../../examples/config/ray.sub1b.cax11.public.json). For better instruction following on the email workload, use [ray.1b.public.json](../../examples/config/ray.1b.public.json) on a 4 GB CX23-class box, or [ray.1b.8gb.public.json](../../examples/config/ray.1b.8gb.public.json) when an 8 GB node is available. The older [ray.vps.json](../../examples/config/ray.vps.json) remains the roomier 3B-style OpenAI-compatible path.
+Typical match: **2 vCPU / 4 GB RAM** with the defaults in [ray.sub1b.public.json](../../examples/config/ray.sub1b.public.json), or the tighter ARM defaults in [ray.sub1b.cax11.public.json](../../examples/config/ray.sub1b.cax11.public.json). For better instruction following on the email workload, use the portable [ray.1b.generic.public.json](../../examples/config/ray.1b.generic.public.json) on a 4 GB VPS, or [ray.1b.8gb.generic.public.json](../../examples/config/ray.1b.8gb.generic.public.json) when an 8 GB node is available. The Qwen/Hetzner configs remain benchmark baselines for this integration, while the generic profiles are the default starting point for other 1B models and VPS providers. The older [ray.vps.json](../../examples/config/ray.vps.json) remains the roomier 3B-style OpenAI-compatible path.
 
 ## Example config
 
@@ -14,10 +14,11 @@ Use [ray.hetzner-cx23-qwen0.6b.public.json](../../examples/config/ray.hetzner-cx
 - **`model.adapter.modelRef`** — must match the model name exposed by llama.cpp (often the GGUF stem or `--model` label you use at startup).
 - **`server.port`** — Ray’s listen port; set **`RAY_PORT`** in the environment if you prefer not to edit JSON.
 - **`asyncQueue.storageDir`** — durable on-disk queue location. On a real VPS, keep it on persistent local storage such as `/var/lib/ray/async-queue`.
+- **`asyncQueue.maxJobs`** and **`asyncQueue.completedTtlMs`** — retained job record budget and completed-job retention. The public examples cap retained jobs at `1000` and prune completed records after 24 hours so a small VPS does not fill its disk or permanently wedge the async endpoint. Override them with `RAY_ASYNC_QUEUE_MAX_JOBS` and `RAY_ASYNC_QUEUE_COMPLETED_TTL_MS` in `/etc/ray/ray.env` when a deployment needs a smaller or larger backlog.
 - **`model.adapter.launchProfile.cacheRamMiB`** — pinned prompt-cache RAM budget for llama.cpp. The example sets **`512` MiB** instead of inheriting the upstream `8192` MiB default, which is a better fit for a 4 GB VPS.
 - **`auth.apiKeyEnv`** — public profile auth is enabled by default. Populate **`RAY_API_KEYS`** before starting the gateway.
 
-For the 1B path, use [ray.1b.public.json](../../examples/config/ray.1b.public.json) or [ray.1b.8gb.public.json](../../examples/config/ray.1b.8gb.public.json) instead. These profiles switch the default GGUF path to `qwen2.5-1.5b-instruct-q4_k_m.gguf`, add model operational metadata, and keep the 4 GB profile single-slot to avoid memory pressure.
+For the portable 1B path, use [ray.1b.generic.public.json](../../examples/config/ray.1b.generic.public.json) or [ray.1b.8gb.generic.public.json](../../examples/config/ray.1b.8gb.generic.public.json). Set `RAY_MODEL_ID`, `RAY_MODEL_REF`, `RAY_MODEL_PATH`, and the `RAY_LLAMA_CPP_*` sizing overrides in `/etc/ray/ray.env` for the actual model and VPS. The Qwen-specific profiles switch the default GGUF path to `qwen2.5-1.5b-instruct-q4_k_m.gguf` and exist to make the checked-in benchmark baselines reproducible.
 
 For below-1B split-role experiments, use [ray.sub1b.classifier.json](../../examples/config/ray.sub1b.classifier.json) for short JSON/classification traffic and [ray.sub1b.drafter.json](../../examples/config/ray.sub1b.drafter.json) for draft generation. These stay on the 0.5B-class GGUF path but use different output caps, warmups, and scheduler pressure limits.
 
@@ -71,7 +72,7 @@ The workload in [email-1b-workload.jsonl](../../examples/workloads/email-1b-work
 
 [email-prompt-families-1b.json](../../examples/evals/email-prompt-families-1b.json) is the smaller golden eval set for prompt wording changes. Run it with `pnpm eval:prompt-families:1b` against a live Ray gateway. The output includes provider diagnostics for `promptFormat`, `promptFormatReason`, `modelRef`, `launchPreset`, cached tokens, slot reuse, and context window.
 
-For longer-running or high-volume work, prefer `POST /v1/jobs` over holding an HTTP connection open. Ray persists the job to disk, processes it in the background, and can `POST` the terminal payload to `callbackUrl` when the work completes. Callback URLs resolve to public network addresses by default; use the async queue allowlist only for explicitly trusted private callbacks.
+For longer-running or high-volume work, prefer `POST /v1/jobs` over holding an HTTP connection open. Ray persists the job to disk, processes it in the background, and can `POST` the terminal payload to `callbackUrl` when the work completes. Completed jobs stay queryable until `asyncQueue.completedTtlMs` expires, while pending callbacks are preserved until delivery succeeds or callback attempts are exhausted. Callback URLs resolve to public network addresses by default; use the async queue allowlist only for explicitly trusted private callbacks.
 
 ## llama.cpp on the same VPS
 

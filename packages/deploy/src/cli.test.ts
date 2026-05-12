@@ -1,0 +1,311 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import assert from "node:assert/strict";
+import { parseCliArgs, parseEnvironmentFile, runCli } from "./cli.js";
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+test("parseCliArgs accepts strict memory budget overrides", () => {
+  const options = parseCliArgs([
+    "doctor",
+    "--cwd",
+    "/srv/ray",
+    "--config",
+    "./ray.json",
+    "--memory-mib",
+    "4096",
+  ]);
+
+  assert.equal(options.command, "doctor");
+  assert.equal(options.cwd, "/srv/ray");
+  assert.equal(options.configPath, "./ray.json");
+  assert.equal(options.memoryBudgetMiB, 4096);
+});
+
+test("parseCliArgs rejects malformed memory budget overrides", () => {
+  assert.throws(
+    () => parseCliArgs(["doctor", "--memory-mib", "4096MiB"]),
+    /--memory-mib must be a positive integer/,
+  );
+
+  assert.throws(
+    () => parseCliArgs(["doctor", "--memory-mib", "1.5"]),
+    /--memory-mib must be a positive integer/,
+  );
+});
+
+test("parseCliArgs rejects malformed direct argv values", () => {
+  assert.throws(() => parseCliArgs(null as unknown as string[]), /argv must be an array/);
+  assert.throws(
+    () => parseCliArgs(["doctor", 4096] as unknown as string[]),
+    /argv\[1\] must be a string/,
+  );
+  assert.throws(
+    () => parseCliArgs(Array.from({ length: 65 }, () => "--config")),
+    /argv must contain at most 64 entries/,
+  );
+  assert.throws(
+    () => parseCliArgs(["doctor", "--config", `ray${"\0"}.json`]),
+    /argv\[2\] must not contain NUL bytes/,
+  );
+  assert.throws(
+    () => parseCliArgs(["doctor", "--config", "x".repeat(4_097)]),
+    /argv\[2\] must be at most 4096 bytes/,
+  );
+});
+
+test("parseCliArgs rejects missing flag values", () => {
+  assert.throws(() => parseCliArgs(["render", "--config"]), /--config requires a value/);
+  assert.throws(
+    () => parseCliArgs(["doctor", "--config", "--memory-mib", "4096"]),
+    /--config requires a value/,
+  );
+});
+
+test("parseCliArgs rejects unknown commands and options", () => {
+  assert.throws(() => parseCliArgs(["docter", "--memory-mib", "4096"]), /Unknown command: docter/);
+  assert.throws(() => parseCliArgs(["doctor", "--memory", "4096"]), /Unknown option: --memory/);
+});
+
+test("parseCliArgs tolerates a separator before known options", () => {
+  const options = parseCliArgs(["doctor", "--", "--env-file", "/etc/ray/ray.env"]);
+
+  assert.equal(options.command, "doctor");
+  assert.equal(options.envFile, "/etc/ray/ray.env");
+});
+
+test("parseCliArgs accepts the Ray-specific env-file alias", () => {
+  const options = parseCliArgs(["doctor", "--ray-env-file", "/etc/ray/ray.env"]);
+
+  assert.equal(options.command, "doctor");
+  assert.equal(options.envFile, "/etc/ray/ray.env");
+});
+
+test("parseCliArgs accepts render output directories", () => {
+  const options = parseCliArgs(["render", "--output-dir", "/tmp/ray-render"]);
+
+  assert.equal(options.command, "render");
+  assert.equal(options.outputDir, "/tmp/ray-render");
+});
+
+test("parseCliArgs accepts explicit systemd Node binaries", () => {
+  const options = parseCliArgs(["render", "--node-binary", "/opt/node 22/bin/node"]);
+
+  assert.equal(options.command, "render");
+  assert.equal(options.nodeBinary, "/opt/node 22/bin/node");
+});
+
+test("parseEnvironmentFile parses dotenv-style deployment overrides", () => {
+  const env = parseEnvironmentFile(`
+    # deployment overrides
+    RAY_MODEL_ID=local-1b
+    RAY_MODEL_PATH="/var/lib/ray/models/local 1b.gguf"
+    RAY_MODEL_FAMILY='llama-compatible'
+    RAY_MODEL_REF=local-1b
+  `);
+
+  assert.equal(env.RAY_MODEL_ID, "local-1b");
+  assert.equal(env.RAY_MODEL_PATH, "/var/lib/ray/models/local 1b.gguf");
+  assert.equal(env.RAY_MODEL_FAMILY, "llama-compatible");
+  assert.equal(env.RAY_MODEL_REF, "local-1b");
+});
+
+test("parseEnvironmentFile rejects malformed deployment env lines", () => {
+  assert.throws(
+    () => parseEnvironmentFile(null as unknown as string),
+    /Env file contents must be a string/,
+  );
+  assert.throws(() => parseEnvironmentFile("RAY_MODEL_ID\n"), /expected KEY=value/);
+  assert.throws(() => parseEnvironmentFile("1MODEL=bad\n"), /invalid variable name/);
+  assert.throws(() => parseEnvironmentFile('RAY_MODEL_ID="unterminated\n'), /unterminated/);
+  assert.throws(
+    () => parseEnvironmentFile(`${"_".repeat(129)}=bad\n`),
+    /variable name must be at most 128 characters/,
+  );
+  assert.throws(() => parseEnvironmentFile("__proto__=polluted\n"), /unsafe variable name/);
+  assert.throws(() => parseEnvironmentFile("constructor=polluted\n"), /unsafe variable name/);
+  assert.throws(
+    () =>
+      parseEnvironmentFile(
+        Array.from({ length: 513 }, (_value, index) => `RAY_VALUE_${index}=x`).join("\n"),
+      ),
+    /Env file must contain at most 512 variables/,
+  );
+  assert.throws(
+    () => parseEnvironmentFile(`RAY_API_KEYS=${"x".repeat(64 * 1024)}\n`),
+    /Env file contents must be at most 65536 bytes/,
+  );
+});
+
+test("runCli rejects missing explicit env files", async () => {
+  await assert.rejects(
+    () => runCli(["render", "--ray-env-file", "missing.ray.env"]),
+    /Env file not found:/,
+  );
+});
+
+test("runCli rejects oversized explicit env files before parsing", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-env-limit-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(envFile, `RAY_API_KEYS=${"x".repeat(64 * 1024)}\n`, "utf8");
+
+  await assert.rejects(
+    () =>
+      runCli([
+        "render",
+        "--cwd",
+        process.cwd(),
+        "--config",
+        "./examples/config/ray.1b.generic.public.json",
+        "--ray-env-file",
+        envFile,
+      ]),
+    /Env file must be at most 65536 bytes/,
+  );
+});
+
+test("runCli render applies env-file overrides to generated llama.cpp service", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-cli-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(
+    envFile,
+    [
+      "RAY_API_KEYS=test-key",
+      "RAY_MODEL_ID=env-local-1b",
+      "RAY_MODEL_REF=env-local-1b",
+      "RAY_MODEL_PATH=/var/lib/ray/models/env-local-1b.gguf",
+      "RAY_MODEL_FAMILY=llama-compatible",
+      "RAY_MODEL_QUANTIZATION=q4_k_m",
+      "",
+    ].join("\n"),
+  );
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli([
+    "render",
+    "--cwd",
+    ".",
+    "--config",
+    "./examples/config/ray.1b.generic.public.json",
+    "--ray-env-file",
+    envFile,
+    "--memory-mib",
+    "4096",
+  ]);
+
+  const rendered = output.join("\n");
+  const llamaSection = rendered.split("# llama.cpp systemd service").at(1) ?? "";
+  assert.match(rendered, /EnvironmentFile=.*ray\.env/);
+  assert.match(rendered, /LLAMA_ARG_MODEL=\/var\/lib\/ray\/models\/env-local-1b\.gguf/);
+  assert.match(rendered, /LLAMA_ARG_ALIAS=env-local-1b/);
+  assert.doesNotMatch(llamaSection, /EnvironmentFile=.*ray\.env/);
+});
+
+test("runCli render writes deployment files when output-dir is provided", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-files-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const outputDir = join(tempDir, "rendered");
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(envFile, "RAY_API_KEYS=test-key\n", "utf8");
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli([
+    "render",
+    "--cwd",
+    tempDir,
+    "--config",
+    join(process.cwd(), "examples/config/ray.1b.generic.public.json"),
+    "--env-file",
+    "ray.env",
+    "--memory-mib",
+    "4096",
+    "--node-binary",
+    "/opt/node 22/bin/node",
+    "--output-dir",
+    outputDir,
+  ]);
+
+  const service = await readFile(join(outputDir, "ray-gateway.service"), "utf8");
+  const llamaService = await readFile(join(outputDir, "ray-llama-cpp.service"), "utf8");
+  const caddyfile = await readFile(join(outputDir, "Caddyfile"), "utf8");
+  const summary = await readFile(join(outputDir, "summary.json"), "utf8");
+  const rendered = output.join("\n");
+
+  assert.match(service, /Description=Ray Gateway/);
+  assert.match(service, new RegExp(`WorkingDirectory=${escapeRegExp(tempDir)}`));
+  assert.match(service, new RegExp(`EnvironmentFile=${escapeRegExp(envFile)}`));
+  assert.match(service, /ExecStart="\/opt\/node 22\/bin\/node"/);
+  assert.match(service, /Wants=ray-llama-cpp\.service/);
+  assert.match(llamaService, /Description=llama\.cpp Server for Ray/);
+  assert.doesNotMatch(llamaService, /EnvironmentFile=/);
+  assert.match(caddyfile, /reverse_proxy 127\.0\.0\.1:3000/);
+  assert.equal(JSON.parse(summary).profile, "1b");
+  assert.match(rendered, /ray-gateway\.service/);
+  assert.doesNotMatch(rendered, /# Ray systemd service/);
+});
+
+test("runCli render removes stale llama.cpp service files from reused output directories", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-stale-files-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const outputDir = join(tempDir, "rendered");
+  await mkdir(outputDir, { recursive: true });
+  await writeFile(join(outputDir, "ray-llama-cpp.service"), "stale generated unit\n", "utf8");
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli([
+    "render",
+    "--cwd",
+    process.cwd(),
+    "--config",
+    "./examples/config/ray.vps.json",
+    "--output-dir",
+    outputDir,
+  ]);
+
+  await assert.rejects(
+    () => readFile(join(outputDir, "ray-llama-cpp.service"), "utf8"),
+    (error: unknown) =>
+      error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT",
+  );
+  const service = await readFile(join(outputDir, "ray-gateway.service"), "utf8");
+  assert.match(service, /Description=Ray Gateway/);
+  assert.doesNotMatch(output.join("\n"), /ray-llama-cpp\.service/);
+});

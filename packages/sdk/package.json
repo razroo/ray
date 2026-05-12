@@ -32,6 +32,8 @@
   "files": [
     "dist",
     "src",
+    "!dist/**/*.test.*",
+    "!src/**/*.test.*",
     "README.md",
     "CHANGELOG.md"
   ],

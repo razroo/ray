@@ -1,6 +1,7 @@
 node_modules
 dist
 .ray
+.playwright-mcp
 *.tsbuildinfo
 .DS_Store
 .env

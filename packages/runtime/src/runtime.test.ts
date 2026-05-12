@@ -4,6 +4,51 @@ import { createDefaultConfig, mergeConfig } from "@ray/config";
 import type { ModelProvider } from "@razroo/ray-core";
 import { createRayRuntime } from "./index.js";
 
+test("runtime rejects invalid direct config", () => {
+  const config = createDefaultConfig("tiny");
+  config.scheduler.concurrency = 0;
+
+  assert.throws(() => createRayRuntime(config), /scheduler\.concurrency/);
+});
+
+test("runtime snapshots config at construction", async () => {
+  let observedInput = "";
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "test-model",
+    capabilities: {
+      streaming: false,
+      quantized: false,
+      localBackend: true,
+    },
+    async infer(request) {
+      observedInput = request.input;
+      return {
+        output: request.input,
+      };
+    },
+  };
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    gracefulDegradation: {
+      enabled: true,
+      maxPromptChars: 8,
+      queueDepthThreshold: 1_000,
+    },
+  });
+  const runtime = createRayRuntime(config, { provider });
+
+  config.gracefulDegradation.maxPromptChars = 1_000;
+
+  const result = await runtime.infer({
+    input: "x".repeat(32),
+    cache: false,
+  });
+
+  assert.equal(observedInput.length, 8);
+  assert.equal(result.degraded, true);
+  assert.equal(runtime.config.gracefulDegradation.maxPromptChars, 8);
+});
+
 test("runtime returns chars and provider token usage explicitly", async () => {
   const provider: ModelProvider = {
     kind: "mock",
@@ -74,6 +119,187 @@ test("runtime health reports upstream unavailability", async () => {
 
   assert.equal(health.status, "unavailable");
   assert.equal(health.provider.status, "unavailable");
+});
+
+test("runtime deduplicates concurrent provider health checks", async () => {
+  let calls = 0;
+  let releaseHealth!: () => void;
+  const healthGate = new Promise<void>((resolve) => {
+    releaseHealth = resolve;
+  });
+  const provider: ModelProvider = {
+    kind: "openai-compatible",
+    modelId: "test-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async health() {
+      calls += 1;
+      await healthGate;
+      return {
+        status: "ready",
+        checkedAt: new Date().toISOString(),
+      };
+    },
+    async infer() {
+      return {
+        output: "unused",
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("vps"), { provider });
+  const healthChecks = Promise.all([runtime.health(), runtime.health(), runtime.health()]);
+  await Promise.resolve();
+
+  assert.equal(calls, 1);
+  releaseHealth();
+
+  const results = await healthChecks;
+  assert.deepEqual(
+    results.map((result) => result.provider.status),
+    ["ready", "ready", "ready"],
+  );
+
+  await runtime.health();
+  assert.equal(calls, 1);
+});
+
+test("runtime rejects malformed request bodies and numeric controls", async () => {
+  const runtime = createRayRuntime(createDefaultConfig("tiny"));
+
+  await assert.rejects(
+    runtime.infer(null as unknown as Parameters<typeof runtime.infer>[0]),
+    /request body must be a JSON object/,
+  );
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      maxTokens: "128",
+    } as unknown as Parameters<typeof runtime.infer>[0]),
+    /maxTokens must be a finite number/,
+  );
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      temperature: Number.NaN,
+    }),
+    /temperature must be a finite number/,
+  );
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      topP: Number.POSITIVE_INFINITY,
+    }),
+    /topP must be a finite number/,
+  );
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      cache: "false",
+    } as unknown as Parameters<typeof runtime.infer>[0]),
+    /cache must be a boolean/,
+  );
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      system: { role: "system" },
+    } as unknown as Parameters<typeof runtime.infer>[0]),
+    /system must be a string/,
+  );
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      dedupeKey: 123,
+    } as unknown as Parameters<typeof runtime.infer>[0]),
+    /dedupeKey must be a string/,
+  );
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      metadata: {
+        promptFamily: ["email"],
+      },
+    } as unknown as Parameters<typeof runtime.infer>[0]),
+    /metadata must be an object of string values/,
+  );
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      metadata: JSON.parse('{"__proto__":"polluted"}') as Record<string, string>,
+    }),
+    /metadata must not contain unsafe key "__proto__"/,
+  );
+
+  const metadata = {};
+  Object.defineProperty(metadata, "promptFamily", {
+    enumerable: true,
+    get() {
+      throw new Error("getter boom");
+    },
+  });
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      metadata: metadata as Record<string, string>,
+    }),
+    /metadata must not contain unreadable properties/,
+  );
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      metadata: Object.fromEntries(
+        Array.from({ length: 33 }, (_value, index) => [`key${index}`, "value"]),
+      ),
+    }),
+    /metadata must contain at most 32 entries/,
+  );
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      metadata: {
+        promptFamily: "x".repeat(1_025),
+      },
+    }),
+    /metadata\.promptFamily must be at most 1024 characters/,
+  );
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      dedupeKey: "x".repeat(513),
+    }),
+    /dedupeKey must be at most 512 characters/,
+  );
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      stop: Array.from({ length: 17 }, (_value, index) => `stop-${index}`),
+    }),
+    /stop must contain at most 16 entries/,
+  );
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      stop: ["x".repeat(257)],
+    }),
+    /stop entries must be at most 256 characters/,
+  );
 });
 
 test("runtime keeps seeded variants isolated in cache keys", async () => {
@@ -151,6 +377,208 @@ test("runtime uses provider token preparation and exposes compiler diagnostics",
   assert.ok((result.diagnostics?.promptCompiler?.charsSaved ?? 0) > 0);
   assert.ok(typeof result.diagnostics?.promptCompiler?.familyKey === "string");
   assert.equal(result.diagnostics?.taskRouting?.recommendedModelRole, "drafter");
+});
+
+test("runtime trims oversized prompts before prompt compilation", async () => {
+  let observedInput = "";
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "trimmed-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async infer(request) {
+      observedInput = request.input;
+      return {
+        output: "trimmed",
+      };
+    },
+  };
+  const runtime = createRayRuntime(
+    mergeConfig(createDefaultConfig("tiny"), {
+      gracefulDegradation: {
+        enabled: true,
+        maxPromptChars: 32,
+        queueDepthThreshold: 1_000,
+      },
+    }),
+    { provider },
+  );
+  const result = await runtime.infer({
+    input: "x".repeat(128),
+    cache: false,
+  });
+
+  assert.equal(result.degraded, true);
+  assert.equal(observedInput.length, 32);
+  assert.equal(result.diagnostics?.promptCompiler?.charsBefore, 32);
+});
+
+test("runtime times out and aborts stalled provider preparation", async () => {
+  let prepareAborted = false;
+  let inferCalled = false;
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "stalled-prepare-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async prepare(request, context) {
+      await new Promise<never>((_resolve, reject) => {
+        context.signal.addEventListener(
+          "abort",
+          () => {
+            prepareAborted = true;
+            reject(context.signal.reason);
+          },
+          { once: true },
+        );
+      });
+
+      return {
+        request,
+        promptTokens: 1,
+      };
+    },
+    async infer() {
+      inferCalled = true;
+      return {
+        output: "should not run",
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(
+    mergeConfig(createDefaultConfig("tiny"), {
+      scheduler: {
+        requestTimeoutMs: 20,
+      },
+    }),
+    { provider },
+  );
+
+  await assert.rejects(
+    () =>
+      runtime.infer({
+        input: "hello world",
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "request_timeout");
+      assert.deepEqual((error as { details?: unknown }).details, {
+        phase: "prepare",
+        timeoutMs: 20,
+      });
+      return true;
+    },
+  );
+
+  assert.equal(prepareAborted, true);
+  assert.equal(inferCalled, false);
+});
+
+test("runtime bounds concurrent provider preparation before scheduling inference", async () => {
+  let activePreparations = 0;
+  let maxActivePreparations = 0;
+  let prepareStarts = 0;
+  const startWaiters: Array<() => void> = [];
+  const releasePreparations: Array<() => void> = [];
+  const waitForPrepareStarts = async (count: number) => {
+    while (prepareStarts < count) {
+      await new Promise<void>((resolve) => {
+        startWaiters.push(resolve);
+      });
+    }
+  };
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "bounded-prepare-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async prepare(request) {
+      activePreparations += 1;
+      maxActivePreparations = Math.max(maxActivePreparations, activePreparations);
+      prepareStarts += 1;
+      for (const resolve of startWaiters.splice(0)) {
+        resolve();
+      }
+
+      try {
+        await new Promise<void>((resolve) => {
+          releasePreparations.push(resolve);
+        });
+        return {
+          request,
+          promptTokens: 8,
+        };
+      } finally {
+        activePreparations -= 1;
+      }
+    },
+    async infer(request) {
+      return {
+        output: request.input,
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(
+    mergeConfig(createDefaultConfig("tiny"), {
+      scheduler: {
+        concurrency: 1,
+        maxQueue: 1,
+        affinityLookahead: 1,
+        requestTimeoutMs: 500,
+      },
+    }),
+    { provider },
+  );
+
+  const first = runtime.infer({
+    input: "first",
+    cache: false,
+  });
+  await waitForPrepareStarts(1);
+
+  const second = runtime.infer({
+    input: "second",
+    cache: false,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(prepareStarts, 1);
+  assert.equal(maxActivePreparations, 1);
+
+  await assert.rejects(
+    runtime.infer({
+      input: "third",
+      cache: false,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "queue_full");
+      assert.equal((error as { details?: { phase?: string } }).details?.phase, "prepare");
+      return true;
+    },
+  );
+
+  releasePreparations.shift()?.();
+  await waitForPrepareStarts(2);
+  releasePreparations.shift()?.();
+
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+
+  assert.equal(firstResult.output, "first");
+  assert.equal(secondResult.output, "second");
+  assert.equal(prepareStarts, 2);
+  assert.equal(maxActivePreparations, 1);
 });
 
 test("runtime exposes task-aware routing diagnostics for classification", async () => {
@@ -248,6 +676,48 @@ test("runtime adaptively reduces maxTokens when observed throughput drops", asyn
   assert.equal(second.diagnostics?.adaptiveTuning?.reduced, true);
   assert.ok((second.diagnostics?.adaptiveTuning?.appliedMaxTokens ?? 128) < 128);
   assert.deepEqual(observedMaxTokens, [128, 96]);
+});
+
+test("runtime bounds learned output family history across unique prompt families", async () => {
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "bounded-family-history-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async infer() {
+      return {
+        output: "ok",
+        usage: {
+          tokens: {
+            prompt: 8,
+            completion: 2,
+            total: 10,
+          },
+        },
+      };
+    },
+  };
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+
+  for (let index = 0; index < 520; index += 1) {
+    await runtime.infer({
+      input: `unique prompt family ${index}`,
+      cache: false,
+      metadata: {
+        promptFamily: `family-${index}`,
+      },
+    });
+  }
+
+  const familyCompletionHistory = (
+    runtime as unknown as {
+      familyCompletionHistory: Map<string, unknown>;
+    }
+  ).familyCompletionHistory;
+  assert.equal(familyCompletionHistory.size, 512);
 });
 
 test("runtime metrics expose small-box process and provider telemetry", async () => {

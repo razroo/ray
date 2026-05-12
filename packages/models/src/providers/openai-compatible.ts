@@ -11,7 +11,14 @@ import {
   type WarmupInferenceRequest,
 } from "@razroo/ray-core";
 import { resolvePromptTemplateRequest } from "@ray/prompts";
-import { adapterRequest, extractAssistantText } from "./http.js";
+import {
+  MAX_ADAPTER_MODEL_REF_CHARS,
+  adapterRequest,
+  assertNonEmptyStringAtMost,
+  extractAssistantText,
+  snapshotAdapterWarmupRequests,
+  snapshotHttpAdapterConfig,
+} from "./http.js";
 
 interface OpenAICompatibleResponse {
   choices?: Array<{
@@ -78,6 +85,22 @@ function extractModelIds(payload: unknown): string[] | undefined {
     .filter((id): id is string => typeof id === "string" && id.length > 0);
 }
 
+function snapshotOpenAIAdapter(
+  adapter: OpenAICompatibleProviderConfig,
+  maxOutputTokens: number,
+): OpenAICompatibleProviderConfig {
+  const snapshot = snapshotHttpAdapterConfig(adapter);
+  assertNonEmptyStringAtMost(snapshot.modelRef, "adapter.modelRef", MAX_ADAPTER_MODEL_REF_CHARS);
+  const warmupRequests = snapshotAdapterWarmupRequests(snapshot.warmupRequests, maxOutputTokens);
+  const next: OpenAICompatibleProviderConfig = { ...snapshot };
+
+  if (warmupRequests !== undefined) {
+    next.warmupRequests = warmupRequests;
+  }
+
+  return next;
+}
+
 export class OpenAICompatibleProvider implements ModelProvider {
   readonly kind = "openai-compatible";
   readonly modelId: string;
@@ -86,12 +109,11 @@ export class OpenAICompatibleProvider implements ModelProvider {
     quantized: true,
     localBackend: true,
   } as const;
+  private readonly adapter: OpenAICompatibleProviderConfig;
 
-  constructor(
-    private readonly model: ModelConfig,
-    private readonly adapter: OpenAICompatibleProviderConfig,
-  ) {
+  constructor(model: ModelConfig, adapter: OpenAICompatibleProviderConfig) {
     this.modelId = model.id;
+    this.adapter = snapshotOpenAIAdapter(adapter, model.maxOutputTokens);
   }
 
   async warm(): Promise<void> {

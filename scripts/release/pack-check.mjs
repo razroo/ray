@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { gunzipSync } from "node:zlib";
 
 const root = process.cwd();
 const destination = path.join(root, ".ray", "packs");
@@ -38,6 +39,34 @@ async function runPack(packageConfig) {
   });
 }
 
+async function listTarballEntries(filePath) {
+  const compressed = await fs.readFile(filePath);
+  const buffer = gunzipSync(compressed);
+  const entries = [];
+  let offset = 0;
+
+  while (offset + 512 <= buffer.length) {
+    const header = buffer.subarray(offset, offset + 512);
+    const isEmptyHeader = header.every((value) => value === 0);
+
+    if (isEmptyHeader) {
+      break;
+    }
+
+    const name = header.toString("utf8", 0, 100).replace(/\0.*$/, "");
+    const prefix = header.toString("utf8", 345, 500).replace(/\0.*$/, "");
+    const sizeRaw = header.toString("utf8", 124, 136).replace(/\0.*$/, "").trim();
+    const size = Number.parseInt(sizeRaw || "0", 8);
+
+    entries.push(prefix ? `${prefix}/${name}` : name);
+
+    const contentSize = Number.isFinite(size) ? size : 0;
+    offset += 512 + Math.ceil(contentSize / 512) * 512;
+  }
+
+  return entries;
+}
+
 await fs.rm(destination, { recursive: true, force: true });
 await fs.mkdir(destination, { recursive: true });
 
@@ -48,12 +77,21 @@ for (const packageConfig of packages) {
 const packedFiles = await fs.readdir(destination);
 
 for (const packageConfig of packages) {
-  const found = packedFiles.some(
+  const packedFile = packedFiles.find(
     (file) => file.includes(packageConfig.expectedFragment) && file.endsWith(".tgz"),
   );
 
-  if (!found) {
+  if (!packedFile) {
     throw new Error(`${packageConfig.name} did not produce an npm tarball`);
+  }
+
+  const entries = await listTarballEntries(path.join(destination, packedFile));
+  const testEntries = entries.filter((entry) => entry.includes(".test."));
+
+  if (testEntries.length > 0) {
+    throw new Error(
+      `${packageConfig.name} package includes test artifacts: ${testEntries.join(", ")}`,
+    );
   }
 }
 

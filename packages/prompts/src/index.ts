@@ -114,17 +114,114 @@ Original reply: "{{replyText}}"`,
 ];
 
 const promptTemplateMap = new Map(promptTemplates.map((template) => [template.id, template]));
+const MAX_TEMPLATE_ID_CHARS = 128;
+const MAX_TEMPLATE_VARIABLES = 32;
+const MAX_TEMPLATE_VARIABLE_KEY_CHARS = 128;
+const MAX_TEMPLATE_VARIABLE_VALUE_CHARS = 16_384;
+const MAX_METADATA_ENTRIES = 32;
+const MAX_METADATA_KEY_CHARS = 128;
+const MAX_METADATA_VALUE_CHARS = 1_024;
+const unsafeObjectKeys = new Set(["__proto__", "constructor", "prototype"]);
+
+function assertStringLength(value: string, label: string, maxChars: number): void {
+  if (value.length > maxChars) {
+    throw new RayError(`${label} must be at most ${maxChars} characters`, {
+      code: "invalid_request",
+      status: 400,
+      details: {
+        maxChars,
+        actualChars: value.length,
+      },
+    });
+  }
+}
+
+function assertTemplateId(value: unknown): asserts value is string {
+  if (typeof value !== "string") {
+    throw new RayError("templateId must be a string", {
+      code: "invalid_request",
+      status: 400,
+      details: { value },
+    });
+  }
+
+  assertStringLength(value, "templateId", MAX_TEMPLATE_ID_CHARS);
+}
+
+function assertPromptRequest(value: unknown): asserts value is PromptTemplatedRequestLike {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new RayError("request must be an object", {
+      code: "invalid_request",
+      status: 400,
+      details: { value },
+    });
+  }
+}
+
+function assertOptionalString(value: unknown, label: string): asserts value is string | undefined {
+  if (value !== undefined && typeof value !== "string") {
+    throw new RayError(`${label} must be a string when provided`, {
+      code: "invalid_request",
+      status: 400,
+      details: { value },
+    });
+  }
+}
+
+function assertSafeObjectKey(key: string, label: string): void {
+  if (unsafeObjectKeys.has(key)) {
+    throw new RayError(`${label} must not contain unsafe key "${key}"`, {
+      code: "invalid_request",
+      status: 400,
+      details: { key },
+    });
+  }
+}
+
+function objectEntries(value: object, label: string): Array<[string, unknown]> {
+  try {
+    return Object.entries(value);
+  } catch (error) {
+    throw new RayError(`${label} must not contain unreadable properties`, {
+      code: "invalid_request",
+      status: 400,
+      details: { message: error instanceof Error ? error.message : String(error) },
+    });
+  }
+}
 
 function normalizeTemplateVariables(
   variables: PromptTemplateVariables | undefined,
 ): Record<string, string> {
-  if (!variables) {
+  if (variables === undefined) {
     return {};
   }
 
-  const normalized: Record<string, string> = {};
+  if (variables === null || typeof variables !== "object" || Array.isArray(variables)) {
+    throw new RayError("templateVariables must be an object when provided", {
+      code: "invalid_request",
+      status: 400,
+      details: { value: variables },
+    });
+  }
 
-  for (const [key, value] of Object.entries(variables)) {
+  const normalized = Object.create(null) as Record<string, string>;
+  const entries = objectEntries(variables, "templateVariables");
+
+  if (entries.length > MAX_TEMPLATE_VARIABLES) {
+    throw new RayError(`templateVariables must contain at most ${MAX_TEMPLATE_VARIABLES} entries`, {
+      code: "invalid_request",
+      status: 400,
+      details: {
+        maxEntries: MAX_TEMPLATE_VARIABLES,
+        actualEntries: entries.length,
+      },
+    });
+  }
+
+  for (const [key, value] of entries) {
+    assertSafeObjectKey(key, "templateVariables");
+
     if (!isNonEmptyString(key)) {
       throw new RayError("template variable keys must be non-empty strings", {
         code: "invalid_request",
@@ -132,10 +229,95 @@ function normalizeTemplateVariables(
       });
     }
 
-    normalized[key] = String(value);
+    assertStringLength(key, "template variable keys", MAX_TEMPLATE_VARIABLE_KEY_CHARS);
+
+    if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+      throw new RayError("template variable values must be strings, numbers, or booleans", {
+        code: "invalid_request",
+        status: 400,
+        details: { key, value },
+      });
+    }
+
+    const normalizedValue = String(value);
+    assertStringLength(
+      normalizedValue,
+      `templateVariables.${key}`,
+      MAX_TEMPLATE_VARIABLE_VALUE_CHARS,
+    );
+
+    normalized[key] = normalizedValue;
   }
 
   return normalized;
+}
+
+function normalizeMetadata(metadata: Record<string, string> | undefined): Record<string, string> {
+  if (metadata === undefined) {
+    return {};
+  }
+
+  if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata)) {
+    throw new RayError("metadata must be an object of string values when provided", {
+      code: "invalid_request",
+      status: 400,
+      details: { value: metadata },
+    });
+  }
+
+  const normalized = Object.create(null) as Record<string, string>;
+  const entries = objectEntries(metadata, "metadata");
+
+  if (entries.length > MAX_METADATA_ENTRIES) {
+    throw new RayError(`metadata must contain at most ${MAX_METADATA_ENTRIES} entries`, {
+      code: "invalid_request",
+      status: 400,
+      details: {
+        maxEntries: MAX_METADATA_ENTRIES,
+        actualEntries: entries.length,
+      },
+    });
+  }
+
+  for (const [key, value] of entries) {
+    assertSafeObjectKey(key, "metadata");
+
+    if (!isNonEmptyString(key) || typeof value !== "string") {
+      throw new RayError("metadata must be an object of string values when provided", {
+        code: "invalid_request",
+        status: 400,
+        details: { key },
+      });
+    }
+
+    assertStringLength(key, "metadata keys", MAX_METADATA_KEY_CHARS);
+    assertStringLength(value, `metadata.${key}`, MAX_METADATA_VALUE_CHARS);
+
+    normalized[key] = value;
+  }
+
+  return normalized;
+}
+
+function normalizeResponseFormat(
+  responseFormat: InferenceResponseFormat | undefined,
+): InferenceResponseFormat | undefined {
+  if (responseFormat === undefined) {
+    return undefined;
+  }
+
+  if (
+    responseFormat === null ||
+    typeof responseFormat !== "object" ||
+    (responseFormat.type !== "text" && responseFormat.type !== "json_object")
+  ) {
+    throw new RayError("responseFormat.type must be 'text' or 'json_object' when provided", {
+      code: "invalid_request",
+      status: 400,
+    });
+  }
+
+  return { type: responseFormat.type };
 }
 
 function renderStringTemplate(template: string, variables: Record<string, string>): string {
@@ -158,11 +340,15 @@ export function listPromptTemplates(): PromptTemplateDefinition[] {
 }
 
 export function getPromptTemplate(id: string): PromptTemplateDefinition | undefined {
+  assertTemplateId(id);
+
   const template = promptTemplateMap.get(id);
   return template ? structuredClone(template) : undefined;
 }
 
 export function requirePromptTemplate(id: string): PromptTemplateDefinition {
+  assertTemplateId(id);
+
   const template = getPromptTemplate(id);
 
   if (!template) {
@@ -179,8 +365,27 @@ export function renderPromptTemplate(
   id: string,
   templateVariables: PromptTemplateVariables | undefined,
 ): RenderedPromptTemplate {
+  assertTemplateId(id);
+
   const template = requirePromptTemplate(id);
   const normalizedVariables = normalizeTemplateVariables(templateVariables);
+  const supportedVariables = new Set(template.variables);
+  const unsupportedVariables = Object.keys(normalizedVariables).filter(
+    (key) => !supportedVariables.has(key),
+  );
+
+  if (unsupportedVariables.length > 0) {
+    throw new RayError(`templateVariables contains unsupported keys for template "${id}"`, {
+      code: "invalid_request",
+      status: 400,
+      details: {
+        templateId: id,
+        unsupportedKeys: unsupportedVariables,
+        supportedKeys: template.variables,
+      },
+    });
+  }
+
   const metadata = {
     ...(template.defaultMetadata ?? {}),
     promptFamily: template.family,
@@ -188,6 +393,7 @@ export function renderPromptTemplate(
     promptTemplateVersion: template.version,
     promptLane: template.lane,
   };
+  const responseFormat = normalizeResponseFormat(template.responseFormat);
 
   return {
     id: template.id,
@@ -201,7 +407,7 @@ export function renderPromptTemplate(
         }
       : {}),
     ...(template.defaultMaxTokens !== undefined ? { maxTokens: template.defaultMaxTokens } : {}),
-    ...(template.responseFormat ? { responseFormat: template.responseFormat } : {}),
+    ...(responseFormat ? { responseFormat } : {}),
     metadata,
     templateVariables: normalizedVariables,
   };
@@ -210,14 +416,20 @@ export function renderPromptTemplate(
 export function resolvePromptTemplateRequest(
   request: PromptTemplatedRequestLike,
 ): ResolvedPromptTemplateRequest {
-  const metadata = structuredClone(request.metadata ?? {});
+  assertPromptRequest(request);
+  assertOptionalString(request.input, "input");
+  assertOptionalString(request.system, "system");
+  assertOptionalString(request.templateId, "templateId");
+
+  const metadata = normalizeMetadata(request.metadata);
+  const responseFormat = normalizeResponseFormat(request.responseFormat);
 
   if (!request.templateId) {
     return {
       ...(request.input !== undefined ? { input: request.input } : {}),
       ...(request.system !== undefined ? { system: request.system } : {}),
       ...(request.maxTokens !== undefined ? { maxTokens: request.maxTokens } : {}),
-      ...(request.responseFormat ? { responseFormat: request.responseFormat } : {}),
+      ...(responseFormat ? { responseFormat } : {}),
       metadata,
     };
   }
@@ -237,8 +449,8 @@ export function resolvePromptTemplateRequest(
     ...((request.maxTokens ?? rendered.maxTokens)
       ? { maxTokens: request.maxTokens ?? rendered.maxTokens }
       : {}),
-    ...((request.responseFormat ?? rendered.responseFormat)
-      ? { responseFormat: request.responseFormat ?? rendered.responseFormat }
+    ...((responseFormat ?? rendered.responseFormat)
+      ? { responseFormat: responseFormat ?? rendered.responseFormat }
       : {}),
     metadata: {
       ...metadata,

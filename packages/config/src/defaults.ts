@@ -10,6 +10,7 @@ export type DeepPartial<T> = {
 
 type Sub1bMachineClass = "cx23" | "cax11";
 type OneBMachineClass = "cx23" | "8gb";
+const unsafeMergeKeys = new Set(["__proto__", "constructor", "prototype"]);
 
 function createSub1bLaunchProfile(machineClass: Sub1bMachineClass): LlamaCppLaunchProfile {
   if (machineClass === "cax11") {
@@ -108,6 +109,8 @@ function createSub1bDefaults(machineClass: Sub1bMachineClass): RayConfig {
     asyncQueue: {
       enabled: false,
       storageDir: ".ray/async-queue",
+      maxJobs: 1_000,
+      completedTtlMs: 86_400_000,
       pollIntervalMs: 1_000,
       dispatchConcurrency: 1,
       maxAttempts: 3,
@@ -281,6 +284,8 @@ function create1bDefaults(machineClass: OneBMachineClass): RayConfig {
     asyncQueue: {
       enabled: false,
       storageDir: ".ray/async-queue",
+      maxJobs: 1_000,
+      completedTtlMs: 86_400_000,
       pollIntervalMs: 1_000,
       dispatchConcurrency: 1,
       maxAttempts: 3,
@@ -383,6 +388,8 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
     asyncQueue: {
       enabled: false,
       storageDir: ".ray/async-queue",
+      maxJobs: 1_000,
+      completedTtlMs: 86_400_000,
       pollIntervalMs: 500,
       dispatchConcurrency: 1,
       maxAttempts: 3,
@@ -483,6 +490,8 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
     asyncQueue: {
       enabled: false,
       storageDir: ".ray/async-queue",
+      maxJobs: 1_000,
+      completedTtlMs: 86_400_000,
       pollIntervalMs: 1_000,
       dispatchConcurrency: 1,
       maxAttempts: 3,
@@ -581,6 +590,8 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
     asyncQueue: {
       enabled: false,
       storageDir: ".ray/async-queue",
+      maxJobs: 2_000,
+      completedTtlMs: 86_400_000,
       pollIntervalMs: 1_000,
       dispatchConcurrency: 2,
       maxAttempts: 3,
@@ -647,20 +658,55 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
 };
 
 export function createDefaultConfig(profile: RayProfile): RayConfig {
+  if (
+    typeof profile !== "string" ||
+    !Object.prototype.hasOwnProperty.call(profileDefaults, profile)
+  ) {
+    throw new TypeError("profile must be a supported Ray profile");
+  }
+
   return structuredClone(profileDefaults[profile]);
 }
 
-export function mergeConfig<T>(base: T, override?: DeepPartial<T>): T {
+function assertSafeOverrideKeys(value: unknown, seen = new WeakSet<object>()): void {
+  if (value === null || typeof value !== "object") {
+    return;
+  }
+
+  if (seen.has(value)) {
+    return;
+  }
+
+  seen.add(value);
+
+  for (const key of Object.keys(value)) {
+    if (unsafeMergeKeys.has(key)) {
+      throw new TypeError(`override key "${key}" is not allowed`);
+    }
+
+    assertSafeOverrideKeys((value as Record<string, unknown>)[key], seen);
+  }
+}
+
+function mergeConfigValue<T>(base: T, override?: DeepPartial<T>): T {
   if (override === undefined) {
     return structuredClone(base);
   }
 
   if (Array.isArray(base)) {
-    return structuredClone((override as T | undefined) ?? base);
+    if (!Array.isArray(override)) {
+      throw new TypeError("override must be an array when merging array config");
+    }
+
+    return structuredClone(override as T);
   }
 
   if (base === null || typeof base !== "object") {
-    return (override as T | undefined) ?? base;
+    return structuredClone(override as T);
+  }
+
+  if (override === null || typeof override !== "object" || Array.isArray(override)) {
+    throw new TypeError("override must be an object when merging object config");
   }
 
   const result: Record<string, unknown> = {};
@@ -676,15 +722,25 @@ export function mergeConfig<T>(base: T, override?: DeepPartial<T>): T {
       continue;
     }
 
-    if (
-      baseValue !== null &&
-      typeof baseValue === "object" &&
-      !Array.isArray(baseValue) &&
-      overrideValue !== null &&
-      typeof overrideValue === "object" &&
-      !Array.isArray(overrideValue)
-    ) {
-      result[key] = mergeConfig(baseValue, overrideValue);
+    if (Array.isArray(baseValue)) {
+      if (!Array.isArray(overrideValue)) {
+        throw new TypeError("override must be an array when merging array config");
+      }
+
+      result[key] = structuredClone(overrideValue);
+      continue;
+    }
+
+    if (baseValue !== null && typeof baseValue === "object" && !Array.isArray(baseValue)) {
+      if (
+        overrideValue === null ||
+        typeof overrideValue !== "object" ||
+        Array.isArray(overrideValue)
+      ) {
+        throw new TypeError("override must be an object when merging object config");
+      }
+
+      result[key] = mergeConfigValue(baseValue, overrideValue as DeepPartial<typeof baseValue>);
       continue;
     }
 
@@ -692,7 +748,7 @@ export function mergeConfig<T>(base: T, override?: DeepPartial<T>): T {
   }
 
   for (const [key, value] of Object.entries(overrideRecord)) {
-    if (key in result || value === undefined) {
+    if (Object.prototype.hasOwnProperty.call(result, key) || value === undefined) {
       continue;
     }
 
@@ -700,4 +756,9 @@ export function mergeConfig<T>(base: T, override?: DeepPartial<T>): T {
   }
 
   return result as T;
+}
+
+export function mergeConfig<T>(base: T, override?: DeepPartial<T>): T {
+  assertSafeOverrideKeys(override);
+  return mergeConfigValue(base, override);
 }

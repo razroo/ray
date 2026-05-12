@@ -137,6 +137,8 @@ export interface SchedulerConfig {
 export interface AsyncQueueConfig {
   enabled: boolean;
   storageDir: string;
+  maxJobs: number;
+  completedTtlMs: number;
   pollIntervalMs: number;
   dispatchConcurrency: number;
   maxAttempts: number;
@@ -300,6 +302,8 @@ export interface AsyncQueueSnapshot {
   running: number;
   callbackPending: number;
   totalJobs: number;
+  maxJobs: number;
+  completedTtlMs: number;
   dispatchConcurrency: number;
 }
 

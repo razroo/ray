@@ -12,24 +12,289 @@ export interface RayClientOptions {
   baseUrl: string;
   apiKey?: string;
   headers?: Record<string, string>;
+  timeoutMs?: number;
+  responseBodyLimitBytes?: number;
+}
+
+export const DEFAULT_RAY_CLIENT_TIMEOUT_MS = 60_000;
+export const DEFAULT_RAY_CLIENT_RESPONSE_BODY_LIMIT_BYTES = 2 * 1024 * 1024;
+const MAX_RAY_CLIENT_BASE_URL_CHARS = 2_048;
+const MAX_RAY_CLIENT_TIMEOUT_MS = 600_000;
+const MAX_RAY_CLIENT_RESPONSE_BODY_LIMIT_BYTES = 64 * 1024 * 1024;
+const MAX_RAY_CLIENT_HEADERS = 64;
+const MAX_RAY_CLIENT_HEADER_NAME_CHARS = 128;
+const MAX_RAY_CLIENT_HEADER_VALUE_CHARS = 8_192;
+const MAX_RAY_CLIENT_API_KEY_CHARS = 1_024;
+const MAX_JOB_ID_CHARS = 128;
+const unsafeHeaderNames = new Set(["__proto__", "constructor", "prototype"]);
+
+interface LimitedResponseBody {
+  text: string;
+  truncated: boolean;
+  bytesRead: number;
+  limitBytes: number;
+  declaredContentLength?: number;
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
-  return baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+  if (typeof baseUrl !== "string" || baseUrl.length === 0) {
+    throw new TypeError("baseUrl must be a non-empty string");
+  }
+
+  if (baseUrl.length > MAX_RAY_CLIENT_BASE_URL_CHARS) {
+    throw new RangeError(`baseUrl must be at most ${MAX_RAY_CLIENT_BASE_URL_CHARS} characters`);
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw new TypeError("baseUrl must be a valid HTTP or HTTPS URL");
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new TypeError("baseUrl must use http or https");
+  }
+
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new TypeError("baseUrl cannot include credentials, query strings, or fragments");
+  }
+
+  return parsed.toString().replace(/\/$/, "");
+}
+
+function assertPositiveSafeIntegerAtMost(value: number, label: string, maximum: number): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError(`${label} must be a positive safe integer`);
+  }
+
+  if (value > maximum) {
+    throw new RangeError(`${label} must be less than or equal to ${maximum}`);
+  }
+}
+
+function assertHeaderName(value: string): void {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_RAY_CLIENT_HEADER_NAME_CHARS ||
+    !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(value)
+  ) {
+    throw new TypeError("headers names must be valid bounded HTTP token strings");
+  }
+}
+
+function assertHeaderValue(value: string): void {
+  if (
+    typeof value !== "string" ||
+    value.length > MAX_RAY_CLIENT_HEADER_VALUE_CHARS ||
+    /[\0\r\n]/.test(value)
+  ) {
+    throw new TypeError("headers values must be bounded strings without control characters");
+  }
+}
+
+function assertClientOptions(value: unknown): asserts value is RayClientOptions {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("RayClient options must be an object");
+  }
+}
+
+function objectEntries(value: object, label: string): Array<[string, unknown]> {
+  try {
+    return Object.entries(value);
+  } catch {
+    throw new TypeError(`${label} must not contain unreadable properties`);
+  }
+}
+
+function snapshotHeaders(headers?: Record<string, string>): Record<string, string> {
+  const snapshot = Object.create(null) as Record<string, string>;
+  snapshot["content-type"] = "application/json";
+
+  if (headers === undefined) {
+    return snapshot;
+  }
+
+  if (headers === null || typeof headers !== "object" || Array.isArray(headers)) {
+    throw new TypeError("headers must be an object of string values when provided");
+  }
+
+  const entries = objectEntries(headers, "headers");
+  if (entries.length > MAX_RAY_CLIENT_HEADERS) {
+    throw new RangeError(`headers must contain at most ${MAX_RAY_CLIENT_HEADERS} entries`);
+  }
+
+  for (const [name, value] of entries) {
+    if (unsafeHeaderNames.has(name.toLowerCase())) {
+      throw new TypeError(`headers names must not contain unsafe key "${name}"`);
+    }
+
+    assertHeaderName(name);
+    if (typeof value !== "string") {
+      throw new TypeError("headers values must be bounded strings without control characters");
+    }
+
+    assertHeaderValue(value);
+    snapshot[name.toLowerCase()] = value;
+  }
+
+  return snapshot;
+}
+
+function assertApiKey(apiKey: string): void {
+  if (
+    typeof apiKey !== "string" ||
+    apiKey.length === 0 ||
+    apiKey.length > MAX_RAY_CLIENT_API_KEY_CHARS ||
+    /\s|[\0\r\n]/.test(apiKey)
+  ) {
+    throw new TypeError("apiKey must be a bounded bearer token string without whitespace");
+  }
+}
+
+function assertJobId(value: string): void {
+  if (
+    typeof value !== "string" ||
+    value.length > MAX_JOB_ID_CHARS ||
+    !/^[A-Za-z0-9_-]+$/.test(value)
+  ) {
+    throw new Error(`jobId must be 1-${MAX_JOB_ID_CHARS} characters of A-Z, a-z, 0-9, _ or -`);
+  }
+}
+
+function decodeBytes(bytes: Uint8Array): string {
+  return new TextDecoder().decode(bytes);
+}
+
+function encodeText(value: string): Uint8Array {
+  return new TextEncoder().encode(value);
+}
+
+function concatBytes(chunks: Uint8Array[], byteLength: number): Uint8Array {
+  const buffer = new Uint8Array(byteLength);
+  let offset = 0;
+
+  for (const chunk of chunks) {
+    buffer.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return buffer;
+}
+
+function getDeclaredContentLength(response: Response): number | undefined {
+  const header = response.headers.get("content-length");
+
+  if (!header) {
+    return undefined;
+  }
+
+  const normalized = header.trim();
+  const parsed = Number(normalized);
+
+  return /^\d+$/.test(normalized) && Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
+async function readResponseTextLimited(
+  response: Response,
+  limitBytes: number,
+): Promise<LimitedResponseBody> {
+  const declaredContentLength = getDeclaredContentLength(response);
+
+  if (declaredContentLength !== undefined && declaredContentLength > limitBytes) {
+    await response.body?.cancel().catch(() => undefined);
+
+    return {
+      text: "",
+      truncated: true,
+      bytesRead: 0,
+      limitBytes,
+      declaredContentLength,
+    };
+  }
+
+  if (!response.body) {
+    const text = await response.text();
+    const bytes = encodeText(text);
+    const truncated = bytes.byteLength > limitBytes;
+
+    return {
+      text: truncated ? decodeBytes(bytes.subarray(0, limitBytes)) : text,
+      truncated,
+      bytesRead: truncated ? limitBytes : bytes.byteLength,
+      limitBytes,
+    };
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytesRead = 0;
+  let truncated = false;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (done) {
+        break;
+      }
+
+      if (bytesRead >= limitBytes) {
+        truncated = true;
+        await reader.cancel();
+        break;
+      }
+
+      const chunk = value;
+      const remaining = limitBytes - bytesRead;
+
+      if (chunk.byteLength > remaining) {
+        chunks.push(chunk.subarray(0, remaining));
+        bytesRead = limitBytes;
+        truncated = true;
+        await reader.cancel();
+        break;
+      }
+
+      chunks.push(chunk);
+      bytesRead += chunk.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return {
+    text: decodeBytes(concatBytes(chunks, bytesRead)),
+    truncated,
+    bytesRead,
+    limitBytes,
+  };
 }
 
 export class RayClient {
   private readonly baseUrl: string;
   private readonly headers: Record<string, string>;
+  private readonly timeoutMs: number;
+  private readonly responseBodyLimitBytes: number;
 
   constructor(options: RayClientOptions) {
-    this.baseUrl = normalizeBaseUrl(options.baseUrl);
-    this.headers = {
-      "content-type": "application/json",
-      ...(options.headers ?? {}),
-    };
+    assertClientOptions(options);
 
-    if (options.apiKey) {
+    this.baseUrl = normalizeBaseUrl(options.baseUrl);
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_RAY_CLIENT_TIMEOUT_MS;
+    this.responseBodyLimitBytes =
+      options.responseBodyLimitBytes ?? DEFAULT_RAY_CLIENT_RESPONSE_BODY_LIMIT_BYTES;
+    assertPositiveSafeIntegerAtMost(this.timeoutMs, "timeoutMs", MAX_RAY_CLIENT_TIMEOUT_MS);
+    assertPositiveSafeIntegerAtMost(
+      this.responseBodyLimitBytes,
+      "responseBodyLimitBytes",
+      MAX_RAY_CLIENT_RESPONSE_BODY_LIMIT_BYTES,
+    );
+    this.headers = snapshotHeaders(options.headers);
+
+    if (options.apiKey !== undefined) {
+      assertApiKey(options.apiKey);
       this.headers.authorization = `Bearer ${options.apiKey}`;
     }
   }
@@ -49,7 +314,8 @@ export class RayClient {
   }
 
   job(jobId: string): Promise<InferenceJobRecord> {
-    return this.request<InferenceJobRecord>(`/v1/jobs/${jobId}`);
+    assertJobId(jobId);
+    return this.request<InferenceJobRecord>(`/v1/jobs/${encodeURIComponent(jobId)}`);
   }
 
   health(): Promise<HealthSnapshot> {
@@ -65,19 +331,48 @@ export class RayClient {
   }
 
   private async request<T>(pathname: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${pathname}`, {
-      ...init,
-      headers: {
-        ...this.headers,
-        ...(init?.headers ?? {}),
-      },
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort(new Error(`Ray request timed out after ${this.timeoutMs}ms`));
+    }, this.timeoutMs);
 
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`Ray request failed with ${response.status}: ${body}`);
+    try {
+      const response = await fetch(`${this.baseUrl}${pathname}`, {
+        ...init,
+        headers: {
+          ...this.headers,
+          ...(init?.headers ?? {}),
+        },
+        signal: controller.signal,
+      });
+
+      const body = await readResponseTextLimited(response, this.responseBodyLimitBytes);
+
+      if (!response.ok) {
+        const truncated = body.truncated
+          ? body.declaredContentLength !== undefined
+            ? ` (response body declared ${body.declaredContentLength} bytes, limit ${body.limitBytes} bytes)`
+            : ` (response body truncated at ${body.limitBytes} bytes)`
+          : "";
+        throw new Error(`Ray request failed with ${response.status}: ${body.text}${truncated}`);
+      }
+
+      if (body.truncated) {
+        throw new Error(`Ray response exceeded ${body.limitBytes} bytes`);
+      }
+
+      return JSON.parse(body.text) as T;
+    } catch (error) {
+      if (controller.signal.aborted) {
+        const reason = controller.signal.reason;
+        throw reason instanceof Error
+          ? reason
+          : new Error(`Ray request timed out after ${this.timeoutMs}ms`);
+      }
+
+      throw error;
+    } finally {
+      clearTimeout(timeout);
     }
-
-    return (await response.json()) as T;
   }
 }

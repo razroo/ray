@@ -1,7 +1,8 @@
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { loadRayConfig, mergeConfig, type DeepPartial } from "@ray/config";
 import type { LlamaCppLaunchProfile, RayConfig } from "@razroo/ray-core";
 import { buildLlamaCppEnvironment } from "../packages/deploy/src/index.ts";
@@ -11,6 +12,45 @@ type BenchmarkCheckOperator = "<=" | ">=" | "===";
 
 const STRUCTURED_OUTPUT_VERSION = 1;
 const BENCHMARK_API_KEY_ENV = "RAY_BENCHMARK_API_KEY";
+const MAX_BENCHMARK_WORKLOAD_FILE_BYTES = 1_048_576;
+const MAX_BENCHMARK_BASELINE_FILE_BYTES = 256 * 1024;
+const MAX_BENCHMARK_WORKLOAD_ITEMS = 1_024;
+const MAX_BENCHMARK_CLI_ARGS = 128;
+const MAX_BENCHMARK_CLI_ARG_BYTES = 4_096;
+const MAX_BENCHMARK_CONCURRENCY = 64;
+const MAX_BENCHMARK_REQUESTS = 10_000;
+const MAX_BENCHMARK_LABEL_CHARS = 256;
+const MAX_BENCHMARK_API_KEY_CHARS = 4_096;
+const MAX_BENCHMARK_TEXT_CHARS = 65_536;
+const MAX_BENCHMARK_METADATA_KEYS = 32;
+const MAX_BENCHMARK_METADATA_KEY_CHARS = 128;
+const MAX_BENCHMARK_METADATA_VALUE_CHARS = 4_096;
+const MAX_BENCHMARK_TEMPLATE_VARIABLES = 64;
+const MAX_BENCHMARK_TEMPLATE_VARIABLE_KEY_CHARS = 128;
+const MAX_BENCHMARK_TEMPLATE_VARIABLE_VALUE_CHARS = 16_384;
+const MAX_BENCHMARK_STOP_SEQUENCES = 16;
+const MAX_BENCHMARK_STOP_SEQUENCE_CHARS = 256;
+const MAX_BENCHMARK_QUALITY_STRINGS = 32;
+const MAX_BENCHMARK_QUALITY_STRING_CHARS = 1_024;
+const MAX_BENCHMARK_BASELINE_NOTES = 16;
+const MAX_BENCHMARK_BASELINE_NOTE_CHARS = 1_024;
+const MAX_BENCHMARK_ERROR_RESPONSE_BYTES = 64 * 1024;
+const MAX_BENCHMARK_SUCCESS_RESPONSE_BYTES = 2 * 1024 * 1024;
+const BENCHMARK_REQUEST_TIMEOUT_MS = 180_000;
+const BENCHMARK_HEALTH_REQUEST_TIMEOUT_MS = 3_000;
+const unsafeObjectKeys = new Set(["__proto__", "constructor", "prototype"]);
+const baselineAssertionKeys = new Set<keyof BenchmarkBaselineAssertions>([
+  "maxLatencyP95Ms",
+  "maxQueueDelayP95Ms",
+  "maxTtftP95Ms",
+  "minCompletionTokensPerSecondAvg",
+  "minPromptCacheHitRate",
+  "minPromptCacheReuseRatio",
+  "minEmailsPerHour",
+  "minQualityPassRate",
+  "minQualityScoreAvg",
+  "minValidJsonRate",
+]);
 
 interface BenchmarkArgs {
   baseUrl: string;
@@ -311,7 +351,96 @@ const defaultWorkload: BenchmarkWorkloadItem[] = [
   },
 ];
 
-function parseArgs(argv: string[]): BenchmarkArgs {
+function assertCliArgv(argv: unknown): asserts argv is string[] {
+  if (!Array.isArray(argv)) {
+    throw new Error("argv must be an array of strings");
+  }
+
+  if (argv.length > MAX_BENCHMARK_CLI_ARGS) {
+    throw new Error(`argv must contain at most ${MAX_BENCHMARK_CLI_ARGS} entries`);
+  }
+
+  for (const [index, value] of argv.entries()) {
+    if (typeof value !== "string") {
+      throw new Error(`argv[${index}] must be a string`);
+    }
+
+    if (value.includes("\0")) {
+      throw new Error(`argv[${index}] must not contain NUL bytes`);
+    }
+
+    if (Buffer.byteLength(value, "utf8") > MAX_BENCHMARK_CLI_ARG_BYTES) {
+      throw new Error(`argv[${index}] must be at most ${MAX_BENCHMARK_CLI_ARG_BYTES} bytes`);
+    }
+  }
+}
+
+function readFlagValue(argv: string[], index: number, flag: string): string {
+  const value = argv[index + 1];
+
+  if (value === undefined || value === "" || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value`);
+  }
+
+  return value;
+}
+
+function parsePositiveIntegerFlag(value: string, label: string, maximum: number): number {
+  const normalized = value.trim();
+  const parsed = Number(normalized);
+
+  if (!/^\d+$/.test(normalized) || !Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+
+  if (parsed > maximum) {
+    throw new Error(`${label} must be less than or equal to ${maximum}`);
+  }
+
+  return parsed;
+}
+
+function assertNonEmptyStringAtMost(value: string, label: string, maximum: number): void {
+  if (value.trim().length === 0) {
+    throw new Error(`${label} must be non-empty`);
+  }
+
+  if (value.length > maximum) {
+    throw new Error(`${label} must be at most ${maximum} characters`);
+  }
+}
+
+function assertPathFlagValue(value: string, label: string): void {
+  assertNonEmptyStringAtMost(value, label, MAX_BENCHMARK_CLI_ARG_BYTES);
+}
+
+function normalizeBaseUrlFlag(value: string): string {
+  let parsed: URL;
+
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("--base-url must be an absolute HTTP URL");
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("--base-url must use http or https");
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new Error("--base-url must not include credentials");
+  }
+
+  if (parsed.search || parsed.hash) {
+    throw new Error("--base-url must not include a query string or fragment");
+  }
+
+  return parsed.toString().replace(/\/$/, "");
+}
+
+export function parseArgs(argv: string[]): BenchmarkArgs {
+  assertCliArgv(argv);
+
   const result: BenchmarkArgs = {
     baseUrl: "http://127.0.0.1:3000",
     concurrency: 1,
@@ -324,7 +453,6 @@ function parseArgs(argv: string[]): BenchmarkArgs {
 
   for (let index = 0; index < argv.length; index += 1) {
     const current = argv[index];
-    const next = argv[index + 1];
 
     if (current === "--") {
       continue;
@@ -350,77 +478,103 @@ function parseArgs(argv: string[]): BenchmarkArgs {
       continue;
     }
 
-    if (!next) {
-      continue;
-    }
-
     if (current === "--base-url") {
-      result.baseUrl = next;
+      result.baseUrl = normalizeBaseUrlFlag(readFlagValue(argv, index, current));
       index += 1;
       continue;
     }
 
     if (current === "--workload") {
-      result.workloadPath = next;
+      const value = readFlagValue(argv, index, current);
+      assertPathFlagValue(value, "--workload");
+      result.workloadPath = value;
       index += 1;
       continue;
     }
 
     if (current === "--concurrency") {
-      result.concurrency = Math.max(1, Number.parseInt(next, 10) || 1);
+      result.concurrency = parsePositiveIntegerFlag(
+        readFlagValue(argv, index, current),
+        "--concurrency",
+        MAX_BENCHMARK_CONCURRENCY,
+      );
       index += 1;
       continue;
     }
 
     if (current === "--requests") {
-      result.requests = Math.max(1, Number.parseInt(next, 10) || 1);
+      result.requests = parsePositiveIntegerFlag(
+        readFlagValue(argv, index, current),
+        "--requests",
+        MAX_BENCHMARK_REQUESTS,
+      );
       index += 1;
       continue;
     }
 
     if (current === "--label") {
-      result.label = next;
+      const value = readFlagValue(argv, index, current);
+      assertNonEmptyStringAtMost(value, "--label", MAX_BENCHMARK_LABEL_CHARS);
+      result.label = value;
       index += 1;
       continue;
     }
 
     if (current === "--api-key") {
-      result.apiKey = next;
+      const value = readFlagValue(argv, index, current);
+      assertNonEmptyStringAtMost(value, "--api-key", MAX_BENCHMARK_API_KEY_CHARS);
+      result.apiKey = value;
       index += 1;
       continue;
     }
 
     if (current === "--config") {
-      result.configPath = next;
+      const value = readFlagValue(argv, index, current);
+      assertPathFlagValue(value, "--config");
+      result.configPath = value;
       index += 1;
       continue;
     }
 
     if (current === "--output") {
-      result.outputPath = next;
+      const value = readFlagValue(argv, index, current);
+      assertPathFlagValue(value, "--output");
+      result.outputPath = value;
       index += 1;
       continue;
     }
 
     if (current === "--history-dir") {
-      result.historyDir = next;
+      const value = readFlagValue(argv, index, current);
+      assertPathFlagValue(value, "--history-dir");
+      result.historyDir = value;
       index += 1;
       continue;
     }
 
     if (current === "--baseline") {
-      result.baselinePath = next;
+      const value = readFlagValue(argv, index, current);
+      assertPathFlagValue(value, "--baseline");
+      result.baselinePath = value;
       index += 1;
       continue;
     }
 
-    if (
-      current === "--autotune-scope" &&
-      (next === "auto" || next === "gateway" || next === "full")
-    ) {
-      result.autotuneScope = next;
+    if (current === "--autotune-scope") {
+      const value = readFlagValue(argv, index, current);
+      if (value !== "auto" && value !== "gateway" && value !== "full") {
+        throw new Error("--autotune-scope must be auto, gateway, or full");
+      }
+      result.autotuneScope = value;
       index += 1;
+      continue;
     }
+
+    if (current.startsWith("-")) {
+      throw new Error(`Unknown option: ${current}`);
+    }
+
+    throw new Error(`Unexpected positional argument: ${current}`);
   }
 
   return result;
@@ -451,39 +605,496 @@ function printUsage(): void {
   console.log(`Auth fallback env: ${BENCHMARK_API_KEY_ENV}`);
 }
 
-async function loadWorkload(workloadPath?: string): Promise<BenchmarkWorkloadItem[]> {
+async function readTextFileBounded(
+  filePath: string,
+  limitBytes: number,
+  label: string,
+): Promise<string> {
+  let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
+
+  try {
+    fileHandle = await open(filePath, "r");
+    const stats = await fileHandle.stat();
+
+    if (!stats.isFile()) {
+      throw new Error(`${label} path must be a file: ${filePath}`);
+    }
+
+    if (stats.size > limitBytes) {
+      throw new Error(`${label} file must be at most ${limitBytes} bytes: ${filePath}`);
+    }
+
+    return await fileHandle.readFile("utf8");
+  } finally {
+    await fileHandle?.close().catch(() => undefined);
+  }
+}
+
+function assertWorkloadSize(workload: BenchmarkWorkloadItem[], resolvedPath: string): void {
+  if (workload.length === 0) {
+    throw new Error(`Workload file has no usable entries: ${resolvedPath}`);
+  }
+
+  if (workload.length > MAX_BENCHMARK_WORKLOAD_ITEMS) {
+    throw new Error(
+      `Workload file must contain at most ${MAX_BENCHMARK_WORKLOAD_ITEMS} entries: ${resolvedPath}`,
+    );
+  }
+}
+
+function assertRecord(value: unknown, label: string): asserts value is Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+
+  for (const key of Object.keys(value)) {
+    if (unsafeObjectKeys.has(key)) {
+      throw new Error(`${label} cannot include unsafe key ${key}`);
+    }
+  }
+}
+
+function assertOptionalStringValue(
+  value: unknown,
+  label: string,
+  maxChars: number,
+): asserts value is string | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+
+  if (value.length > maxChars) {
+    throw new Error(`${label} must be at most ${maxChars} characters`);
+  }
+}
+
+function assertOptionalBooleanValue(
+  value: unknown,
+  label: string,
+): asserts value is boolean | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "boolean") {
+    throw new Error(`${label} must be a boolean`);
+  }
+}
+
+function assertOptionalPositiveIntegerValue(
+  value: unknown,
+  label: string,
+  maximum: number,
+): asserts value is number | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+
+  if (value > maximum) {
+    throw new Error(`${label} must be less than or equal to ${maximum}`);
+  }
+}
+
+function assertOptionalNonNegativeIntegerValue(
+  value: unknown,
+  label: string,
+  maximum = Number.MAX_SAFE_INTEGER,
+): asserts value is number | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
+
+  if (value > maximum) {
+    throw new Error(`${label} must be less than or equal to ${maximum}`);
+  }
+}
+
+function assertOptionalNonNegativeNumberValue(
+  value: unknown,
+  label: string,
+): asserts value is number | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative number`);
+  }
+}
+
+function assertNonNegativeNumberValue(value: unknown, label: string): asserts value is number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative number`);
+  }
+}
+
+function assertOptionalNumberInRange(
+  value: unknown,
+  label: string,
+  minimum: number,
+  maximum: number,
+): asserts value is number | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "number" || !Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new Error(`${label} must be a number between ${minimum} and ${maximum}`);
+  }
+}
+
+function assertStringArray(
+  value: unknown,
+  label: string,
+  maxEntries: number,
+  maxEntryChars: number,
+): asserts value is string[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array of strings`);
+  }
+
+  if (value.length > maxEntries) {
+    throw new Error(`${label} must contain at most ${maxEntries} entries`);
+  }
+
+  for (const [index, entry] of value.entries()) {
+    if (typeof entry !== "string") {
+      throw new Error(`${label}[${index}] must be a string`);
+    }
+
+    if (entry.length > maxEntryChars) {
+      throw new Error(`${label}[${index}] must be at most ${maxEntryChars} characters`);
+    }
+  }
+}
+
+function assertOptionalStringArray(
+  value: unknown,
+  label: string,
+  maxEntries: number,
+  maxEntryChars: number,
+): asserts value is string[] | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  assertStringArray(value, label, maxEntries, maxEntryChars);
+}
+
+function assertOptionalStringRecord(
+  value: unknown,
+  label: string,
+  maxEntries: number,
+  maxKeyChars: number,
+  maxValueChars: number,
+): asserts value is Record<string, string> | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  assertRecord(value, label);
+  const entries = Object.entries(value);
+
+  if (entries.length > maxEntries) {
+    throw new Error(`${label} must contain at most ${maxEntries} entries`);
+  }
+
+  for (const [key, entry] of entries) {
+    if (key.length === 0 || key.length > maxKeyChars) {
+      throw new Error(`${label} keys must be 1-${maxKeyChars} characters`);
+    }
+
+    if (typeof entry !== "string") {
+      throw new Error(`${label}.${key} must be a string`);
+    }
+
+    if (entry.length > maxValueChars) {
+      throw new Error(`${label}.${key} must be at most ${maxValueChars} characters`);
+    }
+  }
+}
+
+function assertOptionalTemplateVariables(
+  value: unknown,
+  label: string,
+): asserts value is Record<string, string | number | boolean> | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  assertRecord(value, label);
+  const entries = Object.entries(value);
+
+  if (entries.length > MAX_BENCHMARK_TEMPLATE_VARIABLES) {
+    throw new Error(`${label} must contain at most ${MAX_BENCHMARK_TEMPLATE_VARIABLES} entries`);
+  }
+
+  for (const [key, entry] of entries) {
+    if (key.length === 0 || key.length > MAX_BENCHMARK_TEMPLATE_VARIABLE_KEY_CHARS) {
+      throw new Error(
+        `${label} keys must be 1-${MAX_BENCHMARK_TEMPLATE_VARIABLE_KEY_CHARS} characters`,
+      );
+    }
+
+    if (typeof entry === "string") {
+      if (entry.length > MAX_BENCHMARK_TEMPLATE_VARIABLE_VALUE_CHARS) {
+        throw new Error(
+          `${label}.${key} must be at most ${MAX_BENCHMARK_TEMPLATE_VARIABLE_VALUE_CHARS} characters`,
+        );
+      }
+      continue;
+    }
+
+    if (typeof entry === "number") {
+      if (!Number.isFinite(entry)) {
+        throw new Error(`${label}.${key} must be a finite number`);
+      }
+      continue;
+    }
+
+    if (typeof entry !== "boolean") {
+      throw new Error(`${label}.${key} must be a string, number, or boolean`);
+    }
+  }
+}
+
+function assertOptionalResponseFormat(
+  value: unknown,
+  label: string,
+): asserts value is InferenceRequest["responseFormat"] | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  assertRecord(value, label);
+  if (value.type !== "text" && value.type !== "json_object") {
+    throw new Error(`${label}.type must be text or json_object`);
+  }
+}
+
+function assertOptionalBenchmarkAssertions(
+  value: unknown,
+  label: string,
+): asserts value is BenchmarkQualityAssertions | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  assertRecord(value, label);
+  assertOptionalBooleanValue(value.requiresValidJson, `${label}.requiresValidJson`);
+  assertOptionalBooleanValue(value.noPromptEcho, `${label}.noPromptEcho`);
+  assertOptionalBooleanValue(value.stopMustNotAppear, `${label}.stopMustNotAppear`);
+  assertOptionalBooleanValue(value.requiresCallToAction, `${label}.requiresCallToAction`);
+  assertOptionalBooleanValue(value.noSubjectGreetingSignoff, `${label}.noSubjectGreetingSignoff`);
+  assertOptionalNonNegativeIntegerValue(
+    value.minOutputChars,
+    `${label}.minOutputChars`,
+    MAX_BENCHMARK_TEXT_CHARS,
+  );
+  assertOptionalNonNegativeIntegerValue(
+    value.maxOutputChars,
+    `${label}.maxOutputChars`,
+    MAX_BENCHMARK_TEXT_CHARS,
+  );
+
+  if (
+    typeof value.minOutputChars === "number" &&
+    typeof value.maxOutputChars === "number" &&
+    value.minOutputChars > value.maxOutputChars
+  ) {
+    throw new Error(`${label}.minOutputChars must be less than or equal to maxOutputChars`);
+  }
+
+  assertOptionalStringArray(
+    value.mustContain,
+    `${label}.mustContain`,
+    MAX_BENCHMARK_QUALITY_STRINGS,
+    MAX_BENCHMARK_QUALITY_STRING_CHARS,
+  );
+  assertOptionalStringArray(
+    value.mustNotContain,
+    `${label}.mustNotContain`,
+    MAX_BENCHMARK_QUALITY_STRINGS,
+    MAX_BENCHMARK_QUALITY_STRING_CHARS,
+  );
+}
+
+function assertBenchmarkWorkloadItem(
+  value: unknown,
+  label: string,
+): asserts value is BenchmarkWorkloadItem {
+  assertRecord(value, label);
+  assertOptionalStringValue(value.input, `${label}.input`, MAX_BENCHMARK_TEXT_CHARS);
+  assertOptionalStringValue(value.system, `${label}.system`, MAX_BENCHMARK_TEXT_CHARS);
+  assertOptionalStringValue(value.templateId, `${label}.templateId`, MAX_BENCHMARK_LABEL_CHARS);
+  assertOptionalStringValue(value.dedupeKey, `${label}.dedupeKey`, MAX_BENCHMARK_LABEL_CHARS);
+
+  if (value.input === undefined && value.templateId === undefined) {
+    throw new Error(`${label} must include input or templateId`);
+  }
+
+  assertOptionalPositiveIntegerValue(value.maxTokens, `${label}.maxTokens`, 8_192);
+  assertOptionalNumberInRange(value.temperature, `${label}.temperature`, 0, 2);
+  assertOptionalNumberInRange(value.topP, `${label}.topP`, 0, 1);
+  assertOptionalNonNegativeIntegerValue(value.seed, `${label}.seed`);
+  assertOptionalBooleanValue(value.cache, `${label}.cache`);
+  assertOptionalResponseFormat(value.responseFormat, `${label}.responseFormat`);
+  assertOptionalStringArray(
+    value.stop,
+    `${label}.stop`,
+    MAX_BENCHMARK_STOP_SEQUENCES,
+    MAX_BENCHMARK_STOP_SEQUENCE_CHARS,
+  );
+  assertOptionalStringRecord(
+    value.metadata,
+    `${label}.metadata`,
+    MAX_BENCHMARK_METADATA_KEYS,
+    MAX_BENCHMARK_METADATA_KEY_CHARS,
+    MAX_BENCHMARK_METADATA_VALUE_CHARS,
+  );
+  assertOptionalTemplateVariables(value.templateVariables, `${label}.templateVariables`);
+  assertOptionalBenchmarkAssertions(value.benchmark, `${label}.benchmark`);
+}
+
+function validateWorkload(workload: unknown[], resolvedPath: string): BenchmarkWorkloadItem[] {
+  assertWorkloadSize(workload as BenchmarkWorkloadItem[], resolvedPath);
+
+  for (const [index, item] of workload.entries()) {
+    assertBenchmarkWorkloadItem(item, `Workload entry ${index + 1}`);
+  }
+
+  return workload as BenchmarkWorkloadItem[];
+}
+
+function assertBaselineAssertions(
+  value: unknown,
+  label: string,
+): asserts value is BenchmarkBaselineAssertions {
+  assertRecord(value, label);
+
+  for (const key of Object.keys(value)) {
+    if (!baselineAssertionKeys.has(key as keyof BenchmarkBaselineAssertions)) {
+      throw new Error(`${label}.${key} is not a supported benchmark assertion`);
+    }
+  }
+
+  for (const key of baselineAssertionKeys) {
+    assertOptionalNonNegativeNumberValue(value[key], `${label}.${key}`);
+  }
+}
+
+function assertBenchmarkBaseline(
+  value: unknown,
+  label: string,
+): asserts value is BenchmarkBaseline {
+  assertRecord(value, label);
+
+  if (value.version !== 1) {
+    throw new Error(`Unsupported benchmark baseline version in ${label}: ${String(value.version)}`);
+  }
+
+  assertOptionalStringValue(value.label, `${label}.label`, MAX_BENCHMARK_LABEL_CHARS);
+  assertOptionalStringValue(value.machineClass, `${label}.machineClass`, MAX_BENCHMARK_LABEL_CHARS);
+  assertOptionalStringValue(
+    value.workloadPath,
+    `${label}.workloadPath`,
+    MAX_BENCHMARK_CLI_ARG_BYTES,
+  );
+  assertOptionalPositiveIntegerValue(
+    value.concurrency,
+    `${label}.concurrency`,
+    MAX_BENCHMARK_CONCURRENCY,
+  );
+  assertOptionalPositiveIntegerValue(value.requests, `${label}.requests`, MAX_BENCHMARK_REQUESTS);
+
+  if (value.label === undefined) {
+    throw new Error(`${label}.label is required`);
+  }
+
+  if (value.machineClass === undefined) {
+    throw new Error(`${label}.machineClass is required`);
+  }
+
+  if (value.concurrency === undefined) {
+    throw new Error(`${label}.concurrency is required`);
+  }
+
+  if (value.requests === undefined) {
+    throw new Error(`${label}.requests is required`);
+  }
+
+  if (value.assertions === undefined) {
+    throw new Error(`${label}.assertions is required`);
+  }
+  assertBaselineAssertions(value.assertions, `${label}.assertions`);
+
+  if (value.notes !== undefined) {
+    assertStringArray(
+      value.notes,
+      `${label}.notes`,
+      MAX_BENCHMARK_BASELINE_NOTES,
+      MAX_BENCHMARK_BASELINE_NOTE_CHARS,
+    );
+  }
+}
+
+export async function loadWorkload(workloadPath?: string): Promise<BenchmarkWorkloadItem[]> {
   if (!workloadPath) {
     return defaultWorkload;
   }
 
   const resolvedPath = path.resolve(process.cwd(), workloadPath);
-  const raw = await readFile(resolvedPath, "utf8");
+  const raw = await readTextFileBounded(
+    resolvedPath,
+    MAX_BENCHMARK_WORKLOAD_FILE_BYTES,
+    "Workload",
+  );
   const trimmed = raw.trim();
 
   if (trimmed.length === 0) {
     throw new Error(`Workload file is empty: ${resolvedPath}`);
   }
 
+  let workload: unknown[];
   if (trimmed.startsWith("[")) {
-    return JSON.parse(trimmed) as BenchmarkWorkloadItem[];
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!Array.isArray(parsed)) {
+      throw new Error(`Workload file must contain a JSON array: ${resolvedPath}`);
+    }
+    workload = parsed;
+  } else {
+    workload = trimmed
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as unknown);
   }
 
-  return trimmed
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line) as BenchmarkWorkloadItem);
+  return validateWorkload(workload, resolvedPath);
 }
 
-async function loadBaseline(baselinePath: string): Promise<BenchmarkBaseline> {
+export async function loadBaseline(baselinePath: string): Promise<BenchmarkBaseline> {
   const resolvedPath = path.resolve(process.cwd(), baselinePath);
-  const baseline = JSON.parse(await readFile(resolvedPath, "utf8")) as BenchmarkBaseline;
+  const raw = await readTextFileBounded(
+    resolvedPath,
+    MAX_BENCHMARK_BASELINE_FILE_BYTES,
+    "Baseline",
+  );
+  const baseline = JSON.parse(raw) as unknown;
 
-  if (baseline.version !== 1) {
-    throw new Error(
-      `Unsupported benchmark baseline version in ${resolvedPath}: ${baseline.version}`,
-    );
-  }
+  assertBenchmarkBaseline(baseline, resolvedPath);
 
   return baseline;
 }
@@ -750,6 +1361,126 @@ function is1bCx23Preset(preset: LlamaCppLaunchProfile["preset"]): boolean {
   return preset === "single-vps-1b-cx23";
 }
 
+function parseContentLength(value: string | null): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  const parsed = Number(normalized);
+  return /^\d+$/.test(normalized) && Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
+async function readResponseTextWithinLimit(
+  response: Response,
+  limitBytes: number,
+  label: string,
+): Promise<string> {
+  const contentLength = parseContentLength(response.headers.get("content-length"));
+  if (contentLength !== undefined && contentLength > limitBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`${label} exceeded ${limitBytes} bytes`);
+  }
+
+  if (!response.body) {
+    return "";
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      if (!value) {
+        continue;
+      }
+
+      totalBytes += value.byteLength;
+      if (totalBytes > limitBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error(`${label} exceeded ${limitBytes} bytes`);
+      }
+
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return Buffer.concat(
+    chunks.map((chunk) => Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength)),
+    totalBytes,
+  ).toString("utf8");
+}
+
+function assertInferenceResponsePayload(value: unknown): asserts value is InferenceResponse {
+  assertRecord(value, "Benchmark response");
+
+  if (typeof value.id !== "string" || value.id.length === 0) {
+    throw new Error("Benchmark response.id must be a non-empty string");
+  }
+
+  if (typeof value.output !== "string") {
+    throw new Error("Benchmark response.output must be a string");
+  }
+
+  assertOptionalBooleanValue(value.cached, "Benchmark response.cached");
+  assertOptionalBooleanValue(value.deduplicated, "Benchmark response.deduplicated");
+  assertOptionalBooleanValue(value.degraded, "Benchmark response.degraded");
+  if (value.cached === undefined) {
+    throw new Error("Benchmark response.cached is required");
+  }
+  if (value.deduplicated === undefined) {
+    throw new Error("Benchmark response.deduplicated is required");
+  }
+  if (value.degraded === undefined) {
+    throw new Error("Benchmark response.degraded is required");
+  }
+
+  assertNonNegativeNumberValue(value.queueTimeMs, "Benchmark response.queueTimeMs");
+  assertNonNegativeNumberValue(value.latencyMs, "Benchmark response.latencyMs");
+  assertRecord(value.usage, "Benchmark response.usage");
+
+  if (value.usage.tokens !== undefined) {
+    assertRecord(value.usage.tokens, "Benchmark response.usage.tokens");
+    assertNonNegativeNumberValue(
+      value.usage.tokens.prompt,
+      "Benchmark response.usage.tokens.prompt",
+    );
+    assertNonNegativeNumberValue(
+      value.usage.tokens.completion,
+      "Benchmark response.usage.tokens.completion",
+    );
+    assertNonNegativeNumberValue(value.usage.tokens.total, "Benchmark response.usage.tokens.total");
+  }
+}
+
+async function parseInferenceResponse(response: Response): Promise<InferenceResponse> {
+  const body = await readResponseTextWithinLimit(
+    response,
+    MAX_BENCHMARK_SUCCESS_RESPONSE_BYTES,
+    "Benchmark response",
+  );
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(body) as unknown;
+  } catch (error) {
+    throw new Error(
+      `Benchmark response was not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  assertInferenceResponsePayload(parsed);
+  return parsed;
+}
+
 async function invoke(
   baseUrl: string,
   request: BenchmarkWorkloadItem,
@@ -762,6 +1493,7 @@ async function invoke(
   try {
     response = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/infer`, {
       method: "POST",
+      signal: AbortSignal.timeout(BENCHMARK_REQUEST_TIMEOUT_MS),
       headers: {
         "content-type": "application/json",
         ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
@@ -777,18 +1509,22 @@ async function invoke(
   }
 
   if (!response.ok) {
-    const body = await response.text();
+    const body = await readResponseTextWithinLimit(
+      response,
+      MAX_BENCHMARK_ERROR_RESPONSE_BYTES,
+      "Benchmark error response",
+    );
     throw new Error(`Benchmark request failed with ${response.status}: ${body}`);
   }
 
   return {
     request,
-    response: (await response.json()) as InferenceResponse,
+    response: await parseInferenceResponse(response),
     wallTimeMs: Date.now() - startedAt,
   };
 }
 
-async function runBenchmark(options: {
+export async function runBenchmark(options: {
   baseUrl: string;
   workload: BenchmarkWorkloadItem[];
   concurrency: number;
@@ -796,6 +1532,10 @@ async function runBenchmark(options: {
   label: string;
   apiKey?: string;
 }): Promise<BenchmarkSummary> {
+  if (options.workload.length === 0) {
+    throw new Error("Benchmark workload must contain at least one request");
+  }
+
   const queue = Array.from(
     { length: options.requests },
     (_, index) => options.workload[index % options.workload.length],
@@ -1127,10 +1867,16 @@ async function waitForHealth(
 
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      const response = await fetch(`${baseUrl.replace(/\/$/, "")}${healthPath}`);
+      const response = await fetch(`${baseUrl.replace(/\/$/, "")}${healthPath}`, {
+        signal: AbortSignal.timeout(
+          Math.min(BENCHMARK_HEALTH_REQUEST_TIMEOUT_MS, Math.max(1, timeoutMs)),
+        ),
+      });
       if (response.ok) {
+        await response.body?.cancel().catch(() => undefined);
         return;
       }
+      await response.body?.cancel().catch(() => undefined);
     } catch {
       // Ignore until timeout.
     }
@@ -1894,7 +2640,9 @@ async function main(): Promise<void> {
   }
 }
 
-void main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}

@@ -1,0 +1,34 @@
+{
+  "profile": "1b",
+  "model": {
+    "id": "local-1b-q4",
+    "family": "generic-1b",
+    "quantization": "q4_k_m",
+    "adapter": {
+      "kind": "llama.cpp",
+      "modelRef": "local-1b-q4",
+      "launchProfile": {
+        "modelPath": "/var/lib/ray/models/local-1b-q4.gguf",
+        "alias": "local-1b-q4"
+      }
+    }
+  },
+  "asyncQueue": {
+    "enabled": true,
+    "storageDir": "/var/lib/ray/async-queue",
+    "maxJobs": 1000,
+    "completedTtlMs": 86400000
+  },
+  "auth": {
+    "enabled": true,
+    "apiKeyEnv": "RAY_API_KEYS"
+  },
+  "tags": {
+    "target": "1b",
+    "hardware": "generic-4gb-vps-class",
+    "engine": "llama.cpp",
+    "modelSize": "1b-class",
+    "exposure": "public",
+    "portability": "generic-model"
+  }
+}

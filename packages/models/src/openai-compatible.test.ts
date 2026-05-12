@@ -7,6 +7,11 @@ import type {
   ProviderContext,
 } from "@razroo/ray-core";
 import { OpenAICompatibleProvider } from "./providers/openai-compatible.js";
+import {
+  BACKEND_ERROR_BODY_LIMIT_BYTES,
+  BACKEND_RESPONSE_BODY_LIMIT_BYTES,
+  adapterRequest,
+} from "./providers/http.js";
 
 function createModel(
   baseUrl: string,
@@ -56,6 +61,8 @@ function createContext(signal: AbortSignal): ProviderContext {
       asyncQueue: {
         enabled: false,
         storageDir: "/tmp/ray-test-async-queue",
+        maxJobs: 1_000,
+        completedTtlMs: 86_400_000,
         pollIntervalMs: 50,
         dispatchConcurrency: 1,
         maxAttempts: 2,
@@ -119,6 +126,250 @@ function createContext(signal: AbortSignal): ProviderContext {
     startedAt: Date.now(),
   };
 }
+
+test("adapterRequest rejects invalid direct adapter config before dispatch", async () => {
+  await assert.rejects(
+    () => adapterRequest(null as never, "/health", {}, 500),
+    /adapter must be an object/,
+  );
+  await assert.rejects(
+    () => adapterRequest({ baseUrl: "file:///tmp/model.sock", timeoutMs: 500 }, "/health", {}),
+    /adapter\.baseUrl/,
+  );
+  await assert.rejects(
+    () => adapterRequest({ baseUrl: "http://127.0.0.1:8080", timeoutMs: Infinity }, "/health", {}),
+    /adapter\.timeoutMs/,
+  );
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: "http://127.0.0.1:8080",
+          timeoutMs: 500,
+          headers: { "x-bad": 1 as unknown as string },
+        },
+        "/health",
+        {},
+      ),
+    /adapter\.headers/,
+  );
+
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: "http://127.0.0.1:8080",
+          timeoutMs: 500,
+          headers: JSON.parse('{"__proto__":"polluted"}') as Record<string, string>,
+        },
+        "/health",
+        {},
+      ),
+    /adapter\.headers must not contain unsafe key "__proto__"/,
+  );
+
+  const headers = {};
+  Object.defineProperty(headers, "x-ray-test", {
+    enumerable: true,
+    get() {
+      throw new Error("getter boom");
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: "http://127.0.0.1:8080",
+          timeoutMs: 500,
+          headers: headers as Record<string, string>,
+        },
+        "/health",
+        {},
+      ),
+    /adapter\.headers must not contain unreadable properties/,
+  );
+});
+
+test("openai-compatible provider rejects invalid direct adapter payload config", () => {
+  const model = createModel("http://127.0.0.1:8080", 500);
+  const adapter = model.adapter as OpenAICompatibleProviderConfig;
+
+  assert.throws(
+    () =>
+      new OpenAICompatibleProvider(model, {
+        ...adapter,
+        modelRef: "",
+      }),
+    /adapter\.modelRef/,
+  );
+  assert.throws(
+    () =>
+      new OpenAICompatibleProvider(model, {
+        ...adapter,
+        warmupRequests: Array.from({ length: 9 }, () => ({ input: "ping" })),
+      }),
+    /adapter\.warmupRequests/,
+  );
+  assert.throws(
+    () =>
+      new OpenAICompatibleProvider(model, {
+        ...adapter,
+        warmupRequests: [{ input: "ping", maxTokens: 129 }],
+      }),
+    /adapter\.warmupRequests\[0\]\.maxTokens/,
+  );
+  assert.throws(
+    () =>
+      new OpenAICompatibleProvider(model, {
+        ...adapter,
+        warmupRequests: [JSON.parse('{"__proto__":"polluted","input":"ping"}')],
+      }),
+    /adapter\.warmupRequests\[0\] must not contain unsafe key "__proto__"/,
+  );
+  assert.throws(
+    () =>
+      new OpenAICompatibleProvider(model, {
+        ...adapter,
+        warmupRequests: [
+          {
+            templateId: "email.reply_classification.v1",
+            templateVariables: JSON.parse('{"replyText":"ok","prototype":"polluted"}'),
+          },
+        ],
+      }),
+    /adapter\.warmupRequests\[0\]\.templateVariables must not contain unsafe key "prototype"/,
+  );
+});
+
+test("adapterRequest caps upstream error response bodies", async (t) => {
+  const server = createServer((_request, response) => {
+    response.writeHead(500, { "content-type": "text/plain" });
+    response.end("x".repeat(BACKEND_ERROR_BODY_LIMIT_BYTES * 4));
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: `http://127.0.0.1:${address.port}`,
+          timeoutMs: 500,
+        },
+        "/v1/chat/completions",
+        { method: "POST" },
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_upstream_error");
+
+      const details = (error as { details?: unknown }).details;
+      assert.ok(details && typeof details === "object" && !Array.isArray(details));
+      assert.equal((details as { truncated?: unknown }).truncated, true);
+      assert.equal(
+        (details as { limitBytes?: unknown }).limitBytes,
+        BACKEND_ERROR_BODY_LIMIT_BYTES,
+      );
+      assert.equal(
+        Buffer.byteLength((details as { body?: string }).body ?? ""),
+        BACKEND_ERROR_BODY_LIMIT_BYTES,
+      );
+
+      return true;
+    },
+  );
+});
+
+test("adapterRequest rejects oversized successful response bodies", async (t) => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/plain" });
+    response.end("x".repeat(BACKEND_RESPONSE_BODY_LIMIT_BYTES + 1));
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: `http://127.0.0.1:${address.port}`,
+          timeoutMs: 500,
+        },
+        "/v1/chat/completions",
+        { method: "POST" },
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_response_too_large");
+
+      const details = (error as { details?: unknown }).details;
+      assert.ok(details && typeof details === "object" && !Array.isArray(details));
+      assert.equal(
+        (details as { limitBytes?: unknown }).limitBytes,
+        BACKEND_RESPONSE_BODY_LIMIT_BYTES,
+      );
+
+      return true;
+    },
+  );
+});
+
+test("adapterRequest rejects declared oversized successful responses before reading body", async (t) => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, {
+      "content-type": "text/plain",
+      "content-length": String(BACKEND_RESPONSE_BODY_LIMIT_BYTES + 1),
+    });
+    response.end("x");
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: `http://127.0.0.1:${address.port}`,
+          timeoutMs: 500,
+        },
+        "/v1/chat/completions",
+        { method: "POST" },
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_response_too_large");
+
+      const details = (error as { details?: unknown }).details;
+      assert.ok(details && typeof details === "object" && !Array.isArray(details));
+      assert.equal((details as { bytesRead?: unknown }).bytesRead, 0);
+      assert.equal(
+        (details as { declaredContentLength?: unknown }).declaredContentLength,
+        BACKEND_RESPONSE_BODY_LIMIT_BYTES + 1,
+      );
+
+      return true;
+    },
+  );
+});
 
 test("openai-compatible provider reports readiness and token usage", async (t) => {
   const server = createServer((request, response) => {
@@ -186,6 +437,70 @@ test("openai-compatible provider reports readiness and token usage", async (t) =
     completion: 2,
     total: 6,
   });
+});
+
+test("openai-compatible provider snapshots adapter config at construction", async (t) => {
+  let observedHeader = "";
+  let observedModel = "";
+
+  const server = createServer(async (request, response) => {
+    if (request.url === "/v1/chat/completions") {
+      observedHeader = request.headers["x-ray-test"]?.toString() ?? "";
+      const chunks: Buffer[] = [];
+
+      for await (const chunk of request) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+
+      observedModel =
+        (JSON.parse(Buffer.concat(chunks).toString("utf8")) as { model?: string }).model ?? "";
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ choices: [{ message: { content: "snapshotted" } }] }));
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const adapter: OpenAICompatibleProviderConfig = {
+    kind: "openai-compatible",
+    baseUrl,
+    modelRef: "original-model-ref",
+    timeoutMs: 500,
+    headers: { "x-ray-test": "original" },
+  };
+  const provider = new OpenAICompatibleProvider(createModel(baseUrl, 500), adapter);
+
+  adapter.baseUrl = "http://127.0.0.1:1";
+  adapter.modelRef = "mutated-model-ref";
+  adapter.timeoutMs = 1;
+  adapter.headers!["x-ray-test"] = "mutated";
+
+  const result = await provider.infer(
+    {
+      input: "hi",
+      maxTokens: 32,
+      temperature: 0.2,
+      topP: 0.9,
+      cache: true,
+      metadata: {},
+    },
+    createContext(new AbortController().signal),
+  );
+
+  assert.equal(result.output, "snapshotted");
+  assert.equal(observedHeader, "original");
+  assert.equal(observedModel, "original-model-ref");
 });
 
 test("openai-compatible provider applies adapter timeout", async (t) => {

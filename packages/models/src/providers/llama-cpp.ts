@@ -20,16 +20,30 @@ import {
   resolvePromptTemplateRequest,
 } from "@ray/prompts";
 import {
+  BACKEND_RESPONSE_BODY_LIMIT_BYTES,
+  MAX_ADAPTER_TIMEOUT_MS,
+  MAX_ADAPTER_MODEL_REF_CHARS,
   adapterRequest,
+  assertNonEmptyStringAtMost,
+  assertPositiveSafeIntegerAtMost,
+  assertDeclaredResponseBodyWithinLimit,
+  assertResponseBodyWithinLimit,
   buildAdapterHeaders,
   extractAssistantText,
   normalizeBaseUrl,
+  readResponseBodyLimited,
+  snapshotAdapterWarmupRequests,
+  snapshotHttpAdapterConfig,
 } from "./http.js";
 
 const DEFAULT_SLOT_SNAPSHOT_TIMEOUT_MS = 250;
 const TOKENIZE_TIMEOUT_MS = 30_000;
 const CAPABILITY_CACHE_TTL_MS = 60_000;
 const PROMPT_FORMAT_OVERRIDE_METADATA_KEY = "rayPromptFormat";
+const MAX_SLOT_SNAPSHOTS = 64;
+const MAX_FAMILY_PREFERRED_SLOT_KEYS = 512;
+const MAX_SLOT_FAMILY_ASSIGNMENTS = 64;
+const MAX_PROMPT_SCAFFOLD_CACHE_ENTRIES = 4_096;
 
 interface LlamaCppHealthResponse {
   status?: string;
@@ -285,6 +299,10 @@ function parseSlotSnapshots(payload: unknown): SchedulerSlotSnapshot[] {
   const snapshots: SchedulerSlotSnapshot[] = [];
 
   for (const rawSlot of list) {
+    if (snapshots.length >= MAX_SLOT_SNAPSHOTS) {
+      break;
+    }
+
     if (rawSlot === null || typeof rawSlot !== "object") {
       continue;
     }
@@ -313,6 +331,79 @@ function parseSlotSnapshots(payload: unknown): SchedulerSlotSnapshot[] {
   return snapshots;
 }
 
+function assertOptionalBoolean(value: boolean | undefined, label: string): void {
+  if (value !== undefined && typeof value !== "boolean") {
+    throw new TypeError(`${label} must be a boolean when provided`);
+  }
+}
+
+function assertOptionalNonNegativeSafeInteger(value: number | undefined, label: string): void {
+  if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+    throw new RangeError(`${label} must be a non-negative safe integer when provided`);
+  }
+}
+
+function assertOptionalPositiveSafeIntegerAtMost(
+  value: number | undefined,
+  label: string,
+  maximum: number,
+): void {
+  if (value === undefined) {
+    return;
+  }
+
+  assertPositiveSafeIntegerAtMost(value, label, maximum);
+}
+
+function snapshotLlamaCppAdapter(
+  adapter: LlamaCppProviderConfig,
+  maxOutputTokens: number,
+): LlamaCppProviderConfig {
+  const snapshot = snapshotHttpAdapterConfig(adapter);
+
+  assertNonEmptyStringAtMost(snapshot.modelRef, "adapter.modelRef", MAX_ADAPTER_MODEL_REF_CHARS);
+  assertOptionalBoolean(snapshot.cachePrompt, "adapter.cachePrompt");
+  assertOptionalNonNegativeSafeInteger(snapshot.slotId, "adapter.slotId");
+  assertOptionalNonNegativeSafeInteger(snapshot.slotStateTtlMs, "adapter.slotStateTtlMs");
+  assertOptionalPositiveSafeIntegerAtMost(
+    snapshot.slotSnapshotTimeoutMs,
+    "adapter.slotSnapshotTimeoutMs",
+    MAX_ADAPTER_TIMEOUT_MS,
+  );
+  assertOptionalPositiveSafeIntegerAtMost(
+    snapshot.promptScaffoldCacheEntries,
+    "adapter.promptScaffoldCacheEntries",
+    MAX_PROMPT_SCAFFOLD_CACHE_ENTRIES,
+  );
+
+  if (
+    snapshot.slotSnapshotTimeoutMs !== undefined &&
+    snapshot.slotSnapshotTimeoutMs > snapshot.timeoutMs
+  ) {
+    throw new RangeError(
+      "adapter.slotSnapshotTimeoutMs must be less than or equal to adapter.timeoutMs",
+    );
+  }
+
+  const warmupRequests = snapshotAdapterWarmupRequests(snapshot.warmupRequests, maxOutputTokens);
+  const next: LlamaCppProviderConfig = { ...snapshot };
+
+  if (warmupRequests !== undefined) {
+    next.warmupRequests = warmupRequests;
+  }
+
+  if (snapshot.launchProfile) {
+    next.launchProfile = {
+      ...snapshot.launchProfile,
+      ...(snapshot.launchProfile.extraArgs
+        ? { extraArgs: [...snapshot.launchProfile.extraArgs] }
+        : {}),
+    };
+  }
+
+  return next;
+}
+
 export class LlamaCppProvider implements ModelProvider {
   readonly kind = "llama.cpp";
   readonly modelId: string;
@@ -331,13 +422,15 @@ export class LlamaCppProvider implements ModelProvider {
   private readonly maxPromptScaffoldEntries: number;
   private slotStateCache: CachedSlotState | undefined;
   private backendCapabilitiesCache: CachedBackendCapabilities | undefined;
+  private readonly adapter: LlamaCppProviderConfig;
 
   constructor(
     private readonly model: ModelConfig,
-    private readonly adapter: LlamaCppProviderConfig,
+    adapter: LlamaCppProviderConfig,
   ) {
     this.modelId = model.id;
-    this.maxPromptScaffoldEntries = adapter.promptScaffoldCacheEntries ?? 128;
+    this.adapter = snapshotLlamaCppAdapter(adapter, model.maxOutputTokens);
+    this.maxPromptScaffoldEntries = this.adapter.promptScaffoldCacheEntries ?? 128;
   }
 
   async warm(): Promise<void> {
@@ -848,8 +941,7 @@ export class LlamaCppProvider implements ModelProvider {
     const slotId = payload.generation_settings?.id_slot ?? preparation.preferredSlot;
 
     if (typeof slotId === "number" && context.affinityKey) {
-      this.familyPreferredSlots.set(context.affinityKey, slotId);
-      this.slotFamilyAssignments.set(slotId, context.affinityKey);
+      this.rememberFamilyPreferredSlot(context.affinityKey, slotId);
     }
 
     return {
@@ -1313,6 +1405,41 @@ export class LlamaCppProvider implements ModelProvider {
     });
   }
 
+  private rememberFamilyPreferredSlot(affinityKey: string, slotId: number): void {
+    if (this.familyPreferredSlots.has(affinityKey)) {
+      this.familyPreferredSlots.delete(affinityKey);
+    }
+
+    this.familyPreferredSlots.set(affinityKey, slotId);
+    this.slotFamilyAssignments.set(slotId, affinityKey);
+
+    while (this.familyPreferredSlots.size > MAX_FAMILY_PREFERRED_SLOT_KEYS) {
+      const oldestAffinityKey = this.familyPreferredSlots.keys().next().value;
+
+      if (oldestAffinityKey === undefined) {
+        break;
+      }
+
+      this.familyPreferredSlots.delete(oldestAffinityKey);
+
+      for (const [assignedSlotId, assignedAffinityKey] of this.slotFamilyAssignments.entries()) {
+        if (assignedAffinityKey === oldestAffinityKey) {
+          this.slotFamilyAssignments.delete(assignedSlotId);
+        }
+      }
+    }
+
+    while (this.slotFamilyAssignments.size > MAX_SLOT_FAMILY_ASSIGNMENTS) {
+      const oldestSlotId = this.slotFamilyAssignments.keys().next().value;
+
+      if (oldestSlotId === undefined) {
+        break;
+      }
+
+      this.slotFamilyAssignments.delete(oldestSlotId);
+    }
+  }
+
   private setPreparationCache(key: string, preparation: ProviderRequestPreparation): void {
     if (this.preparationCache.has(key)) {
       this.preparationCache.delete(key);
@@ -1380,7 +1507,15 @@ export class LlamaCppProvider implements ModelProvider {
           signal: controller.signal,
         },
       );
-      const payload = (await response.json()) as LlamaCppHealthResponse;
+      const contentType = response.headers.get("content-type") ?? "";
+      await assertDeclaredResponseBodyWithinLimit(
+        response,
+        BACKEND_RESPONSE_BODY_LIMIT_BYTES,
+        contentType,
+      );
+      const body = await readResponseBodyLimited(response, BACKEND_RESPONSE_BODY_LIMIT_BYTES);
+      assertResponseBodyWithinLimit(body, contentType);
+      const payload = JSON.parse(body.body) as LlamaCppHealthResponse;
       return {
         statusCode: response.status,
         payload,
@@ -1416,6 +1551,8 @@ export class LlamaCppProvider implements ModelProvider {
         asyncQueue: {
           enabled: false,
           storageDir: "",
+          maxJobs: 1,
+          completedTtlMs: 1,
           pollIntervalMs: 1,
           dispatchConcurrency: 1,
           maxAttempts: 1,

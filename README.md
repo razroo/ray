@@ -189,6 +189,8 @@ curl -s http://127.0.0.1:3000/v1/jobs \
   -d '{"input":"Draft a follow-up email body.","callbackUrl":"https://example.com/ray-callback"}'
 ```
 
+The durable queue caps retained job records with `asyncQueue.maxJobs` and prunes completed jobs after `asyncQueue.completedTtlMs`, while pending callbacks remain protected until delivery succeeds or callback attempts are exhausted.
+
 ### Build
 
 ```bash
@@ -205,14 +207,38 @@ pnpm start
 
 For the roomier 3B-style OpenAI-compatible profile, use `pnpm start:vps`.
 
-### 1B llama.cpp profile
+### Portable 1B llama.cpp profiles
 
-Use the 1B profile when the product needs better instruction following than the sub-1B default and can tolerate lower throughput on the same cheap-VPS class. The default [ray.1b.json](examples/config/ray.1b.json) target is a conservative 4 GB CX23-class single-slot setup for a Qwen2.5 1.5B Q4 GGUF. The [ray.1b.8gb.json](examples/config/ray.1b.8gb.json) variant raises context, cache, and parallelism for an 8 GB single node.
+Use the 1B profile when the product needs better instruction following than the sub-1B default and can tolerate lower throughput on the same cheap-VPS class. Ray's 1B support is intended to be model-family and VPS-provider agnostic: pick a machine class, point Ray at a local GGUF/model backend, then tune context, slots, cache RAM, and scheduler budgets to the actual box.
+
+The generic starting points are [ray.1b.generic.json](examples/config/ray.1b.generic.json) for a conservative 4 GB single-slot VPS and [ray.1b.8gb.generic.json](examples/config/ray.1b.8gb.generic.json) for an 8 GB two-slot node. The Qwen/Hetzner configs remain checked-in reference baselines, not the product boundary.
 
 ```bash
-pnpm start:1b
-pnpm start:1b:8gb
+pnpm start:1b:generic
+pnpm start:1b:8gb:generic
 ```
+
+Common portable model overrides can live in `/etc/ray/ray.env`, so operators do not need to fork JSON for every 1B model:
+
+```dotenv
+RAY_MODEL_ID=local-1b-q4
+RAY_MODEL_REF=local-1b-q4
+RAY_MODEL_FAMILY=llama-compatible
+RAY_MODEL_QUANTIZATION=q4_k_m
+RAY_MODEL_PATH=/var/lib/ray/models/local-1b-q4.gguf
+RAY_LLAMA_CPP_BINARY_PATH=/usr/local/bin/llama-server
+RAY_LLAMA_CPP_CTX_SIZE=2048
+RAY_LLAMA_CPP_PARALLEL=1
+RAY_LLAMA_CPP_THREADS=2
+RAY_LLAMA_CPP_CACHE_RAM_MIB=384
+RAY_SCHEDULER_CONCURRENCY=1
+RAY_SCHEDULER_MAX_INFLIGHT_TOKENS=2560
+RAY_ASYNC_QUEUE_MAX_JOBS=1000
+RAY_ASYNC_QUEUE_COMPLETED_TTL_MS=86400000
+```
+
+Create `/var/lib/ray/models` on the VPS and put the GGUF at `RAY_MODEL_PATH`
+before starting the generated llama.cpp service or running doctor.
 
 Deployment walkthrough: [examples/deploy/vps/README.md](examples/deploy/vps/README.md).
 
@@ -226,9 +252,11 @@ the operator.
 ```bash
 pnpm validate:config
 pnpm doctor
+pnpm doctor:1b:generic
+pnpm doctor:1b:8gb:generic
 ```
 
-`pnpm doctor` targets the public `sub1b` deploy profile. Run it on the VPS after the GGUF exists at the configured path and `/etc/ray/ray.env` is populated.
+`pnpm doctor` targets the public `sub1b` deploy profile. The 1B doctor commands target the public generic 1B deploy profiles with explicit 4 GB and 8 GB memory budgets. Run them on the VPS after the GGUF exists at the configured path and `/etc/ray/ray.env` is populated.
 
 ### Benchmark Contract
 
@@ -271,6 +299,10 @@ That runs lint, Prettier `--check`, tests (`pnpm test` builds then runs the Tap 
 - [examples/config/ray.sub1b.cax11.public.json](examples/config/ray.sub1b.cax11.public.json) — public-safe CAX11-class ARM variant
 - [examples/config/ray.sub1b.classifier.json](examples/config/ray.sub1b.classifier.json) — below-1B classifier-oriented profile with shorter outputs, JSON-mode warmup, and tighter context
 - [examples/config/ray.sub1b.drafter.json](examples/config/ray.sub1b.drafter.json) — below-1B email drafting profile with warmer prompt-family defaults
+- [examples/config/ray.1b.generic.json](examples/config/ray.1b.generic.json) — portable private/local 1B-class `llama.cpp` profile for generic 4 GB VPS boxes
+- [examples/config/ray.1b.generic.public.json](examples/config/ray.1b.generic.public.json) — public-safe generic 4 GB 1B-class profile with auth and async queue enabled
+- [examples/config/ray.1b.8gb.generic.json](examples/config/ray.1b.8gb.generic.json) — portable private/local 1B-class profile for generic 8 GB VPS boxes
+- [examples/config/ray.1b.8gb.generic.public.json](examples/config/ray.1b.8gb.generic.public.json) — public-safe generic 8 GB 1B-class profile
 - [examples/config/ray.1b.json](examples/config/ray.1b.json) — private/local 1B-class `llama.cpp` profile for 4 GB CX23-class boxes
 - [examples/config/ray.1b.public.json](examples/config/ray.1b.public.json) — public-safe 4 GB 1B-class profile with auth and async queue enabled
 - [examples/config/ray.1b.8gb.json](examples/config/ray.1b.8gb.json) — private/local 1B-class profile for 8 GB single-node boxes
@@ -310,6 +342,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Short version: keep changes scoped, run 
 
 - [docs/architecture.md](docs/architecture.md)
 - [docs/principles.md](docs/principles.md)
+- [docs/portable-1b.md](docs/portable-1b.md)
 - [docs/roadmap.md](docs/roadmap.md)
 
 Release smoke checklist: [docs/release-checklist.md](docs/release-checklist.md).

@@ -30,6 +30,8 @@
   "files": [
     "dist",
     "src",
+    "!dist/**/*.test.*",
+    "!src/**/*.test.*",
     "CHANGELOG.md"
   ],
   "publishConfig": {

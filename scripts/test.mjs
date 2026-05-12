@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 
 const root = process.cwd();
 const testFiles = [];
+const scriptTestFiles = [];
 const skipNames = new Set([".git", "node_modules"]);
 
 async function collect(current) {
@@ -25,6 +26,10 @@ async function collect(current) {
     if (entry.name.endsWith(".test.js") && absolutePath.includes(`${path.sep}dist${path.sep}`)) {
       testFiles.push(absolutePath);
     }
+
+    if (entry.name.endsWith(".test.ts") && absolutePath.includes(`${path.sep}scripts${path.sep}`)) {
+      scriptTestFiles.push(absolutePath);
+    }
   }
 }
 
@@ -35,11 +40,33 @@ if (testFiles.length === 0) {
   process.exit(1);
 }
 
-const child = spawn(process.execPath, ["--test", "--test-concurrency=1", ...testFiles], {
-  cwd: root,
-  stdio: "inherit",
-});
+function runTestCommand(args) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, args, {
+      cwd: root,
+      stdio: "inherit",
+    });
 
-child.on("exit", (code) => {
-  process.exit(code ?? 1);
-});
+    child.on("exit", (code) => {
+      resolve(code ?? 1);
+    });
+  });
+}
+
+let code = await runTestCommand(["--test", "--test-concurrency=1", ...testFiles]);
+if (code !== 0) {
+  process.exit(code);
+}
+
+if (scriptTestFiles.length > 0) {
+  code = await runTestCommand([
+    "--import",
+    "tsx",
+    "--test",
+    "--test-concurrency=1",
+    ...scriptTestFiles,
+  ]);
+  if (code !== 0) {
+    process.exit(code);
+  }
+}

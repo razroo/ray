@@ -5,6 +5,7 @@ import {
   RayError,
   isNonEmptyString,
   type LogLevel,
+  type Quantization,
   type RayConfig,
   type RayProfile,
 } from "@razroo/ray-core";
@@ -18,6 +19,74 @@ const llamaCppLaunchPresets = new Set<LlamaCppLaunchProfile["preset"]>([
   "single-vps-1b-8gb",
   "single-vps-balanced",
 ]);
+const rayProfiles = new Set<RayProfile>(["tiny", "sub1b", "1b", "vps", "balanced"]);
+const logLevels = new Set<LogLevel>(["debug", "info", "warn", "error"]);
+const quantizations = new Set<Quantization>([
+  "q4_0",
+  "q4_k_m",
+  "q5_k_m",
+  "q8_0",
+  "fp16",
+  "unknown",
+]);
+const MAX_REQUEST_BODY_LIMIT_BYTES = 1_048_576;
+const MAX_CONFIG_FILE_BYTES = 256 * 1024;
+const MAX_SCHEDULER_CONCURRENCY = 8;
+const MAX_SCHEDULER_QUEUE_DEPTH = 512;
+const MAX_SCHEDULER_QUEUED_TOKENS = 262_144;
+const MAX_SCHEDULER_INFLIGHT_TOKENS = 65_536;
+const MAX_ASYNC_DISPATCH_CONCURRENCY = 8;
+const MAX_ASYNC_QUEUE_JOBS = 2_000;
+const MAX_CACHE_ENTRIES = 4_096;
+const MAX_RATE_LIMIT_KEYS = 16_384;
+const MAX_CONFIG_RECORD_ENTRIES = 64;
+const MAX_CONFIG_RECORD_KEY_CHARS = 128;
+const MAX_CONFIG_RECORD_VALUE_CHARS = 4_096;
+const MAX_CONFIG_STRING_ARRAY_ENTRIES = 64;
+const MAX_CONFIG_STRING_ARRAY_ENTRY_CHARS = 4_096;
+const MAX_CONFIG_HOST_CHARS = 253;
+const MAX_CONFIG_IDENTIFIER_CHARS = 256;
+const MAX_CONFIG_PATH_CHARS = 4_096;
+const MAX_CONFIG_URL_CHARS = 2_048;
+const MAX_CONFIG_ENV_NAME_CHARS = 128;
+const MAX_TELEMETRY_SERVICE_NAME_CHARS = 128;
+const MAX_CALLBACK_ALLOWED_HOST_CHARS = 253;
+const MAX_PROMPT_FAMILY_METADATA_KEYS = 16;
+const MAX_PROMPT_FAMILY_METADATA_KEY_CHARS = 128;
+const MAX_WARMUP_REQUESTS = 8;
+const MAX_WARMUP_TEXT_CHARS = 8_192;
+const MAX_WARMUP_STOP_SEQUENCES = 16;
+const MAX_WARMUP_STOP_SEQUENCE_CHARS = 256;
+const MAX_WARMUP_TEMPLATE_VARIABLES = 32;
+const MAX_WARMUP_TEMPLATE_VARIABLE_KEY_CHARS = 128;
+const MAX_WARMUP_TEMPLATE_VARIABLE_VALUE_CHARS = 16_384;
+const MAX_MODEL_CONTEXT_WINDOW = 32_768;
+const MAX_MODEL_OUTPUT_TOKENS = 2_048;
+const MAX_REQUEST_TIMEOUT_MS = 120_000;
+const MAX_ADAPTER_TIMEOUT_MS = 120_000;
+const MAX_ASYNC_COMPLETED_TTL_MS = 604_800_000;
+const MAX_ASYNC_POLL_INTERVAL_MS = 60_000;
+const MAX_CALLBACK_TIMEOUT_MS = 30_000;
+const MAX_CACHE_TTL_MS = 86_400_000;
+const MAX_GRACEFUL_DEGRADATION_PROMPT_CHARS = 65_536;
+const MAX_ADAPTIVE_SAMPLE_SIZE = 512;
+const MAX_ADAPTIVE_FAMILY_HISTORY_SIZE = 1_024;
+const MAX_ADAPTIVE_LATENCY_THRESHOLD_MS = 120_000;
+const MAX_RATE_LIMIT_WINDOW_MS = 3_600_000;
+const MAX_RATE_LIMIT_REQUESTS = 10_000;
+const MAX_MOCK_LATENCY_MS = 120_000;
+const MAX_MOCK_SEED_CHARS = 512;
+const MAX_LLAMA_CTX_SIZE = 32_768;
+const MAX_LLAMA_PARALLEL = 8;
+const MAX_LLAMA_THREADS = 32;
+const MAX_LLAMA_HTTP_THREADS = 16;
+const MAX_LLAMA_BATCH_SIZE = 4_096;
+const MAX_LLAMA_CACHE_REUSE = 32_768;
+const MAX_LLAMA_CACHE_RAM_MIB = 8_192;
+const MAX_PROMPT_SCAFFOLD_CACHE_ENTRIES = 4_096;
+const MAX_AUTH_API_KEY_ENV_CHARS = 64 * 1024;
+const MAX_AUTH_API_KEYS = 128;
+const MAX_AUTH_API_KEY_CHARS = 1_024;
 
 export interface LoadRayConfigOptions {
   configPath?: string;
@@ -42,18 +111,56 @@ function parseConfigJson(raw: string, configPath: string): DeepPartial<RayConfig
   }
 }
 
-function parseProfile(value: string | undefined): RayProfile | undefined {
-  if (
-    value === "tiny" ||
-    value === "sub1b" ||
-    value === "1b" ||
-    value === "vps" ||
-    value === "balanced"
-  ) {
-    return value;
+async function readConfigFileBounded(configPath: string): Promise<string> {
+  let fileHandle: Awaited<ReturnType<typeof fs.open>> | undefined;
+
+  try {
+    fileHandle = await fs.open(configPath, "r");
+    const stats = await fileHandle.stat();
+
+    if (!stats.isFile()) {
+      throw new RayError(`Config path must be a file: ${configPath}`, {
+        code: "config_validation_error",
+        status: 500,
+      });
+    }
+
+    if (stats.size > MAX_CONFIG_FILE_BYTES) {
+      throw new RayError(`Config file must be at most ${MAX_CONFIG_FILE_BYTES} bytes`, {
+        code: "config_validation_error",
+        status: 500,
+        details: {
+          configPath,
+          actualBytes: stats.size,
+          maxBytes: MAX_CONFIG_FILE_BYTES,
+        },
+      });
+    }
+
+    return await fileHandle.readFile("utf8");
+  } finally {
+    await fileHandle?.close().catch(() => undefined);
+  }
+}
+
+function parseProfile(value: unknown, label: string): RayProfile | undefined {
+  if (value === undefined) {
+    return undefined;
   }
 
-  return undefined;
+  if (typeof value === "string" && rayProfiles.has(value as RayProfile)) {
+    return value as RayProfile;
+  }
+
+  if (typeof value === "string" && value.trim().length === 0) {
+    return undefined;
+  }
+
+  throw new RayError(`Expected ${label} to be a supported Ray profile`, {
+    code: "config_validation_error",
+    status: 500,
+    details: { value, supported: [...rayProfiles] },
+  });
 }
 
 function parsePositiveInteger(value: string | undefined, label: string): number | undefined {
@@ -61,24 +168,91 @@ function parsePositiveInteger(value: string | undefined, label: string): number 
     return undefined;
   }
 
-  const parsed = Number.parseInt(value, 10);
+  const normalized = value.trim();
+  const parsed = Number(normalized);
 
-  if (!Number.isFinite(parsed) || parsed <= 0) {
+  if (!/^\d+$/.test(normalized) || !Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new RayError(`Expected ${label} to be a positive integer`, {
       code: "config_validation_error",
       status: 500,
+      details: { value },
     });
   }
 
   return parsed;
 }
 
-function parseLogLevel(value: string | undefined): LogLevel | undefined {
-  if (value === "debug" || value === "info" || value === "warn" || value === "error") {
-    return value;
+function parseTcpPort(value: string | undefined, label: string): number | undefined {
+  const parsed = parsePositiveInteger(value, label);
+
+  if (parsed !== undefined && parsed > 65_535) {
+    throw new RayError(`Expected ${label} to be less than or equal to 65535`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { value },
+    });
+  }
+
+  return parsed;
+}
+
+function parseLogLevel(value: unknown, label: string): LogLevel | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "string" && logLevels.has(value as LogLevel)) {
+    return value as LogLevel;
+  }
+
+  if (typeof value === "string" && value.trim().length === 0) {
+    return undefined;
+  }
+
+  throw new RayError(`Expected ${label} to be a supported log level`, {
+    code: "config_validation_error",
+    status: 500,
+    details: { value, supported: [...logLevels] },
+  });
+}
+
+function parseQuantization(value: string | undefined): Quantization | undefined {
+  if (typeof value === "string" && quantizations.has(value as Quantization)) {
+    return value as Quantization;
+  }
+
+  if (isNonEmptyString(value)) {
+    throw new RayError("Expected RAY_MODEL_QUANTIZATION to be a supported quantization", {
+      code: "config_validation_error",
+      status: 500,
+      details: { value, supported: [...quantizations] },
+    });
   }
 
   return undefined;
+}
+
+function parseIntegerAtLeast(
+  value: string | undefined,
+  minimum: number,
+  label: string,
+): number | undefined {
+  if (!isNonEmptyString(value)) {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  const parsed = Number(normalized);
+
+  if (!/^-?\d+$/.test(normalized) || !Number.isSafeInteger(parsed) || parsed < minimum) {
+    throw new RayError(`Expected ${label} to be an integer greater than or equal to ${minimum}`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { value, minimum },
+    });
+  }
+
+  return parsed;
 }
 
 function isLlamaCppLaunchPreset(value: string): value is LlamaCppLaunchProfile["preset"] {
@@ -88,8 +262,74 @@ function isLlamaCppLaunchPreset(value: string): value is LlamaCppLaunchProfile["
 function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig {
   const next = structuredClone(config);
   const host = env.RAY_HOST;
-  const port = parsePositiveInteger(env.RAY_PORT, "RAY_PORT");
-  const logLevel = parseLogLevel(env.RAY_LOG_LEVEL);
+  const port = parseTcpPort(env.RAY_PORT, "RAY_PORT");
+  const logLevel = parseLogLevel(env.RAY_LOG_LEVEL, "RAY_LOG_LEVEL");
+  const modelId = env.RAY_MODEL_ID;
+  const modelFamily = env.RAY_MODEL_FAMILY;
+  const quantization = parseQuantization(env.RAY_MODEL_QUANTIZATION);
+  const modelContextWindow = parsePositiveInteger(
+    env.RAY_MODEL_CONTEXT_WINDOW,
+    "RAY_MODEL_CONTEXT_WINDOW",
+  );
+  const modelMaxOutputTokens = parsePositiveInteger(
+    env.RAY_MODEL_MAX_OUTPUT_TOKENS,
+    "RAY_MODEL_MAX_OUTPUT_TOKENS",
+  );
+  const modelTokensPerSecondTarget = parsePositiveInteger(
+    env.RAY_MODEL_TOKENS_PER_SECOND_TARGET,
+    "RAY_MODEL_TOKENS_PER_SECOND_TARGET",
+  );
+  const modelMemoryClassMiB = parsePositiveInteger(
+    env.RAY_MODEL_MEMORY_CLASS_MIB,
+    "RAY_MODEL_MEMORY_CLASS_MIB",
+  );
+  const modelPreferredCtxSize = parsePositiveInteger(
+    env.RAY_MODEL_PREFERRED_CTX_SIZE,
+    "RAY_MODEL_PREFERRED_CTX_SIZE",
+  );
+  const schedulerConcurrency = parsePositiveInteger(
+    env.RAY_SCHEDULER_CONCURRENCY,
+    "RAY_SCHEDULER_CONCURRENCY",
+  );
+  const schedulerMaxQueue = parsePositiveInteger(
+    env.RAY_SCHEDULER_MAX_QUEUE,
+    "RAY_SCHEDULER_MAX_QUEUE",
+  );
+  const schedulerMaxQueuedTokens = parsePositiveInteger(
+    env.RAY_SCHEDULER_MAX_QUEUED_TOKENS,
+    "RAY_SCHEDULER_MAX_QUEUED_TOKENS",
+  );
+  const schedulerMaxInflightTokens = parsePositiveInteger(
+    env.RAY_SCHEDULER_MAX_INFLIGHT_TOKENS,
+    "RAY_SCHEDULER_MAX_INFLIGHT_TOKENS",
+  );
+  const schedulerRequestTimeoutMs = parsePositiveInteger(
+    env.RAY_SCHEDULER_REQUEST_TIMEOUT_MS,
+    "RAY_SCHEDULER_REQUEST_TIMEOUT_MS",
+  );
+  const asyncQueueStorageDir = env.RAY_ASYNC_QUEUE_STORAGE_DIR;
+  const asyncQueueMaxJobs = parsePositiveInteger(
+    env.RAY_ASYNC_QUEUE_MAX_JOBS,
+    "RAY_ASYNC_QUEUE_MAX_JOBS",
+  );
+  const asyncQueueCompletedTtlMs = parsePositiveInteger(
+    env.RAY_ASYNC_QUEUE_COMPLETED_TTL_MS,
+    "RAY_ASYNC_QUEUE_COMPLETED_TTL_MS",
+  );
+  const cacheMaxEntries = parsePositiveInteger(env.RAY_CACHE_MAX_ENTRIES, "RAY_CACHE_MAX_ENTRIES");
+  const cacheTtlMs = parsePositiveInteger(env.RAY_CACHE_TTL_MS, "RAY_CACHE_TTL_MS");
+  const degradationQueueDepthThreshold = parsePositiveInteger(
+    env.RAY_DEGRADATION_QUEUE_DEPTH_THRESHOLD,
+    "RAY_DEGRADATION_QUEUE_DEPTH_THRESHOLD",
+  );
+  const degradationMaxPromptChars = parsePositiveInteger(
+    env.RAY_DEGRADATION_MAX_PROMPT_CHARS,
+    "RAY_DEGRADATION_MAX_PROMPT_CHARS",
+  );
+  const degradationMaxTokens = parsePositiveInteger(
+    env.RAY_DEGRADATION_MAX_TOKENS,
+    "RAY_DEGRADATION_MAX_TOKENS",
+  );
 
   if (isNonEmptyString(host)) {
     next.server.host = host;
@@ -103,12 +343,241 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
     next.telemetry.logLevel = logLevel;
   }
 
+  if (isNonEmptyString(modelId)) {
+    next.model.id = modelId;
+  }
+
+  if (isNonEmptyString(modelFamily)) {
+    next.model.family = modelFamily;
+  }
+
+  if (quantization !== undefined) {
+    next.model.quantization = quantization;
+  }
+
+  if (modelContextWindow !== undefined) {
+    next.model.contextWindow = modelContextWindow;
+  }
+
+  if (modelMaxOutputTokens !== undefined) {
+    next.model.maxOutputTokens = modelMaxOutputTokens;
+  }
+
+  if (next.model.operational) {
+    if (modelTokensPerSecondTarget !== undefined) {
+      next.model.operational.tokensPerSecondTarget = modelTokensPerSecondTarget;
+    }
+
+    if (modelMemoryClassMiB !== undefined) {
+      next.model.operational.memoryClassMiB = modelMemoryClassMiB;
+    }
+
+    if (modelPreferredCtxSize !== undefined) {
+      next.model.operational.preferredCtxSize = modelPreferredCtxSize;
+    }
+  }
+
+  if (next.model.adapter.kind === "openai-compatible" || next.model.adapter.kind === "llama.cpp") {
+    const adapterBaseUrl =
+      env.RAY_MODEL_BASE_URL ??
+      (next.model.adapter.kind === "llama.cpp" ? env.RAY_LLAMA_CPP_BASE_URL : undefined);
+    const adapterModelRef =
+      env.RAY_MODEL_REF ??
+      (next.model.adapter.kind === "llama.cpp" ? env.RAY_LLAMA_CPP_MODEL_REF : undefined);
+    const adapterTimeoutMs = parsePositiveInteger(env.RAY_MODEL_TIMEOUT_MS, "RAY_MODEL_TIMEOUT_MS");
+
+    if (isNonEmptyString(adapterBaseUrl)) {
+      next.model.adapter.baseUrl = adapterBaseUrl;
+    }
+
+    if (isNonEmptyString(adapterModelRef)) {
+      next.model.adapter.modelRef = adapterModelRef;
+    } else if (isNonEmptyString(modelId)) {
+      next.model.adapter.modelRef = modelId;
+    }
+
+    if (adapterTimeoutMs !== undefined) {
+      next.model.adapter.timeoutMs = adapterTimeoutMs;
+    }
+  }
+
+  if (next.model.adapter.kind === "llama.cpp" && next.model.adapter.launchProfile) {
+    const profile = next.model.adapter.launchProfile;
+    const binaryPath = env.RAY_LLAMA_CPP_BINARY_PATH;
+    const modelPath = env.RAY_MODEL_PATH ?? env.RAY_LLAMA_CPP_MODEL_PATH;
+    const alias = env.RAY_LLAMA_CPP_ALIAS;
+    const llamaHost = env.RAY_LLAMA_CPP_HOST;
+    const llamaPort = parseTcpPort(env.RAY_LLAMA_CPP_PORT, "RAY_LLAMA_CPP_PORT");
+    const ctxSize = parsePositiveInteger(env.RAY_LLAMA_CPP_CTX_SIZE, "RAY_LLAMA_CPP_CTX_SIZE");
+    const parallel = parsePositiveInteger(env.RAY_LLAMA_CPP_PARALLEL, "RAY_LLAMA_CPP_PARALLEL");
+    const threads = parsePositiveInteger(env.RAY_LLAMA_CPP_THREADS, "RAY_LLAMA_CPP_THREADS");
+    const threadsBatch = parsePositiveInteger(
+      env.RAY_LLAMA_CPP_THREADS_BATCH,
+      "RAY_LLAMA_CPP_THREADS_BATCH",
+    );
+    const threadsHttp = parsePositiveInteger(
+      env.RAY_LLAMA_CPP_THREADS_HTTP,
+      "RAY_LLAMA_CPP_THREADS_HTTP",
+    );
+    const batchSize = parsePositiveInteger(
+      env.RAY_LLAMA_CPP_BATCH_SIZE,
+      "RAY_LLAMA_CPP_BATCH_SIZE",
+    );
+    const ubatchSize = parsePositiveInteger(
+      env.RAY_LLAMA_CPP_UBATCH_SIZE,
+      "RAY_LLAMA_CPP_UBATCH_SIZE",
+    );
+    const cacheReuse = parseIntegerAtLeast(
+      env.RAY_LLAMA_CPP_CACHE_REUSE,
+      0,
+      "RAY_LLAMA_CPP_CACHE_REUSE",
+    );
+    const cacheRamMiB = parseIntegerAtLeast(
+      env.RAY_LLAMA_CPP_CACHE_RAM_MIB,
+      -1,
+      "RAY_LLAMA_CPP_CACHE_RAM_MIB",
+    );
+
+    if (isNonEmptyString(binaryPath)) {
+      profile.binaryPath = binaryPath;
+    }
+
+    if (isNonEmptyString(modelPath)) {
+      profile.modelPath = modelPath;
+    }
+
+    if (isNonEmptyString(alias)) {
+      profile.alias = alias;
+    } else if (isNonEmptyString(modelId)) {
+      profile.alias = modelId;
+    }
+
+    if (isNonEmptyString(llamaHost)) {
+      profile.host = llamaHost;
+    }
+
+    if (llamaPort !== undefined) {
+      profile.port = llamaPort;
+    }
+
+    if (ctxSize !== undefined) {
+      profile.ctxSize = ctxSize;
+      if (next.model.operational && modelPreferredCtxSize === undefined) {
+        next.model.operational.preferredCtxSize = ctxSize;
+      }
+    }
+
+    if (parallel !== undefined) {
+      profile.parallel = parallel;
+    }
+
+    if (threads !== undefined) {
+      profile.threads = threads;
+    }
+
+    if (threadsBatch !== undefined) {
+      profile.threadsBatch = threadsBatch;
+    }
+
+    if (threadsHttp !== undefined) {
+      profile.threadsHttp = threadsHttp;
+    }
+
+    if (batchSize !== undefined) {
+      profile.batchSize = batchSize;
+    }
+
+    if (ubatchSize !== undefined) {
+      profile.ubatchSize = ubatchSize;
+    }
+
+    if (cacheReuse !== undefined) {
+      profile.cacheReuse = cacheReuse;
+    }
+
+    if (cacheRamMiB !== undefined) {
+      profile.cacheRamMiB = cacheRamMiB;
+    }
+
+    if (
+      !isNonEmptyString(env.RAY_MODEL_BASE_URL) &&
+      !isNonEmptyString(env.RAY_LLAMA_CPP_BASE_URL) &&
+      (isNonEmptyString(llamaHost) || llamaPort !== undefined)
+    ) {
+      next.model.adapter.baseUrl = `http://${profile.host}:${profile.port}`;
+    }
+  }
+
+  if (schedulerConcurrency !== undefined) {
+    next.scheduler.concurrency = schedulerConcurrency;
+  }
+
+  if (schedulerMaxQueue !== undefined) {
+    next.scheduler.maxQueue = schedulerMaxQueue;
+  }
+
+  if (schedulerMaxQueuedTokens !== undefined) {
+    next.scheduler.maxQueuedTokens = schedulerMaxQueuedTokens;
+  }
+
+  if (schedulerMaxInflightTokens !== undefined) {
+    next.scheduler.maxInflightTokens = schedulerMaxInflightTokens;
+  }
+
+  if (schedulerRequestTimeoutMs !== undefined) {
+    next.scheduler.requestTimeoutMs = schedulerRequestTimeoutMs;
+  }
+
+  if (isNonEmptyString(asyncQueueStorageDir)) {
+    next.asyncQueue.storageDir = asyncQueueStorageDir;
+  }
+
+  if (asyncQueueMaxJobs !== undefined) {
+    next.asyncQueue.maxJobs = asyncQueueMaxJobs;
+  }
+
+  if (asyncQueueCompletedTtlMs !== undefined) {
+    next.asyncQueue.completedTtlMs = asyncQueueCompletedTtlMs;
+  }
+
+  if (cacheMaxEntries !== undefined) {
+    next.cache.maxEntries = cacheMaxEntries;
+  }
+
+  if (cacheTtlMs !== undefined) {
+    next.cache.ttlMs = cacheTtlMs;
+  }
+
+  if (degradationQueueDepthThreshold !== undefined) {
+    next.gracefulDegradation.queueDepthThreshold = degradationQueueDepthThreshold;
+  }
+
+  if (degradationMaxPromptChars !== undefined) {
+    next.gracefulDegradation.maxPromptChars = degradationMaxPromptChars;
+  }
+
+  if (degradationMaxTokens !== undefined) {
+    next.gracefulDegradation.degradeToMaxTokens = degradationMaxTokens;
+  }
+
   return next;
 }
 
 function resolveConfigPaths(config: RayConfig, cwd: string): RayConfig {
   const next = structuredClone(config);
   next.asyncQueue.storageDir = path.resolve(cwd, next.asyncQueue.storageDir);
+
+  if (next.model.adapter.kind === "llama.cpp" && next.model.adapter.launchProfile) {
+    const profile = next.model.adapter.launchProfile;
+    if (!path.isAbsolute(profile.modelPath)) {
+      profile.modelPath = path.resolve(cwd, profile.modelPath);
+    }
+
+    if (!path.isAbsolute(profile.binaryPath) && profile.binaryPath.includes("/")) {
+      profile.binaryPath = path.resolve(cwd, profile.binaryPath);
+    }
+  }
+
   return next;
 }
 
@@ -118,6 +587,88 @@ function assertPositiveInteger(value: number, label: string): void {
       code: "config_validation_error",
       status: 500,
       details: { value },
+    });
+  }
+}
+
+function assertTcpPort(value: number, label: string): void {
+  assertPositiveInteger(value, label);
+
+  if (value > 65_535) {
+    throw new RayError(`${label} must be less than or equal to 65535`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { value },
+    });
+  }
+}
+
+function assertHttpBaseUrl(value: string, label: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch (error) {
+    throw new RayError(`${label} must be an absolute HTTP or HTTPS URL`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { value, error },
+    });
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new RayError(`${label} must use the http or https scheme`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { value },
+    });
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new RayError(`${label} must not include credentials; use headers or apiKeyEnv instead`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { value },
+    });
+  }
+
+  if (parsed.search || parsed.hash) {
+    throw new RayError(`${label} must not include a query string or fragment`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { value },
+    });
+  }
+}
+
+function assertRequestBodyLimitBytes(value: number): void {
+  assertPositiveInteger(value, "server.requestBodyLimitBytes");
+
+  if (value > MAX_REQUEST_BODY_LIMIT_BYTES) {
+    throw new RayError(
+      `server.requestBodyLimitBytes must be less than or equal to ${MAX_REQUEST_BODY_LIMIT_BYTES}`,
+      {
+        code: "config_validation_error",
+        status: 500,
+        details: {
+          value,
+          maxBytes: MAX_REQUEST_BODY_LIMIT_BYTES,
+        },
+      },
+    );
+  }
+}
+
+function assertPositiveIntegerAtMost(value: number, label: string, maximum: number): void {
+  assertPositiveInteger(value, label);
+
+  if (value > maximum) {
+    throw new RayError(`${label} must be less than or equal to ${maximum}`, {
+      code: "config_validation_error",
+      status: 500,
+      details: {
+        value,
+        maximum,
+      },
     });
   }
 }
@@ -162,6 +713,46 @@ function assertSafeInteger(value: number, label: string): void {
   }
 }
 
+function assertStringLength(value: string, label: string, maxChars: number): void {
+  if (value.length > maxChars) {
+    throw new RayError(`${label} must be at most ${maxChars} characters`, {
+      code: "config_validation_error",
+      status: 500,
+      details: {
+        actualChars: value.length,
+        maxChars,
+      },
+    });
+  }
+}
+
+function assertNonEmptyStringLength(value: unknown, label: string, maxChars: number): void {
+  if (!isNonEmptyString(value)) {
+    throw new RayError(`${label} must be a non-empty string`, {
+      code: "config_validation_error",
+      status: 500,
+    });
+  }
+
+  assertStringLength(value, label, maxChars);
+}
+
+function assertOptionalStringLength(value: unknown, label: string, maxChars: number): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "string") {
+    throw new RayError(`${label} must be a string`, {
+      code: "config_validation_error",
+      status: 500,
+      details: value,
+    });
+  }
+
+  assertStringLength(value, label, maxChars);
+}
+
 function assertBoolean(value: boolean, label: string): void {
   if (typeof value !== "boolean") {
     throw new RayError(`${label} must be a boolean`, {
@@ -169,6 +760,62 @@ function assertBoolean(value: boolean, label: string): void {
       status: 500,
       details: { value },
     });
+  }
+}
+
+function assertEnumValue<T extends string>(
+  value: unknown,
+  supported: Set<T>,
+  label: string,
+): asserts value is T {
+  if (typeof value !== "string" || !supported.has(value as T)) {
+    throw new RayError(`${label} is not supported`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { value, supported: [...supported] },
+    });
+  }
+}
+
+function assertStringRecord(
+  value: Record<string, string>,
+  label: string,
+  maxEntries = MAX_CONFIG_RECORD_ENTRIES,
+  maxKeyChars = MAX_CONFIG_RECORD_KEY_CHARS,
+  maxValueChars = MAX_CONFIG_RECORD_VALUE_CHARS,
+): void {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new RayError(`${label} must be an object of string values`, {
+      code: "config_validation_error",
+      status: 500,
+      details: value,
+    });
+  }
+
+  const entries = Object.entries(value);
+
+  if (entries.length > maxEntries) {
+    throw new RayError(`${label} must contain at most ${maxEntries} entries`, {
+      code: "config_validation_error",
+      status: 500,
+      details: {
+        actualEntries: entries.length,
+        maxEntries,
+      },
+    });
+  }
+
+  for (const [key, entry] of entries) {
+    if (!isNonEmptyString(key) || typeof entry !== "string") {
+      throw new RayError(`${label} must be an object of string values`, {
+        code: "config_validation_error",
+        status: 500,
+        details: value,
+      });
+    }
+
+    assertStringLength(key, `${label} keys`, maxKeyChars);
+    assertStringLength(entry, `${label}.${key}`, maxValueChars);
   }
 }
 
@@ -199,6 +846,17 @@ function assertStopSequences(value: string[] | undefined, label: string): void {
     });
   }
 
+  if (value.length > MAX_WARMUP_STOP_SEQUENCES) {
+    throw new RayError(`${label} must contain at most ${MAX_WARMUP_STOP_SEQUENCES} entries`, {
+      code: "config_validation_error",
+      status: 500,
+      details: {
+        actualEntries: value.length,
+        maxEntries: MAX_WARMUP_STOP_SEQUENCES,
+      },
+    });
+  }
+
   for (const entry of value) {
     if (!isNonEmptyString(entry)) {
       throw new RayError(`${label} entries must be non-empty strings`, {
@@ -207,6 +865,8 @@ function assertStopSequences(value: string[] | undefined, label: string): void {
         details: value,
       });
     }
+
+    assertStringLength(entry, `${label} entries`, MAX_WARMUP_STOP_SEQUENCE_CHARS);
   }
 }
 
@@ -223,7 +883,20 @@ function assertTemplateVariables(value: Record<string, unknown> | undefined, lab
     });
   }
 
-  for (const [key, entry] of Object.entries(value)) {
+  const entries = Object.entries(value);
+
+  if (entries.length > MAX_WARMUP_TEMPLATE_VARIABLES) {
+    throw new RayError(`${label} must contain at most ${MAX_WARMUP_TEMPLATE_VARIABLES} entries`, {
+      code: "config_validation_error",
+      status: 500,
+      details: {
+        actualEntries: entries.length,
+        maxEntries: MAX_WARMUP_TEMPLATE_VARIABLES,
+      },
+    });
+  }
+
+  for (const [key, entry] of entries) {
     if (!isNonEmptyString(key)) {
       throw new RayError(`${label} keys must be non-empty strings`, {
         code: "config_validation_error",
@@ -232,6 +905,8 @@ function assertTemplateVariables(value: Record<string, unknown> | undefined, lab
       });
     }
 
+    assertStringLength(key, `${label} keys`, MAX_WARMUP_TEMPLATE_VARIABLE_KEY_CHARS);
+
     if (typeof entry !== "string" && typeof entry !== "number" && typeof entry !== "boolean") {
       throw new RayError(`${label}.${key} must be a string, number, or boolean`, {
         code: "config_validation_error",
@@ -239,12 +914,15 @@ function assertTemplateVariables(value: Record<string, unknown> | undefined, lab
         details: entry,
       });
     }
+
+    assertStringLength(String(entry), `${label}.${key}`, MAX_WARMUP_TEMPLATE_VARIABLE_VALUE_CHARS);
   }
 }
 
 function assertWarmupRequest(
   request: {
     input?: string;
+    system?: string;
     maxTokens?: number;
     seed?: number;
     stop?: string[];
@@ -253,8 +931,19 @@ function assertWarmupRequest(
     templateVariables?: Record<string, unknown>;
   },
   label: string,
+  maxOutputTokens: number,
 ): void {
+  if (request === null || typeof request !== "object" || Array.isArray(request)) {
+    throw new RayError(`${label} must be an object`, {
+      code: "config_validation_error",
+      status: 500,
+      details: request,
+    });
+  }
+
   if (isNonEmptyString(request.templateId)) {
+    assertStringLength(request.templateId, `${label}.templateId`, MAX_CONFIG_RECORD_KEY_CHARS);
+
     if (request.input !== undefined) {
       throw new RayError(`${label}.input must be omitted when templateId is provided`, {
         code: "config_validation_error",
@@ -270,8 +959,35 @@ function assertWarmupRequest(
     });
   }
 
+  if (isNonEmptyString(request.input)) {
+    assertStringLength(request.input, `${label}.input`, MAX_WARMUP_TEXT_CHARS);
+  }
+
+  if (request.system !== undefined) {
+    if (typeof request.system !== "string") {
+      throw new RayError(`${label}.system must be a string when provided`, {
+        code: "config_validation_error",
+        status: 500,
+        details: request.system,
+      });
+    }
+
+    assertStringLength(request.system, `${label}.system`, MAX_WARMUP_TEXT_CHARS);
+  }
+
   if (request.maxTokens !== undefined) {
     assertPositiveInteger(request.maxTokens, `${label}.maxTokens`);
+
+    if (request.maxTokens > maxOutputTokens) {
+      throw new RayError(`${label}.maxTokens must be less than or equal to model.maxOutputTokens`, {
+        code: "config_validation_error",
+        status: 500,
+        details: {
+          value: request.maxTokens,
+          maxOutputTokens,
+        },
+      });
+    }
   }
 
   if (request.seed !== undefined) {
@@ -282,7 +998,54 @@ function assertWarmupRequest(
   assertResponseFormat(request.responseFormat, `${label}.responseFormat`);
 }
 
-function assertStringArray(value: string[] | undefined, label: string): void {
+function assertWarmupRequests(value: unknown, label: string, maxOutputTokens: number): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!Array.isArray(value)) {
+    throw new RayError(`${label} must be an array`, {
+      code: "config_validation_error",
+      status: 500,
+      details: value,
+    });
+  }
+
+  if (value.length > MAX_WARMUP_REQUESTS) {
+    throw new RayError(`${label} must contain at most ${MAX_WARMUP_REQUESTS} entries`, {
+      code: "config_validation_error",
+      status: 500,
+      details: {
+        actualEntries: value.length,
+        maxEntries: MAX_WARMUP_REQUESTS,
+      },
+    });
+  }
+
+  for (const [index, request] of value.entries()) {
+    assertWarmupRequest(
+      request as {
+        input?: string;
+        system?: string;
+        maxTokens?: number;
+        seed?: number;
+        stop?: string[];
+        responseFormat?: { type: string };
+        templateId?: string;
+        templateVariables?: Record<string, unknown>;
+      },
+      `${label}[${index}]`,
+      maxOutputTokens,
+    );
+  }
+}
+
+function assertStringArray(
+  value: string[] | undefined,
+  label: string,
+  maxEntries = MAX_CONFIG_STRING_ARRAY_ENTRIES,
+  maxEntryChars = MAX_CONFIG_STRING_ARRAY_ENTRY_CHARS,
+): void {
   if (value === undefined) {
     return;
   }
@@ -293,6 +1056,21 @@ function assertStringArray(value: string[] | undefined, label: string): void {
       status: 500,
       details: value,
     });
+  }
+
+  if (value.length > maxEntries) {
+    throw new RayError(`${label} must contain at most ${maxEntries} entries`, {
+      code: "config_validation_error",
+      status: 500,
+      details: {
+        actualEntries: value.length,
+        maxEntries,
+      },
+    });
+  }
+
+  for (const entry of value) {
+    assertStringLength(entry, `${label} entries`, maxEntryChars);
   }
 }
 
@@ -320,153 +1098,358 @@ function assertModelOperationalMetadata(config: RayConfig): void {
 
   assertPositiveInteger(metadata.tokensPerSecondTarget, "model.operational.tokensPerSecondTarget");
   assertPositiveInteger(metadata.memoryClassMiB, "model.operational.memoryClassMiB");
-  assertPositiveInteger(metadata.preferredCtxSize, "model.operational.preferredCtxSize");
+  assertPositiveIntegerAtMost(
+    metadata.preferredCtxSize,
+    "model.operational.preferredCtxSize",
+    config.model.contextWindow,
+  );
   assertBoolean(metadata.supportsJsonMode, "model.operational.supportsJsonMode");
   assertBoolean(metadata.chatTemplateKnown, "model.operational.chatTemplateKnown");
 }
 
 function validateConfig(config: RayConfig): RayConfig {
-  if (!isNonEmptyString(config.server.host)) {
-    throw new RayError("server.host must be a non-empty string", {
+  assertEnumValue(config.profile, rayProfiles, "profile");
+  assertEnumValue(config.model.quantization, quantizations, "model.quantization");
+  assertEnumValue(config.telemetry.logLevel, logLevels, "telemetry.logLevel");
+
+  assertNonEmptyStringLength(config.server.host, "server.host", MAX_CONFIG_HOST_CHARS);
+  assertNonEmptyStringLength(
+    config.telemetry.serviceName,
+    "telemetry.serviceName",
+    MAX_TELEMETRY_SERVICE_NAME_CHARS,
+  );
+
+  assertTcpPort(config.server.port, "server.port");
+  assertRequestBodyLimitBytes(config.server.requestBodyLimitBytes);
+  assertPositiveIntegerAtMost(
+    config.model.contextWindow,
+    "model.contextWindow",
+    MAX_MODEL_CONTEXT_WINDOW,
+  );
+  assertPositiveIntegerAtMost(
+    config.model.maxOutputTokens,
+    "model.maxOutputTokens",
+    MAX_MODEL_OUTPUT_TOKENS,
+  );
+  if (config.model.maxOutputTokens > config.model.contextWindow) {
+    throw new RayError("model.maxOutputTokens must be less than or equal to model.contextWindow", {
       code: "config_validation_error",
       status: 500,
+      details: {
+        maxOutputTokens: config.model.maxOutputTokens,
+        contextWindow: config.model.contextWindow,
+      },
     });
   }
-
-  assertPositiveInteger(config.server.port, "server.port");
-  assertPositiveInteger(config.server.requestBodyLimitBytes, "server.requestBodyLimitBytes");
-  assertPositiveInteger(config.model.contextWindow, "model.contextWindow");
-  assertPositiveInteger(config.model.maxOutputTokens, "model.maxOutputTokens");
-  assertPositiveInteger(config.scheduler.concurrency, "scheduler.concurrency");
-  assertPositiveInteger(config.scheduler.maxQueue, "scheduler.maxQueue");
-  assertPositiveInteger(config.scheduler.maxQueuedTokens, "scheduler.maxQueuedTokens");
-  assertPositiveInteger(config.scheduler.maxInflightTokens, "scheduler.maxInflightTokens");
-  assertPositiveInteger(config.scheduler.requestTimeoutMs, "scheduler.requestTimeoutMs");
+  assertPositiveIntegerAtMost(
+    config.scheduler.concurrency,
+    "scheduler.concurrency",
+    MAX_SCHEDULER_CONCURRENCY,
+  );
+  assertPositiveIntegerAtMost(
+    config.scheduler.maxQueue,
+    "scheduler.maxQueue",
+    MAX_SCHEDULER_QUEUE_DEPTH,
+  );
+  assertPositiveIntegerAtMost(
+    config.scheduler.maxQueuedTokens,
+    "scheduler.maxQueuedTokens",
+    MAX_SCHEDULER_QUEUED_TOKENS,
+  );
+  assertPositiveIntegerAtMost(
+    config.scheduler.maxInflightTokens,
+    "scheduler.maxInflightTokens",
+    MAX_SCHEDULER_INFLIGHT_TOKENS,
+  );
+  assertPositiveIntegerAtMost(
+    config.scheduler.requestTimeoutMs,
+    "scheduler.requestTimeoutMs",
+    MAX_REQUEST_TIMEOUT_MS,
+  );
+  assertNonNegativeInteger(config.scheduler.batchWindowMs, "scheduler.batchWindowMs");
   assertPositiveInteger(config.scheduler.affinityLookahead, "scheduler.affinityLookahead");
   assertPositiveInteger(config.scheduler.shortJobMaxTokens, "scheduler.shortJobMaxTokens");
-  assertPositiveInteger(config.asyncQueue.pollIntervalMs, "asyncQueue.pollIntervalMs");
-  assertPositiveInteger(config.asyncQueue.dispatchConcurrency, "asyncQueue.dispatchConcurrency");
+  if (config.scheduler.affinityLookahead > config.scheduler.maxQueue) {
+    throw new RayError("scheduler.affinityLookahead must be less than or equal to maxQueue", {
+      code: "config_validation_error",
+      status: 500,
+      details: {
+        affinityLookahead: config.scheduler.affinityLookahead,
+        maxQueue: config.scheduler.maxQueue,
+      },
+    });
+  }
+  if (config.scheduler.shortJobMaxTokens > config.model.maxOutputTokens) {
+    throw new RayError(
+      "scheduler.shortJobMaxTokens must be less than or equal to model.maxOutputTokens",
+      {
+        code: "config_validation_error",
+        status: 500,
+        details: {
+          shortJobMaxTokens: config.scheduler.shortJobMaxTokens,
+          maxOutputTokens: config.model.maxOutputTokens,
+        },
+      },
+    );
+  }
+  assertPositiveIntegerAtMost(
+    config.asyncQueue.maxJobs,
+    "asyncQueue.maxJobs",
+    MAX_ASYNC_QUEUE_JOBS,
+  );
+  assertPositiveIntegerAtMost(
+    config.asyncQueue.completedTtlMs,
+    "asyncQueue.completedTtlMs",
+    MAX_ASYNC_COMPLETED_TTL_MS,
+  );
+  assertPositiveIntegerAtMost(
+    config.asyncQueue.pollIntervalMs,
+    "asyncQueue.pollIntervalMs",
+    MAX_ASYNC_POLL_INTERVAL_MS,
+  );
+  assertPositiveIntegerAtMost(
+    config.asyncQueue.dispatchConcurrency,
+    "asyncQueue.dispatchConcurrency",
+    MAX_ASYNC_DISPATCH_CONCURRENCY,
+  );
   assertPositiveInteger(config.asyncQueue.maxAttempts, "asyncQueue.maxAttempts");
-  assertPositiveInteger(config.asyncQueue.callbackTimeoutMs, "asyncQueue.callbackTimeoutMs");
+  assertPositiveIntegerAtMost(
+    config.asyncQueue.callbackTimeoutMs,
+    "asyncQueue.callbackTimeoutMs",
+    MAX_CALLBACK_TIMEOUT_MS,
+  );
   assertPositiveInteger(config.asyncQueue.maxCallbackAttempts, "asyncQueue.maxCallbackAttempts");
-  assertStringArray(config.asyncQueue.callbackAllowedHosts, "asyncQueue.callbackAllowedHosts");
-  assertPositiveInteger(config.cache.maxEntries, "cache.maxEntries");
-  assertPositiveInteger(config.cache.ttlMs, "cache.ttlMs");
-  assertPositiveInteger(
+  assertStringArray(
+    config.asyncQueue.callbackAllowedHosts,
+    "asyncQueue.callbackAllowedHosts",
+    MAX_CONFIG_STRING_ARRAY_ENTRIES,
+    MAX_CALLBACK_ALLOWED_HOST_CHARS,
+  );
+  assertPositiveIntegerAtMost(config.cache.maxEntries, "cache.maxEntries", MAX_CACHE_ENTRIES);
+  assertPositiveIntegerAtMost(config.cache.ttlMs, "cache.ttlMs", MAX_CACHE_TTL_MS);
+  assertPositiveIntegerAtMost(
     config.gracefulDegradation.maxPromptChars,
     "gracefulDegradation.maxPromptChars",
+    MAX_GRACEFUL_DEGRADATION_PROMPT_CHARS,
+  );
+  assertPositiveInteger(
+    config.gracefulDegradation.queueDepthThreshold,
+    "gracefulDegradation.queueDepthThreshold",
   );
   assertPositiveInteger(
     config.gracefulDegradation.degradeToMaxTokens,
     "gracefulDegradation.degradeToMaxTokens",
   );
-  assertPositiveInteger(config.adaptiveTuning.sampleSize, "adaptiveTuning.sampleSize");
-  assertPositiveInteger(
+  if (config.gracefulDegradation.degradeToMaxTokens > config.model.maxOutputTokens) {
+    throw new RayError(
+      "gracefulDegradation.degradeToMaxTokens must be less than or equal to model.maxOutputTokens",
+      {
+        code: "config_validation_error",
+        status: 500,
+        details: {
+          degradeToMaxTokens: config.gracefulDegradation.degradeToMaxTokens,
+          maxOutputTokens: config.model.maxOutputTokens,
+        },
+      },
+    );
+  }
+  assertPositiveIntegerAtMost(
+    config.adaptiveTuning.sampleSize,
+    "adaptiveTuning.sampleSize",
+    MAX_ADAPTIVE_SAMPLE_SIZE,
+  );
+  assertPositiveIntegerAtMost(
     config.adaptiveTuning.familyHistorySize,
     "adaptiveTuning.familyHistorySize",
+    MAX_ADAPTIVE_FAMILY_HISTORY_SIZE,
   );
   assertPositiveInteger(
     config.adaptiveTuning.learnedCapMinSamples,
     "adaptiveTuning.learnedCapMinSamples",
   );
-  assertPositiveInteger(
+  assertPositiveIntegerAtMost(
     config.adaptiveTuning.queueLatencyThresholdMs,
     "adaptiveTuning.queueLatencyThresholdMs",
+    MAX_ADAPTIVE_LATENCY_THRESHOLD_MS,
+  );
+  assertPositiveInteger(
+    config.adaptiveTuning.minCompletionTokensPerSecond,
+    "adaptiveTuning.minCompletionTokensPerSecond",
   );
   assertPositiveInteger(config.adaptiveTuning.minOutputTokens, "adaptiveTuning.minOutputTokens");
+  if (config.adaptiveTuning.minOutputTokens > config.model.maxOutputTokens) {
+    throw new RayError(
+      "adaptiveTuning.minOutputTokens must be less than or equal to model.maxOutputTokens",
+      {
+        code: "config_validation_error",
+        status: 500,
+        details: {
+          minOutputTokens: config.adaptiveTuning.minOutputTokens,
+          maxOutputTokens: config.model.maxOutputTokens,
+        },
+      },
+    );
+  }
   assertPositiveInteger(
     config.adaptiveTuning.learnedCapHeadroomTokens,
     "adaptiveTuning.learnedCapHeadroomTokens",
   );
-  assertPositiveInteger(config.rateLimit.windowMs, "rateLimit.windowMs");
-  assertPositiveInteger(config.rateLimit.maxRequests, "rateLimit.maxRequests");
-  assertPositiveInteger(config.rateLimit.maxKeys, "rateLimit.maxKeys");
+  assertPositiveIntegerAtMost(
+    config.rateLimit.windowMs,
+    "rateLimit.windowMs",
+    MAX_RATE_LIMIT_WINDOW_MS,
+  );
+  assertPositiveIntegerAtMost(
+    config.rateLimit.maxRequests,
+    "rateLimit.maxRequests",
+    MAX_RATE_LIMIT_REQUESTS,
+  );
+  assertPositiveIntegerAtMost(config.rateLimit.maxKeys, "rateLimit.maxKeys", MAX_RATE_LIMIT_KEYS);
   assertUnitInterval(
     config.adaptiveTuning.maxOutputReductionRatio,
     "adaptiveTuning.maxOutputReductionRatio",
   );
   assertUnitInterval(config.adaptiveTuning.draftPercentile, "adaptiveTuning.draftPercentile");
   assertUnitInterval(config.adaptiveTuning.shortPercentile, "adaptiveTuning.shortPercentile");
+  assertBoolean(config.model.warmOnBoot, "model.warmOnBoot");
+  assertBoolean(config.scheduler.dedupeInflight, "scheduler.dedupeInflight");
+  assertBoolean(config.asyncQueue.enabled, "asyncQueue.enabled");
+  assertBoolean(
+    config.asyncQueue.callbackAllowPrivateNetwork,
+    "asyncQueue.callbackAllowPrivateNetwork",
+  );
+  assertBoolean(config.cache.enabled, "cache.enabled");
+  assertBoolean(config.telemetry.includeDebugMetrics, "telemetry.includeDebugMetrics");
+  assertBoolean(config.gracefulDegradation.enabled, "gracefulDegradation.enabled");
+  assertBoolean(config.promptCompiler.enabled, "promptCompiler.enabled");
+  assertBoolean(config.promptCompiler.collapseWhitespace, "promptCompiler.collapseWhitespace");
+  assertBoolean(config.promptCompiler.dedupeRepeatedLines, "promptCompiler.dedupeRepeatedLines");
+  assertBoolean(config.adaptiveTuning.enabled, "adaptiveTuning.enabled");
+  assertBoolean(
+    config.adaptiveTuning.learnedFamilyCapEnabled,
+    "adaptiveTuning.learnedFamilyCapEnabled",
+  );
+  assertBoolean(config.auth.enabled, "auth.enabled");
+  assertBoolean(config.rateLimit.enabled, "rateLimit.enabled");
+  assertBoolean(config.rateLimit.trustProxyHeaders, "rateLimit.trustProxyHeaders");
+  assertEnumValue(
+    config.cache.keyStrategy,
+    new Set(["input", "input+params"]),
+    "cache.keyStrategy",
+  );
+  assertEnumValue(
+    config.rateLimit.keyStrategy,
+    new Set(["ip", "api-key", "ip+api-key"]),
+    "rateLimit.keyStrategy",
+  );
+  assertStringRecord(config.tags, "tags");
 
-  if (!isNonEmptyString(config.model.id) || !isNonEmptyString(config.model.family)) {
-    throw new RayError("model.id and model.family must be non-empty strings", {
-      code: "config_validation_error",
-      status: 500,
-    });
-  }
+  assertNonEmptyStringLength(config.model.id, "model.id", MAX_CONFIG_IDENTIFIER_CHARS);
+  assertNonEmptyStringLength(config.model.family, "model.family", MAX_CONFIG_IDENTIFIER_CHARS);
 
   assertModelOperationalMetadata(config);
+  assertEnumValue(
+    config.model.adapter.kind,
+    new Set(["mock", "openai-compatible", "llama.cpp"]),
+    "model.adapter.kind",
+  );
 
-  if (!isNonEmptyString(config.asyncQueue.storageDir)) {
-    throw new RayError("asyncQueue.storageDir must be a non-empty string", {
-      code: "config_validation_error",
-      status: 500,
-    });
-  }
+  assertNonEmptyStringLength(
+    config.asyncQueue.storageDir,
+    "asyncQueue.storageDir",
+    MAX_CONFIG_PATH_CHARS,
+  );
 
-  if (
-    !Array.isArray(config.promptCompiler.familyMetadataKeys) ||
-    config.promptCompiler.familyMetadataKeys.some((value) => !isNonEmptyString(value))
-  ) {
-    throw new RayError("promptCompiler.familyMetadataKeys must be an array of non-empty strings", {
-      code: "config_validation_error",
-      status: 500,
-      details: config.promptCompiler.familyMetadataKeys,
-    });
-  }
+  assertStringArray(
+    config.promptCompiler.familyMetadataKeys,
+    "promptCompiler.familyMetadataKeys",
+    MAX_PROMPT_FAMILY_METADATA_KEYS,
+    MAX_PROMPT_FAMILY_METADATA_KEY_CHARS,
+  );
 
-  if (config.auth.enabled && !isNonEmptyString(config.auth.apiKeyEnv)) {
-    throw new RayError("auth.apiKeyEnv must be set when auth is enabled", {
-      code: "config_validation_error",
-      status: 500,
-    });
+  if (config.auth.enabled) {
+    assertNonEmptyStringLength(config.auth.apiKeyEnv, "auth.apiKeyEnv", MAX_CONFIG_ENV_NAME_CHARS);
+  } else {
+    assertOptionalStringLength(config.auth.apiKeyEnv, "auth.apiKeyEnv", MAX_CONFIG_ENV_NAME_CHARS);
   }
 
   if (config.model.adapter.kind === "openai-compatible") {
-    if (
-      !isNonEmptyString(config.model.adapter.baseUrl) ||
-      !isNonEmptyString(config.model.adapter.modelRef)
-    ) {
-      throw new RayError("openai-compatible adapters require baseUrl and modelRef", {
-        code: "config_validation_error",
-        status: 500,
-      });
+    assertNonEmptyStringLength(
+      config.model.adapter.baseUrl,
+      "model.adapter.baseUrl",
+      MAX_CONFIG_URL_CHARS,
+    );
+    assertNonEmptyStringLength(
+      config.model.adapter.modelRef,
+      "model.adapter.modelRef",
+      MAX_CONFIG_IDENTIFIER_CHARS,
+    );
+    assertOptionalStringLength(
+      config.model.adapter.apiKeyEnv,
+      "model.adapter.apiKeyEnv",
+      MAX_CONFIG_ENV_NAME_CHARS,
+    );
+
+    assertHttpBaseUrl(config.model.adapter.baseUrl, "model.adapter.baseUrl");
+    assertPositiveIntegerAtMost(
+      config.model.adapter.timeoutMs,
+      "model.adapter.timeoutMs",
+      MAX_ADAPTER_TIMEOUT_MS,
+    );
+    if (config.model.adapter.headers !== undefined) {
+      assertStringRecord(config.model.adapter.headers, "model.adapter.headers");
     }
 
-    assertPositiveInteger(config.model.adapter.timeoutMs, "model.adapter.timeoutMs");
-
-    for (const [index, request] of (config.model.adapter.warmupRequests ?? []).entries()) {
-      assertWarmupRequest(
-        request as {
-          input?: string;
-          maxTokens?: number;
-          seed?: number;
-          stop?: string[];
-          responseFormat?: { type: string };
-          templateId?: string;
-          templateVariables?: Record<string, unknown>;
-        },
-        `model.adapter.warmupRequests[${index}]`,
-      );
-    }
+    assertWarmupRequests(
+      config.model.adapter.warmupRequests,
+      "model.adapter.warmupRequests",
+      config.model.maxOutputTokens,
+    );
   }
 
   if (config.model.adapter.kind === "mock") {
-    assertPositiveInteger(config.model.adapter.latencyMs, "model.adapter.latencyMs");
+    assertPositiveIntegerAtMost(
+      config.model.adapter.latencyMs,
+      "model.adapter.latencyMs",
+      MAX_MOCK_LATENCY_MS,
+    );
+    assertOptionalStringLength(
+      config.model.adapter.seed,
+      "model.adapter.seed",
+      MAX_MOCK_SEED_CHARS,
+    );
   }
 
   if (config.model.adapter.kind === "llama.cpp") {
-    if (
-      !isNonEmptyString(config.model.adapter.baseUrl) ||
-      !isNonEmptyString(config.model.adapter.modelRef)
-    ) {
-      throw new RayError("llama.cpp adapters require baseUrl and modelRef", {
-        code: "config_validation_error",
-        status: 500,
-      });
+    assertNonEmptyStringLength(
+      config.model.adapter.baseUrl,
+      "model.adapter.baseUrl",
+      MAX_CONFIG_URL_CHARS,
+    );
+    assertNonEmptyStringLength(
+      config.model.adapter.modelRef,
+      "model.adapter.modelRef",
+      MAX_CONFIG_IDENTIFIER_CHARS,
+    );
+    assertOptionalStringLength(
+      config.model.adapter.apiKeyEnv,
+      "model.adapter.apiKeyEnv",
+      MAX_CONFIG_ENV_NAME_CHARS,
+    );
+
+    assertHttpBaseUrl(config.model.adapter.baseUrl, "model.adapter.baseUrl");
+    assertPositiveIntegerAtMost(
+      config.model.adapter.timeoutMs,
+      "model.adapter.timeoutMs",
+      MAX_ADAPTER_TIMEOUT_MS,
+    );
+    if (config.model.adapter.headers !== undefined) {
+      assertStringRecord(config.model.adapter.headers, "model.adapter.headers");
     }
 
-    assertPositiveInteger(config.model.adapter.timeoutMs, "model.adapter.timeoutMs");
+    if (config.model.adapter.cachePrompt !== undefined) {
+      assertBoolean(config.model.adapter.cachePrompt, "model.adapter.cachePrompt");
+    }
 
     if (config.model.adapter.slotId !== undefined && config.model.adapter.slotId < 0) {
       throw new RayError("model.adapter.slotId must be zero or greater when provided", {
@@ -487,6 +1470,22 @@ function validateConfig(config: RayConfig): RayConfig {
         details: config.model.adapter.slotStateTtlMs,
       });
     }
+    if (
+      config.model.adapter.slotStateTtlMs !== undefined &&
+      config.model.adapter.slotStateTtlMs > MAX_ADAPTER_TIMEOUT_MS
+    ) {
+      throw new RayError(
+        `model.adapter.slotStateTtlMs must be less than or equal to ${MAX_ADAPTER_TIMEOUT_MS}`,
+        {
+          code: "config_validation_error",
+          status: 500,
+          details: {
+            value: config.model.adapter.slotStateTtlMs,
+            maximum: MAX_ADAPTER_TIMEOUT_MS,
+          },
+        },
+      );
+    }
 
     if (
       config.model.adapter.slotSnapshotTimeoutMs !== undefined &&
@@ -498,6 +1497,22 @@ function validateConfig(config: RayConfig): RayConfig {
         status: 500,
         details: config.model.adapter.slotSnapshotTimeoutMs,
       });
+    }
+    if (
+      config.model.adapter.slotSnapshotTimeoutMs !== undefined &&
+      config.model.adapter.slotSnapshotTimeoutMs > config.model.adapter.timeoutMs
+    ) {
+      throw new RayError(
+        "model.adapter.slotSnapshotTimeoutMs must be less than or equal to model.adapter.timeoutMs",
+        {
+          code: "config_validation_error",
+          status: 500,
+          details: {
+            slotSnapshotTimeoutMs: config.model.adapter.slotSnapshotTimeoutMs,
+            timeoutMs: config.model.adapter.timeoutMs,
+          },
+        },
+      );
     }
 
     if (
@@ -511,35 +1526,51 @@ function validateConfig(config: RayConfig): RayConfig {
         details: config.model.adapter.promptScaffoldCacheEntries,
       });
     }
-
-    for (const [index, request] of (config.model.adapter.warmupRequests ?? []).entries()) {
-      assertWarmupRequest(
-        request as {
-          input?: string;
-          maxTokens?: number;
-          seed?: number;
-          stop?: string[];
-          responseFormat?: { type: string };
-          templateId?: string;
-          templateVariables?: Record<string, unknown>;
+    if (
+      config.model.adapter.promptScaffoldCacheEntries !== undefined &&
+      config.model.adapter.promptScaffoldCacheEntries > MAX_PROMPT_SCAFFOLD_CACHE_ENTRIES
+    ) {
+      throw new RayError(
+        `model.adapter.promptScaffoldCacheEntries must be less than or equal to ${MAX_PROMPT_SCAFFOLD_CACHE_ENTRIES}`,
+        {
+          code: "config_validation_error",
+          status: 500,
+          details: {
+            value: config.model.adapter.promptScaffoldCacheEntries,
+            maximum: MAX_PROMPT_SCAFFOLD_CACHE_ENTRIES,
+          },
         },
-        `model.adapter.warmupRequests[${index}]`,
       );
     }
 
+    assertWarmupRequests(
+      config.model.adapter.warmupRequests,
+      "model.adapter.warmupRequests",
+      config.model.maxOutputTokens,
+    );
+
     if (config.model.adapter.launchProfile) {
       const profile = config.model.adapter.launchProfile;
-      if (
-        !isNonEmptyString(profile.binaryPath) ||
-        !isNonEmptyString(profile.modelPath) ||
-        !isNonEmptyString(profile.host)
-      ) {
-        throw new RayError("model.adapter.launchProfile requires binaryPath, modelPath, and host", {
-          code: "config_validation_error",
-          status: 500,
-          details: profile,
-        });
-      }
+      assertNonEmptyStringLength(
+        profile.binaryPath,
+        "model.adapter.launchProfile.binaryPath",
+        MAX_CONFIG_PATH_CHARS,
+      );
+      assertNonEmptyStringLength(
+        profile.modelPath,
+        "model.adapter.launchProfile.modelPath",
+        MAX_CONFIG_PATH_CHARS,
+      );
+      assertNonEmptyStringLength(
+        profile.host,
+        "model.adapter.launchProfile.host",
+        MAX_CONFIG_HOST_CHARS,
+      );
+      assertOptionalStringLength(
+        profile.alias,
+        "model.adapter.launchProfile.alias",
+        MAX_CONFIG_IDENTIFIER_CHARS,
+      );
 
       if (!isLlamaCppLaunchPreset(profile.preset)) {
         throw new RayError("model.adapter.launchProfile.preset is not recognized", {
@@ -549,20 +1580,108 @@ function validateConfig(config: RayConfig): RayConfig {
         });
       }
 
-      assertPositiveInteger(profile.port, "model.adapter.launchProfile.port");
-      assertPositiveInteger(profile.ctxSize, "model.adapter.launchProfile.ctxSize");
-      assertPositiveInteger(profile.parallel, "model.adapter.launchProfile.parallel");
-      assertPositiveInteger(profile.threads, "model.adapter.launchProfile.threads");
-      assertPositiveInteger(profile.threadsHttp, "model.adapter.launchProfile.threadsHttp");
-      assertPositiveInteger(profile.batchSize, "model.adapter.launchProfile.batchSize");
-      assertPositiveInteger(profile.ubatchSize, "model.adapter.launchProfile.ubatchSize");
+      assertTcpPort(profile.port, "model.adapter.launchProfile.port");
+      assertPositiveIntegerAtMost(
+        profile.ctxSize,
+        "model.adapter.launchProfile.ctxSize",
+        MAX_LLAMA_CTX_SIZE,
+      );
+      if (profile.ctxSize > config.model.contextWindow) {
+        throw new RayError(
+          "model.adapter.launchProfile.ctxSize must be less than or equal to model.contextWindow",
+          {
+            code: "config_validation_error",
+            status: 500,
+            details: {
+              ctxSize: profile.ctxSize,
+              contextWindow: config.model.contextWindow,
+            },
+          },
+        );
+      }
+      assertPositiveIntegerAtMost(
+        profile.parallel,
+        "model.adapter.launchProfile.parallel",
+        MAX_LLAMA_PARALLEL,
+      );
+      assertPositiveIntegerAtMost(
+        profile.threads,
+        "model.adapter.launchProfile.threads",
+        MAX_LLAMA_THREADS,
+      );
+      assertPositiveIntegerAtMost(
+        profile.threadsHttp,
+        "model.adapter.launchProfile.threadsHttp",
+        MAX_LLAMA_HTTP_THREADS,
+      );
+      assertPositiveIntegerAtMost(
+        profile.batchSize,
+        "model.adapter.launchProfile.batchSize",
+        MAX_LLAMA_BATCH_SIZE,
+      );
+      assertPositiveIntegerAtMost(
+        profile.ubatchSize,
+        "model.adapter.launchProfile.ubatchSize",
+        MAX_LLAMA_BATCH_SIZE,
+      );
+      if (profile.ubatchSize > profile.batchSize) {
+        throw new RayError(
+          "model.adapter.launchProfile.ubatchSize must be less than or equal to batchSize",
+          {
+            code: "config_validation_error",
+            status: 500,
+            details: {
+              ubatchSize: profile.ubatchSize,
+              batchSize: profile.batchSize,
+            },
+          },
+        );
+      }
       assertNonNegativeInteger(profile.cacheReuse, "model.adapter.launchProfile.cacheReuse");
+      if (profile.cacheReuse > MAX_LLAMA_CACHE_REUSE) {
+        throw new RayError(
+          `model.adapter.launchProfile.cacheReuse must be less than or equal to ${MAX_LLAMA_CACHE_REUSE}`,
+          {
+            code: "config_validation_error",
+            status: 500,
+            details: {
+              value: profile.cacheReuse,
+              maximum: MAX_LLAMA_CACHE_REUSE,
+            },
+          },
+        );
+      }
+      assertBoolean(profile.cachePrompt, "model.adapter.launchProfile.cachePrompt");
+      assertBoolean(profile.continuousBatching, "model.adapter.launchProfile.continuousBatching");
+      assertBoolean(profile.enableMetrics, "model.adapter.launchProfile.enableMetrics");
+      assertBoolean(profile.exposeSlots, "model.adapter.launchProfile.exposeSlots");
+      assertBoolean(profile.warmup, "model.adapter.launchProfile.warmup");
+      assertBoolean(profile.enableUnifiedKv, "model.adapter.launchProfile.enableUnifiedKv");
+      assertBoolean(profile.cacheIdleSlots, "model.adapter.launchProfile.cacheIdleSlots");
+      assertBoolean(profile.contextShift, "model.adapter.launchProfile.contextShift");
       if (profile.cacheRamMiB !== undefined) {
         assertIntegerAtLeast(profile.cacheRamMiB, -1, "model.adapter.launchProfile.cacheRamMiB");
+        if (profile.cacheRamMiB > MAX_LLAMA_CACHE_RAM_MIB) {
+          throw new RayError(
+            `model.adapter.launchProfile.cacheRamMiB must be less than or equal to ${MAX_LLAMA_CACHE_RAM_MIB}`,
+            {
+              code: "config_validation_error",
+              status: 500,
+              details: {
+                value: profile.cacheRamMiB,
+                maximum: MAX_LLAMA_CACHE_RAM_MIB,
+              },
+            },
+          );
+        }
       }
 
       if (profile.threadsBatch !== undefined) {
-        assertPositiveInteger(profile.threadsBatch, "model.adapter.launchProfile.threadsBatch");
+        assertPositiveIntegerAtMost(
+          profile.threadsBatch,
+          "model.adapter.launchProfile.threadsBatch",
+          MAX_LLAMA_THREADS,
+        );
       }
 
       assertStringArray(profile.extraArgs, "model.adapter.launchProfile.extraArgs");
@@ -570,6 +1689,10 @@ function validateConfig(config: RayConfig): RayConfig {
   }
 
   return config;
+}
+
+export function snapshotRayConfig(config: RayConfig): RayConfig {
+  return validateConfig(structuredClone(config));
 }
 
 export function resolveAuthApiKeys(config: RayConfig, env: NodeJS.ProcessEnv): Set<string> {
@@ -596,6 +1719,18 @@ export function resolveAuthApiKeys(config: RayConfig, env: NodeJS.ProcessEnv): S
     });
   }
 
+  if (raw.length > MAX_AUTH_API_KEY_ENV_CHARS) {
+    throw new RayError(`${envName} must be at most ${MAX_AUTH_API_KEY_ENV_CHARS} characters`, {
+      code: "config_validation_error",
+      status: 500,
+      details: {
+        envName,
+        actualChars: raw.length,
+        maxChars: MAX_AUTH_API_KEY_ENV_CHARS,
+      },
+    });
+  }
+
   const keys = raw
     .split(/[\n,]/)
     .map((value) => value.trim())
@@ -609,6 +1744,22 @@ export function resolveAuthApiKeys(config: RayConfig, env: NodeJS.ProcessEnv): S
     });
   }
 
+  if (keys.length > MAX_AUTH_API_KEYS) {
+    throw new RayError(`${envName} must contain at most ${MAX_AUTH_API_KEYS} API keys`, {
+      code: "config_validation_error",
+      status: 500,
+      details: {
+        envName,
+        actualKeys: keys.length,
+        maxKeys: MAX_AUTH_API_KEYS,
+      },
+    });
+  }
+
+  for (const key of keys) {
+    assertStringLength(key, `${envName} entries`, MAX_AUTH_API_KEY_CHARS);
+  }
+
   return new Set(keys);
 }
 
@@ -620,11 +1771,14 @@ export async function loadRayConfig(options: LoadRayConfigOptions = {}): Promise
   let fileConfig: DeepPartial<RayConfig> | undefined;
 
   if (absoluteConfigPath) {
-    const raw = await fs.readFile(absoluteConfigPath, "utf8");
+    const raw = await readConfigFileBounded(absoluteConfigPath);
     fileConfig = parseConfigJson(raw, absoluteConfigPath);
   }
 
-  const selectedProfile = fileConfig?.profile ?? parseProfile(env.RAY_PROFILE) ?? "sub1b";
+  const selectedProfile =
+    parseProfile(fileConfig?.profile, "config.profile") ??
+    parseProfile(env.RAY_PROFILE, "RAY_PROFILE") ??
+    "sub1b";
   const defaultConfig = createDefaultConfig(selectedProfile);
   const mergedConfig = mergeConfig(defaultConfig, fileConfig);
   const config = validateConfig(resolveConfigPaths(applyEnvOverrides(mergedConfig, env), cwd));

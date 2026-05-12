@@ -1,6 +1,110 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import type { SchedulerConfig } from "@razroo/ray-core";
 import { RequestScheduler } from "./index.js";
+
+function createSchedulerConfig(overrides: Partial<SchedulerConfig> = {}): SchedulerConfig {
+  return {
+    concurrency: 1,
+    maxQueue: 8,
+    maxQueuedTokens: 128,
+    maxInflightTokens: 64,
+    requestTimeoutMs: 1_000,
+    dedupeInflight: true,
+    batchWindowMs: 0,
+    affinityLookahead: 8,
+    shortJobMaxTokens: 96,
+    ...overrides,
+  };
+}
+
+test("scheduler rejects invalid resource limit config", () => {
+  assert.throws(
+    () => new RequestScheduler<string>(createSchedulerConfig({ concurrency: 0 })),
+    /scheduler\.concurrency/,
+  );
+  assert.throws(
+    () => new RequestScheduler<string>(createSchedulerConfig({ maxQueue: 0 })),
+    /scheduler\.maxQueue/,
+  );
+  assert.throws(
+    () => new RequestScheduler<string>(createSchedulerConfig({ maxQueuedTokens: Infinity })),
+    /scheduler\.maxQueuedTokens/,
+  );
+  assert.throws(
+    () => new RequestScheduler<string>(createSchedulerConfig({ maxInflightTokens: 1.5 })),
+    /scheduler\.maxInflightTokens/,
+  );
+  assert.throws(
+    () => new RequestScheduler<string>(createSchedulerConfig({ requestTimeoutMs: 0 })),
+    /scheduler\.requestTimeoutMs/,
+  );
+  assert.throws(
+    () => new RequestScheduler<string>(createSchedulerConfig({ batchWindowMs: -1 })),
+    /scheduler\.batchWindowMs/,
+  );
+  assert.throws(
+    () => new RequestScheduler<string>(createSchedulerConfig({ affinityLookahead: 9 })),
+    /scheduler\.affinityLookahead/,
+  );
+  assert.throws(
+    () => new RequestScheduler<string>(createSchedulerConfig({ shortJobMaxTokens: 0 })),
+    /scheduler\.shortJobMaxTokens/,
+  );
+  assert.throws(
+    () =>
+      new RequestScheduler<string>(
+        createSchedulerConfig({ dedupeInflight: "true" as unknown as boolean }),
+      ),
+    /scheduler\.dedupeInflight/,
+  );
+});
+
+test("scheduler snapshots resource limits at construction", async () => {
+  const config = createSchedulerConfig({
+    maxQueue: 1,
+    affinityLookahead: 1,
+  });
+  const scheduler = new RequestScheduler<string>(config);
+  let releaseFirst!: () => void;
+
+  config.concurrency = 10;
+  config.maxQueue = 10;
+  config.maxQueuedTokens = 10_000;
+  config.maxInflightTokens = 10_000;
+
+  const first = scheduler.schedule({
+    handler: async () => {
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      return "first";
+    },
+  });
+  const second = scheduler.schedule({
+    handler: async () => "second",
+  });
+
+  assert.throws(
+    () =>
+      scheduler.schedule({
+        handler: async () => "third",
+      }),
+    (error: unknown) =>
+      error instanceof Error &&
+      "code" in error &&
+      (error as { code?: string }).code === "queue_full",
+  );
+  assert.equal(scheduler.snapshot().concurrency, 1);
+  assert.equal(scheduler.snapshot().maxQueue, 1);
+
+  releaseFirst();
+  const results = await Promise.all([first, second]);
+  assert.deepEqual(
+    results.map((result) => result.value),
+    ["first", "second"],
+  );
+});
 
 test("scheduler deduplicates matching inflight work", async () => {
   let executions = 0;
@@ -38,6 +142,46 @@ test("scheduler deduplicates matching inflight work", async () => {
   assert.equal(b.deduplicated, true);
 });
 
+test("scheduler handles cleanup after rejected keyed work", async () => {
+  const unhandledRejections: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown) => {
+    unhandledRejections.push(reason);
+  };
+
+  process.on("unhandledRejection", onUnhandledRejection);
+
+  try {
+    const scheduler = new RequestScheduler<string>({
+      concurrency: 1,
+      maxQueue: 8,
+      maxQueuedTokens: 128,
+      maxInflightTokens: 64,
+      requestTimeoutMs: 1_000,
+      dedupeInflight: true,
+      batchWindowMs: 0,
+      affinityLookahead: 8,
+      shortJobMaxTokens: 96,
+    });
+
+    await assert.rejects(
+      scheduler.schedule({
+        key: "fails",
+        handler: async () => {
+          throw new Error("backend failed");
+        },
+      }),
+      /backend failed/,
+    );
+
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(unhandledRejections, []);
+  } finally {
+    process.off("unhandledRejection", onUnhandledRejection);
+  }
+});
+
 test("scheduler honors batchWindowMs before starting work", async () => {
   let started = false;
   const scheduler = new RequestScheduler<string>({
@@ -67,6 +211,42 @@ test("scheduler honors batchWindowMs before starting work", async () => {
   assert.equal(result.value, "ok");
 });
 
+test("scheduler expires queued work before it starts after requestTimeoutMs", async () => {
+  let started = false;
+  const scheduler = new RequestScheduler<string>({
+    concurrency: 1,
+    maxQueue: 8,
+    maxQueuedTokens: 128,
+    maxInflightTokens: 64,
+    requestTimeoutMs: 20,
+    dedupeInflight: true,
+    batchWindowMs: 50,
+    affinityLookahead: 8,
+    shortJobMaxTokens: 96,
+  });
+
+  const pending = scheduler.schedule({
+    handler: async () => {
+      started = true;
+      return "late";
+    },
+  });
+
+  await assert.rejects(
+    pending,
+    (error: unknown) =>
+      error instanceof Error &&
+      "code" in error &&
+      (error as { code?: string }).code === "request_timeout",
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 60));
+
+  assert.equal(started, false);
+  assert.equal(scheduler.snapshot().queueDepth, 0);
+  assert.equal(scheduler.snapshot().queuedTokens, 0);
+});
+
 test("scheduler rejects work that exceeds token budgets", async () => {
   const scheduler = new RequestScheduler<string>({
     concurrency: 1,
@@ -91,6 +271,56 @@ test("scheduler rejects work that exceeds token budgets", async () => {
       "code" in error &&
       (error as { code?: string }).code === "request_token_budget_exceeded",
   );
+});
+
+test("scheduler enforces requestTimeoutMs when work ignores abort", async () => {
+  let releaseFirst!: () => void;
+  let aborted = false;
+  const scheduler = new RequestScheduler<string>({
+    concurrency: 1,
+    maxQueue: 8,
+    maxQueuedTokens: 128,
+    maxInflightTokens: 64,
+    requestTimeoutMs: 20,
+    dedupeInflight: true,
+    batchWindowMs: 0,
+    affinityLookahead: 8,
+    shortJobMaxTokens: 96,
+  });
+
+  const first = scheduler.schedule({
+    handler: async (signal) => {
+      signal.addEventListener(
+        "abort",
+        () => {
+          aborted = true;
+        },
+        { once: true },
+      );
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      return "late";
+    },
+  });
+
+  await assert.rejects(
+    first,
+    (error: unknown) =>
+      error instanceof Error &&
+      "code" in error &&
+      (error as { code?: string }).code === "request_timeout",
+  );
+
+  const second = await scheduler.schedule({
+    handler: async () => "next",
+  });
+
+  assert.equal(second.value, "next");
+  assert.equal(aborted, true);
+
+  releaseFirst();
+  await new Promise((resolve) => setImmediate(resolve));
 });
 
 test("scheduler allows smaller queued work to bypass an oversized inflight wait", async () => {

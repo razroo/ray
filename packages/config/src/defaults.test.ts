@@ -11,6 +11,10 @@ test("createDefaultConfig returns an isolated clone", () => {
   assert.notEqual(left.server.port, right.server.port);
 });
 
+test("createDefaultConfig rejects unsupported direct profiles", () => {
+  assert.throws(() => createDefaultConfig("cluster" as never), /supported Ray profile/);
+});
+
 test("mergeConfig preserves nested defaults while applying overrides", () => {
   const merged = mergeConfig(createDefaultConfig("vps"), {
     model: {
@@ -27,6 +31,78 @@ test("mergeConfig preserves nested defaults while applying overrides", () => {
   assert.equal(merged.cache.enabled, true);
 });
 
+test("mergeConfig snapshots direct override values", () => {
+  const override = {
+    tags: {
+      custom: "initial",
+    },
+    model: {
+      adapter: {
+        kind: "mock" as const,
+        latencyMs: 1,
+        seed: "initial",
+      },
+    },
+  };
+
+  const merged = mergeConfig(createDefaultConfig("tiny"), override);
+
+  override.tags.custom = "mutated";
+  override.model.adapter.seed = "mutated";
+
+  assert.equal(merged.tags.custom, "initial");
+
+  if (merged.model.adapter.kind !== "mock") {
+    throw new Error("Expected a mock adapter");
+  }
+
+  assert.equal(merged.model.adapter.seed, "initial");
+});
+
+test("mergeConfig rejects invalid direct override shapes", () => {
+  assert.throws(
+    () => mergeConfig(createDefaultConfig("tiny"), null as never),
+    /override must be an object/,
+  );
+  assert.throws(
+    () => mergeConfig(createDefaultConfig("tiny"), { model: null } as never),
+    /override must be an object/,
+  );
+  assert.throws(
+    () =>
+      mergeConfig(createDefaultConfig("tiny"), {
+        promptCompiler: {
+          familyMetadataKeys: { primary: "promptFamily" },
+        },
+      } as never),
+    /override must be an array/,
+  );
+});
+
+test("mergeConfig rejects unsafe override keys", () => {
+  assert.throws(
+    () => mergeConfig(createDefaultConfig("tiny"), JSON.parse('{"__proto__":{"polluted":true}}')),
+    /override key "__proto__" is not allowed/,
+  );
+  assert.throws(
+    () =>
+      mergeConfig(
+        createDefaultConfig("tiny"),
+        JSON.parse('{"model":{"adapter":{"constructor":{"polluted":true}}}}'),
+      ),
+    /override key "constructor" is not allowed/,
+  );
+  assert.throws(
+    () =>
+      mergeConfig(
+        createDefaultConfig("tiny"),
+        JSON.parse('{"unknown":{"prototype":{"polluted":true}}}'),
+      ),
+    /override key "prototype" is not allowed/,
+  );
+  assert.equal(({} as { polluted?: boolean }).polluted, undefined);
+});
+
 test("sub1b profile defaults to a bounded llama.cpp launch profile", () => {
   const config = createDefaultConfig("sub1b");
 
@@ -40,6 +116,8 @@ test("sub1b profile defaults to a bounded llama.cpp launch profile", () => {
   assert.equal(config.model.adapter.launchProfile.preset, "single-vps-sub1b-cx23");
   assert.equal(config.model.adapter.launchProfile.cacheRamMiB, 512);
   assert.equal(config.model.adapter.slotSnapshotTimeoutMs, 250);
+  assert.equal(config.asyncQueue.maxJobs, 1_000);
+  assert.equal(config.asyncQueue.completedTtlMs, 86_400_000);
   assert.equal(config.rateLimit.maxKeys, 4096);
   assert.equal(config.auth.enabled, false);
 });
@@ -74,6 +152,30 @@ test("resolveAuthApiKeys parses comma and newline separated values", () => {
   });
 
   assert.deepEqual([...keys], ["alpha", "beta", "charlie"]);
+});
+
+test("resolveAuthApiKeys bounds retained API key material", () => {
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    auth: {
+      enabled: true,
+    },
+  });
+
+  assert.throws(
+    () =>
+      resolveAuthApiKeys(config, {
+        RAY_API_KEYS: Array.from({ length: 129 }, (_value, index) => `key-${index}`).join(","),
+      }),
+    /RAY_API_KEYS must contain at most 128 API keys/,
+  );
+
+  assert.throws(
+    () =>
+      resolveAuthApiKeys(config, {
+        RAY_API_KEYS: "x".repeat(1_025),
+      }),
+    /RAY_API_KEYS entries must be at most 1024 characters/,
+  );
 });
 
 test("sanitizeConfig redacts upstream adapter headers", () => {

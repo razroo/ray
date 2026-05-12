@@ -1,8 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import type { LlamaCppProviderConfig, ModelConfig, ProviderContext } from "@razroo/ray-core";
+import type {
+  LlamaCppProviderConfig,
+  ModelConfig,
+  ProviderContext,
+  ProviderRequestPreparation,
+} from "@razroo/ray-core";
 import { LlamaCppProvider } from "./providers/llama-cpp.js";
+import { BACKEND_RESPONSE_BODY_LIMIT_BYTES } from "./providers/http.js";
 
 function createModel(
   baseUrl: string,
@@ -53,6 +59,8 @@ function createContext(model: ModelConfig, signal: AbortSignal): ProviderContext
       asyncQueue: {
         enabled: false,
         storageDir: "/tmp/ray-test-async-queue",
+        maxJobs: 1_000,
+        completedTtlMs: 86_400_000,
         pollIntervalMs: 50,
         dispatchConcurrency: 1,
         maxAttempts: 2,
@@ -116,6 +124,52 @@ function createContext(model: ModelConfig, signal: AbortSignal): ProviderContext
     startedAt: Date.now(),
   };
 }
+
+test("llama.cpp provider rejects invalid direct adapter config", () => {
+  const model = createModel("http://127.0.0.1:8081", 500);
+  const adapter = model.adapter as LlamaCppProviderConfig;
+
+  assert.throws(
+    () =>
+      new LlamaCppProvider(model, {
+        ...adapter,
+        modelRef: "",
+      }),
+    /adapter\.modelRef/,
+  );
+  assert.throws(
+    () =>
+      new LlamaCppProvider(model, {
+        ...adapter,
+        warmupRequests: Array.from({ length: 9 }, () => ({ input: "ping" })),
+      }),
+    /adapter\.warmupRequests/,
+  );
+  assert.throws(
+    () =>
+      new LlamaCppProvider(model, {
+        ...adapter,
+        promptScaffoldCacheEntries: Infinity,
+      }),
+    /adapter\.promptScaffoldCacheEntries/,
+  );
+  assert.throws(
+    () =>
+      new LlamaCppProvider(model, {
+        ...adapter,
+        slotSnapshotTimeoutMs: 501,
+      }),
+    /adapter\.slotSnapshotTimeoutMs/,
+  );
+  assert.throws(
+    () =>
+      new LlamaCppProvider(model, {
+        ...adapter,
+        cachePrompt: "true" as unknown as boolean,
+      }),
+    /adapter\.cachePrompt/,
+  );
+});
 
 test("llama.cpp provider uses native completion diagnostics and exact tokenization", async (t) => {
   const seenPaths: string[] = [];
@@ -280,6 +334,107 @@ test("llama.cpp provider uses native completion diagnostics and exact tokenizati
   assert.ok(seenPaths.includes("/apply-template"));
   assert.ok(seenPaths.includes("/tokenize"));
   assert.ok(seenPaths.includes("/completion"));
+});
+
+test("llama.cpp provider caps oversized health response bodies", async (t) => {
+  const server = createServer((request, response) => {
+    if (request.url === "/health?include_slots=1") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("x".repeat(BACKEND_RESPONSE_BODY_LIMIT_BYTES + 1));
+      return;
+    }
+
+    if (request.url === "/props") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          total_slots: 1,
+          default_generation_settings: {
+            n_ctx: 8192,
+            model: "qwen2.5-0.6b-q4",
+          },
+        }),
+      );
+      return;
+    }
+
+    if (request.url === "/slots") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ slots: [] }));
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const model = createModel(`http://127.0.0.1:${address.port}`, 500);
+  const provider = new LlamaCppProvider(model, model.adapter as LlamaCppProviderConfig);
+  const health = await provider.health();
+
+  assert.equal(health.status, "ready");
+  assert.match(String(health.details?.healthError ?? ""), /configured size limit/);
+  assert.equal(health.detectedCapabilities?.totalSlots, 1);
+});
+
+test("llama.cpp provider rejects declared oversized health responses before reading body", async (t) => {
+  const server = createServer((request, response) => {
+    if (request.url === "/health?include_slots=1") {
+      response.writeHead(200, {
+        "content-type": "application/json",
+        "content-length": String(BACKEND_RESPONSE_BODY_LIMIT_BYTES + 1),
+      });
+      response.end("x");
+      return;
+    }
+
+    if (request.url === "/props") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          total_slots: 1,
+          default_generation_settings: {
+            n_ctx: 8192,
+            model: "qwen2.5-0.6b-q4",
+          },
+        }),
+      );
+      return;
+    }
+
+    if (request.url === "/slots") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ slots: [] }));
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const model = createModel(`http://127.0.0.1:${address.port}`, 500);
+  const provider = new LlamaCppProvider(model, model.adapter as LlamaCppProviderConfig);
+  const health = await provider.health();
+
+  assert.equal(health.status, "ready");
+  assert.match(String(health.details?.healthError ?? ""), /configured size limit/);
+  assert.equal(health.detectedCapabilities?.totalSlots, 1);
 });
 
 test("llama.cpp provider falls back when native prompt templating is unavailable", async (t) => {
@@ -654,4 +809,152 @@ test("llama.cpp provider degrades gracefully when slot snapshots time out", asyn
   assert.equal(result.output, '{"intent":"positive"}');
   assert.ok(seenPaths.includes("/slots"));
   assert.ok(seenPaths.includes("/v1/chat/completions"));
+});
+
+test("llama.cpp provider caps slot snapshots retained from backend", async (t) => {
+  const server = createServer((request, response) => {
+    if (request.url === "/slots") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify(
+          Array.from({ length: 80 }, (_value, index) => ({
+            id: index,
+            is_processing: false,
+            n_ctx: 2048,
+          })),
+        ),
+      );
+      return;
+    }
+
+    if (request.url === "/props") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          total_slots: 80,
+          default_generation_settings: {
+            n_ctx: 2048,
+            model: "test-model-ref",
+          },
+        }),
+      );
+      return;
+    }
+
+    if (request.url === "/apply-template") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ prompt: "<s>hello" }));
+      return;
+    }
+
+    if (request.url === "/tokenize") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ tokens: [1, 2, 3] }));
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const model = createModel(`http://127.0.0.1:${address.port}`, 500, {
+    slotStateTtlMs: 0,
+  });
+  const provider = new LlamaCppProvider(model, model.adapter as LlamaCppProviderConfig);
+  const context = createContext(model, new AbortController().signal);
+  const preparation = await provider.prepare(
+    {
+      input: "Hello",
+      maxTokens: 32,
+      temperature: 0.2,
+      topP: 0.95,
+      cache: true,
+      metadata: {},
+    },
+    context,
+  );
+
+  assert.equal(preparation.slotSnapshots?.length, 64);
+  assert.equal(preparation.slotSnapshots?.at(0)?.id, 0);
+  assert.equal(preparation.slotSnapshots?.at(-1)?.id, 63);
+});
+
+test("llama.cpp provider bounds preferred slot affinity maps", async (t) => {
+  let completionCalls = 0;
+  const server = createServer((request, response) => {
+    if (request.url === "/completion") {
+      const slotId = completionCalls;
+      completionCalls += 1;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          content: "ok",
+          generation_settings: {
+            id_slot: slotId,
+          },
+          timings: {
+            prompt_n: 1,
+            predicted_n: 1,
+          },
+        }),
+      );
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const model = createModel(`http://127.0.0.1:${address.port}`, 500);
+  const provider = new LlamaCppProvider(model, model.adapter as LlamaCppProviderConfig);
+  const context = createContext(model, new AbortController().signal);
+
+  for (let index = 0; index < 520; index += 1) {
+    const request = {
+      input: `Affinity prompt ${index}`,
+      maxTokens: 1,
+      temperature: 0.2,
+      topP: 0.95,
+      cache: false,
+      metadata: {},
+    };
+    const preparation = {
+      request,
+      promptTokens: 1,
+      providerState: {
+        prompt: request.input,
+      },
+    } satisfies ProviderRequestPreparation;
+
+    await provider.infer(request, {
+      ...context,
+      affinityKey: `family-${index}`,
+      preparation,
+    });
+  }
+
+  const providerState = provider as unknown as {
+    familyPreferredSlots: Map<string, number>;
+    slotFamilyAssignments: Map<number, string>;
+  };
+  assert.equal(providerState.familyPreferredSlots.size, 512);
+  assert.equal(providerState.slotFamilyAssignments.size, 64);
+  assert.equal(providerState.familyPreferredSlots.has("family-0"), false);
+  assert.equal(providerState.familyPreferredSlots.has("family-519"), true);
 });

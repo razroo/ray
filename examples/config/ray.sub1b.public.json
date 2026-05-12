@@ -60,6 +60,8 @@
   "asyncQueue": {
     "enabled": true,
     "storageDir": "/var/lib/ray/async-queue",
+    "maxJobs": 1000,
+    "completedTtlMs": 86400000,
     "pollIntervalMs": 1000,
     "dispatchConcurrency": 1,
     "maxAttempts": 3,

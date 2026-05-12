@@ -1,4 +1,4 @@
-import { sanitizeConfig } from "@ray/config";
+import { sanitizeConfig, snapshotRayConfig } from "@ray/config";
 import { TtlCache } from "@ray/cache";
 import { createModelProvider } from "@ray/models";
 import { resolvePromptTemplateRequest } from "@ray/prompts";
@@ -66,6 +66,21 @@ interface FamilyCompletionHistory {
   completionTokens: number[];
 }
 
+interface PreparationQueueEntry {
+  timeout: NodeJS.Timeout;
+  resolve: (release: () => void) => void;
+  reject: (error: unknown) => void;
+}
+
+const MAX_DEDUPE_KEY_CHARS = 512;
+const MAX_METADATA_ENTRIES = 32;
+const MAX_METADATA_KEY_CHARS = 128;
+const MAX_METADATA_VALUE_CHARS = 1_024;
+const MAX_STOP_SEQUENCES = 16;
+const MAX_STOP_SEQUENCE_CHARS = 256;
+const unsafeMetadataKeys = new Set(["__proto__", "constructor", "prototype"]);
+const MAX_LEARNED_FAMILY_HISTORY_KEYS = 512;
+
 export interface CreateRayRuntimeOptions {
   provider?: ModelProvider;
   logger?: Logger;
@@ -74,10 +89,140 @@ export interface CreateRayRuntimeOptions {
   cache?: TtlCache<CachedInferencePayload>;
 }
 
+function assertRequestObject(request: InferenceRequest): void {
+  if (request === null || typeof request !== "object" || Array.isArray(request)) {
+    throw new RayError("request body must be a JSON object", {
+      code: "invalid_request",
+      status: 400,
+    });
+  }
+}
+
+function assertFiniteNumber(value: unknown, label: string): asserts value is number {
+  if (value !== undefined && (typeof value !== "number" || !Number.isFinite(value))) {
+    throw new RayError(`${label} must be a finite number when provided`, {
+      code: "invalid_request",
+      status: 400,
+      details: { value },
+    });
+  }
+}
+
+function assertOptionalBoolean(
+  value: unknown,
+  label: string,
+): asserts value is boolean | undefined {
+  if (value !== undefined && typeof value !== "boolean") {
+    throw new RayError(`${label} must be a boolean when provided`, {
+      code: "invalid_request",
+      status: 400,
+      details: { value },
+    });
+  }
+}
+
+function assertOptionalString(value: unknown, label: string): asserts value is string | undefined {
+  if (value !== undefined && typeof value !== "string") {
+    throw new RayError(`${label} must be a string when provided`, {
+      code: "invalid_request",
+      status: 400,
+      details: { value },
+    });
+  }
+}
+
+function assertStringLength(value: string, label: string, maxChars: number): void {
+  if (value.length > maxChars) {
+    throw new RayError(`${label} must be at most ${maxChars} characters`, {
+      code: "invalid_request",
+      status: 400,
+      details: {
+        maxChars,
+        actualChars: value.length,
+      },
+    });
+  }
+}
+
+function objectEntries(value: object, label: string): Array<[string, unknown]> {
+  try {
+    return Object.entries(value);
+  } catch (error) {
+    throw new RayError(`${label} must not contain unreadable properties`, {
+      code: "invalid_request",
+      status: 400,
+      details: { message: error instanceof Error ? error.message : String(error) },
+    });
+  }
+}
+
+function assertMetadataRecord(value: unknown): asserts value is Record<string, string> | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new RayError("metadata must be an object of string values when provided", {
+      code: "invalid_request",
+      status: 400,
+      details: { value },
+    });
+  }
+
+  const entries = objectEntries(value, "metadata");
+
+  if (entries.length > MAX_METADATA_ENTRIES) {
+    throw new RayError(`metadata must contain at most ${MAX_METADATA_ENTRIES} entries`, {
+      code: "invalid_request",
+      status: 400,
+      details: {
+        maxEntries: MAX_METADATA_ENTRIES,
+        actualEntries: entries.length,
+      },
+    });
+  }
+
+  for (const [key, entry] of entries) {
+    if (unsafeMetadataKeys.has(key)) {
+      throw new RayError(`metadata must not contain unsafe key "${key}"`, {
+        code: "invalid_request",
+        status: 400,
+        details: { key },
+      });
+    }
+
+    if (!isNonEmptyString(key) || typeof entry !== "string") {
+      throw new RayError("metadata must be an object of string values when provided", {
+        code: "invalid_request",
+        status: 400,
+        details: { value },
+      });
+    }
+
+    assertStringLength(key, "metadata keys", MAX_METADATA_KEY_CHARS);
+    assertStringLength(entry, `metadata.${key}`, MAX_METADATA_VALUE_CHARS);
+  }
+}
+
 export function normalizeInferenceRequest(
   config: RayConfig,
   request: InferenceRequest,
 ): NormalizedInferenceRequest {
+  assertRequestObject(request);
+  assertOptionalString(request.input, "input");
+  assertOptionalString(request.system, "system");
+  assertOptionalString(request.dedupeKey, "dedupeKey");
+  assertOptionalString(request.templateId, "templateId");
+  assertFiniteNumber(request.maxTokens, "maxTokens");
+  assertFiniteNumber(request.temperature, "temperature");
+  assertFiniteNumber(request.topP, "topP");
+  assertOptionalBoolean(request.cache, "cache");
+  assertMetadataRecord(request.metadata);
+
+  if (request.dedupeKey !== undefined) {
+    assertStringLength(request.dedupeKey, "dedupeKey", MAX_DEDUPE_KEY_CHARS);
+  }
+
   const resolvedRequest = resolvePromptTemplateRequest(request);
 
   if (!isNonEmptyString(resolvedRequest.input)) {
@@ -123,6 +268,17 @@ export function normalizeInferenceRequest(
       });
     }
 
+    if (request.stop.length > MAX_STOP_SEQUENCES) {
+      throw new RayError(`stop must contain at most ${MAX_STOP_SEQUENCES} entries`, {
+        code: "invalid_request",
+        status: 400,
+        details: {
+          maxEntries: MAX_STOP_SEQUENCES,
+          actualEntries: request.stop.length,
+        },
+      });
+    }
+
     normalized.stop = request.stop.map((value) => {
       if (!isNonEmptyString(value)) {
         throw new RayError("stop entries must be non-empty strings", {
@@ -130,6 +286,8 @@ export function normalizeInferenceRequest(
           status: 400,
         });
       }
+
+      assertStringLength(value, "stop entries", MAX_STOP_SEQUENCE_CHARS);
 
       return value;
     });
@@ -375,7 +533,28 @@ function compilePrompt(config: RayConfig, request: NormalizedInferenceRequest): 
   };
 }
 
-function applyGracefulDegradation(
+function applyPromptLengthDegradation(
+  config: RayConfig,
+  request: NormalizedInferenceRequest,
+): { request: NormalizedInferenceRequest; degraded: boolean } {
+  if (!config.gracefulDegradation.enabled) {
+    return { request, degraded: false };
+  }
+
+  if (request.input.length <= config.gracefulDegradation.maxPromptChars) {
+    return { request, degraded: false };
+  }
+
+  return {
+    request: {
+      ...request,
+      input: request.input.slice(0, config.gracefulDegradation.maxPromptChars),
+    },
+    degraded: true,
+  };
+}
+
+function applyQueueDepthDegradation(
   config: RayConfig,
   request: NormalizedInferenceRequest,
   queueDepth: number,
@@ -384,32 +563,17 @@ function applyGracefulDegradation(
     return { request, degraded: false };
   }
 
-  let degraded = false;
-  let input = request.input;
-  let maxTokens = request.maxTokens;
-
-  if (input.length > config.gracefulDegradation.maxPromptChars) {
-    input = input.slice(0, config.gracefulDegradation.maxPromptChars);
-    degraded = true;
-  }
-
   if (
-    queueDepth >= config.gracefulDegradation.queueDepthThreshold &&
-    maxTokens > config.gracefulDegradation.degradeToMaxTokens
+    queueDepth < config.gracefulDegradation.queueDepthThreshold ||
+    request.maxTokens <= config.gracefulDegradation.degradeToMaxTokens
   ) {
-    maxTokens = config.gracefulDegradation.degradeToMaxTokens;
-    degraded = true;
-  }
-
-  if (!degraded) {
     return { request, degraded: false };
   }
 
   return {
     request: {
       ...request,
-      input,
-      maxTokens,
+      maxTokens: config.gracefulDegradation.degradeToMaxTokens,
     },
     degraded: true,
   };
@@ -703,6 +867,17 @@ function buildResponse(
   };
 }
 
+function createPreparationTimeoutError(timeoutMs: number): RayError {
+  return new RayError("The inference request exceeded the preparation timeout", {
+    code: "request_timeout",
+    status: 504,
+    details: {
+      phase: "prepare",
+      timeoutMs,
+    },
+  });
+}
+
 export class RayRuntime {
   readonly logger: Logger;
   readonly metrics: RuntimeMetrics;
@@ -715,21 +890,26 @@ export class RayRuntime {
   private warmState: WarmState = "idle";
   private lastWarmError: string | undefined;
   private providerHealthCache: CachedProviderHealth | undefined;
+  private providerHealthInFlight: Promise<ProviderHealthSnapshot> | undefined;
+  private activePreparations = 0;
+  private readonly preparationQueue: PreparationQueueEntry[] = [];
 
-  constructor(
-    readonly config: RayConfig,
-    options: CreateRayRuntimeOptions = {},
-  ) {
-    this.provider = options.provider ?? createModelProvider(config.model);
+  readonly config: RayConfig;
+
+  constructor(config: RayConfig, options: CreateRayRuntimeOptions = {}) {
+    this.config = snapshotRayConfig(config);
+    this.provider = options.provider ?? createModelProvider(this.config.model);
     this.logger =
-      options.logger ?? new Logger(config.telemetry.serviceName, config.telemetry.logLevel);
+      options.logger ??
+      new Logger(this.config.telemetry.serviceName, this.config.telemetry.logLevel);
     this.metrics = options.metrics ?? new RuntimeMetrics();
-    this.scheduler = options.scheduler ?? new RequestScheduler<ProviderResult>(config.scheduler);
+    this.scheduler =
+      options.scheduler ?? new RequestScheduler<ProviderResult>(this.config.scheduler);
     this.cache =
       options.cache ??
       new TtlCache<CachedInferencePayload>({
-        maxEntries: config.cache.maxEntries,
-        ttlMs: config.cache.ttlMs,
+        maxEntries: this.config.cache.maxEntries,
+        ttlMs: this.config.cache.ttlMs,
       });
   }
 
@@ -782,7 +962,8 @@ export class RayRuntime {
     const requestId = createRequestId("req");
     const queueSnapshot = this.scheduler.snapshot();
     const normalized = normalizeInferenceRequest(this.config, request);
-    const compiled = compilePrompt(this.config, normalized);
+    const promptLengthDegraded = applyPromptLengthDegradation(this.config, normalized);
+    const compiled = compilePrompt(this.config, promptLengthDegraded.request);
     const learnedCap = applyLearnedOutputCap(
       this.config,
       compiled.request,
@@ -790,11 +971,15 @@ export class RayRuntime {
       compiled.lane,
       this.familyCompletionHistory.get(compiled.affinityKey),
     );
-    const degraded = applyGracefulDegradation(
+    const queueDepthDegraded = applyQueueDepthDegradation(
       this.config,
       learnedCap.request,
       queueSnapshot.queueDepth,
     );
+    const degraded = {
+      request: queueDepthDegraded.request,
+      degraded: promptLengthDegraded.degraded || queueDepthDegraded.degraded,
+    };
     const tuned = applyAdaptiveTuning(this.config, degraded.request, this.recentAdaptiveSamples);
     const runtimeDiagnostics: InferenceDiagnostics = {
       promptCompiler: compiled.diagnostics,
@@ -1000,28 +1185,19 @@ export class RayRuntime {
         return this.providerHealthCache.snapshot;
       }
 
+      if (this.providerHealthInFlight) {
+        return this.providerHealthInFlight;
+      }
+
+      const healthPromise = this.refreshProviderHealth();
+      this.providerHealthInFlight = healthPromise;
+
       try {
-        const snapshot = await this.provider.health();
-        this.providerHealthCache = {
-          checkedAtMs: now,
-          snapshot,
-        };
-        this.metrics.recordProviderHealth(snapshot);
-        return snapshot;
-      } catch (error) {
-        const snapshot: ProviderHealthSnapshot = {
-          status: "unavailable",
-          checkedAt: new Date().toISOString(),
-          details: {
-            message: toErrorMessage(error),
-          },
-        };
-        this.providerHealthCache = {
-          checkedAtMs: now,
-          snapshot,
-        };
-        this.metrics.recordProviderHealth(snapshot);
-        return snapshot;
+        return await healthPromise;
+      } finally {
+        if (this.providerHealthInFlight === healthPromise) {
+          this.providerHealthInFlight = undefined;
+        }
       }
     }
 
@@ -1057,6 +1233,46 @@ export class RayRuntime {
     return snapshot;
   }
 
+  private async refreshProviderHealth(): Promise<ProviderHealthSnapshot> {
+    try {
+      const snapshot = await this.provider.health?.();
+
+      if (snapshot) {
+        this.providerHealthCache = {
+          checkedAtMs: Date.now(),
+          snapshot,
+        };
+        this.metrics.recordProviderHealth(snapshot);
+        return snapshot;
+      }
+    } catch (error) {
+      const snapshot: ProviderHealthSnapshot = {
+        status: "unavailable",
+        checkedAt: new Date().toISOString(),
+        details: {
+          message: toErrorMessage(error),
+        },
+      };
+      this.providerHealthCache = {
+        checkedAtMs: Date.now(),
+        snapshot,
+      };
+      this.metrics.recordProviderHealth(snapshot);
+      return snapshot;
+    }
+
+    const snapshot: ProviderHealthSnapshot = {
+      status: "unknown",
+      checkedAt: new Date().toISOString(),
+    };
+    this.providerHealthCache = {
+      checkedAtMs: Date.now(),
+      snapshot,
+    };
+    this.metrics.recordProviderHealth(snapshot);
+    return snapshot;
+  }
+
   private toCachedPayload(
     scheduled: ScheduledTaskResult<ProviderResult>,
     request: NormalizedInferenceRequest,
@@ -1083,15 +1299,115 @@ export class RayRuntime {
       return undefined;
     }
 
+    const releasePreparationSlot = await this.acquirePreparationSlot(startedAt);
     const controller = new AbortController();
-    return this.provider.prepare(request, {
-      signal: controller.signal,
-      requestId,
-      config: this.config,
-      startedAt,
-      affinityKey,
-      lane,
+    let timeout: NodeJS.Timeout | undefined;
+
+    try {
+      const remainingTimeoutMs = this.config.scheduler.requestTimeoutMs - (Date.now() - startedAt);
+
+      if (remainingTimeoutMs <= 0) {
+        throw createPreparationTimeoutError(this.config.scheduler.requestTimeoutMs);
+      }
+
+      const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          const error = createPreparationTimeoutError(this.config.scheduler.requestTimeoutMs);
+          controller.abort(error);
+          reject(error);
+        }, remainingTimeoutMs);
+      });
+      const preparationPromise = this.provider.prepare(request, {
+        signal: controller.signal,
+        requestId,
+        config: this.config,
+        startedAt,
+        affinityKey,
+        lane,
+      });
+
+      void preparationPromise.catch(() => undefined);
+
+      return await Promise.race([preparationPromise, timeoutPromise]);
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      releasePreparationSlot();
+    }
+  }
+
+  private async acquirePreparationSlot(startedAt: number): Promise<() => void> {
+    const remainingTimeoutMs = this.config.scheduler.requestTimeoutMs - (Date.now() - startedAt);
+
+    if (remainingTimeoutMs <= 0) {
+      throw createPreparationTimeoutError(this.config.scheduler.requestTimeoutMs);
+    }
+
+    if (this.activePreparations < this.config.scheduler.concurrency) {
+      this.activePreparations += 1;
+      return this.createPreparationRelease();
+    }
+
+    if (this.preparationQueue.length >= this.config.scheduler.maxQueue) {
+      throw new RayError("The preparation queue is full", {
+        code: "queue_full",
+        status: 503,
+        details: {
+          phase: "prepare",
+          activePreparations: this.activePreparations,
+          queuedPreparations: this.preparationQueue.length,
+          concurrency: this.config.scheduler.concurrency,
+          maxQueue: this.config.scheduler.maxQueue,
+        },
+      });
+    }
+
+    return new Promise<() => void>((resolve, reject) => {
+      const entry: PreparationQueueEntry = {
+        timeout: setTimeout(() => {
+          const index = this.preparationQueue.indexOf(entry);
+          if (index !== -1) {
+            this.preparationQueue.splice(index, 1);
+          }
+
+          reject(createPreparationTimeoutError(this.config.scheduler.requestTimeoutMs));
+        }, remainingTimeoutMs),
+        resolve,
+        reject,
+      };
+      this.preparationQueue.push(entry);
     });
+  }
+
+  private createPreparationRelease(): () => void {
+    let released = false;
+
+    return () => {
+      if (released) {
+        return;
+      }
+
+      released = true;
+      this.activePreparations -= 1;
+      this.drainPreparationQueue();
+    };
+  }
+
+  private drainPreparationQueue(): void {
+    while (
+      this.activePreparations < this.config.scheduler.concurrency &&
+      this.preparationQueue.length > 0
+    ) {
+      const entry = this.preparationQueue.shift();
+      if (!entry) {
+        return;
+      }
+
+      clearTimeout(entry.timeout);
+      this.activePreparations += 1;
+      entry.resolve(this.createPreparationRelease());
+    }
   }
 
   private recordAdaptiveSample(
@@ -1130,7 +1446,18 @@ export class RayRuntime {
       existing.completionTokens.shift();
     }
 
+    this.familyCompletionHistory.delete(familyKey);
     this.familyCompletionHistory.set(familyKey, existing);
+
+    while (this.familyCompletionHistory.size > MAX_LEARNED_FAMILY_HISTORY_KEYS) {
+      const oldestFamilyKey = this.familyCompletionHistory.keys().next().value;
+
+      if (oldestFamilyKey === undefined) {
+        break;
+      }
+
+      this.familyCompletionHistory.delete(oldestFamilyKey);
+    }
   }
 
   private resolveCompletionTokens(usage: UsageStats): number {

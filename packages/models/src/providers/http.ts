@@ -3,6 +3,8 @@ import {
   toErrorMessage,
   type LlamaCppProviderConfig,
   type OpenAICompatibleProviderConfig,
+  type PromptTemplateVariableValue,
+  type WarmupInferenceRequest,
 } from "@razroo/ray-core";
 
 interface OpenAICompatibleResponse {
@@ -19,11 +21,338 @@ type HttpAdapterConfig = Pick<
   "baseUrl" | "timeoutMs" | "headers" | "apiKeyEnv"
 >;
 
+export const BACKEND_ERROR_BODY_LIMIT_BYTES = 4_096;
+export const BACKEND_RESPONSE_BODY_LIMIT_BYTES = 1_048_576;
+export const MAX_ADAPTER_TIMEOUT_MS = 120_000;
+export const MAX_ADAPTER_MODEL_REF_CHARS = 256;
+
+const MAX_ADAPTER_URL_CHARS = 2_048;
+const MAX_ADAPTER_HEADERS = 64;
+const MAX_ADAPTER_HEADER_KEY_CHARS = 128;
+const MAX_ADAPTER_HEADER_VALUE_CHARS = 4_096;
+const MAX_ADAPTER_ENV_NAME_CHARS = 128;
+const MAX_ADAPTER_WARMUP_REQUESTS = 8;
+const MAX_ADAPTER_WARMUP_TEXT_CHARS = 8_192;
+const MAX_ADAPTER_WARMUP_STOP_SEQUENCES = 16;
+const MAX_ADAPTER_WARMUP_STOP_SEQUENCE_CHARS = 256;
+const MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLES = 32;
+const MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLE_KEY_CHARS = 128;
+const MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLE_VALUE_CHARS = 16_384;
+const unsafeAdapterRecordKeys = new Set(["__proto__", "constructor", "prototype"]);
+
+interface LimitedResponseBody {
+  body: string;
+  truncated: boolean;
+  bytesRead: number;
+  limitBytes: number;
+}
+
 export function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
 }
 
+function assertStringLength(value: string, label: string, maximum: number): void {
+  if (value.length > maximum) {
+    throw new RangeError(`${label} must be at most ${maximum} characters`);
+  }
+}
+
+function objectEntries(value: object, label: string): Array<[string, unknown]> {
+  try {
+    return Object.entries(value);
+  } catch {
+    throw new TypeError(`${label} must not contain unreadable properties`);
+  }
+}
+
+function assertSafeRecordKey(key: string, label: string): void {
+  if (unsafeAdapterRecordKeys.has(key)) {
+    throw new TypeError(`${label} must not contain unsafe key "${key}"`);
+  }
+}
+
+export function assertNonEmptyStringAtMost(value: string, label: string, maximum: number): void {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new TypeError(`${label} must be a non-empty string`);
+  }
+
+  assertStringLength(value, label, maximum);
+}
+
+export function assertPositiveSafeIntegerAtMost(
+  value: number,
+  label: string,
+  maximum: number,
+): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError(`${label} must be a positive safe integer`);
+  }
+
+  if (value > maximum) {
+    throw new RangeError(`${label} must be less than or equal to ${maximum}`);
+  }
+}
+
+function assertOptionalString(value: string | undefined, label: string, maximum: number): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new TypeError(`${label} must be a non-empty string when provided`);
+  }
+
+  assertStringLength(value, label, maximum);
+}
+
+function assertSafeInteger(value: number, label: string): void {
+  if (!Number.isSafeInteger(value)) {
+    throw new RangeError(`${label} must be a safe integer`);
+  }
+}
+
+function assertHttpBaseUrl(value: string, label: string): void {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new TypeError(`${label} must be a non-empty string`);
+  }
+
+  assertStringLength(value, label, MAX_ADAPTER_URL_CHARS);
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new TypeError(`${label} must be an absolute HTTP or HTTPS URL`);
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new TypeError(`${label} must use the http or https scheme`);
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new TypeError(`${label} must not include credentials`);
+  }
+
+  if (parsed.search || parsed.hash) {
+    throw new TypeError(`${label} must not include a query string or fragment`);
+  }
+}
+
+function assertHeaderRecord(value: Record<string, string> | undefined, label: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${label} must be an object of string values`);
+  }
+
+  const entries = objectEntries(value, label);
+
+  if (entries.length > MAX_ADAPTER_HEADERS) {
+    throw new RangeError(`${label} must contain at most ${MAX_ADAPTER_HEADERS} entries`);
+  }
+
+  for (const [key, entry] of entries) {
+    assertSafeRecordKey(key, label);
+
+    if (key.trim().length === 0 || typeof entry !== "string") {
+      throw new TypeError(`${label} must be an object of string values`);
+    }
+
+    assertStringLength(key, `${label} keys`, MAX_ADAPTER_HEADER_KEY_CHARS);
+    assertStringLength(entry, `${label}.${key}`, MAX_ADAPTER_HEADER_VALUE_CHARS);
+  }
+}
+
+function assertStopSequences(value: string[] | undefined, label: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new TypeError(`${label} must be a non-empty array of strings`);
+  }
+
+  if (value.length > MAX_ADAPTER_WARMUP_STOP_SEQUENCES) {
+    throw new RangeError(
+      `${label} must contain at most ${MAX_ADAPTER_WARMUP_STOP_SEQUENCES} entries`,
+    );
+  }
+
+  for (const entry of value) {
+    if (typeof entry !== "string" || entry.length === 0) {
+      throw new TypeError(`${label} entries must be non-empty strings`);
+    }
+
+    assertStringLength(entry, `${label} entries`, MAX_ADAPTER_WARMUP_STOP_SEQUENCE_CHARS);
+  }
+}
+
+function assertTemplateVariables(
+  value: Record<string, PromptTemplateVariableValue> | undefined,
+  label: string,
+): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${label} must be an object of template variable values`);
+  }
+
+  const entries = objectEntries(value, label);
+
+  if (entries.length > MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLES) {
+    throw new RangeError(
+      `${label} must contain at most ${MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLES} entries`,
+    );
+  }
+
+  for (const [key, entry] of entries) {
+    assertSafeRecordKey(key, label);
+
+    assertNonEmptyStringAtMost(
+      key,
+      `${label} keys`,
+      MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLE_KEY_CHARS,
+    );
+
+    if (typeof entry !== "string" && typeof entry !== "number" && typeof entry !== "boolean") {
+      throw new TypeError(`${label}.${key} must be a string, number, or boolean`);
+    }
+
+    assertStringLength(
+      String(entry),
+      `${label}.${key}`,
+      MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLE_VALUE_CHARS,
+    );
+  }
+}
+
+function assertResponseFormat(
+  value: WarmupInferenceRequest["responseFormat"] | undefined,
+  label: string,
+): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    (value.type !== "text" && value.type !== "json_object")
+  ) {
+    throw new TypeError(`${label}.type must be 'text' or 'json_object'`);
+  }
+}
+
+function assertWarmupRequest(
+  request: WarmupInferenceRequest,
+  label: string,
+  maxOutputTokens: number,
+): void {
+  if (request === null || typeof request !== "object" || Array.isArray(request)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+
+  for (const [key] of objectEntries(request, label)) {
+    assertSafeRecordKey(key, label);
+  }
+
+  if (typeof request.templateId === "string" && request.templateId.trim().length > 0) {
+    assertNonEmptyStringAtMost(
+      request.templateId,
+      `${label}.templateId`,
+      MAX_ADAPTER_HEADER_KEY_CHARS,
+    );
+
+    if (request.input !== undefined) {
+      throw new TypeError(`${label}.input must be omitted when templateId is provided`);
+    }
+
+    assertTemplateVariables(request.templateVariables, `${label}.templateVariables`);
+  } else {
+    assertNonEmptyStringAtMost(
+      request.input ?? "",
+      `${label}.input`,
+      MAX_ADAPTER_WARMUP_TEXT_CHARS,
+    );
+  }
+
+  if (request.system !== undefined) {
+    assertNonEmptyStringAtMost(request.system, `${label}.system`, MAX_ADAPTER_WARMUP_TEXT_CHARS);
+  }
+
+  if (request.maxTokens !== undefined) {
+    assertPositiveSafeIntegerAtMost(request.maxTokens, `${label}.maxTokens`, maxOutputTokens);
+  }
+
+  if (request.seed !== undefined) {
+    assertSafeInteger(request.seed, `${label}.seed`);
+  }
+
+  assertStopSequences(request.stop, `${label}.stop`);
+  assertResponseFormat(request.responseFormat, `${label}.responseFormat`);
+}
+
+export function snapshotAdapterWarmupRequests(
+  requests: WarmupInferenceRequest[] | undefined,
+  maxOutputTokens: number,
+): WarmupInferenceRequest[] | undefined {
+  if (requests === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(requests)) {
+    throw new TypeError("adapter.warmupRequests must be an array when provided");
+  }
+
+  if (requests.length > MAX_ADAPTER_WARMUP_REQUESTS) {
+    throw new RangeError(
+      `adapter.warmupRequests must contain at most ${MAX_ADAPTER_WARMUP_REQUESTS} entries`,
+    );
+  }
+
+  return requests.map((request, index) => {
+    assertWarmupRequest(request, `adapter.warmupRequests[${index}]`, maxOutputTokens);
+
+    return {
+      ...request,
+      ...(request.stop ? { stop: [...request.stop] } : {}),
+      ...(request.responseFormat ? { responseFormat: { ...request.responseFormat } } : {}),
+      ...(request.templateVariables ? { templateVariables: { ...request.templateVariables } } : {}),
+    };
+  });
+}
+
+export function assertHttpAdapterConfig(adapter: HttpAdapterConfig): void {
+  if (adapter === null || typeof adapter !== "object" || Array.isArray(adapter)) {
+    throw new TypeError("adapter must be an object");
+  }
+
+  for (const [key] of objectEntries(adapter, "adapter")) {
+    assertSafeRecordKey(key, "adapter");
+  }
+
+  assertHttpBaseUrl(adapter.baseUrl, "adapter.baseUrl");
+  assertPositiveSafeIntegerAtMost(adapter.timeoutMs, "adapter.timeoutMs", MAX_ADAPTER_TIMEOUT_MS);
+  assertOptionalString(adapter.apiKeyEnv, "adapter.apiKeyEnv", MAX_ADAPTER_ENV_NAME_CHARS);
+  assertHeaderRecord(adapter.headers, "adapter.headers");
+}
+
+export function snapshotHttpAdapterConfig<T extends HttpAdapterConfig>(adapter: T): T {
+  assertHttpAdapterConfig(adapter);
+
+  return {
+    ...adapter,
+    ...(adapter.headers ? { headers: { ...adapter.headers } } : {}),
+  };
+}
+
 export function buildAdapterHeaders(adapter: HttpAdapterConfig): Record<string, string> {
+  assertHttpAdapterConfig(adapter);
+
   const headers: Record<string, string> = {
     "content-type": "application/json",
     ...(adapter.headers ?? {}),
@@ -39,6 +368,126 @@ export function buildAdapterHeaders(adapter: HttpAdapterConfig): Record<string, 
   return headers;
 }
 
+export async function readResponseBodyLimited(
+  response: Response,
+  limitBytes: number,
+): Promise<LimitedResponseBody> {
+  if (!response.body) {
+    const text = await response.text();
+    const bytes = Buffer.from(text);
+    const truncated = bytes.byteLength > limitBytes;
+    const body = truncated ? bytes.subarray(0, limitBytes).toString("utf8") : text;
+
+    return {
+      body,
+      truncated,
+      bytesRead: truncated ? limitBytes : bytes.byteLength,
+      limitBytes,
+    };
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let bytesRead = 0;
+  let truncated = false;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (done) {
+        break;
+      }
+
+      if (bytesRead >= limitBytes) {
+        truncated = true;
+        await reader.cancel();
+        break;
+      }
+
+      const chunk = Buffer.from(value);
+      const remaining = limitBytes - bytesRead;
+
+      if (chunk.byteLength > remaining) {
+        chunks.push(chunk.subarray(0, remaining));
+        bytesRead = limitBytes;
+        truncated = true;
+        await reader.cancel();
+        break;
+      }
+
+      chunks.push(chunk);
+      bytesRead += chunk.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return {
+    body: Buffer.concat(chunks, bytesRead).toString("utf8"),
+    truncated,
+    bytesRead,
+    limitBytes,
+  };
+}
+
+export function assertResponseBodyWithinLimit(
+  body: LimitedResponseBody,
+  contentType: string,
+): void {
+  if (!body.truncated) {
+    return;
+  }
+
+  throw new RayError("The backend response body exceeded the configured size limit", {
+    code: "provider_response_too_large",
+    status: 502,
+    details: {
+      contentType,
+      bytesRead: body.bytesRead,
+      limitBytes: body.limitBytes,
+    },
+  });
+}
+
+function getDeclaredContentLength(response: Response): number | undefined {
+  const header = response.headers.get("content-length");
+
+  if (!header) {
+    return undefined;
+  }
+
+  const normalized = header.trim();
+  const parsed = Number(normalized);
+
+  return /^\d+$/.test(normalized) && Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
+export async function assertDeclaredResponseBodyWithinLimit(
+  response: Response,
+  limitBytes: number,
+  contentType: string,
+): Promise<void> {
+  const declaredContentLength = getDeclaredContentLength(response);
+
+  if (declaredContentLength === undefined || declaredContentLength <= limitBytes) {
+    return;
+  }
+
+  await response.body?.cancel().catch(() => undefined);
+
+  throw new RayError("The backend response body exceeded the configured size limit", {
+    code: "provider_response_too_large",
+    status: 502,
+    details: {
+      contentType,
+      bytesRead: 0,
+      limitBytes,
+      declaredContentLength,
+    },
+  });
+}
+
 export async function adapterRequest(
   adapter: HttpAdapterConfig,
   pathname: string,
@@ -46,6 +495,9 @@ export async function adapterRequest(
   timeoutMs = adapter.timeoutMs,
   parentSignal?: AbortSignal,
 ): Promise<unknown> {
+  assertHttpAdapterConfig(adapter);
+  assertPositiveSafeIntegerAtMost(timeoutMs, "adapter.timeoutMs", MAX_ADAPTER_TIMEOUT_MS);
+
   const controller = new AbortController();
   const timeout = setTimeout(() => {
     controller.abort(
@@ -87,7 +539,7 @@ export async function adapterRequest(
     });
 
     if (!response.ok) {
-      const body = await response.text();
+      const body = await readResponseBodyLimited(response, BACKEND_ERROR_BODY_LIMIT_BYTES);
       throw new RayError(`The backend rejected the request with ${response.status}`, {
         code: "provider_upstream_error",
         status: 502,
@@ -100,12 +552,19 @@ export async function adapterRequest(
     }
 
     const contentType = response.headers.get("content-type") ?? "";
+    await assertDeclaredResponseBodyWithinLimit(
+      response,
+      BACKEND_RESPONSE_BODY_LIMIT_BYTES,
+      contentType,
+    );
+    const body = await readResponseBodyLimited(response, BACKEND_RESPONSE_BODY_LIMIT_BYTES);
+    assertResponseBodyWithinLimit(body, contentType);
 
     if (contentType.includes("application/json")) {
-      return (await response.json()) as unknown;
+      return JSON.parse(body.body) as unknown;
     }
 
-    return await response.text();
+    return body.body;
   } catch (error) {
     if (controller.signal.aborted) {
       const reason = controller.signal.reason;

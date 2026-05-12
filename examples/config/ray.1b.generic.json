@@ -1,0 +1,24 @@
+{
+  "profile": "1b",
+  "model": {
+    "id": "local-1b-q4",
+    "family": "generic-1b",
+    "quantization": "q4_k_m",
+    "adapter": {
+      "kind": "llama.cpp",
+      "modelRef": "local-1b-q4",
+      "launchProfile": {
+        "modelPath": "/var/lib/ray/models/local-1b-q4.gguf",
+        "alias": "local-1b-q4"
+      }
+    }
+  },
+  "tags": {
+    "target": "1b",
+    "hardware": "generic-4gb-vps-class",
+    "engine": "llama.cpp",
+    "modelSize": "1b-class",
+    "exposure": "private-local",
+    "portability": "generic-model"
+  }
+}

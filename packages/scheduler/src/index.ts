@@ -13,6 +13,59 @@ const RECENT_AFFINITY_BONUS = 80;
 const DOMINANT_AFFINITY_BONUS = 40;
 const WAIT_SCORE_DIVISOR = 25;
 
+function createRequestTimeoutError(): RayError {
+  return new RayError("The inference request exceeded the scheduler timeout", {
+    code: "request_timeout",
+    status: 504,
+  });
+}
+
+function assertPositiveSafeInteger(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError(`${label} must be a positive safe integer`);
+  }
+}
+
+function assertNonNegativeSafeInteger(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError(`${label} must be a non-negative safe integer`);
+  }
+}
+
+function assertBoolean(value: boolean, label: string): void {
+  if (typeof value !== "boolean") {
+    throw new TypeError(`${label} must be a boolean`);
+  }
+}
+
+function normalizeSchedulerConfig(config: SchedulerConfig): SchedulerConfig {
+  assertPositiveSafeInteger(config.concurrency, "scheduler.concurrency");
+  assertPositiveSafeInteger(config.maxQueue, "scheduler.maxQueue");
+  assertPositiveSafeInteger(config.maxQueuedTokens, "scheduler.maxQueuedTokens");
+  assertPositiveSafeInteger(config.maxInflightTokens, "scheduler.maxInflightTokens");
+  assertPositiveSafeInteger(config.requestTimeoutMs, "scheduler.requestTimeoutMs");
+  assertNonNegativeSafeInteger(config.batchWindowMs, "scheduler.batchWindowMs");
+  assertPositiveSafeInteger(config.affinityLookahead, "scheduler.affinityLookahead");
+  assertPositiveSafeInteger(config.shortJobMaxTokens, "scheduler.shortJobMaxTokens");
+  assertBoolean(config.dedupeInflight, "scheduler.dedupeInflight");
+
+  if (config.affinityLookahead > config.maxQueue) {
+    throw new RangeError("scheduler.affinityLookahead must be less than or equal to maxQueue");
+  }
+
+  return {
+    concurrency: config.concurrency,
+    maxQueue: config.maxQueue,
+    maxQueuedTokens: config.maxQueuedTokens,
+    maxInflightTokens: config.maxInflightTokens,
+    requestTimeoutMs: config.requestTimeoutMs,
+    dedupeInflight: config.dedupeInflight,
+    batchWindowMs: config.batchWindowMs,
+    affinityLookahead: config.affinityLookahead,
+    shortJobMaxTokens: config.shortJobMaxTokens,
+  };
+}
+
 interface QueueItem<T> {
   key?: string;
   affinityKey?: string;
@@ -20,6 +73,7 @@ interface QueueItem<T> {
   lane: ScheduleLane;
   costTokens: number;
   enqueuedAt: number;
+  queuedTimeout?: NodeJS.Timeout;
   handler: (signal: AbortSignal) => Promise<T>;
   resolve: (value: ScheduledTaskResult<T>) => void;
   reject: (reason?: unknown) => void;
@@ -60,8 +114,11 @@ export class RequestScheduler<T> {
   private inFlightTokens = 0;
   private drainTimer: NodeJS.Timeout | undefined;
   private lastAffinityKey: string | undefined;
+  private readonly config: SchedulerConfig;
 
-  constructor(private readonly config: SchedulerConfig) {}
+  constructor(config: SchedulerConfig) {
+    this.config = normalizeSchedulerConfig(config);
+  }
 
   schedule(options: ScheduleTaskOptions<T>): Promise<ScheduledTaskResult<T>> {
     if (options.key && this.config.dedupeInflight) {
@@ -116,14 +173,18 @@ export class RequestScheduler<T> {
     });
 
     if (options.key && this.config.dedupeInflight) {
-      this.dedupeMap.set(options.key, promise);
-      void promise.finally(() => {
-        this.dedupeMap.delete(options.key as string);
-      });
+      const dedupeKey = options.key;
+      this.dedupeMap.set(dedupeKey, promise);
+      void promise
+        .finally(() => {
+          this.dedupeMap.delete(dedupeKey);
+        })
+        .catch(() => undefined);
     }
 
     this.queues[lane].push(item);
     this.queuedTokens += costTokens;
+    this.armQueuedTimeout(item);
     this.requestDrain();
 
     return promise;
@@ -168,6 +229,7 @@ export class RequestScheduler<T> {
       }
 
       this.queuedTokens -= item.costTokens;
+      this.clearQueuedTimeout(item);
       this.lastAffinityKey = item.affinityKey ?? this.lastAffinityKey;
       void this.run(item);
     }
@@ -304,6 +366,41 @@ export class RequestScheduler<T> {
     }, this.config.batchWindowMs);
   }
 
+  private armQueuedTimeout(item: QueueItem<T>): void {
+    item.queuedTimeout = setTimeout(() => {
+      delete item.queuedTimeout;
+
+      if (!this.removeQueuedItem(item)) {
+        return;
+      }
+
+      item.reject(createRequestTimeoutError());
+      this.requestDrain();
+    }, this.config.requestTimeoutMs);
+  }
+
+  private clearQueuedTimeout(item: QueueItem<T>): void {
+    if (!item.queuedTimeout) {
+      return;
+    }
+
+    clearTimeout(item.queuedTimeout);
+    delete item.queuedTimeout;
+  }
+
+  private removeQueuedItem(item: QueueItem<T>): boolean {
+    const queue = this.queues[item.lane];
+    const index = queue.indexOf(item);
+
+    if (index === -1) {
+      return false;
+    }
+
+    queue.splice(index, 1);
+    this.queuedTokens -= item.costTokens;
+    return true;
+  }
+
   private async run(item: QueueItem<T>): Promise<void> {
     this.inFlight += 1;
     this.inFlightTokens += item.costTokens;
@@ -316,19 +413,26 @@ export class RequestScheduler<T> {
     }
 
     const queueTimeMs = Date.now() - item.enqueuedAt;
-    const controller = new AbortController();
-
-    const timeout = setTimeout(() => {
-      controller.abort(
-        new RayError("The inference request exceeded the scheduler timeout", {
-          code: "request_timeout",
-          status: 504,
-        }),
-      );
-    }, this.config.requestTimeoutMs);
+    let timeout: NodeJS.Timeout | undefined;
 
     try {
-      const value = await item.handler(controller.signal);
+      const remainingTimeoutMs = this.config.requestTimeoutMs - queueTimeMs;
+
+      if (remainingTimeoutMs <= 0) {
+        throw createRequestTimeoutError();
+      }
+
+      const controller = new AbortController();
+      const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          const error = createRequestTimeoutError();
+          controller.abort(error);
+          reject(error);
+        }, remainingTimeoutMs);
+      });
+      const handlerPromise = item.handler(controller.signal);
+      void handlerPromise.catch(() => undefined);
+      const value = await Promise.race([handlerPromise, timeoutPromise]);
       item.resolve({
         value,
         queueTimeMs,
@@ -337,7 +441,9 @@ export class RequestScheduler<T> {
     } catch (error) {
       item.reject(error);
     } finally {
-      clearTimeout(timeout);
+      if (timeout) {
+        clearTimeout(timeout);
+      }
       this.inFlight -= 1;
       this.inFlightTokens -= item.costTokens;
 

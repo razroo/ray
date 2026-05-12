@@ -28,16 +28,374 @@ const RETRYABLE_JOB_ERROR_CODES = new Set([
   "provider_request_failed",
   "gateway_error",
 ]);
+const ATOMIC_WRITE_TEMP_PREFIX = ".tmp-";
+const STOP_TIMEOUT_BUFFER_MS = 1_000;
+const PERSISTED_JOB_FILE_LIMIT_BYTES = 2 * 1024 * 1024;
+const CALLBACK_DNS_LOOKUP_TIMEOUT_MS = 1_000;
+const MAX_JOB_ID_CHARS = 128;
+const MAX_CALLBACK_URL_CHARS = 2_048;
+const MAX_JOB_ERROR_MESSAGE_CHARS = 8_192;
+const MAX_JOB_ERROR_DETAIL_DEPTH = 5;
+const MAX_JOB_ERROR_DETAIL_KEYS = 32;
+const MAX_JOB_ERROR_DETAIL_ARRAY_ITEMS = 32;
+const MAX_JOB_ERROR_DETAIL_STRING_CHARS = 4_096;
+const MAX_JOB_ERROR_DETAIL_TOTAL_CHARS = 64 * 1024;
+const MAX_JOB_ERROR_DETAIL_NODES = 512;
+const MAX_ASYNC_QUEUE_JOBS = 2_000;
+const MAX_ASYNC_DISPATCH_CONCURRENCY = 8;
+const MAX_ASYNC_COMPLETED_TTL_MS = 604_800_000;
+const MAX_ASYNC_POLL_INTERVAL_MS = 60_000;
+const MAX_CALLBACK_TIMEOUT_MS = 30_000;
+const MAX_CALLBACK_ALLOWED_HOSTS = 64;
+const MAX_CALLBACK_ALLOWED_HOST_CHARS = 253;
+
+export type CallbackAddressLookup = (
+  hostname: string,
+  options: { all: true; verbatim: true },
+) => Promise<Array<{ address: string }>>;
 
 export interface CreateDurableInferenceQueueOptions {
   config: AsyncQueueConfig;
   runtime: RayRuntime;
   logger: Logger;
   fetchImpl?: typeof fetch;
+  lookupImpl?: CallbackAddressLookup;
+}
+
+export interface StopDurableInferenceQueueOptions {
+  timeoutMs?: number;
+}
+
+interface ActiveTaskContext {
+  kind: "inference" | "callback";
+  jobId: string;
+}
+
+interface RecoveryRetentionResult {
+  retained: boolean;
+  displaced?: InferenceJobRecord;
+}
+
+interface JobErrorDetailBudget {
+  chars: number;
+  nodes: number;
+}
+
+const JOB_STATUSES = new Set<InferenceJobRecord["status"]>([
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+]);
+const CALLBACK_STATUSES = new Set<InferenceJobCallbackState["status"]>([
+  "pending",
+  "delivered",
+  "failed",
+]);
+
+class PersistedJobValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PersistedJobValidationError";
+  }
+}
+
+async function readPersistedJobFile(filePath: string): Promise<string> {
+  let fileHandle: Awaited<ReturnType<typeof fs.open>> | undefined;
+
+  try {
+    fileHandle = await fs.open(filePath, "r");
+    const stats = await fileHandle.stat();
+
+    if (!stats.isFile()) {
+      throw new PersistedJobValidationError("persisted async job path must be a file");
+    }
+
+    if (stats.size > PERSISTED_JOB_FILE_LIMIT_BYTES) {
+      throw new PersistedJobValidationError(
+        `persisted async job file exceeds ${PERSISTED_JOB_FILE_LIMIT_BYTES} bytes`,
+      );
+    }
+
+    return await fileHandle.readFile("utf8");
+  } finally {
+    await fileHandle?.close().catch(() => undefined);
+  }
 }
 
 function isTerminalJobStatus(status: InferenceJobRecord["status"]): boolean {
   return status === "succeeded" || status === "failed";
+}
+
+function hasPendingWork(job: InferenceJobRecord): boolean {
+  return !isTerminalJobStatus(job.status) || job.callback?.status === "pending";
+}
+
+function compareRecoveryRetention(left: InferenceJobRecord, right: InferenceJobRecord): number {
+  const leftPriority = hasPendingWork(left) ? 0 : 1;
+  const rightPriority = hasPendingWork(right) ? 0 : 1;
+
+  if (leftPriority !== rightPriority) {
+    return leftPriority - rightPriority;
+  }
+
+  return left.createdAt.localeCompare(right.createdAt);
+}
+
+function retainRecoveredJob(
+  recoveredJobs: InferenceJobRecord[],
+  job: InferenceJobRecord,
+  maxJobs: number,
+): RecoveryRetentionResult {
+  if (recoveredJobs.length < maxJobs) {
+    recoveredJobs.push(job);
+    return { retained: true };
+  }
+
+  let worstIndex = -1;
+
+  for (let index = 0; index < recoveredJobs.length; index += 1) {
+    const existing = recoveredJobs[index];
+    if (!existing) {
+      continue;
+    }
+
+    if (worstIndex === -1 || compareRecoveryRetention(existing, recoveredJobs[worstIndex]!) > 0) {
+      worstIndex = index;
+    }
+  }
+
+  if (worstIndex === -1 || compareRecoveryRetention(job, recoveredJobs[worstIndex]!) >= 0) {
+    return { retained: false };
+  }
+
+  const displaced = recoveredJobs[worstIndex]!;
+  recoveredJobs[worstIndex] = job;
+  return { retained: true, displaced };
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isSafeJobId(value: unknown): value is string {
+  return (
+    typeof value === "string" && value.length <= MAX_JOB_ID_CHARS && /^[A-Za-z0-9_-]+$/.test(value)
+  );
+}
+
+function jobIdFromPersistedFileName(fileName: string): string | undefined {
+  if (!fileName.endsWith(".json")) {
+    return undefined;
+  }
+
+  const jobId = fileName.slice(0, -".json".length);
+  return isSafeJobId(jobId) ? jobId : undefined;
+}
+
+function isValidTimestamp(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value));
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function assertPositiveSafeIntegerAtMost(value: number, label: string, maximum: number): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError(`${label} must be a positive safe integer`);
+  }
+
+  if (value > maximum) {
+    throw new RangeError(`${label} must be less than or equal to ${maximum}`);
+  }
+}
+
+function assertBoolean(value: boolean, label: string): void {
+  if (typeof value !== "boolean") {
+    throw new TypeError(`${label} must be a boolean`);
+  }
+}
+
+function assertAsyncQueueStringArray(
+  value: string[],
+  label: string,
+  maxEntries: number,
+  maxEntryChars: number,
+): void {
+  if (!Array.isArray(value) || value.some((entry) => !isNonEmptyString(entry))) {
+    throw new TypeError(`${label} must be an array of non-empty strings`);
+  }
+
+  if (value.length > maxEntries) {
+    throw new RangeError(`${label} must contain at most ${maxEntries} entries`);
+  }
+
+  for (const entry of value) {
+    if (entry.length > maxEntryChars) {
+      throw new RangeError(`${label} entries must be at most ${maxEntryChars} characters`);
+    }
+  }
+}
+
+function snapshotAsyncQueueConfig(config: AsyncQueueConfig): AsyncQueueConfig {
+  assertBoolean(config.enabled, "asyncQueue.enabled");
+  assertBoolean(config.callbackAllowPrivateNetwork, "asyncQueue.callbackAllowPrivateNetwork");
+
+  if (!isNonEmptyString(config.storageDir)) {
+    throw new TypeError("asyncQueue.storageDir must be a non-empty string");
+  }
+
+  assertPositiveSafeIntegerAtMost(config.maxJobs, "asyncQueue.maxJobs", MAX_ASYNC_QUEUE_JOBS);
+  assertPositiveSafeIntegerAtMost(
+    config.completedTtlMs,
+    "asyncQueue.completedTtlMs",
+    MAX_ASYNC_COMPLETED_TTL_MS,
+  );
+  assertPositiveSafeIntegerAtMost(
+    config.pollIntervalMs,
+    "asyncQueue.pollIntervalMs",
+    MAX_ASYNC_POLL_INTERVAL_MS,
+  );
+  assertPositiveSafeIntegerAtMost(
+    config.dispatchConcurrency,
+    "asyncQueue.dispatchConcurrency",
+    MAX_ASYNC_DISPATCH_CONCURRENCY,
+  );
+  assertPositiveSafeIntegerAtMost(
+    config.maxAttempts,
+    "asyncQueue.maxAttempts",
+    Number.MAX_SAFE_INTEGER,
+  );
+  assertPositiveSafeIntegerAtMost(
+    config.callbackTimeoutMs,
+    "asyncQueue.callbackTimeoutMs",
+    MAX_CALLBACK_TIMEOUT_MS,
+  );
+  assertPositiveSafeIntegerAtMost(
+    config.maxCallbackAttempts,
+    "asyncQueue.maxCallbackAttempts",
+    Number.MAX_SAFE_INTEGER,
+  );
+  assertAsyncQueueStringArray(
+    config.callbackAllowedHosts,
+    "asyncQueue.callbackAllowedHosts",
+    MAX_CALLBACK_ALLOWED_HOSTS,
+    MAX_CALLBACK_ALLOWED_HOST_CHARS,
+  );
+
+  return {
+    enabled: config.enabled,
+    storageDir: config.storageDir,
+    maxJobs: config.maxJobs,
+    completedTtlMs: config.completedTtlMs,
+    pollIntervalMs: config.pollIntervalMs,
+    dispatchConcurrency: config.dispatchConcurrency,
+    maxAttempts: config.maxAttempts,
+    callbackTimeoutMs: config.callbackTimeoutMs,
+    maxCallbackAttempts: config.maxCallbackAttempts,
+    callbackAllowPrivateNetwork: config.callbackAllowPrivateNetwork,
+    callbackAllowedHosts: [...config.callbackAllowedHosts],
+  };
+}
+
+function isJobStatus(value: unknown): value is InferenceJobRecord["status"] {
+  return typeof value === "string" && JOB_STATUSES.has(value as InferenceJobRecord["status"]);
+}
+
+function isCallbackStatus(value: unknown): value is InferenceJobCallbackState["status"] {
+  return (
+    typeof value === "string" && CALLBACK_STATUSES.has(value as InferenceJobCallbackState["status"])
+  );
+}
+
+function assertOptionalTimestamp(value: unknown, label: string): void {
+  if (value !== undefined && !isValidTimestamp(value)) {
+    throw new PersistedJobValidationError(`${label} must be a valid timestamp when present`);
+  }
+}
+
+function assertPersistedCallbackState(value: unknown): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!isObjectRecord(value)) {
+    throw new PersistedJobValidationError("callback must be an object when present");
+  }
+
+  if (!isNonEmptyString(value.url)) {
+    throw new PersistedJobValidationError("callback.url must be a non-empty string");
+  }
+
+  if (value.url.length > MAX_CALLBACK_URL_CHARS) {
+    throw new PersistedJobValidationError(
+      `callback.url must be at most ${MAX_CALLBACK_URL_CHARS} characters`,
+    );
+  }
+
+  if (!isCallbackStatus(value.status)) {
+    throw new PersistedJobValidationError("callback.status is invalid");
+  }
+
+  if (!isNonNegativeInteger(value.attempts)) {
+    throw new PersistedJobValidationError("callback.attempts must be a non-negative integer");
+  }
+
+  assertOptionalTimestamp(value.lastAttemptAt, "callback.lastAttemptAt");
+  assertOptionalTimestamp(value.deliveredAt, "callback.deliveredAt");
+
+  if (value.lastError !== undefined && typeof value.lastError !== "string") {
+    throw new PersistedJobValidationError("callback.lastError must be a string when present");
+  }
+}
+
+function validatePersistedJobRecord(value: unknown, expectedJobId?: string): InferenceJobRecord {
+  if (!isObjectRecord(value)) {
+    throw new PersistedJobValidationError("persisted async job must be an object");
+  }
+
+  if (!isSafeJobId(value.id)) {
+    throw new PersistedJobValidationError("persisted async job id is invalid");
+  }
+
+  if (expectedJobId !== undefined && value.id !== expectedJobId) {
+    throw new PersistedJobValidationError("persisted async job id does not match its file name");
+  }
+
+  if (!isJobStatus(value.status)) {
+    throw new PersistedJobValidationError("persisted async job status is invalid");
+  }
+
+  if (!isObjectRecord(value.request)) {
+    throw new PersistedJobValidationError("persisted async job request must be an object");
+  }
+
+  if (!isValidTimestamp(value.createdAt)) {
+    throw new PersistedJobValidationError("persisted async job createdAt is invalid");
+  }
+
+  if (!isValidTimestamp(value.updatedAt)) {
+    throw new PersistedJobValidationError("persisted async job updatedAt is invalid");
+  }
+
+  if (!isNonNegativeInteger(value.attempts)) {
+    throw new PersistedJobValidationError("persisted async job attempts is invalid");
+  }
+
+  if (!isPositiveInteger(value.maxAttempts)) {
+    throw new PersistedJobValidationError("persisted async job maxAttempts is invalid");
+  }
+
+  assertOptionalTimestamp(value.startedAt, "persisted async job startedAt");
+  assertOptionalTimestamp(value.completedAt, "persisted async job completedAt");
+  assertPersistedCallbackState(value.callback);
+
+  return value as unknown as InferenceJobRecord;
 }
 
 function cloneJobRecord(job: InferenceJobRecord): InferenceJobRecord {
@@ -50,17 +408,176 @@ function cloneRequest(request: CreateInferenceJobRequest): InferenceRequest {
   return next;
 }
 
+function truncateJobErrorString(value: string, maxChars = MAX_JOB_ERROR_MESSAGE_CHARS): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+
+  return `${value.slice(0, maxChars)}...[truncated ${value.length - maxChars} chars]`;
+}
+
+function truncateJobErrorDetailString(value: string, budget: JobErrorDetailBudget): string {
+  const allowedChars = Math.min(value.length, MAX_JOB_ERROR_DETAIL_STRING_CHARS, budget.chars);
+
+  if (allowedChars <= 0) {
+    return `[Truncated ${value.length} chars]`;
+  }
+
+  budget.chars -= allowedChars;
+
+  if (allowedChars < value.length) {
+    return `${value.slice(0, allowedChars)}...[truncated ${value.length - allowedChars} chars]`;
+  }
+
+  return value;
+}
+
+function sanitizeJobErrorDetail(
+  value: unknown,
+  budget: JobErrorDetailBudget,
+  seen: WeakSet<object>,
+  depth = 0,
+): unknown {
+  if (value === undefined || value === null) {
+    return value;
+  }
+
+  if (budget.nodes <= 0) {
+    return "[Truncated]";
+  }
+  budget.nodes -= 1;
+
+  if (typeof value === "string") {
+    return truncateJobErrorDetailString(value, budget);
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : String(value);
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+
+  if (typeof value === "symbol" || typeof value === "function") {
+    return `[${typeof value}]`;
+  }
+
+  if (seen.has(value)) {
+    return "[Circular]";
+  }
+
+  if (depth >= MAX_JOB_ERROR_DETAIL_DEPTH) {
+    return "[Truncated]";
+  }
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? String(value) : value.toISOString();
+  }
+
+  if (value instanceof Error) {
+    const output: Record<string, unknown> = {
+      name: truncateJobErrorString(value.name),
+      message: truncateJobErrorDetailString(value.message, budget),
+    };
+
+    if (value.stack) {
+      output.stack = truncateJobErrorDetailString(value.stack, budget);
+    }
+
+    return output;
+  }
+
+  if (ArrayBuffer.isView(value)) {
+    return `[${value.constructor.name} ${value.byteLength} bytes]`;
+  }
+
+  seen.add(value);
+
+  try {
+    if (Array.isArray(value)) {
+      const output: unknown[] = [];
+
+      for (const entry of value.slice(0, MAX_JOB_ERROR_DETAIL_ARRAY_ITEMS)) {
+        if (budget.nodes <= 0) {
+          output.push("[Truncated]");
+          break;
+        }
+
+        output.push(sanitizeJobErrorDetail(entry, budget, seen, depth + 1));
+      }
+
+      if (value.length > MAX_JOB_ERROR_DETAIL_ARRAY_ITEMS) {
+        output.push(`[Truncated ${value.length - MAX_JOB_ERROR_DETAIL_ARRAY_ITEMS} items]`);
+      }
+
+      return output;
+    }
+
+    let keys: string[];
+    try {
+      keys = Object.keys(value);
+    } catch (error) {
+      return `[Unserializable object: ${truncateJobErrorString(toErrorMessage(error))}]`;
+    }
+
+    const output: Record<string, unknown> = {};
+
+    for (const key of keys.slice(0, MAX_JOB_ERROR_DETAIL_KEYS)) {
+      if (budget.nodes <= 0) {
+        output.__truncatedValues = true;
+        break;
+      }
+
+      try {
+        output[key] = sanitizeJobErrorDetail(
+          (value as Record<string, unknown>)[key],
+          budget,
+          seen,
+          depth + 1,
+        );
+      } catch (error) {
+        output[key] = `[Thrown: ${truncateJobErrorString(toErrorMessage(error))}]`;
+      }
+    }
+
+    if (keys.length > MAX_JOB_ERROR_DETAIL_KEYS) {
+      output.__truncatedKeys = keys.length - MAX_JOB_ERROR_DETAIL_KEYS;
+    }
+
+    return output;
+  } finally {
+    seen.delete(value);
+  }
+}
+
 function toJobError(error: unknown): InferenceJobError {
   if (error instanceof RayError) {
-    return {
-      message: error.message,
+    const jobError: InferenceJobError = {
+      message: truncateJobErrorString(error.message),
       code: error.code,
-      details: error.details,
     };
+
+    if (error.details !== undefined) {
+      jobError.details = sanitizeJobErrorDetail(
+        error.details,
+        {
+          chars: MAX_JOB_ERROR_DETAIL_TOTAL_CHARS,
+          nodes: MAX_JOB_ERROR_DETAIL_NODES,
+        },
+        new WeakSet(),
+      );
+    }
+
+    return jobError;
   }
 
   return {
-    message: toErrorMessage(error),
+    message: truncateJobErrorString(toErrorMessage(error)),
   };
 }
 
@@ -152,29 +669,63 @@ function isPrivateNetworkAddress(address: string): boolean {
   return false;
 }
 
-async function resolveCallbackAddresses(hostname: string): Promise<string[]> {
+async function resolveCallbackAddresses(
+  hostname: string,
+  lookupImpl: CallbackAddressLookup,
+  timeoutMs: number,
+): Promise<string[]> {
   const normalized = normalizeHostname(hostname);
 
   if (isIP(normalized)) {
     return [normalized];
   }
 
+  let timeout: NodeJS.Timeout | undefined;
+
   try {
-    const records = await lookup(normalized, {
-      all: true,
-      verbatim: true,
-    });
+    const records = await Promise.race([
+      lookupImpl(normalized, {
+        all: true,
+        verbatim: true,
+      }),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          reject(
+            new RayError("callbackUrl hostname resolution timed out", {
+              code: "invalid_request",
+              status: 400,
+              details: {
+                hostname: normalized,
+                timeoutMs,
+              },
+            }),
+          );
+        }, timeoutMs);
+      }),
+    ]);
     return records.map((record) => record.address);
   } catch (error) {
+    if (error instanceof RayError) {
+      throw error;
+    }
+
     throw new RayError("callbackUrl hostname could not be resolved", {
       code: "invalid_request",
       status: 400,
       details: error,
     });
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
   }
 }
 
-async function assertCallbackNetworkAllowed(parsed: URL, config: AsyncQueueConfig): Promise<void> {
+async function assertCallbackNetworkAllowed(
+  parsed: URL,
+  config: AsyncQueueConfig,
+  lookupImpl: CallbackAddressLookup,
+): Promise<void> {
   if (matchesAllowedHost(parsed.hostname, config.callbackAllowedHosts)) {
     return;
   }
@@ -183,7 +734,11 @@ async function assertCallbackNetworkAllowed(parsed: URL, config: AsyncQueueConfi
     return;
   }
 
-  const addresses = await resolveCallbackAddresses(parsed.hostname);
+  const addresses = await resolveCallbackAddresses(
+    parsed.hostname,
+    lookupImpl,
+    Math.min(config.callbackTimeoutMs, CALLBACK_DNS_LOOKUP_TIMEOUT_MS),
+  );
   const blockedAddress = addresses.find((address) => isPrivateNetworkAddress(address));
 
   if (blockedAddress) {
@@ -199,11 +754,31 @@ async function assertCallbackNetworkAllowed(parsed: URL, config: AsyncQueueConfi
 }
 
 async function normalizeCallbackUrl(
-  callbackUrl: string | undefined,
+  callbackUrl: unknown,
   config: AsyncQueueConfig,
+  lookupImpl: CallbackAddressLookup,
 ): Promise<string | undefined> {
-  if (!isNonEmptyString(callbackUrl)) {
+  if (callbackUrl === undefined) {
     return undefined;
+  }
+
+  if (typeof callbackUrl !== "string" || !isNonEmptyString(callbackUrl)) {
+    throw new RayError("callbackUrl must be a non-empty string when provided", {
+      code: "invalid_request",
+      status: 400,
+      details: { value: callbackUrl },
+    });
+  }
+
+  if (callbackUrl.length > MAX_CALLBACK_URL_CHARS) {
+    throw new RayError(`callbackUrl must be at most ${MAX_CALLBACK_URL_CHARS} characters`, {
+      code: "invalid_request",
+      status: 400,
+      details: {
+        maxChars: MAX_CALLBACK_URL_CHARS,
+        actualChars: callbackUrl.length,
+      },
+    });
   }
 
   let parsed: URL;
@@ -225,20 +800,77 @@ async function normalizeCallbackUrl(
     });
   }
 
-  await assertCallbackNetworkAllowed(parsed, config);
+  await assertCallbackNetworkAllowed(parsed, config, lookupImpl);
 
   return parsed.toString();
 }
 
-async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
+async function discardResponseBody(response: Response): Promise<void> {
+  if (!response.body) {
+    return;
+  }
+
+  try {
+    await response.body.cancel();
+  } catch {
+    // Callback delivery only needs response headers/status; failed body cleanup should not
+    // turn a delivered callback into a failed job.
+  }
+}
+
+function stringifyPersistedJob(job: InferenceJobRecord): string {
+  const body = JSON.stringify(job, null, 2);
+  const bytes = Buffer.byteLength(body, "utf8");
+
+  if (bytes > PERSISTED_JOB_FILE_LIMIT_BYTES) {
+    throw new RayError("The async job record exceeds the durable storage size limit", {
+      code: "async_job_record_too_large",
+      status: 413,
+      details: {
+        jobId: job.id,
+        bytes,
+        maxBytes: PERSISTED_JOB_FILE_LIMIT_BYTES,
+      },
+    });
+  }
+
+  return body;
+}
+
+async function writeJsonAtomic(filePath: string, body: string): Promise<void> {
   const directory = path.dirname(filePath);
   const tempPath = path.join(
     directory,
-    `.tmp-${path.basename(filePath)}-${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`,
+    `${ATOMIC_WRITE_TEMP_PREFIX}${path.basename(filePath)}-${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`,
   );
-  const body = JSON.stringify(value, null, 2);
-  await fs.writeFile(tempPath, body, "utf8");
-  await fs.rename(tempPath, filePath);
+  let fileHandle: Awaited<ReturnType<typeof fs.open>> | undefined;
+
+  try {
+    fileHandle = await fs.open(tempPath, "w");
+    await fileHandle.writeFile(body, "utf8");
+    await fileHandle.sync();
+    await fileHandle.close();
+    fileHandle = undefined;
+    await fs.rename(tempPath, filePath);
+    await syncDirectoryBestEffort(directory);
+  } catch (error) {
+    await fileHandle?.close().catch(() => undefined);
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function syncDirectoryBestEffort(directory: string): Promise<void> {
+  let directoryHandle: Awaited<ReturnType<typeof fs.open>> | undefined;
+
+  try {
+    directoryHandle = await fs.open(directory, "r");
+    await directoryHandle.sync();
+  } catch {
+    // Directory fsync support varies by platform; the atomic rename still protects readers.
+  } finally {
+    await directoryHandle?.close().catch(() => undefined);
+  }
 }
 
 export class DurableInferenceQueue {
@@ -248,15 +880,23 @@ export class DurableInferenceQueue {
   private readonly retryTimers = new Set<NodeJS.Timeout>();
   private readonly activeTasks = new Set<Promise<void>>();
   private readonly fetchImpl: typeof fetch;
+  private readonly lookupImpl: CallbackAddressLookup;
   private readonly jobsDir: string;
+  private readonly options: CreateDurableInferenceQueueOptions;
   private readyPromise: Promise<void> | undefined;
   private started = false;
   private activeInferenceJobs = 0;
   private activeCallbackDeliveries = 0;
+  private pendingJobAdmissions = 0;
 
-  constructor(private readonly options: CreateDurableInferenceQueueOptions) {
+  constructor(options: CreateDurableInferenceQueueOptions) {
+    this.options = {
+      ...options,
+      config: snapshotAsyncQueueConfig(options.config),
+    };
     this.fetchImpl = options.fetchImpl ?? fetch;
-    this.jobsDir = path.join(options.config.storageDir, "jobs");
+    this.lookupImpl = options.lookupImpl ?? (lookup as CallbackAddressLookup);
+    this.jobsDir = path.join(this.options.config.storageDir, "jobs");
   }
 
   async start(): Promise<void> {
@@ -270,7 +910,7 @@ export class DurableInferenceQueue {
     this.requestDrain();
   }
 
-  async stop(): Promise<void> {
+  async stop(options: StopDurableInferenceQueueOptions = {}): Promise<void> {
     this.started = false;
 
     for (const timer of this.retryTimers) {
@@ -278,7 +918,13 @@ export class DurableInferenceQueue {
     }
     this.retryTimers.clear();
 
-    await Promise.allSettled([...this.activeTasks]);
+    await this.waitForActiveTasks(
+      options.timeoutMs ??
+        Math.max(
+          this.options.runtime.config.scheduler.requestTimeoutMs,
+          this.options.config.callbackTimeoutMs,
+        ) + STOP_TIMEOUT_BUFFER_MS,
+    );
   }
 
   snapshot(): AsyncQueueSnapshot {
@@ -301,6 +947,8 @@ export class DurableInferenceQueue {
       running,
       callbackPending,
       totalJobs: this.jobs.size,
+      maxJobs: this.options.config.maxJobs,
+      completedTtlMs: this.options.config.completedTtlMs,
       dispatchConcurrency: this.options.config.dispatchConcurrency,
     };
   }
@@ -308,53 +956,96 @@ export class DurableInferenceQueue {
   async enqueue(request: CreateInferenceJobRequest): Promise<InferenceJobRecord> {
     await this.ensureReady();
     normalizeInferenceRequest(this.options.runtime.config, cloneRequest(request));
+    await this.pruneCompletedJobs();
 
-    const callbackUrl = await normalizeCallbackUrl(request.callbackUrl, this.options.config);
-    const now = new Date().toISOString();
-    const job: InferenceJobRecord = {
-      id: createRequestId("job"),
-      status: "queued",
-      request: cloneRequest(request),
-      createdAt: now,
-      updatedAt: now,
-      attempts: 0,
-      maxAttempts: this.options.config.maxAttempts,
-      ...(callbackUrl
-        ? {
-            callback: {
-              url: callbackUrl,
-              status: "pending",
-              attempts: 0,
-            } satisfies InferenceJobCallbackState,
-          }
-        : {}),
-    };
+    this.reserveJobAdmission();
 
-    this.jobs.set(job.id, job);
-    await this.persistJob(job);
-    this.enqueueJobId(job.id);
-    this.requestDrain();
+    try {
+      const callbackUrl = await normalizeCallbackUrl(
+        request.callbackUrl,
+        this.options.config,
+        this.lookupImpl,
+      );
+      const now = new Date().toISOString();
+      const job: InferenceJobRecord = {
+        id: createRequestId("job"),
+        status: "queued",
+        request: cloneRequest(request),
+        createdAt: now,
+        updatedAt: now,
+        attempts: 0,
+        maxAttempts: this.options.config.maxAttempts,
+        ...(callbackUrl
+          ? {
+              callback: {
+                url: callbackUrl,
+                status: "pending",
+                attempts: 0,
+              } satisfies InferenceJobCallbackState,
+            }
+          : {}),
+      };
 
-    return cloneJobRecord(job);
+      this.jobs.set(job.id, job);
+
+      try {
+        await this.persistJob(job);
+      } catch (error) {
+        this.jobs.delete(job.id);
+        throw error;
+      }
+
+      this.enqueueJobId(job.id);
+      this.requestDrain();
+
+      return cloneJobRecord(job);
+    } finally {
+      this.pendingJobAdmissions -= 1;
+    }
   }
 
   async get(jobId: string): Promise<InferenceJobRecord | undefined> {
     const normalizedId = this.normalizeJobId(jobId);
+    await this.ensureReady();
     const existing = this.jobs.get(normalizedId);
 
     if (existing) {
+      if (await this.pruneCompletedJob(existing)) {
+        return undefined;
+      }
+
       return cloneJobRecord(existing);
     }
 
-    await this.ensureReady();
-
     try {
-      const raw = await fs.readFile(this.getJobPath(normalizedId), "utf8");
-      const parsed = JSON.parse(raw) as InferenceJobRecord;
+      const filePath = this.getJobPath(normalizedId);
+      const raw = await readPersistedJobFile(filePath);
+      const parsed = validatePersistedJobRecord(JSON.parse(raw), normalizedId);
+
+      if (await this.pruneCompletedJob(parsed, filePath)) {
+        return undefined;
+      }
+
+      if (this.jobs.size + this.pendingJobAdmissions >= this.options.config.maxJobs) {
+        this.options.logger.warn("skipped persisted async job because retained store is full", {
+          jobId: parsed.id,
+          maxJobs: this.options.config.maxJobs,
+        });
+        return undefined;
+      }
+
       this.jobs.set(parsed.id, parsed);
       return cloneJobRecord(parsed);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return undefined;
+      }
+
+      if (error instanceof SyntaxError || error instanceof PersistedJobValidationError) {
+        this.options.logger.warn("failed to load persisted async job", {
+          jobId: normalizedId,
+          error: toErrorMessage(error),
+        });
         return undefined;
       }
 
@@ -376,36 +1067,106 @@ export class DurableInferenceQueue {
     await this.readyPromise;
   }
 
+  private reserveJobAdmission(): void {
+    const retainedOrPendingJobs = this.jobs.size + this.pendingJobAdmissions;
+
+    if (retainedOrPendingJobs >= this.options.config.maxJobs) {
+      throw new RayError("The async job store is full", {
+        code: "async_queue_full",
+        status: 503,
+        details: {
+          totalJobs: this.jobs.size,
+          pendingAdmissions: this.pendingJobAdmissions,
+          maxJobs: this.options.config.maxJobs,
+        },
+      });
+    }
+
+    this.pendingJobAdmissions += 1;
+  }
+
   private async loadJobsFromDisk(): Promise<void> {
     this.jobs.clear();
     this.queuedJobIds.length = 0;
     this.pendingCallbackJobIds.length = 0;
 
-    const entries = await fs.readdir(this.jobsDir, { withFileTypes: true });
     const recoveredJobs: InferenceJobRecord[] = [];
+    const recoveredJobPaths = new Map<string, string>();
 
-    for (const entry of entries) {
+    for await (const entry of await fs.opendir(this.jobsDir)) {
+      const filePath = path.join(this.jobsDir, entry.name);
+
+      if (entry.isFile() && entry.name.startsWith(ATOMIC_WRITE_TEMP_PREFIX)) {
+        await this.removeStaleTempFile(filePath);
+        continue;
+      }
+
       if (!entry.isFile() || !entry.name.endsWith(".json")) {
         continue;
       }
 
-      const filePath = path.join(this.jobsDir, entry.name);
-
       try {
-        const raw = await fs.readFile(filePath, "utf8");
-        const parsed = JSON.parse(raw) as InferenceJobRecord;
+        const expectedJobId = jobIdFromPersistedFileName(entry.name);
+        if (!expectedJobId) {
+          throw new PersistedJobValidationError("persisted async job file name is invalid");
+        }
+
+        const raw = await readPersistedJobFile(filePath);
+        const parsed = validatePersistedJobRecord(JSON.parse(raw), expectedJobId);
 
         if (parsed.status === "running") {
-          parsed.status = "queued";
-          parsed.updatedAt = new Date().toISOString();
-          parsed.error = {
-            code: "job_recovered",
-            message: "The job was returned to the durable queue after a restart",
-          };
+          const recoveredAt = new Date().toISOString();
+          parsed.updatedAt = recoveredAt;
+
+          if (parsed.attempts >= parsed.maxAttempts) {
+            parsed.status = "failed";
+            parsed.completedAt = recoveredAt;
+            parsed.error = {
+              code: "job_recovery_attempts_exhausted",
+              message: "The job was running during restart and had no retry attempts remaining",
+            };
+          } else {
+            parsed.status = "queued";
+            parsed.error = {
+              code: "job_recovered",
+              message: "The job was returned to the durable queue after a restart",
+            };
+          }
+
           await this.persistJob(parsed);
         }
 
-        recoveredJobs.push(parsed);
+        if (await this.pruneCompletedJob(parsed, filePath)) {
+          continue;
+        }
+
+        const retention = retainRecoveredJob(recoveredJobs, parsed, this.options.config.maxJobs);
+
+        if (!retention.retained) {
+          this.options.logger.warn("skipped persisted async job because retained store is full", {
+            jobId: parsed.id,
+            filePath,
+            maxJobs: this.options.config.maxJobs,
+          });
+          await this.removeOverflowPersistedJob(parsed, filePath);
+          continue;
+        }
+
+        recoveredJobPaths.set(parsed.id, filePath);
+
+        if (retention.displaced) {
+          const displacedPath = recoveredJobPaths.get(retention.displaced.id);
+          recoveredJobPaths.delete(retention.displaced.id);
+
+          if (displacedPath) {
+            this.options.logger.warn("pruned overflow persisted async job from retained store", {
+              jobId: retention.displaced.id,
+              filePath: displacedPath,
+              maxJobs: this.options.config.maxJobs,
+            });
+            await this.removeOverflowPersistedJob(retention.displaced, displacedPath);
+          }
+        }
       } catch (error) {
         this.options.logger.warn("failed to load persisted async job", {
           filePath,
@@ -414,7 +1175,7 @@ export class DurableInferenceQueue {
       }
     }
 
-    recoveredJobs.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    recoveredJobs.sort(compareRecoveryRetention);
 
     for (const job of recoveredJobs) {
       this.jobs.set(job.id, job);
@@ -449,12 +1210,9 @@ export class DurableInferenceQueue {
       }
 
       this.activeInferenceJobs += 1;
-      const task = this.runInferenceJob(jobId).finally(() => {
+      this.trackActiveTask(this.runInferenceJob(jobId), { kind: "inference", jobId }, () => {
         this.activeInferenceJobs -= 1;
-        this.activeTasks.delete(task);
-        this.requestDrain();
       });
-      this.activeTasks.add(task);
     }
 
     while (this.activeCallbackDeliveries < 1 && this.pendingCallbackJobIds.length > 0) {
@@ -465,12 +1223,54 @@ export class DurableInferenceQueue {
       }
 
       this.activeCallbackDeliveries += 1;
-      const task = this.deliverCallback(jobId).finally(() => {
+      this.trackActiveTask(this.deliverCallback(jobId), { kind: "callback", jobId }, () => {
         this.activeCallbackDeliveries -= 1;
-        this.activeTasks.delete(task);
-        this.requestDrain();
       });
-      this.activeTasks.add(task);
+    }
+  }
+
+  private trackActiveTask(
+    task: Promise<void>,
+    context: ActiveTaskContext,
+    onSettled: () => void,
+  ): void {
+    const handled = task.catch((error) => {
+      this.options.logger.error("async queue task failed", {
+        ...context,
+        error: toErrorMessage(error),
+      });
+    });
+    const tracked = handled.finally(() => {
+      onSettled();
+      this.activeTasks.delete(tracked);
+      this.requestDrain();
+    });
+    this.activeTasks.add(tracked);
+  }
+
+  private async waitForActiveTasks(timeoutMs: number): Promise<void> {
+    const tasks = [...this.activeTasks];
+    if (tasks.length === 0) {
+      return;
+    }
+
+    let timeout: NodeJS.Timeout | undefined;
+    const outcome = await Promise.race<"settled" | "timed_out">([
+      Promise.allSettled(tasks).then(() => "settled"),
+      new Promise<"timed_out">((resolve) => {
+        timeout = setTimeout(() => resolve("timed_out"), Math.max(1, timeoutMs));
+      }),
+    ]);
+
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+
+    if (outcome === "timed_out") {
+      this.options.logger.warn("async queue stop timed out with active tasks", {
+        activeTasks: this.activeTasks.size,
+        timeoutMs,
+      });
     }
   }
 
@@ -504,6 +1304,8 @@ export class DurableInferenceQueue {
       const retryable = shouldRetryJob(error) && job.attempts < job.maxAttempts;
       job.error = toJobError(error);
       job.updatedAt = new Date().toISOString();
+      delete job.result;
+      delete job.completedAt;
 
       if (retryable) {
         job.status = "queued";
@@ -543,6 +1345,7 @@ export class DurableInferenceQueue {
 
     try {
       const response = await this.requestCallback(job);
+      await discardResponseBody(response);
 
       if (!response.ok) {
         throw new Error(`Callback endpoint responded with ${response.status}`);
@@ -569,6 +1372,11 @@ export class DurableInferenceQueue {
   }
 
   private async requestCallback(job: InferenceJobRecord): Promise<Response> {
+    const callbackUrl = await normalizeCallbackUrl(
+      job.callback?.url,
+      this.options.config,
+      this.lookupImpl,
+    );
     const controller = new AbortController();
     const timeout = setTimeout(() => {
       controller.abort(
@@ -577,8 +1385,9 @@ export class DurableInferenceQueue {
     }, this.options.config.callbackTimeoutMs);
 
     try {
-      return await this.fetchImpl(job.callback?.url ?? "", {
+      return await this.fetchImpl(callbackUrl ?? "", {
         method: "POST",
+        redirect: "manual",
         headers: {
           "content-type": "application/json",
         },
@@ -625,10 +1434,13 @@ export class DurableInferenceQueue {
   }
 
   private normalizeJobId(jobId: string): string {
-    if (!/^[A-Za-z0-9_-]+$/.test(jobId)) {
+    if (!isSafeJobId(jobId)) {
       throw new RayError("job id is invalid", {
         code: "invalid_request",
         status: 400,
+        details: {
+          maxChars: MAX_JOB_ID_CHARS,
+        },
       });
     }
 
@@ -639,7 +1451,92 @@ export class DurableInferenceQueue {
     return path.join(this.jobsDir, `${jobId}.json`);
   }
 
+  private isCompletedJobExpired(job: InferenceJobRecord, nowMs = Date.now()): boolean {
+    if (!isTerminalJobStatus(job.status) || job.callback?.status === "pending") {
+      return false;
+    }
+
+    const updatedAtMs = Date.parse(job.updatedAt);
+
+    return (
+      Number.isFinite(updatedAtMs) && nowMs - updatedAtMs >= this.options.config.completedTtlMs
+    );
+  }
+
+  private async pruneCompletedJob(
+    job: InferenceJobRecord,
+    filePath = this.getJobPath(job.id),
+  ): Promise<boolean> {
+    if (!this.isCompletedJobExpired(job)) {
+      return false;
+    }
+
+    this.jobs.delete(job.id);
+    this.removeQueuedJobId(job.id);
+    this.removeCallbackJobId(job.id);
+
+    try {
+      await fs.rm(filePath, { force: true });
+    } catch (error) {
+      this.options.logger.warn("failed to prune expired async job", {
+        jobId: job.id,
+        filePath,
+        error: toErrorMessage(error),
+      });
+    }
+
+    return true;
+  }
+
+  private async pruneCompletedJobs(): Promise<void> {
+    await Promise.all([...this.jobs.values()].map((job) => this.pruneCompletedJob(job)));
+  }
+
+  private async removeOverflowPersistedJob(
+    job: InferenceJobRecord,
+    filePath: string,
+  ): Promise<void> {
+    if (hasPendingWork(job)) {
+      return;
+    }
+
+    try {
+      await fs.rm(filePath, { force: true });
+    } catch (error) {
+      this.options.logger.warn("failed to remove overflow persisted async job", {
+        jobId: job.id,
+        filePath,
+        error: toErrorMessage(error),
+      });
+    }
+  }
+
+  private removeQueuedJobId(jobId: string): void {
+    const index = this.queuedJobIds.indexOf(jobId);
+    if (index !== -1) {
+      this.queuedJobIds.splice(index, 1);
+    }
+  }
+
+  private removeCallbackJobId(jobId: string): void {
+    const index = this.pendingCallbackJobIds.indexOf(jobId);
+    if (index !== -1) {
+      this.pendingCallbackJobIds.splice(index, 1);
+    }
+  }
+
+  private async removeStaleTempFile(filePath: string): Promise<void> {
+    try {
+      await fs.rm(filePath, { force: true });
+    } catch (error) {
+      this.options.logger.warn("failed to remove stale async job temp file", {
+        filePath,
+        error: toErrorMessage(error),
+      });
+    }
+  }
+
   private async persistJob(job: InferenceJobRecord): Promise<void> {
-    await writeJsonAtomic(this.getJobPath(job.id), job);
+    await writeJsonAtomic(this.getJobPath(job.id), stringifyPersistedJob(job));
   }
 }

@@ -18,6 +18,8 @@ import { RayClient } from "@razroo/ray-sdk";
 const client = new RayClient({
   baseUrl: "http://127.0.0.1:3000",
   apiKey: process.env.RAY_API_KEY,
+  timeoutMs: 60_000,
+  responseBodyLimitBytes: 2 * 1024 * 1024,
 });
 
 const result = await client.infer({
@@ -36,3 +38,5 @@ const finalJob = await client.job(job.id);
 ```
 
 See the gateway routes under `apps/gateway` and shared types in `@razroo/ray-core` for request and response shapes.
+
+`timeoutMs` defaults to `60000`, and `responseBodyLimitBytes` defaults to `2097152`.

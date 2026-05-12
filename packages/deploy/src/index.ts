@@ -1,14 +1,18 @@
 import { stat } from "node:fs/promises";
-import { totalmem } from "node:os";
+import { isIP } from "node:net";
+import { tmpdir, totalmem } from "node:os";
 import path from "node:path";
 import { loadRayConfig, resolveAuthApiKeys } from "@ray/config";
-import { type LlamaCppLaunchProfile, type RayConfig } from "@razroo/ray-core";
+import { toErrorMessage, type LlamaCppLaunchProfile, type RayConfig } from "@razroo/ray-core";
 
 export interface SystemdServiceOptions {
   workingDirectory: string;
   configPath: string;
   user: string;
   envFile?: string;
+  stateDirectory?: string;
+  after?: string[];
+  wants?: string[];
   nodeBinary?: string;
 }
 
@@ -16,6 +20,7 @@ export interface ReverseProxyOptions {
   domain: string;
   upstreamPort: number;
   requestBodyLimitBytes: number;
+  upstreamTimeoutMs: number;
 }
 
 export interface LlamaCppServiceOptions {
@@ -68,6 +73,25 @@ const MIN_SYSTEM_RESERVE_MIB = 768;
 const SYSTEM_RESERVE_RATIO = 0.2;
 const SCHEDULER_BYTES_PER_TOKEN = 768;
 const TIGHT_MEMORY_RATIO = 0.9;
+const LLAMA_CPP_SYSTEMD_SERVICE = "ray-llama-cpp.service";
+const MAX_SYSTEMD_DEPENDENCY_UNITS = 32;
+const MAX_SYSTEMD_DEPENDENCY_UNIT_CHARS = 256;
+const MAX_LLAMA_CPP_EXTRA_ARGS = 64;
+const MAX_LLAMA_CPP_EXTRA_ARG_CHARS = 4_096;
+const CADDY_UPSTREAM_TIMEOUT_GRACE_MS = 5_000;
+const CADDY_DIAL_TIMEOUT_MS = 5_000;
+const CADDY_WRITE_TIMEOUT_MS = 10_000;
+const MAX_CADDY_REQUEST_BODY_LIMIT_BYTES = 1_048_576;
+const MAX_CADDY_UPSTREAM_TIMEOUT_MS = 120_000 + CADDY_UPSTREAM_TIMEOUT_GRACE_MS;
+
+const llamaCppLaunchPresets = new Set<LlamaCppLaunchProfile["preset"]>([
+  "single-vps-sub1b",
+  "single-vps-sub1b-cx23",
+  "single-vps-sub1b-cax11",
+  "single-vps-1b-cx23",
+  "single-vps-1b-8gb",
+  "single-vps-balanced",
+]);
 
 function isSub1bPreset(preset: LlamaCppLaunchProfile["preset"]): boolean {
   return (
@@ -89,8 +113,408 @@ function isCax11Preset(preset: LlamaCppLaunchProfile["preset"]): boolean {
   return preset === "single-vps-sub1b-cax11";
 }
 
+function isPathInside(parentPath: string, candidatePath: string): boolean {
+  const relative = path.relative(parentPath, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function isTemporaryStoragePath(storageDir: string): boolean {
+  const resolved = path.resolve(storageDir);
+  return (
+    isPathInside(path.resolve(tmpdir()), resolved) ||
+    isPathInside("/tmp", resolved) ||
+    isPathInside("/var/tmp", resolved)
+  );
+}
+
+function isSystemdProtectHomePath(value: string): boolean {
+  if (!path.isAbsolute(value)) {
+    return false;
+  }
+
+  const resolved = path.resolve(value);
+  return ["/home", "/root", "/run/user"].some((protectedPath) =>
+    isPathInside(protectedPath, resolved),
+  );
+}
+
+function isLoopbackHost(value: string): boolean {
+  const host = normalizeHostLiteral(value);
+
+  if (host === "localhost" || host === "::1" || host === "0:0:0:0:0:0:0:1") {
+    return true;
+  }
+
+  if (isIP(host) === 4) {
+    const firstOctet = Number(host.split(".")[0]);
+    return firstOctet === 127;
+  }
+
+  return false;
+}
+
+function normalizeHostLiteral(value: string): string {
+  const trimmed = value.trim().toLowerCase();
+  return trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+}
+
+function launchHostRequiresExactBaseUrlHost(value: string): boolean {
+  return isIP(normalizeHostLiteral(value)) > 0;
+}
+
+function parseAdapterBaseUrl(value: string): URL | undefined {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function getUrlPort(url: URL): number {
+  if (url.port) {
+    return Number(url.port);
+  }
+
+  return url.protocol === "https:" ? 443 : 80;
+}
+
+function inferRayStateDirectory(config: RayConfig): string | undefined {
+  if (!config.asyncQueue.enabled) {
+    return undefined;
+  }
+
+  const storageDir = path.resolve(config.asyncQueue.storageDir);
+
+  if (isPathInside("/var/lib/ray", storageDir)) {
+    return "ray";
+  }
+
+  return undefined;
+}
+
+function escapeSystemdScalar(value: string | number): string {
+  return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/%/g, "%%");
+}
+
+function assertOptionsObject(
+  value: unknown,
+  label: string,
+): asserts value is Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+}
+
+function assertNonEmptyString(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+}
+
+function assertSystemdScalar(value: unknown, label: string): asserts value is string {
+  assertNonEmptyString(value, label);
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} cannot contain control characters`);
+  }
+}
+
+function assertOptionalSystemdText(
+  value: unknown,
+  label: string,
+): asserts value is string | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be a string`);
+  }
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} cannot contain control characters`);
+  }
+}
+
+function assertSystemdUser(value: unknown): asserts value is string {
+  assertSystemdScalar(value, "user");
+
+  if (!/^(?:[A-Za-z_][A-Za-z0-9_-]{0,30}|[0-9]{1,10})$/.test(value)) {
+    throw new Error(
+      "user must be a system account name or numeric UID using only letters, digits, underscores, or hyphens",
+    );
+  }
+}
+
+function assertSystemdStateDirectory(value: unknown): asserts value is string {
+  assertSystemdScalar(value, "stateDirectory");
+
+  if (
+    path.isAbsolute(value) ||
+    value
+      .split("/")
+      .some((segment) => segment.length === 0 || segment === "." || segment === "..") ||
+    !/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/.test(value)
+  ) {
+    throw new Error(
+      "stateDirectory must be a relative systemd state directory without whitespace or path traversal",
+    );
+  }
+}
+
+function assertOptionalSystemdDependencyArray(
+  value: unknown,
+  label: string,
+): asserts value is string[] | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array of strings`);
+  }
+
+  if (value.length > MAX_SYSTEMD_DEPENDENCY_UNITS) {
+    throw new Error(`${label} must contain at most ${MAX_SYSTEMD_DEPENDENCY_UNITS} entries`);
+  }
+
+  for (const [index, unit] of value.entries()) {
+    if (typeof unit !== "string") {
+      throw new Error(`${label}[${index}] must be a string`);
+    }
+
+    if (unit.length > MAX_SYSTEMD_DEPENDENCY_UNIT_CHARS) {
+      throw new Error(
+        `${label}[${index}] must be at most ${MAX_SYSTEMD_DEPENDENCY_UNIT_CHARS} characters`,
+      );
+    }
+  }
+}
+
+function formatSystemdDirectiveValue(value: string, label: string): string {
+  assertSystemdScalar(value, label);
+
+  const escaped = escapeSystemdScalar(value);
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(escaped) ? escaped : `"${escaped}"`;
+}
+
 function formatSystemdEnvironmentLine(name: string, value: string | number): string {
-  return `Environment=${name}=${value}`;
+  const escapedValue = escapeSystemdScalar(value);
+  return `Environment="${name}=${escapedValue}"`;
+}
+
+function formatSystemdDependencyLine(name: "After" | "Wants", units: unknown): string {
+  if (!Array.isArray(units)) {
+    throw new Error(`${name} units must be an array of strings`);
+  }
+
+  const uniqueUnits = Array.from(
+    new Set(
+      units
+        .map((unit, index) => {
+          if (typeof unit !== "string") {
+            throw new Error(`${name} unit at index ${index} must be a string`);
+          }
+
+          if (unit.length > MAX_SYSTEMD_DEPENDENCY_UNIT_CHARS) {
+            throw new Error(
+              `${name} unit at index ${index} must be at most ${MAX_SYSTEMD_DEPENDENCY_UNIT_CHARS} characters`,
+            );
+          }
+
+          const trimmed = unit.trim();
+          assertSystemdScalar(trimmed, `${name} unit`);
+          if (/\s/.test(trimmed)) {
+            throw new Error(`${name} unit cannot contain whitespace`);
+          }
+          return trimmed;
+        })
+        .filter((unit) => unit.length > 0),
+    ),
+  );
+  return uniqueUnits.length > 0 ? `${name}=${uniqueUnits.join(" ")}\n` : "";
+}
+
+function formatSystemdExecArg(value: string): string {
+  assertSystemdScalar(value, "ExecStart argument");
+  const escaped = escapeSystemdScalar(value);
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(escaped) ? escaped : `"${escaped}"`;
+}
+
+function formatSystemdExecStart(args: string[]): string {
+  return `ExecStart=${args.map((arg) => formatSystemdExecArg(arg)).join(" ")}`;
+}
+
+function assertAbsolutePath(value: string, label: string): void {
+  if (!path.isAbsolute(value)) {
+    throw new Error(`${label} must be an absolute path`);
+  }
+}
+
+function formatCaddySiteAddress(value: string): string {
+  assertNonEmptyString(value, "Caddy site address");
+
+  const address = value.trim();
+
+  if (address.length === 0 || address !== value || /[\s{}]/.test(address)) {
+    throw new Error("Caddy site address must be non-empty and cannot contain whitespace or braces");
+  }
+
+  return address;
+}
+
+function assertPositiveInteger(value: unknown, label: string): asserts value is number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+}
+
+function assertNonNegativeInteger(value: unknown, label: string): asserts value is number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
+}
+
+function assertIntegerAtLeast(
+  value: unknown,
+  minimum: number,
+  label: string,
+): asserts value is number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum) {
+    throw new Error(`${label} must be an integer greater than or equal to ${minimum}`);
+  }
+}
+
+function assertPositiveIntegerAtMost(
+  value: unknown,
+  label: string,
+  maximum: number,
+): asserts value is number {
+  assertPositiveInteger(value, label);
+
+  if (value > maximum) {
+    throw new Error(`${label} must be less than or equal to ${maximum}`);
+  }
+}
+
+function assertTcpPort(value: unknown, label: string): asserts value is number {
+  assertPositiveInteger(value, label);
+
+  if (value > 65_535) {
+    throw new Error(`${label} must be less than or equal to 65535`);
+  }
+}
+
+function assertCaddyPort(value: unknown): asserts value is number {
+  assertTcpPort(value, "upstreamPort");
+}
+
+function formatCaddyDurationMs(value: number, label: string): string {
+  assertPositiveInteger(value, label);
+
+  if (value % 1_000 === 0) {
+    return `${value / 1_000}s`;
+  }
+
+  return `${value}ms`;
+}
+
+function isLlamaCppLaunchPreset(value: unknown): value is LlamaCppLaunchProfile["preset"] {
+  return (
+    typeof value === "string" && llamaCppLaunchPresets.has(value as LlamaCppLaunchProfile["preset"])
+  );
+}
+
+function assertBoolean(value: unknown, label: string): asserts value is boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`${label} must be a boolean`);
+  }
+}
+
+function assertOptionalSystemdStringArray(
+  value: unknown,
+  label: string,
+  maxEntries: number,
+  maxEntryChars: number,
+): asserts value is string[] | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string" || entry === "")) {
+    throw new Error(`${label} must be an array of non-empty strings`);
+  }
+
+  if (value.length > maxEntries) {
+    throw new Error(`${label} must contain at most ${maxEntries} entries`);
+  }
+
+  for (const [index, entry] of value.entries()) {
+    if (entry.length > maxEntryChars) {
+      throw new Error(`${label}[${index}] must be at most ${maxEntryChars} characters`);
+    }
+  }
+}
+
+function assertLlamaCppLaunchProfileForEnvironment(
+  value: unknown,
+): asserts value is LlamaCppLaunchProfile {
+  assertOptionsObject(value, "model.adapter.launchProfile");
+
+  if (!isLlamaCppLaunchPreset(value.preset)) {
+    throw new Error("model.adapter.launchProfile.preset is not recognized");
+  }
+
+  assertSystemdScalar(value.modelPath, "model.adapter.launchProfile.modelPath");
+  assertAbsolutePath(value.modelPath, "model.adapter.launchProfile.modelPath");
+  assertSystemdScalar(value.host, "model.adapter.launchProfile.host");
+  assertOptionalSystemdText(value.alias, "model.adapter.launchProfile.alias");
+  assertTcpPort(value.port, "model.adapter.launchProfile.port");
+  assertPositiveInteger(value.ctxSize, "model.adapter.launchProfile.ctxSize");
+  assertPositiveInteger(value.parallel, "model.adapter.launchProfile.parallel");
+  assertPositiveInteger(value.threads, "model.adapter.launchProfile.threads");
+  assertPositiveInteger(value.threadsHttp, "model.adapter.launchProfile.threadsHttp");
+  assertPositiveInteger(value.batchSize, "model.adapter.launchProfile.batchSize");
+  assertPositiveInteger(value.ubatchSize, "model.adapter.launchProfile.ubatchSize");
+  if (value.ubatchSize > value.batchSize) {
+    throw new Error(
+      "model.adapter.launchProfile.ubatchSize must be less than or equal to batchSize",
+    );
+  }
+
+  assertNonNegativeInteger(value.cacheReuse, "model.adapter.launchProfile.cacheReuse");
+  assertBoolean(value.cachePrompt, "model.adapter.launchProfile.cachePrompt");
+  assertBoolean(value.continuousBatching, "model.adapter.launchProfile.continuousBatching");
+  assertBoolean(value.enableMetrics, "model.adapter.launchProfile.enableMetrics");
+  assertBoolean(value.exposeSlots, "model.adapter.launchProfile.exposeSlots");
+  assertBoolean(value.warmup, "model.adapter.launchProfile.warmup");
+  assertBoolean(value.enableUnifiedKv, "model.adapter.launchProfile.enableUnifiedKv");
+  assertBoolean(value.cacheIdleSlots, "model.adapter.launchProfile.cacheIdleSlots");
+  assertBoolean(value.contextShift, "model.adapter.launchProfile.contextShift");
+
+  if (value.cacheRamMiB !== undefined) {
+    assertIntegerAtLeast(value.cacheRamMiB, -1, "model.adapter.launchProfile.cacheRamMiB");
+  }
+
+  if (value.threadsBatch !== undefined) {
+    assertPositiveInteger(value.threadsBatch, "model.adapter.launchProfile.threadsBatch");
+  }
+}
+
+function assertLlamaCppLaunchProfileForService(
+  value: unknown,
+): asserts value is LlamaCppLaunchProfile {
+  assertLlamaCppLaunchProfileForEnvironment(value);
+  assertSystemdScalar(value.binaryPath, "model.adapter.launchProfile.binaryPath");
+  assertAbsolutePath(value.binaryPath, "model.adapter.launchProfile.binaryPath");
+
+  assertOptionalSystemdStringArray(
+    value.extraArgs,
+    "model.adapter.launchProfile.extraArgs",
+    MAX_LLAMA_CPP_EXTRA_ARGS,
+    MAX_LLAMA_CPP_EXTRA_ARG_CHARS,
+  );
 }
 
 function boolToEnv(value: boolean): "1" | "0" {
@@ -217,6 +641,8 @@ export function estimateLlamaCppMemoryFit(
 }
 
 export function buildLlamaCppEnvironment(profile: LlamaCppLaunchProfile): Record<string, string> {
+  assertLlamaCppLaunchProfileForEnvironment(profile);
+
   return {
     LLAMA_ARG_MODEL: profile.modelPath,
     ...(profile.alias ? { LLAMA_ARG_ALIAS: profile.alias } : {}),
@@ -247,30 +673,80 @@ export function buildLlamaCppEnvironment(profile: LlamaCppLaunchProfile): Record
 }
 
 export function renderSystemdService(options: SystemdServiceOptions): string {
-  const nodeBinary = options.nodeBinary ?? "/usr/bin/node";
-  const envFileLine = options.envFile ? `EnvironmentFile=${options.envFile}\n` : "";
+  assertOptionsObject(options, "Systemd service options");
+
+  const after = options.after;
+  const wants = options.wants;
+  assertOptionalSystemdDependencyArray(after, "after");
+  assertOptionalSystemdDependencyArray(wants, "wants");
+
+  const nodeBinary = options.nodeBinary === undefined ? "/usr/bin/node" : options.nodeBinary;
+  assertSystemdScalar(nodeBinary, "nodeBinary");
+  assertSystemdScalar(options.workingDirectory, "workingDirectory");
+  assertAbsolutePath(nodeBinary, "nodeBinary");
+  assertAbsolutePath(options.workingDirectory, "workingDirectory");
+  if (options.envFile !== undefined) {
+    assertSystemdScalar(options.envFile, "envFile");
+    assertAbsolutePath(options.envFile, "envFile");
+  }
+
+  assertSystemdUser(options.user);
+  if (options.stateDirectory !== undefined) {
+    assertSystemdStateDirectory(options.stateDirectory);
+  }
+
+  const envFileLine = options.envFile
+    ? `EnvironmentFile=${formatSystemdDirectiveValue(options.envFile, "envFile")}\n`
+    : "";
+  const stateDirectoryLine = options.stateDirectory
+    ? `StateDirectory=${formatSystemdDirectiveValue(options.stateDirectory, "stateDirectory")}\n`
+    : "";
+  const wantsLine = formatSystemdDependencyLine("Wants", wants ?? []);
+  const afterLine = formatSystemdDependencyLine("After", ["network.target", ...(after ?? [])]);
   const absoluteConfigPath = path.resolve(options.workingDirectory, options.configPath);
+  const gatewayEntryPoint = path.join(options.workingDirectory, "apps/gateway/dist/index.js");
+  const execStart = formatSystemdExecStart([
+    nodeBinary,
+    gatewayEntryPoint,
+    "--config",
+    absoluteConfigPath,
+  ]);
 
   return `[Unit]
 Description=Ray Gateway
-After=network.target
+${wantsLine}${afterLine}StartLimitIntervalSec=60
+StartLimitBurst=10
 
 [Service]
 Type=simple
 User=${options.user}
-WorkingDirectory=${options.workingDirectory}
+WorkingDirectory=${formatSystemdDirectiveValue(options.workingDirectory, "workingDirectory")}
 ${envFileLine}Environment=NODE_ENV=production
-ExecStart=${nodeBinary} ${path.join(options.workingDirectory, "apps/gateway/dist/index.js")} --config ${absoluteConfigPath}
+${execStart}
 Restart=always
 RestartSec=2
-NoNewPrivileges=true
+TimeoutStopSec=35
+KillSignal=SIGTERM
+KillMode=mixed
+TasksMax=128
+CPUAccounting=true
+MemoryAccounting=true
+IOAccounting=true
+${stateDirectoryLine}NoNewPrivileges=true
+CapabilityBoundingSet=
+SystemCallArchitectures=native
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=full
 ProtectHome=true
+ProtectClock=true
 ProtectControlGroups=true
+ProtectKernelModules=true
 ProtectKernelTunables=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictRealtime=true
 RestrictSUIDSGID=true
 UMask=027
 LimitNOFILE=4096
@@ -281,7 +757,25 @@ WantedBy=multi-user.target
 }
 
 export function renderCaddyfile(options: ReverseProxyOptions): string {
-  return `${options.domain} {
+  assertOptionsObject(options, "Caddyfile options");
+
+  const domain = formatCaddySiteAddress(options.domain);
+  assertCaddyPort(options.upstreamPort);
+  assertPositiveIntegerAtMost(
+    options.requestBodyLimitBytes,
+    "requestBodyLimitBytes",
+    MAX_CADDY_REQUEST_BODY_LIMIT_BYTES,
+  );
+  assertPositiveIntegerAtMost(
+    options.upstreamTimeoutMs,
+    "upstreamTimeoutMs",
+    MAX_CADDY_UPSTREAM_TIMEOUT_MS,
+  );
+  const upstreamTimeout = formatCaddyDurationMs(options.upstreamTimeoutMs, "upstreamTimeoutMs");
+  const dialTimeout = formatCaddyDurationMs(CADDY_DIAL_TIMEOUT_MS, "dialTimeoutMs");
+  const writeTimeout = formatCaddyDurationMs(CADDY_WRITE_TIMEOUT_MS, "writeTimeoutMs");
+
+  return `${domain} {
   encode zstd gzip
   request_body {
     max_size ${options.requestBodyLimitBytes}
@@ -294,39 +788,72 @@ export function renderCaddyfile(options: ReverseProxyOptions): string {
   reverse_proxy 127.0.0.1:${options.upstreamPort} {
     health_uri /livez
     health_interval 15s
+    transport http {
+      dial_timeout ${dialTimeout}
+      response_header_timeout ${upstreamTimeout}
+      read_timeout ${upstreamTimeout}
+      write_timeout ${writeTimeout}
+    }
   }
 }
 `;
 }
 
 export function renderLlamaCppService(options: LlamaCppServiceOptions): string {
-  const envFileLine = options.envFile ? `EnvironmentFile=${options.envFile}\n` : "";
+  assertOptionsObject(options, "llama.cpp service options");
+  assertLlamaCppLaunchProfileForService(options.launchProfile);
+
+  if (options.envFile !== undefined) {
+    assertSystemdScalar(options.envFile, "envFile");
+    assertAbsolutePath(options.envFile, "envFile");
+  }
+  assertSystemdUser(options.user);
+
+  const envFileLine = options.envFile
+    ? `EnvironmentFile=${formatSystemdDirectiveValue(options.envFile, "envFile")}\n`
+    : "";
   const profile = options.launchProfile;
+
   const environmentLines = Object.entries(buildLlamaCppEnvironment(profile))
     .map(([name, value]) => formatSystemdEnvironmentLine(name, value))
     .map((line) => `${line}\n`)
     .join("");
-  const extraArgs =
-    profile.extraArgs && profile.extraArgs.length > 0 ? ` ${profile.extraArgs.join(" ")}` : "";
+  const execStart = formatSystemdExecStart([profile.binaryPath, ...(profile.extraArgs ?? [])]);
 
   return `[Unit]
 Description=llama.cpp Server for Ray
 After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=10
 
 [Service]
 Type=simple
 User=${options.user}
-${envFileLine}${environmentLines}ExecStart=${profile.binaryPath}${extraArgs}
+${envFileLine}${environmentLines}${execStart}
 Restart=always
 RestartSec=2
+TimeoutStopSec=35
+KillSignal=SIGTERM
+KillMode=mixed
+TasksMax=256
+CPUAccounting=true
+MemoryAccounting=true
+IOAccounting=true
 NoNewPrivileges=true
+CapabilityBoundingSet=
+SystemCallArchitectures=native
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=full
 ProtectHome=true
+ProtectClock=true
 ProtectControlGroups=true
+ProtectKernelModules=true
 ProtectKernelTunables=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictRealtime=true
 RestrictSUIDSGID=true
 UMask=027
 LimitNOFILE=4096
@@ -355,6 +882,28 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
     lines.push(
       "# llama.cpp launch profile is rendered directly into the generated systemd service.",
     );
+    lines.push("# Optional portable 1B/model overrides:");
+    lines.push(`# RAY_MODEL_ID=${config.model.id}`);
+    lines.push(`# RAY_MODEL_REF=${config.model.adapter.modelRef}`);
+    lines.push(`# RAY_MODEL_PATH=${config.model.adapter.launchProfile.modelPath}`);
+    lines.push(`# RAY_MODEL_FAMILY=${config.model.family}`);
+    lines.push(`# RAY_MODEL_QUANTIZATION=${config.model.quantization}`);
+    lines.push(`# RAY_LLAMA_CPP_BINARY_PATH=${config.model.adapter.launchProfile.binaryPath}`);
+    lines.push(`# RAY_LLAMA_CPP_CTX_SIZE=${config.model.adapter.launchProfile.ctxSize}`);
+    lines.push(`# RAY_LLAMA_CPP_PARALLEL=${config.model.adapter.launchProfile.parallel}`);
+    lines.push(`# RAY_LLAMA_CPP_THREADS=${config.model.adapter.launchProfile.threads}`);
+    lines.push(
+      `# RAY_LLAMA_CPP_CACHE_RAM_MIB=${config.model.adapter.launchProfile.cacheRamMiB ?? ""}`,
+    );
+    lines.push(`# RAY_SCHEDULER_CONCURRENCY=${config.scheduler.concurrency}`);
+    lines.push(`# RAY_SCHEDULER_MAX_INFLIGHT_TOKENS=${config.scheduler.maxInflightTokens}`);
+  }
+
+  if (config.asyncQueue.enabled) {
+    lines.push("# Optional async durable queue overrides:");
+    lines.push(`# RAY_ASYNC_QUEUE_STORAGE_DIR=${config.asyncQueue.storageDir}`);
+    lines.push(`# RAY_ASYNC_QUEUE_MAX_JOBS=${config.asyncQueue.maxJobs}`);
+    lines.push(`# RAY_ASYNC_QUEUE_COMPLETED_TTL_MS=${config.asyncQueue.completedTtlMs}`);
   }
 
   if (lines.length === 1) {
@@ -395,11 +944,11 @@ export function diagnoseConfig(
   } else {
     try {
       resolveAuthApiKeys(config, env);
-    } catch {
+    } catch (error) {
       diagnostics.push({
         level: "error",
         code: "auth_keys_missing",
-        message: `Auth is enabled but ${config.auth.apiKeyEnv} is not populated with API keys.`,
+        message: `Auth key configuration is invalid: ${toErrorMessage(error)}`,
       });
     }
 
@@ -412,6 +961,24 @@ export function diagnoseConfig(
     }
   }
 
+  if (!isLoopbackHost(config.server.host)) {
+    diagnostics.push({
+      level: "error",
+      code: "gateway_bind_host_public",
+      message:
+        "server.host is not loopback. Generated VPS deployments should bind the Ray gateway to 127.0.0.1 or localhost and expose it only through Caddy.",
+    });
+  }
+
+  if (envFile && !path.isAbsolute(envFile)) {
+    diagnostics.push({
+      level: "error",
+      code: "env_file_relative",
+      message:
+        "EnvironmentFile paths rendered into systemd units must be absolute. Pass an absolute --ray-env-file path or resolve it against --cwd before rendering.",
+    });
+  }
+
   if (!config.rateLimit.enabled) {
     diagnostics.push({
       level: "warn",
@@ -419,6 +986,35 @@ export function diagnoseConfig(
       message:
         "Inference rate limiting is disabled. Public endpoints should have a bounded request budget.",
     });
+  }
+
+  if (config.asyncQueue.enabled) {
+    if (!path.isAbsolute(config.asyncQueue.storageDir)) {
+      diagnostics.push({
+        level: "warn",
+        code: "async_queue_storage_relative",
+        message:
+          "asyncQueue.storageDir is relative. Durable VPS queues should use an explicit persistent path such as /var/lib/ray/async-queue.",
+      });
+    }
+
+    if (isTemporaryStoragePath(config.asyncQueue.storageDir)) {
+      diagnostics.push({
+        level: "warn",
+        code: "async_queue_storage_volatile",
+        message:
+          "asyncQueue.storageDir points at temporary storage. Use persistent local storage such as /var/lib/ray/async-queue so queued work survives restarts.",
+      });
+    }
+
+    if (isSystemdProtectHomePath(config.asyncQueue.storageDir)) {
+      diagnostics.push({
+        level: "error",
+        code: "async_queue_storage_home_protected",
+        message:
+          "asyncQueue.storageDir is under /home, /root, or /run/user, but the generated gateway service uses ProtectHome=true. Use a service-readable path such as /var/lib/ray/async-queue.",
+      });
+    }
   }
 
   if (
@@ -456,6 +1052,109 @@ export function diagnoseConfig(
       const perSlotContext = Math.floor(
         launchProfile.ctxSize / Math.max(1, launchProfile.parallel),
       );
+
+      if (!isLoopbackHost(launchProfile.host)) {
+        diagnostics.push({
+          level: "error",
+          code: "llama_launch_host_public",
+          message:
+            "model.adapter.launchProfile.host is not loopback. Generated llama.cpp services should bind to 127.0.0.1 or localhost so Ray remains the public inference surface.",
+        });
+      }
+
+      const adapterBaseUrl = parseAdapterBaseUrl(config.model.adapter.baseUrl);
+      if (!adapterBaseUrl) {
+        diagnostics.push({
+          level: "error",
+          code: "llama_base_url_invalid",
+          message:
+            "model.adapter.baseUrl must be an absolute HTTP URL when Ray renders a local llama.cpp service.",
+        });
+      } else {
+        if (adapterBaseUrl.protocol !== "http:") {
+          diagnostics.push({
+            level: "error",
+            code: "llama_base_url_scheme_mismatch",
+            message:
+              "model.adapter.baseUrl must use plain HTTP when Ray renders the local llama.cpp service; the generated backend unit does not terminate TLS.",
+          });
+        }
+
+        if (!isLoopbackHost(adapterBaseUrl.hostname)) {
+          diagnostics.push({
+            level: "error",
+            code: "llama_base_url_public",
+            message:
+              "model.adapter.baseUrl is not loopback while a local llama.cpp launchProfile is configured. Point Ray at the generated local backend instead of a public backend.",
+          });
+        }
+
+        if (
+          launchHostRequiresExactBaseUrlHost(launchProfile.host) &&
+          normalizeHostLiteral(adapterBaseUrl.hostname) !== normalizeHostLiteral(launchProfile.host)
+        ) {
+          diagnostics.push({
+            level: "error",
+            code: "llama_base_url_host_mismatch",
+            message:
+              "model.adapter.baseUrl host does not match the literal IP in model.adapter.launchProfile.host. Ray would connect to a different loopback address than the generated llama.cpp service binds.",
+          });
+        }
+
+        if (getUrlPort(adapterBaseUrl) !== launchProfile.port) {
+          diagnostics.push({
+            level: "error",
+            code: "llama_base_url_launch_mismatch",
+            message:
+              "model.adapter.baseUrl port does not match model.adapter.launchProfile.port. Ray would send traffic to a different backend than the generated llama.cpp service.",
+          });
+        }
+
+        if (adapterBaseUrl.pathname !== "/" || adapterBaseUrl.search || adapterBaseUrl.hash) {
+          diagnostics.push({
+            level: "error",
+            code: "llama_base_url_path_mismatch",
+            message:
+              "model.adapter.baseUrl must point at the generated llama.cpp service root without a path, query, or fragment.",
+          });
+        }
+      }
+
+      if (!path.isAbsolute(launchProfile.binaryPath)) {
+        diagnostics.push({
+          level: "error",
+          code: "llama_binary_path_relative",
+          message:
+            "model.adapter.launchProfile.binaryPath must be an absolute path so the generated systemd service can start llama.cpp reliably.",
+        });
+      }
+
+      if (isSystemdProtectHomePath(launchProfile.binaryPath)) {
+        diagnostics.push({
+          level: "error",
+          code: "llama_binary_path_home_protected",
+          message:
+            "model.adapter.launchProfile.binaryPath is under /home, /root, or /run/user, but the generated llama.cpp service uses ProtectHome=true. Install llama-server somewhere service-readable such as /usr/local/bin/llama-server.",
+        });
+      }
+
+      if (!path.isAbsolute(launchProfile.modelPath)) {
+        diagnostics.push({
+          level: "error",
+          code: "llama_model_path_relative",
+          message:
+            "model.adapter.launchProfile.modelPath must be an absolute path so the generated llama.cpp service can find the GGUF file.",
+        });
+      }
+
+      if (isSystemdProtectHomePath(launchProfile.modelPath)) {
+        diagnostics.push({
+          level: "error",
+          code: "llama_model_path_home_protected",
+          message:
+            "model.adapter.launchProfile.modelPath is under /home, /root, or /run/user, but the generated llama.cpp service uses ProtectHome=true. Store GGUF files somewhere service-readable such as /var/lib/ray/models.",
+        });
+      }
 
       if (!launchProfile.cachePrompt) {
         diagnostics.push({
@@ -663,6 +1362,7 @@ export async function renderDeploymentBundle(options: {
   envFile?: string;
   env?: NodeJS.ProcessEnv;
   memoryBudgetMiB?: number;
+  nodeBinary?: string;
 }): Promise<{
   service: string;
   caddyfile: string;
@@ -670,19 +1370,39 @@ export async function renderDeploymentBundle(options: {
   llamaCppService?: string;
   summary: Record<string, unknown>;
 }> {
-  const inspected = await loadAndDiagnoseDeployment(options);
+  const cwd = path.resolve(options.cwd);
+  const envFile = options.envFile ? path.resolve(cwd, options.envFile) : undefined;
+  const inspected = await loadAndDiagnoseDeployment({
+    ...options,
+    cwd,
+    ...(envFile ? { envFile } : {}),
+  });
+  const stateDirectory = inferRayStateDirectory(inspected.config);
+  const rendersLlamaCppService =
+    inspected.config.model.adapter.kind === "llama.cpp" &&
+    inspected.config.model.adapter.launchProfile !== undefined;
 
   return {
     service: renderSystemdService({
-      workingDirectory: options.cwd,
+      workingDirectory: cwd,
       configPath: options.configPath,
       user: options.user,
-      ...(options.envFile ? { envFile: options.envFile } : {}),
+      ...(options.nodeBinary ? { nodeBinary: options.nodeBinary } : {}),
+      ...(envFile ? { envFile } : {}),
+      ...(stateDirectory ? { stateDirectory } : {}),
+      ...(rendersLlamaCppService
+        ? {
+            after: [LLAMA_CPP_SYSTEMD_SERVICE],
+            wants: [LLAMA_CPP_SYSTEMD_SERVICE],
+          }
+        : {}),
     }),
     caddyfile: renderCaddyfile({
       domain: options.domain,
       upstreamPort: inspected.config.server.port,
       requestBodyLimitBytes: inspected.config.server.requestBodyLimitBytes,
+      upstreamTimeoutMs:
+        inspected.config.scheduler.requestTimeoutMs + CADDY_UPSTREAM_TIMEOUT_GRACE_MS,
     }),
     envFileExample: renderEnvironmentFileExample(inspected.config),
     ...(inspected.config.model.adapter.kind === "llama.cpp" &&
@@ -690,7 +1410,6 @@ export async function renderDeploymentBundle(options: {
       ? {
           llamaCppService: renderLlamaCppService({
             user: options.user,
-            ...(options.envFile ? { envFile: options.envFile } : {}),
             launchProfile: inspected.config.model.adapter.launchProfile,
           }),
         }
