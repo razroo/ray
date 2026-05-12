@@ -175,6 +175,8 @@ const TIGHT_MEMORY_RATIO = 0.9;
 const LLAMA_CPP_SYSTEMD_SERVICE = "ray-llama-cpp.service";
 const GATEWAY_ENTRYPOINT_RELATIVE_PATH = "apps/gateway/dist/index.js";
 const DEFAULT_GATEWAY_RUNTIME_BINARY = "/usr/local/bin/bun";
+const BINARY_SOURCE_ENV = "RAY_LLAMA_CPP_BINARY_SOURCE_PATH";
+const MODEL_SOURCE_ENV = "RAY_MODEL_SOURCE_PATH";
 const MIN_GATEWAY_BUN_VERSION = "1.3.0";
 const MIN_GATEWAY_NODE_VERSION = "20.11.0";
 const GATEWAY_RUNTIME_VERSION_TIMEOUT_MS = 3_000;
@@ -322,6 +324,23 @@ function inferRayStateDirectory(config: RayConfig): string | undefined {
   }
 
   return undefined;
+}
+
+function readNonEmptyEnvValue(value: string | undefined): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function formatModelStageApplyHint(env: NodeJS.ProcessEnv): string {
+  const hasBinarySource = readNonEmptyEnvValue(env[BINARY_SOURCE_ENV]) !== undefined;
+  const hasModelSource = readNonEmptyEnvValue(env[MODEL_SOURCE_ENV]) !== undefined;
+  const command =
+    "bun run model:stage -- --config <same-config> --ray-env-file /etc/ray/ray.env --apply";
+
+  if (hasBinarySource && hasModelSource) {
+    return ` The deploy env already includes ${BINARY_SOURCE_ENV} and ${MODEL_SOURCE_ENV}; run \`${command}\` before rerunning doctor.`;
+  }
+
+  return ` If the source artifacts are already on this VPS, set both ${BINARY_SOURCE_ENV} and ${MODEL_SOURCE_ENV}, then run \`${command}\` before rerunning doctor.`;
 }
 
 function escapeSystemdScalar(value: string | number): string {
@@ -2235,7 +2254,7 @@ export function diagnoseConfig(
           diagnostics.push({
             level: "error",
             code: "llama_binary_missing",
-            message: `The configured llama.cpp binary was not found at ${binaryPath}. Install llama-server there or set RAY_LLAMA_CPP_BINARY_PATH before rendering the generated backend service.`,
+            message: `The configured llama.cpp binary was not found at ${binaryPath}. Install llama-server there or set RAY_LLAMA_CPP_BINARY_PATH before rendering the generated backend service.${formatModelStageApplyHint(env)}`,
           });
         } else if (preflight.llamaCppBinaryStatus === "unreadable") {
           diagnostics.push({
@@ -2391,7 +2410,7 @@ export function diagnoseConfig(
         diagnostics.push({
           level: "error",
           code: "model_file_missing",
-          message: `The configured GGUF model file was not found at ${preflight.modelFilePath}. Doctor cannot estimate memory fit without the real model file.`,
+          message: `The configured GGUF model file was not found at ${preflight.modelFilePath}. Doctor cannot estimate memory fit without the real model file.${formatModelStageApplyHint(env)}`,
         });
       } else if (strictFilesystem && preflight?.modelFileStatus === "unreadable") {
         diagnostics.push({

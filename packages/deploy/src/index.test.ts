@@ -2158,6 +2158,10 @@ test("loadAndDiagnoseDeployment errors when the configured model file is missing
   const inspected = await loadAndDiagnoseDeployment({
     cwd: tempDir,
     configPath,
+    env: {
+      RAY_LLAMA_CPP_BINARY_SOURCE_PATH: join(tempDir, "llama-server"),
+      RAY_MODEL_SOURCE_PATH: join(tempDir, "source.gguf"),
+    },
     strictFilesystem: true,
     memoryBudgetMiB: 4_096,
   });
@@ -2165,6 +2169,9 @@ test("loadAndDiagnoseDeployment errors when the configured model file is missing
   const diagnostic = inspected.diagnostics.find((entry) => entry.code === "model_file_missing");
   assert.ok(diagnostic);
   assert.match(diagnostic.message, /was not found/);
+  assert.match(diagnostic.message, /RAY_LLAMA_CPP_BINARY_SOURCE_PATH/);
+  assert.match(diagnostic.message, /bun run model:stage -- --config <same-config>/);
+  assert.match(diagnostic.message, /--apply/);
 });
 
 test("loadAndDiagnoseDeployment errors when the configured llama.cpp binary is missing in strict mode", async (t) => {
@@ -2189,6 +2196,10 @@ test("loadAndDiagnoseDeployment errors when the configured llama.cpp binary is m
   const inspected = await loadAndDiagnoseDeployment({
     cwd: tempDir,
     configPath,
+    env: {
+      RAY_LLAMA_CPP_BINARY_SOURCE_PATH: join(tempDir, "source-llama-server"),
+      RAY_MODEL_SOURCE_PATH: join(tempDir, "model-source.gguf"),
+    },
     strictFilesystem: true,
     memoryBudgetMiB: 4_096,
   });
@@ -2196,6 +2207,9 @@ test("loadAndDiagnoseDeployment errors when the configured llama.cpp binary is m
   const diagnostic = inspected.diagnostics.find((entry) => entry.code === "llama_binary_missing");
   assert.ok(diagnostic);
   assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /RAY_MODEL_SOURCE_PATH/);
+  assert.match(diagnostic.message, /bun run model:stage -- --config <same-config>/);
+  assert.match(diagnostic.message, /--apply/);
 });
 
 test("loadAndDiagnoseDeployment reports an executable llama.cpp binary in strict mode", async (t) => {
