@@ -663,6 +663,71 @@ test("runCli render can separate loaded env files from rendered systemd paths", 
   assert.match(output.join("\n"), /ray-gateway\.service/);
 });
 
+test("runCli render allows systemd env-file paths before secrets exist locally", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-systemd-env-only-"));
+  const originalApiKeys = process.env.RAY_API_KEYS;
+  const originalAuthApiKeyEnv = process.env.RAY_AUTH_API_KEY_ENV;
+  delete process.env.RAY_API_KEYS;
+  delete process.env.RAY_AUTH_API_KEY_ENV;
+  t.after(async () => {
+    if (originalApiKeys === undefined) {
+      delete process.env.RAY_API_KEYS;
+    } else {
+      process.env.RAY_API_KEYS = originalApiKeys;
+    }
+
+    if (originalAuthApiKeyEnv === undefined) {
+      delete process.env.RAY_AUTH_API_KEY_ENV;
+    } else {
+      process.env.RAY_AUTH_API_KEY_ENV = originalAuthApiKeyEnv;
+    }
+
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const outputDir = join(tempDir, "rendered");
+  const systemdEnvFile = join(tempDir, "missing-systemd.env");
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli([
+    "render",
+    "--cwd",
+    tempDir,
+    "--config",
+    join(process.cwd(), "examples/config/ray.sub1b.public.json"),
+    "--systemd-env-file",
+    systemdEnvFile,
+    "--gateway-runtime-binary",
+    "/usr/local/bin/bun",
+    "--output-dir",
+    "rendered",
+  ]);
+
+  const service = await readFile(join(outputDir, "ray-gateway.service"), "utf8");
+  const summary = JSON.parse(await readFile(join(outputDir, "summary.json"), "utf8"));
+  const diagnosticCodes = summary.diagnostics.map(
+    (diagnostic: { code: string }) => diagnostic.code,
+  );
+
+  assert.match(service, new RegExp(`EnvironmentFile=${escapeRegExp(systemdEnvFile)}`));
+  assert.ok(diagnosticCodes.includes("auth_keys_unverified"));
+  assert.ok(!diagnosticCodes.includes("auth_keys_missing"));
+  assert.deepEqual(
+    summary.diagnostics
+      .filter((diagnostic: { level: string }) => diagnostic.level === "error")
+      .map((diagnostic: { code: string }) => diagnostic.code),
+    [],
+  );
+  assert.match(output.join("\n"), /ray-gateway\.service/);
+});
+
 test("runCli render refuses to write deployment files when diagnostics contain errors", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-render-errors-"));
   t.after(async () => {

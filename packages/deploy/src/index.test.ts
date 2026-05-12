@@ -463,6 +463,23 @@ test("diagnoseConfig surfaces invalid auth key material without retaining secret
   assert.doesNotMatch(diagnostic.message, /secret-secret/);
 });
 
+test("diagnoseConfig can defer auth key checks to rendered systemd env files", () => {
+  const config = mergeConfig(createDefaultConfig("vps"), {
+    auth: {
+      enabled: true,
+      apiKeyEnv: "RAY_API_KEYS",
+    },
+  });
+  const diagnostics = diagnoseConfig(config, {}, "/etc/ray/ray.env", {
+    allowMissingAuthKeys: true,
+  });
+  const diagnosticCodes = diagnostics.map((diagnostic) => diagnostic.code);
+
+  assert.ok(diagnosticCodes.includes("auth_keys_unverified"));
+  assert.ok(!diagnosticCodes.includes("auth_keys_missing"));
+  assert.ok(!diagnosticCodes.includes("env_file_missing"));
+});
+
 test("renderEnvironmentFileExample includes auth env placeholders", () => {
   const config = mergeConfig(createDefaultConfig("vps"), {
     auth: {

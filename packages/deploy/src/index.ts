@@ -159,6 +159,7 @@ export interface LlamaCppMemoryEstimate {
 export interface DiagnoseConfigOptions {
   preflight?: DeploymentPreflight;
   strictFilesystem?: boolean;
+  allowMissingAuthKeys?: boolean;
 }
 
 const BYTES_PER_MIB = 1024 * 1024;
@@ -1648,14 +1649,31 @@ export function diagnoseConfig(
       message: "Inference auth is disabled. Public deployments should require Bearer API keys.",
     });
   } else {
-    try {
-      resolveAuthApiKeys(config, env);
-    } catch (error) {
+    const authKeyEnv = config.auth.apiKeyEnv;
+    const rawAuthKeys = authKeyEnv ? env[authKeyEnv] : undefined;
+    const shouldDeferAuthKeyValidation =
+      options.allowMissingAuthKeys === true &&
+      envFile !== undefined &&
+      typeof authKeyEnv === "string" &&
+      authKeyEnv.length > 0 &&
+      (typeof rawAuthKeys !== "string" || rawAuthKeys.trim().length === 0);
+
+    if (shouldDeferAuthKeyValidation) {
       diagnostics.push({
-        level: "error",
-        code: "auth_keys_missing",
-        message: `Auth key configuration is invalid: ${toErrorMessage(error)}`,
+        level: "warn",
+        code: "auth_keys_unverified",
+        message: `Auth is enabled but ${authKeyEnv} was not present while rendering. The generated systemd unit must load it from ${envFile}.`,
       });
+    } else {
+      try {
+        resolveAuthApiKeys(config, env);
+      } catch (error) {
+        diagnostics.push({
+          level: "error",
+          code: "auth_keys_missing",
+          message: `Auth key configuration is invalid: ${toErrorMessage(error)}`,
+        });
+      }
     }
 
     if (!envFile) {
@@ -2453,6 +2471,7 @@ export async function loadAndDiagnoseDeployment(options: {
   user?: string;
   strictFilesystem?: boolean;
   nodeBinary?: string;
+  allowMissingAuthKeys?: boolean;
 }): Promise<{
   config: RayConfig;
   configPath?: string;
@@ -2485,6 +2504,9 @@ export async function loadAndDiagnoseDeployment(options: {
       ...(options.strictFilesystem !== undefined
         ? { strictFilesystem: options.strictFilesystem }
         : {}),
+      ...(options.allowMissingAuthKeys !== undefined
+        ? { allowMissingAuthKeys: options.allowMissingAuthKeys }
+        : {}),
     }),
     ...(loaded.configPath ? { configPath: loaded.configPath } : {}),
   };
@@ -2514,6 +2536,7 @@ export async function renderDeploymentBundle(options: {
   const systemdEnvFile = options.systemdEnvFile
     ? path.resolve(cwd, options.systemdEnvFile)
     : envFile;
+  const allowMissingAuthKeys = options.systemdEnvFile !== undefined && envFile === undefined;
   const inspected = await loadAndDiagnoseDeployment({
     cwd,
     configPath: options.configPath,
@@ -2526,6 +2549,7 @@ export async function renderDeploymentBundle(options: {
     ...(options.strictFilesystem !== undefined
       ? { strictFilesystem: options.strictFilesystem }
       : {}),
+    ...(allowMissingAuthKeys ? { allowMissingAuthKeys } : {}),
   });
   const stateDirectory = inferRayStateDirectory(inspected.config);
   const rendersLlamaCppService =
