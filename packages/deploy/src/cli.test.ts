@@ -7,6 +7,7 @@ import { createDefaultConfig, mergeConfig } from "@ray/config";
 import {
   normalizeGatewayRuntimeBinaryPath,
   normalizeRepoConfigPath,
+  parseDeploySshPort,
   parseCliArgs,
   parseEnvironmentFile,
   runCli,
@@ -115,6 +116,20 @@ test("normalizeGatewayRuntimeBinaryPath rejects paths hidden from systemd servic
       ),
     /control characters/,
   );
+});
+
+test("parseDeploySshPort accepts valid deploy SSH ports", () => {
+  assert.equal(parseDeploySshPort("22"), 22);
+  assert.equal(parseDeploySshPort("2222"), 2222);
+  assert.equal(parseDeploySshPort("65535"), 65_535);
+});
+
+test("parseDeploySshPort rejects invalid deploy SSH ports", () => {
+  assert.throws(() => parseDeploySshPort(""), /integer from 1 to 65535/);
+  assert.throws(() => parseDeploySshPort("0"), /integer from 1 to 65535/);
+  assert.throws(() => parseDeploySshPort("65536"), /integer from 1 to 65535/);
+  assert.throws(() => parseDeploySshPort("22/tcp"), /integer from 1 to 65535/);
+  assert.throws(() => parseDeploySshPort("22.5"), /integer from 1 to 65535/);
 });
 
 test("parseCliArgs rejects malformed memory budget overrides", () => {

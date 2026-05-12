@@ -228,6 +228,23 @@ export function normalizeGatewayRuntimeBinaryPath(
   return normalized;
 }
 
+export function parseDeploySshPort(value: string, label = "RAY_DEPLOY_SSH_PORT"): number {
+  const normalized = value.trim();
+  const parsed = Number(normalized);
+
+  if (
+    normalized.length === 0 ||
+    !/^\d+$/.test(normalized) ||
+    !Number.isSafeInteger(parsed) ||
+    parsed <= 0 ||
+    parsed > 65_535
+  ) {
+    throw new Error(`${label} must be an integer from 1 to 65535`);
+  }
+
+  return parsed;
+}
+
 function parseOptionalPositiveIntegerEnv(
   value: string | undefined,
   label: string,

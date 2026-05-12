@@ -45,6 +45,7 @@ jobs:
       RAY_ENV_FILE_CONTENTS: ${{ secrets.RAY_ENV_FILE_CONTENTS }}
       RAY_CONFIG_JSON: ${{ secrets.RAY_CONFIG_JSON }}
       RAY_DEPLOY_SSH_USER: ${{ vars.RAY_DEPLOY_SSH_USER }}
+      RAY_DEPLOY_SSH_PORT: ${{ vars.RAY_DEPLOY_SSH_PORT }}
       RAY_DEPLOY_SERVICE_USER: ${{ vars.RAY_DEPLOY_SERVICE_USER }}
       RAY_DEPLOY_DOMAIN: ${{ vars.RAY_DEPLOY_DOMAIN }}
       RAY_DEPLOY_MEMORY_MIB: ${{ vars.RAY_DEPLOY_MEMORY_MIB }}
@@ -89,6 +90,7 @@ jobs:
           INSTALL_CADDY="${RAY_DEPLOY_INSTALL_CADDY:-false}"
           READY_TIMEOUT_SECONDS="${RAY_DEPLOY_READY_TIMEOUT_SECONDS:-120}"
           GATEWAY_RUNTIME_BINARY_INPUT="${RAY_GATEWAY_RUNTIME_BINARY:-/usr/local/bin/bun}"
+          SSH_PORT_INPUT="${RAY_DEPLOY_SSH_PORT:-22}"
 
           if [ -z "$DEPLOY_DOMAIN" ] || printf '%s' "$DEPLOY_DOMAIN" | grep -q '[[:space:]{}]'; then
             echo "::error::RAY_DEPLOY_DOMAIN must be a non-empty Caddy site address without whitespace or braces."
@@ -128,6 +130,18 @@ jobs:
                 "RAY_GATEWAY_RUNTIME_BINARY",
               ),
             );
+          } catch (error) {
+            process.stderr.write(
+              `::error::${error instanceof Error ? error.message : String(error)}\n`,
+            );
+            process.exit(1);
+          }
+          ')
+          SSH_PORT=$(SSH_PORT="$SSH_PORT_INPUT" bun --eval '
+          import { parseDeploySshPort } from "./packages/deploy/dist/cli.js";
+
+          try {
+            process.stdout.write(String(parseDeploySshPort(process.env.SSH_PORT ?? "", "RAY_DEPLOY_SSH_PORT")));
           } catch (error) {
             process.stderr.write(
               `::error::${error instanceof Error ? error.message : String(error)}\n`,
@@ -224,6 +238,7 @@ jobs:
           echo "install_caddy=$INSTALL_CADDY" >> "$GITHUB_OUTPUT"
           echo "ready_timeout_seconds=$READY_TIMEOUT_SECONDS" >> "$GITHUB_OUTPUT"
           echo "gateway_runtime_binary=$GATEWAY_RUNTIME_BINARY" >> "$GITHUB_OUTPUT"
+          echo "ssh_port=$SSH_PORT" >> "$GITHUB_OUTPUT"
 
       - name: Set up SSH
         run: |
@@ -236,11 +251,13 @@ jobs:
       - name: Bootstrap remote runtime
         env:
           SSH_USER: ${{ vars.RAY_DEPLOY_SSH_USER }}
+          SSH_PORT: ${{ steps.settings.outputs.ssh_port }}
           SERVICE_USER: ${{ steps.settings.outputs.service_user }}
           INSTALL_CADDY: ${{ steps.settings.outputs.install_caddy }}
         run: |
           set -euo pipefail
           SSH_USER="${SSH_USER:-root}"
+          SSH_PORT="${SSH_PORT:-22}"
           SERVICE_USER="${SERVICE_USER:-ray}"
           INSTALL_CADDY="${INSTALL_CADDY:-false}"
           TARGET="$SSH_USER@$RAY_DEPLOY_HOST"
@@ -248,7 +265,7 @@ jobs:
             printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
           }
 
-          ssh -i ~/.ssh/deploy_key "$TARGET" "INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") SERVICE_USER=$(shell_quote "$SERVICE_USER") bash -s" <<'ENDSSH'
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$TARGET" "INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") SERVICE_USER=$(shell_quote "$SERVICE_USER") bash -s" <<'ENDSSH'
           set -euo pipefail
 
           SUDO=""
@@ -281,13 +298,15 @@ jobs:
       - name: Sync repository to VPS
         env:
           SSH_USER: ${{ vars.RAY_DEPLOY_SSH_USER }}
+          SSH_PORT: ${{ steps.settings.outputs.ssh_port }}
         run: |
           set -euo pipefail
           SSH_USER="${SSH_USER:-root}"
+          SSH_PORT="${SSH_PORT:-22}"
           TARGET="$SSH_USER@$RAY_DEPLOY_HOST"
 
           rsync -az --delete \
-            -e "ssh -i ~/.ssh/deploy_key" \
+            -e "ssh -i ~/.ssh/deploy_key -p $SSH_PORT" \
             --exclude '.git' \
             --exclude '.github' \
             --exclude '.ray' \
@@ -298,6 +317,7 @@ jobs:
       - name: Install config, env, and restart service
         env:
           SSH_USER: ${{ vars.RAY_DEPLOY_SSH_USER }}
+          SSH_PORT: ${{ steps.settings.outputs.ssh_port }}
           CONFIG_SOURCE: ${{ steps.settings.outputs.config_source }}
           CONFIG_REL: ${{ steps.settings.outputs.config_rel }}
           HEALTH_PORT: ${{ steps.settings.outputs.health_port }}
@@ -309,6 +329,7 @@ jobs:
         run: |
           set -euo pipefail
           SSH_USER="${SSH_USER:-root}"
+          SSH_PORT="${SSH_PORT:-22}"
           TARGET="$SSH_USER@$RAY_DEPLOY_HOST"
           SERVICE_USER="${SERVICE_USER:-ray}"
           ENV_B64="$(printf '%s' "${RAY_ENV_FILE_CONTENTS:-}" | base64 -w 0)"
@@ -317,7 +338,7 @@ jobs:
             printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
           }
 
-          ssh -i ~/.ssh/deploy_key "$TARGET" \
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$TARGET" \
             "CONFIG_SOURCE=$(shell_quote "$CONFIG_SOURCE") CONFIG_REL=$(shell_quote "$CONFIG_REL") CONFIG_B64=$(shell_quote "$CONFIG_B64") HEALTH_PORT=$(shell_quote "$HEALTH_PORT") DEPLOY_DOMAIN=$(shell_quote "$DEPLOY_DOMAIN") INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") SERVICE_USER=$(shell_quote "$SERVICE_USER") READY_TIMEOUT_SECONDS=$(shell_quote "$READY_TIMEOUT_SECONDS") GATEWAY_RUNTIME_BINARY=$(shell_quote "$GATEWAY_RUNTIME_BINARY") RAY_DEPLOY_MEMORY_MIB=$(shell_quote "${RAY_DEPLOY_MEMORY_MIB:-}") ENV_B64=$(shell_quote "$ENV_B64") bash -s" <<'ENDSSH'
           set -euo pipefail
 

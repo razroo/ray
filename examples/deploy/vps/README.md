@@ -288,13 +288,14 @@ Set these GitHub secrets in your own repo or fork:
 
 - `RAY_DEPLOY_HOST` — VPS hostname or IP
 - `RAY_DEPLOY_SSH_KEY` — private SSH key for the deploy user
-- `RAY_DEPLOY_KNOWN_HOSTS` — `known_hosts` entry for the VPS
+- `RAY_DEPLOY_KNOWN_HOSTS` — `known_hosts` entry for the VPS; when `RAY_DEPLOY_SSH_PORT` is not `22`, use the OpenSSH bracket form such as `[ray.example.com]:2222 ssh-ed25519 ...`
 - `RAY_CONFIG_JSON` — optional full Ray config JSON to write to `/etc/ray/ray.json`
 - `RAY_ENV_FILE_CONTENTS` — complete contents of `/etc/ray/ray.env`; required when the deployed config has auth enabled
 
 Optional repository variables:
 
 - `RAY_DEPLOY_SSH_USER` — defaults to `root`
+- `RAY_DEPLOY_SSH_PORT` — SSH port for deploy, defaults to `22`
 - `RAY_DEPLOY_SERVICE_USER` — generated systemd service account, defaults to `ray`; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--user` is omitted
 - `RAY_DEPLOY_DOMAIN` — Caddy site address to render, defaults to `ray.local`; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--domain` is omitted
 - `RAY_DEPLOY_MEMORY_MIB` — optional VPS memory class used by workflow doctor/render when `/etc/ray/ray.env` does not already set it; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--memory-mib` is omitted
