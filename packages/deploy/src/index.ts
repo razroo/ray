@@ -17,6 +17,8 @@ export interface SystemdServiceOptions {
   wants?: string[];
   runtimeBinary?: string;
   nodeBinary?: string;
+  memoryHighMiB?: number;
+  memoryMaxMiB?: number;
 }
 
 export interface ReverseProxyOptions {
@@ -30,6 +32,8 @@ export interface LlamaCppServiceOptions {
   user: string;
   envFile?: string;
   launchProfile: LlamaCppLaunchProfile;
+  memoryHighMiB?: number;
+  memoryMaxMiB?: number;
 }
 
 export interface DeploymentDiagnostic {
@@ -151,6 +155,7 @@ const GATEWAY_RUNTIME_VERSION_TIMEOUT_MS = 3_000;
 const GATEWAY_RUNTIME_VERSION_MAX_BUFFER_BYTES = 16 * 1024;
 const MAX_SYSTEMD_DEPENDENCY_UNITS = 32;
 const MAX_SYSTEMD_DEPENDENCY_UNIT_CHARS = 256;
+const MAX_SYSTEMD_MEMORY_MIB = 1_048_576;
 const MAX_LLAMA_CPP_EXTRA_ARGS = 64;
 const MAX_LLAMA_CPP_EXTRA_ARG_CHARS = 4_096;
 const CADDY_UPSTREAM_TIMEOUT_GRACE_MS = 5_000;
@@ -158,6 +163,9 @@ const CADDY_DIAL_TIMEOUT_MS = 5_000;
 const CADDY_WRITE_TIMEOUT_MS = 10_000;
 const MAX_CADDY_REQUEST_BODY_LIMIT_BYTES = 1_048_576;
 const MAX_CADDY_UPSTREAM_TIMEOUT_MS = 120_000 + CADDY_UPSTREAM_TIMEOUT_GRACE_MS;
+const GATEWAY_MEMORY_HIGH_HEADROOM_MIB = 128;
+const GATEWAY_MEMORY_MAX_HEADROOM_MIB = 384;
+const LLAMA_CPP_MEMORY_HIGH_RATIO = 0.9;
 
 interface StorageStats {
   bavail: number | bigint;
@@ -396,6 +404,34 @@ function formatSystemdDirectiveValue(value: string, label: string): string {
 function formatSystemdEnvironmentLine(name: string, value: string | number): string {
   const escapedValue = escapeSystemdScalar(value);
   return `Environment="${name}=${escapedValue}"`;
+}
+
+function formatSystemdMemoryControlLines(options: {
+  memoryHighMiB?: number;
+  memoryMaxMiB?: number;
+}): string {
+  const { memoryHighMiB, memoryMaxMiB } = options;
+
+  if (memoryHighMiB === undefined && memoryMaxMiB === undefined) {
+    return "";
+  }
+
+  if (memoryHighMiB !== undefined) {
+    assertPositiveIntegerAtMost(memoryHighMiB, "memoryHighMiB", MAX_SYSTEMD_MEMORY_MIB);
+  }
+
+  if (memoryMaxMiB !== undefined) {
+    assertPositiveIntegerAtMost(memoryMaxMiB, "memoryMaxMiB", MAX_SYSTEMD_MEMORY_MIB);
+  }
+
+  if (memoryHighMiB !== undefined && memoryMaxMiB !== undefined && memoryHighMiB > memoryMaxMiB) {
+    throw new Error("memoryHighMiB must be less than or equal to memoryMaxMiB");
+  }
+
+  return [
+    ...(memoryHighMiB !== undefined ? [`MemoryHigh=${memoryHighMiB}M`] : []),
+    ...(memoryMaxMiB !== undefined ? [`MemoryMax=${memoryMaxMiB}M`] : []),
+  ].join("\n");
 }
 
 function formatSystemdDependencyLine(name: "After" | "Wants", units: unknown): string {
@@ -1018,6 +1054,39 @@ export function estimateLlamaCppMemoryFit(
   };
 }
 
+function resolveGatewayMemoryControls(config: RayConfig): {
+  memoryHighMiB: number;
+  memoryMaxMiB: number;
+} {
+  return {
+    memoryHighMiB:
+      config.gracefulDegradation.memoryRssThresholdMiB + GATEWAY_MEMORY_HIGH_HEADROOM_MIB,
+    memoryMaxMiB:
+      config.gracefulDegradation.memoryRssThresholdMiB + GATEWAY_MEMORY_MAX_HEADROOM_MIB,
+  };
+}
+
+function resolveLlamaCppMemoryControls(
+  launchProfile: LlamaCppLaunchProfile,
+  preflight: Pick<DeploymentPreflight, "memoryBudgetMiB">,
+): {
+  memoryHighMiB: number;
+  memoryMaxMiB: number;
+} {
+  const memoryBudgetMiB =
+    preflight.memoryBudgetMiB ?? getPresetMemoryBudgetMiB(launchProfile.preset);
+  const reserveMiB = Math.max(
+    MIN_SYSTEM_RESERVE_MIB,
+    Math.ceil(memoryBudgetMiB * SYSTEM_RESERVE_RATIO),
+  );
+  const memoryMaxMiB = Math.max(512, memoryBudgetMiB - reserveMiB - RAY_RUNTIME_RESERVE_MIB);
+
+  return {
+    memoryHighMiB: Math.max(1, Math.floor(memoryMaxMiB * LLAMA_CPP_MEMORY_HIGH_RATIO)),
+    memoryMaxMiB,
+  };
+}
+
 export function buildLlamaCppEnvironment(profile: LlamaCppLaunchProfile): Record<string, string> {
   assertLlamaCppLaunchProfileForEnvironment(profile);
 
@@ -1100,6 +1169,10 @@ export function renderSystemdService(options: SystemdServiceOptions): string {
     "--config",
     absoluteConfigPath,
   ]);
+  const memoryControlLines = formatSystemdMemoryControlLines({
+    ...(options.memoryHighMiB !== undefined ? { memoryHighMiB: options.memoryHighMiB } : {}),
+    ...(options.memoryMaxMiB !== undefined ? { memoryMaxMiB: options.memoryMaxMiB } : {}),
+  });
 
   return `[Unit]
 Description=Ray Gateway
@@ -1123,6 +1196,7 @@ TasksMax=128
 CPUAccounting=true
 MemoryAccounting=true
 IOAccounting=true
+${memoryControlLines ? `${memoryControlLines}\n` : ""}
 ${stateDirectoryLine}NoNewPrivileges=true
 CapabilityBoundingSet=
 SystemCallArchitectures=native
@@ -1209,6 +1283,10 @@ export function renderLlamaCppService(options: LlamaCppServiceOptions): string {
     .map((line) => `${line}\n`)
     .join("");
   const execStart = formatSystemdExecStart([profile.binaryPath, ...(profile.extraArgs ?? [])]);
+  const memoryControlLines = formatSystemdMemoryControlLines({
+    ...(options.memoryHighMiB !== undefined ? { memoryHighMiB: options.memoryHighMiB } : {}),
+    ...(options.memoryMaxMiB !== undefined ? { memoryMaxMiB: options.memoryMaxMiB } : {}),
+  });
 
   return `[Unit]
 Description=llama.cpp Server for Ray
@@ -1231,6 +1309,7 @@ TasksMax=256
 CPUAccounting=true
 MemoryAccounting=true
 IOAccounting=true
+${memoryControlLines ? `${memoryControlLines}\n` : ""}
 NoNewPrivileges=true
 CapabilityBoundingSet=
 SystemCallArchitectures=native
@@ -2134,6 +2213,7 @@ export async function loadAndDiagnoseDeployment(options: {
   config: RayConfig;
   configPath?: string;
   diagnostics: DeploymentDiagnostic[];
+  preflight: DeploymentPreflight;
 }> {
   const loaded = await loadRayConfig({
     cwd: options.cwd,
@@ -2155,6 +2235,7 @@ export async function loadAndDiagnoseDeployment(options: {
 
   return {
     config: loaded.config,
+    preflight,
     diagnostics: diagnoseConfig(loaded.config, options.env ?? process.env, options.envFile, {
       preflight,
       ...(options.strictFilesystem !== undefined
@@ -2193,12 +2274,22 @@ export async function renderDeploymentBundle(options: {
   const rendersLlamaCppService =
     inspected.config.model.adapter.kind === "llama.cpp" &&
     inspected.config.model.adapter.launchProfile !== undefined;
+  const gatewayMemoryControls = resolveGatewayMemoryControls(inspected.config);
+  const llamaCppMemoryControls =
+    inspected.config.model.adapter.kind === "llama.cpp" &&
+    inspected.config.model.adapter.launchProfile
+      ? resolveLlamaCppMemoryControls(
+          inspected.config.model.adapter.launchProfile,
+          inspected.preflight,
+        )
+      : undefined;
 
   return {
     service: renderSystemdService({
       workingDirectory: cwd,
       configPath: options.configPath,
       user: options.user,
+      ...gatewayMemoryControls,
       ...(options.runtimeBinary ? { runtimeBinary: options.runtimeBinary } : {}),
       ...(options.nodeBinary ? { nodeBinary: options.nodeBinary } : {}),
       ...(envFile ? { envFile } : {}),
@@ -2224,6 +2315,7 @@ export async function renderDeploymentBundle(options: {
           llamaCppService: renderLlamaCppService({
             user: options.user,
             launchProfile: inspected.config.model.adapter.launchProfile,
+            ...(llamaCppMemoryControls ? llamaCppMemoryControls : {}),
           }),
         }
       : {}),
