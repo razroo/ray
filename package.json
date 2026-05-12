@@ -126,7 +126,7 @@
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.0",
-    "@eslint/js": "^9.23.0",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.13.5",
     "eslint": "^9.23.0",
     "globals": "^17.5.0",
