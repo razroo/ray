@@ -133,6 +133,7 @@ RAY_ASYNC_QUEUE_ENABLED=true
 RAY_ASYNC_QUEUE_MAX_JOBS=1000
 RAY_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB=256
 RAY_ASYNC_QUEUE_COMPLETED_TTL_MS=86400000
+RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS=callback.example,*.trusted.example
 RAY_AUTH_ENABLED=true
 RAY_RATE_LIMIT_ENABLED=true
 RAY_RATE_LIMIT_WINDOW_MS=60000
@@ -266,6 +267,7 @@ RAY_API_KEYS=replace-with-comma-separated-client-keys
 RAY_LOG_LEVEL=info
 RAY_MODEL_WARM_ON_BOOT=false
 RAY_ASYNC_QUEUE_ENABLED=true
+RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS=callback.example
 RAY_AUTH_ENABLED=true
 RAY_RATE_LIMIT_MAX_REQUESTS=75
 ```
@@ -322,7 +324,7 @@ Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 - Ray also samples Linux cgroup memory files when available, marks memory pressure when the service or container reaches 90% of its configured cgroup memory limit, and exposes process RSS pressure ratio plus cgroup v2 `memory.events` counters in health and metrics so operators can see when `MemoryHigh` or OOM boundaries were crossed.
 - Detailed `/health` exposes provider-preparation, durable async-queue, queue depth, in-flight work, queued-token, and in-flight-token saturation ratios so operators can see admission pressure without a separate metrics scrape.
 - The `/metrics` endpoint refreshes live provider-preparation, queue, cache, async-job saturation, async storage headroom, and cgroup resource gauges before responding, so a scraper can observe current pressure without a separate health probe.
-- Use `RAY_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB` to preserve local disk headroom before accepting more durable async jobs. Doctor checks the nearest existing parent of `RAY_ASYNC_QUEUE_STORAGE_DIR`, so it catches a too-small VPS disk even before the queue directory exists, and verifies the generated service user can write there.
-- Keep async callback URLs on global public addresses by default. Doctor warns when `asyncQueue.callbackAllowPrivateNetwork` or `asyncQueue.callbackAllowedHosts` bypass the normal callback DNS/network guardrails; prefer a small allowlist of operator-owned callback hosts over the global private-network bypass. Allowlist entries must be exact host/IP literals such as `callback.example.com` or wildcard DNS suffix patterns such as `*.example.com`, not full URLs or `host:port` values.
+- Use `RAY_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB` to preserve local disk headroom before accepting more durable async jobs. Use `RAY_ASYNC_QUEUE_POLL_INTERVAL_MS`, `RAY_ASYNC_QUEUE_DISPATCH_CONCURRENCY`, `RAY_ASYNC_QUEUE_MAX_ATTEMPTS`, `RAY_ASYNC_QUEUE_CALLBACK_TIMEOUT_MS`, and `RAY_ASYNC_QUEUE_MAX_CALLBACK_ATTEMPTS` to tune durable-job dispatch from `/etc/ray/ray.env`. Doctor checks the nearest existing parent of `RAY_ASYNC_QUEUE_STORAGE_DIR`, so it catches a too-small VPS disk even before the queue directory exists, and verifies the generated service user can write there.
+- Keep async callback URLs on global public addresses by default. Doctor warns when `asyncQueue.callbackAllowPrivateNetwork` or `asyncQueue.callbackAllowedHosts` bypass the normal callback DNS/network guardrails; prefer `RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS` with a small comma-separated allowlist of operator-owned callback hosts over `RAY_ASYNC_QUEUE_CALLBACK_ALLOW_PRIVATE_NETWORK=true`. Allowlist entries must be exact host/IP literals such as `callback.example.com` or wildcard DNS suffix patterns such as `*.example.com`, not full URLs or `host:port` values.
 - Keep the cache bounded. Ray is designed to stay predictable under memory pressure.
 - Prefer quantized models that fit comfortably rather than models that technically boot.

@@ -1478,6 +1478,17 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
     lines.push(`# RAY_ASYNC_QUEUE_MAX_JOBS=${config.asyncQueue.maxJobs}`);
     lines.push(`# RAY_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB=${config.asyncQueue.minFreeStorageMiB}`);
     lines.push(`# RAY_ASYNC_QUEUE_COMPLETED_TTL_MS=${config.asyncQueue.completedTtlMs}`);
+    lines.push(`# RAY_ASYNC_QUEUE_POLL_INTERVAL_MS=${config.asyncQueue.pollIntervalMs}`);
+    lines.push(`# RAY_ASYNC_QUEUE_DISPATCH_CONCURRENCY=${config.asyncQueue.dispatchConcurrency}`);
+    lines.push(`# RAY_ASYNC_QUEUE_MAX_ATTEMPTS=${config.asyncQueue.maxAttempts}`);
+    lines.push(`# RAY_ASYNC_QUEUE_CALLBACK_TIMEOUT_MS=${config.asyncQueue.callbackTimeoutMs}`);
+    lines.push(`# RAY_ASYNC_QUEUE_MAX_CALLBACK_ATTEMPTS=${config.asyncQueue.maxCallbackAttempts}`);
+    lines.push(
+      `# RAY_ASYNC_QUEUE_CALLBACK_ALLOW_PRIVATE_NETWORK=${config.asyncQueue.callbackAllowPrivateNetwork}`,
+    );
+    lines.push(
+      `# RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS=${config.asyncQueue.callbackAllowedHosts.join(",")}`,
+    );
   }
 
   if (lines.length === 1) {

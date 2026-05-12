@@ -138,6 +138,13 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
       RAY_ASYNC_QUEUE_MAX_JOBS: "250",
       RAY_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB: "192",
       RAY_ASYNC_QUEUE_COMPLETED_TTL_MS: "3600000",
+      RAY_ASYNC_QUEUE_POLL_INTERVAL_MS: "250",
+      RAY_ASYNC_QUEUE_DISPATCH_CONCURRENCY: "2",
+      RAY_ASYNC_QUEUE_MAX_ATTEMPTS: "4",
+      RAY_ASYNC_QUEUE_CALLBACK_TIMEOUT_MS: "1500",
+      RAY_ASYNC_QUEUE_MAX_CALLBACK_ATTEMPTS: "3",
+      RAY_ASYNC_QUEUE_CALLBACK_ALLOW_PRIVATE_NETWORK: "false",
+      RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS: "callback.example,*.trusted.example",
       RAY_CACHE_ENABLED: "0",
       RAY_CACHE_MAX_ENTRIES: "128",
       RAY_GRACEFUL_DEGRADATION_ENABLED: "1",
@@ -184,6 +191,16 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
   assert.equal(loaded.config.asyncQueue.maxJobs, 250);
   assert.equal(loaded.config.asyncQueue.minFreeStorageMiB, 192);
   assert.equal(loaded.config.asyncQueue.completedTtlMs, 3_600_000);
+  assert.equal(loaded.config.asyncQueue.pollIntervalMs, 250);
+  assert.equal(loaded.config.asyncQueue.dispatchConcurrency, 2);
+  assert.equal(loaded.config.asyncQueue.maxAttempts, 4);
+  assert.equal(loaded.config.asyncQueue.callbackTimeoutMs, 1_500);
+  assert.equal(loaded.config.asyncQueue.maxCallbackAttempts, 3);
+  assert.equal(loaded.config.asyncQueue.callbackAllowPrivateNetwork, false);
+  assert.deepEqual(loaded.config.asyncQueue.callbackAllowedHosts, [
+    "callback.example",
+    "*.trusted.example",
+  ]);
   assert.equal(loaded.config.cache.enabled, false);
   assert.equal(loaded.config.cache.maxEntries, 128);
   assert.equal(loaded.config.gracefulDegradation.enabled, true);
@@ -344,6 +361,17 @@ test("loadRayConfig rejects malformed environment overrides", async () => {
       },
     }),
     /Expected RAY_RATE_LIMIT_KEY_STRATEGY to be a supported rate-limit key strategy/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS: "callback.example,",
+      },
+    }),
+    /Expected RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS to be comma-separated non-empty values/,
   );
 });
 

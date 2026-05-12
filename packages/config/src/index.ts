@@ -197,6 +197,26 @@ function parseBoolean(value: string | undefined, label: string): boolean | undef
   }
 }
 
+function parseCommaSeparatedStrings(
+  value: string | undefined,
+  label: string,
+): string[] | undefined {
+  if (!isNonEmptyString(value)) {
+    return undefined;
+  }
+
+  const entries = value.split(",").map((entry) => entry.trim());
+  if (entries.some((entry) => entry.length === 0)) {
+    throw new RayError(`Expected ${label} to be comma-separated non-empty values`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { value },
+    });
+  }
+
+  return entries;
+}
+
 function parsePositiveInteger(value: string | undefined, label: string): number | undefined {
   if (!isNonEmptyString(value)) {
     return undefined;
@@ -401,6 +421,34 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
     "RAY_ASYNC_QUEUE_COMPLETED_TTL_MS",
   );
   const asyncQueueEnabled = parseBoolean(env.RAY_ASYNC_QUEUE_ENABLED, "RAY_ASYNC_QUEUE_ENABLED");
+  const asyncQueuePollIntervalMs = parsePositiveInteger(
+    env.RAY_ASYNC_QUEUE_POLL_INTERVAL_MS,
+    "RAY_ASYNC_QUEUE_POLL_INTERVAL_MS",
+  );
+  const asyncQueueDispatchConcurrency = parsePositiveInteger(
+    env.RAY_ASYNC_QUEUE_DISPATCH_CONCURRENCY,
+    "RAY_ASYNC_QUEUE_DISPATCH_CONCURRENCY",
+  );
+  const asyncQueueMaxAttempts = parsePositiveInteger(
+    env.RAY_ASYNC_QUEUE_MAX_ATTEMPTS,
+    "RAY_ASYNC_QUEUE_MAX_ATTEMPTS",
+  );
+  const asyncQueueCallbackTimeoutMs = parsePositiveInteger(
+    env.RAY_ASYNC_QUEUE_CALLBACK_TIMEOUT_MS,
+    "RAY_ASYNC_QUEUE_CALLBACK_TIMEOUT_MS",
+  );
+  const asyncQueueMaxCallbackAttempts = parsePositiveInteger(
+    env.RAY_ASYNC_QUEUE_MAX_CALLBACK_ATTEMPTS,
+    "RAY_ASYNC_QUEUE_MAX_CALLBACK_ATTEMPTS",
+  );
+  const asyncQueueCallbackAllowPrivateNetwork = parseBoolean(
+    env.RAY_ASYNC_QUEUE_CALLBACK_ALLOW_PRIVATE_NETWORK,
+    "RAY_ASYNC_QUEUE_CALLBACK_ALLOW_PRIVATE_NETWORK",
+  );
+  const asyncQueueCallbackAllowedHosts = parseCommaSeparatedStrings(
+    env.RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS,
+    "RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS",
+  );
   const cacheEnabled = parseBoolean(env.RAY_CACHE_ENABLED, "RAY_CACHE_ENABLED");
   const cacheMaxEntries = parsePositiveInteger(env.RAY_CACHE_MAX_ENTRIES, "RAY_CACHE_MAX_ENTRIES");
   const cacheTtlMs = parsePositiveInteger(env.RAY_CACHE_TTL_MS, "RAY_CACHE_TTL_MS");
@@ -682,6 +730,34 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
 
   if (asyncQueueEnabled !== undefined) {
     next.asyncQueue.enabled = asyncQueueEnabled;
+  }
+
+  if (asyncQueuePollIntervalMs !== undefined) {
+    next.asyncQueue.pollIntervalMs = asyncQueuePollIntervalMs;
+  }
+
+  if (asyncQueueDispatchConcurrency !== undefined) {
+    next.asyncQueue.dispatchConcurrency = asyncQueueDispatchConcurrency;
+  }
+
+  if (asyncQueueMaxAttempts !== undefined) {
+    next.asyncQueue.maxAttempts = asyncQueueMaxAttempts;
+  }
+
+  if (asyncQueueCallbackTimeoutMs !== undefined) {
+    next.asyncQueue.callbackTimeoutMs = asyncQueueCallbackTimeoutMs;
+  }
+
+  if (asyncQueueMaxCallbackAttempts !== undefined) {
+    next.asyncQueue.maxCallbackAttempts = asyncQueueMaxCallbackAttempts;
+  }
+
+  if (asyncQueueCallbackAllowPrivateNetwork !== undefined) {
+    next.asyncQueue.callbackAllowPrivateNetwork = asyncQueueCallbackAllowPrivateNetwork;
+  }
+
+  if (asyncQueueCallbackAllowedHosts !== undefined) {
+    next.asyncQueue.callbackAllowedHosts = asyncQueueCallbackAllowedHosts;
   }
 
   if (cacheEnabled !== undefined) {

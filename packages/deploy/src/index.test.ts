@@ -522,6 +522,12 @@ test("renderEnvironmentFileExample documents async queue retention overrides", (
       maxJobs: 500,
       minFreeStorageMiB: 192,
       completedTtlMs: 3_600_000,
+      pollIntervalMs: 250,
+      dispatchConcurrency: 2,
+      maxAttempts: 4,
+      callbackTimeoutMs: 1_500,
+      maxCallbackAttempts: 3,
+      callbackAllowedHosts: ["callback.example", "*.trusted.example"],
     },
   });
   const envFile = renderEnvironmentFileExample(config);
@@ -530,6 +536,16 @@ test("renderEnvironmentFileExample documents async queue retention overrides", (
   assert.match(envFile, /RAY_ASYNC_QUEUE_MAX_JOBS=500/);
   assert.match(envFile, /RAY_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB=192/);
   assert.match(envFile, /RAY_ASYNC_QUEUE_COMPLETED_TTL_MS=3600000/);
+  assert.match(envFile, /RAY_ASYNC_QUEUE_POLL_INTERVAL_MS=250/);
+  assert.match(envFile, /RAY_ASYNC_QUEUE_DISPATCH_CONCURRENCY=2/);
+  assert.match(envFile, /RAY_ASYNC_QUEUE_MAX_ATTEMPTS=4/);
+  assert.match(envFile, /RAY_ASYNC_QUEUE_CALLBACK_TIMEOUT_MS=1500/);
+  assert.match(envFile, /RAY_ASYNC_QUEUE_MAX_CALLBACK_ATTEMPTS=3/);
+  assert.match(envFile, /RAY_ASYNC_QUEUE_CALLBACK_ALLOW_PRIVATE_NETWORK=false/);
+  assert.match(
+    envFile,
+    /RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS=callback\.example,\*\.trusted\.example/,
+  );
 });
 
 test("renderDeploymentBundle includes llama.cpp service for generic 1b profiles", async () => {
