@@ -32,6 +32,7 @@ The Qwen and Hetzner configs are reference baselines. They are useful for benchm
 Keep model-specific values in `/etc/ray/ray.env` when possible:
 
 ```dotenv
+RAY_AUTH_API_KEY_ENV=RAY_API_KEYS
 RAY_API_KEYS=replace-with-comma-separated-client-api-keys
 RAY_MODEL_ID=local-1b-q4
 RAY_MODEL_REF=local-1b-q4
@@ -88,6 +89,9 @@ RAY_ASYNC_QUEUE_COMPLETED_TTL_MS=86400000
 
 Create `/var/lib/ray/models` on the VPS and place the GGUF at `RAY_MODEL_PATH`
 before starting the generated llama.cpp service or running doctor.
+
+Set `RAY_AUTH_API_KEY_ENV` when an existing secret manager or deployment workflow
+uses a different environment variable for the Bearer keys.
 
 For 8 GB nodes, start by raising context, slots, and cache RAM through the 8 GB generic profile before adding more overrides.
 

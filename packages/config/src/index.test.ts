@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadRayConfig } from "./index.js";
+import { loadRayConfig, resolveAuthApiKeys } from "./index.js";
 
 test("loadRayConfig defaults to the sub1b profile", async () => {
   const loaded = await loadRayConfig({
@@ -190,6 +190,7 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
       RAY_ADAPTIVE_SHORT_PERCENTILE: "0.8",
       RAY_ADAPTIVE_LEARNED_CAP_HEADROOM_TOKENS: "12",
       RAY_AUTH_ENABLED: "on",
+      RAY_AUTH_API_KEY_ENV: "RAY_PUBLIC_API_KEYS",
       RAY_RATE_LIMIT_ENABLED: "no",
       RAY_RATE_LIMIT_WINDOW_MS: "30000",
       RAY_RATE_LIMIT_MAX_REQUESTS: "45",
@@ -283,6 +284,11 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
   assert.equal(loaded.config.adaptiveTuning.shortPercentile, 0.8);
   assert.equal(loaded.config.adaptiveTuning.learnedCapHeadroomTokens, 12);
   assert.equal(loaded.config.auth.enabled, true);
+  assert.equal(loaded.config.auth.apiKeyEnv, "RAY_PUBLIC_API_KEYS");
+  assert.deepEqual(
+    resolveAuthApiKeys(loaded.config, { RAY_PUBLIC_API_KEYS: "alpha,beta" }),
+    new Set(["alpha", "beta"]),
+  );
   assert.equal(loaded.config.rateLimit.enabled, false);
   assert.equal(loaded.config.rateLimit.windowMs, 30_000);
   assert.equal(loaded.config.rateLimit.maxRequests, 45);

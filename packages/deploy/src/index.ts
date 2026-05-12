@@ -1481,6 +1481,7 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
     `# RAY_ADAPTIVE_LEARNED_CAP_HEADROOM_TOKENS=${config.adaptiveTuning.learnedCapHeadroomTokens}`,
   );
   lines.push(`# RAY_AUTH_ENABLED=${config.auth.enabled}`);
+  lines.push(`# RAY_AUTH_API_KEY_ENV=${config.auth.apiKeyEnv}`);
   lines.push(`# RAY_RATE_LIMIT_ENABLED=${config.rateLimit.enabled}`);
   lines.push(`# RAY_RATE_LIMIT_WINDOW_MS=${config.rateLimit.windowMs}`);
   lines.push(`# RAY_RATE_LIMIT_MAX_REQUESTS=${config.rateLimit.maxRequests}`);

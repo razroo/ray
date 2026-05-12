@@ -518,6 +518,7 @@ test("renderEnvironmentFileExample documents gateway behavior switches", () => {
   assert.match(envFile, /RAY_ADAPTIVE_SHORT_PERCENTILE=0\.9/);
   assert.match(envFile, /RAY_ADAPTIVE_LEARNED_CAP_HEADROOM_TOKENS=24/);
   assert.match(envFile, /RAY_AUTH_ENABLED=true/);
+  assert.match(envFile, /RAY_AUTH_API_KEY_ENV=RAY_API_KEYS/);
   assert.match(envFile, /RAY_RATE_LIMIT_ENABLED=true/);
   assert.match(envFile, /RAY_RATE_LIMIT_WINDOW_MS=60000/);
   assert.match(envFile, /RAY_RATE_LIMIT_MAX_REQUESTS=75/);

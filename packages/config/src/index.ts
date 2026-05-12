@@ -613,6 +613,7 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
     "RAY_ADAPTIVE_LEARNED_CAP_HEADROOM_TOKENS",
   );
   const authEnabled = parseBoolean(env.RAY_AUTH_ENABLED, "RAY_AUTH_ENABLED");
+  const authApiKeyEnv = env.RAY_AUTH_API_KEY_ENV;
   const rateLimitEnabled = parseBoolean(env.RAY_RATE_LIMIT_ENABLED, "RAY_RATE_LIMIT_ENABLED");
   const rateLimitWindowMs = parsePositiveInteger(
     env.RAY_RATE_LIMIT_WINDOW_MS,
@@ -1114,6 +1115,10 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
 
   if (authEnabled !== undefined) {
     next.auth.enabled = authEnabled;
+  }
+
+  if (isNonEmptyString(authApiKeyEnv)) {
+    next.auth.apiKeyEnv = authApiKeyEnv;
   }
 
   if (rateLimitEnabled !== undefined) {
