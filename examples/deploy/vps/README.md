@@ -315,11 +315,14 @@ test "$caddy_status" -eq 0
 
 ```bash
 RAY_API_KEYS=replace-with-real-key bun run validate:config:public
+RAY_API_KEYS=replace-with-real-key bun run validate:config:cax11:public
 RAY_API_KEYS=replace-with-real-key bun run validate:config:1b:generic:public
 RAY_API_KEYS=replace-with-real-key bun run validate:config:1b:public
 bun run doctor:1b:generic
+bun run doctor:cax11
 bun run doctor
 bun run benchmark:assert:cx23
+bun run benchmark:assert:cax11
 bun run benchmark:assert:cx23:1b
 ```
 
