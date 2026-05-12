@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 
 export const MAX_CLEAN_DIRECTORIES = 4_096;
 export const MAX_CLEAN_FILES = 32_768;
+export const MAX_CLEAN_DIRECTORY_ENTRIES = 4_096;
 export const MAX_CLEAN_REMOVALS = 2_048;
 export const MAX_CLEAN_PATH_BYTES = 4_096;
 export const MAX_CLEAN_PACKAGE_JSON_BYTES = 512 * 1024;
@@ -33,6 +34,7 @@ function resolveCleanOptions(options) {
     verifyRoot: options.verifyRoot ?? true,
     maxDirectories: options.maxDirectories ?? MAX_CLEAN_DIRECTORIES,
     maxFiles: options.maxFiles ?? MAX_CLEAN_FILES,
+    maxDirectoryEntries: options.maxDirectoryEntries ?? MAX_CLEAN_DIRECTORY_ENTRIES,
     maxRemovals: options.maxRemovals ?? MAX_CLEAN_REMOVALS,
     maxPathBytes: options.maxPathBytes ?? MAX_CLEAN_PATH_BYTES,
   };
@@ -41,6 +43,7 @@ function resolveCleanOptions(options) {
 function assertCleanOptions(options) {
   assertPositiveInteger(options.maxDirectories, "maxDirectories");
   assertPositiveInteger(options.maxFiles, "maxFiles");
+  assertPositiveInteger(options.maxDirectoryEntries, "maxDirectoryEntries");
   assertPositiveInteger(options.maxRemovals, "maxRemovals");
   assertPositiveInteger(options.maxPathBytes, "maxPathBytes");
 }
@@ -122,11 +125,40 @@ async function removePath(absolutePath, state, options) {
   state.removedPaths.push(absolutePath);
 }
 
+async function readDirectoryEntriesBounded(current, options) {
+  const entries = [];
+  let directory;
+
+  try {
+    directory = await fs.opendir(current);
+
+    for await (const entry of directory) {
+      entries.push(entry);
+
+      if (entries.length > options.maxDirectoryEntries) {
+        throw new Error(
+          `Clean found more than ${options.maxDirectoryEntries} entries in one directory: ${current}`,
+        );
+      }
+    }
+  } finally {
+    if (directory) {
+      try {
+        await directory.close();
+      } catch {
+        // Directory async iteration closes the handle on normal completion in some runtimes.
+      }
+    }
+  }
+
+  return entries.sort((left, right) => left.name.localeCompare(right.name));
+}
+
 async function walk(current, state, options) {
   recordVisitedDirectory(state, options);
-  const entries = await fs.readdir(current, { withFileTypes: true });
+  const entries = await readDirectoryEntriesBounded(current, options);
 
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+  for (const entry of entries) {
     if (options.skipNames.has(entry.name)) {
       continue;
     }

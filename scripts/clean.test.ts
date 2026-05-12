@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { promises as fs } from "node:fs";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -65,6 +66,51 @@ test("cleanWorkspace rejects non-Ray roots before walking", async (t) => {
     /clean must be run from the Ray repository root/,
   );
   assert.equal(await pathExists(path.join(tempDir, "dist")), true);
+});
+
+test("cleanWorkspace streams directory entries without readdir", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-clean-stream-"));
+  const originalReaddir = fs.readdir;
+
+  t.after(async () => {
+    Object.defineProperty(fs, "readdir", {
+      configurable: true,
+      value: originalReaddir,
+    });
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  await writeRayPackageJson(tempDir);
+  await mkdir(path.join(tempDir, "packages", "runtime", "dist"), { recursive: true });
+  await writeFile(path.join(tempDir, "packages", "runtime", "dist", "index.js"), "");
+
+  Object.defineProperty(fs, "readdir", {
+    configurable: true,
+    value: async () => {
+      throw new Error("readdir should not be used during clean traversal");
+    },
+  });
+
+  const result = await cleanWorkspace(tempDir);
+
+  assert.equal(result.removalCount, 1);
+  assert.equal(await pathExists(path.join(tempDir, "packages", "runtime", "dist")), false);
+});
+
+test("cleanWorkspace rejects excessive entries in one directory", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-clean-entry-cap-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  await writeRayPackageJson(tempDir);
+  await writeFile(path.join(tempDir, "a.tsbuildinfo"), "");
+  await writeFile(path.join(tempDir, "b.tsbuildinfo"), "");
+
+  await assert.rejects(
+    () => cleanWorkspace(tempDir, { maxDirectoryEntries: 1 }),
+    /Clean found more than 1 entries in one directory/,
+  );
 });
 
 test("cleanWorkspace caps removal work", async (t) => {
