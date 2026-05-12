@@ -163,6 +163,7 @@ const MAX_METADATA_VALUE_CHARS = 1_024;
 const MAX_STOP_SEQUENCES = 16;
 const MAX_STOP_SEQUENCE_CHARS = 256;
 const MAX_PROVIDER_PREPARATION_AFFINITY_KEY_CHARS = 512;
+const MAX_PROVIDER_PREPARATION_REQUEST_STRING_CHARS = 512;
 const BYTES_PER_MIB = 1024 * 1024;
 const CGROUP_V2_ROOT = "/sys/fs/cgroup";
 const CGROUP_V1_MEMORY_ROOT = "/sys/fs/cgroup/memory";
@@ -1933,6 +1934,311 @@ function normalizeProviderPreparationAffinityKey(value: unknown): string | undef
   return value;
 }
 
+function providerPreparationObjectEntries(value: object, label: string): Array<[string, unknown]> {
+  try {
+    return Object.entries(value);
+  } catch (error) {
+    throw createProviderPreparationError(`${label} must not contain unreadable properties`, {
+      field: label,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function normalizeProviderPreparationStringRecord(
+  value: unknown,
+  label: string,
+): Record<string, string> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw createProviderPreparationError(`${label} must be an object of string values`, {
+      field: label,
+    });
+  }
+
+  const entries = providerPreparationObjectEntries(value, label);
+  if (entries.length > MAX_METADATA_ENTRIES) {
+    throw createProviderPreparationError(
+      `${label} must contain at most ${MAX_METADATA_ENTRIES} entries`,
+      {
+        field: label,
+        maxEntries: MAX_METADATA_ENTRIES,
+        actualEntries: entries.length,
+      },
+    );
+  }
+
+  const record: Record<string, string> = {};
+
+  for (const [key, entry] of entries) {
+    if (unsafeMetadataKeys.has(key)) {
+      throw createProviderPreparationError(`${label} must not contain unsafe keys`, {
+        field: label,
+        key,
+      });
+    }
+
+    if (!isNonEmptyString(key) || typeof entry !== "string") {
+      throw createProviderPreparationError(`${label} must be an object of string values`, {
+        field: label,
+      });
+    }
+
+    if (key.length > MAX_METADATA_KEY_CHARS) {
+      throw createProviderPreparationError(
+        `${label} keys must be at most ${MAX_METADATA_KEY_CHARS} characters`,
+        {
+          field: label,
+          maxChars: MAX_METADATA_KEY_CHARS,
+          actualChars: key.length,
+        },
+      );
+    }
+
+    if (entry.length > MAX_METADATA_VALUE_CHARS) {
+      throw createProviderPreparationError(
+        `${label}.${key} must be at most ${MAX_METADATA_VALUE_CHARS} characters`,
+        {
+          field: `${label}.${key}`,
+          maxChars: MAX_METADATA_VALUE_CHARS,
+          actualChars: entry.length,
+        },
+      );
+    }
+
+    record[key] = entry;
+  }
+
+  return record;
+}
+
+function normalizeProviderPreparationRequestString(
+  value: unknown,
+  field: string,
+): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_PROVIDER_PREPARATION_REQUEST_STRING_CHARS
+  ) {
+    throw createProviderPreparationError(`${field} must be a bounded non-empty string`, {
+      field,
+      maxChars: MAX_PROVIDER_PREPARATION_REQUEST_STRING_CHARS,
+    });
+  }
+
+  return value;
+}
+
+function normalizeProviderPreparationRequestStop(value: unknown): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value) || value.length === 0) {
+    throw createProviderPreparationError("request.stop must be a non-empty array of strings", {
+      field: "request.stop",
+    });
+  }
+
+  if (value.length > MAX_STOP_SEQUENCES) {
+    throw createProviderPreparationError(
+      `request.stop must contain at most ${MAX_STOP_SEQUENCES} entries`,
+      {
+        field: "request.stop",
+        maxEntries: MAX_STOP_SEQUENCES,
+        actualEntries: value.length,
+      },
+    );
+  }
+
+  return value.map((entry, index) => {
+    if (typeof entry !== "string" || entry.length === 0 || entry.length > MAX_STOP_SEQUENCE_CHARS) {
+      throw createProviderPreparationError(
+        `request.stop[${index}] must be a bounded non-empty string`,
+        {
+          field: `request.stop[${index}]`,
+          maxChars: MAX_STOP_SEQUENCE_CHARS,
+        },
+      );
+    }
+
+    return entry;
+  });
+}
+
+function normalizeProviderPreparationResponseFormat(
+  value: unknown,
+): NormalizedInferenceRequest["responseFormat"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    ((value as { type?: unknown }).type !== "text" &&
+      (value as { type?: unknown }).type !== "json_object")
+  ) {
+    throw createProviderPreparationError(
+      "request.responseFormat.type must be text or json_object",
+      {
+        field: "request.responseFormat.type",
+      },
+    );
+  }
+
+  return { type: (value as { type: "text" | "json_object" }).type };
+}
+
+function normalizeProviderPreparationRequest(
+  value: unknown,
+  config: RayConfig,
+): NormalizedInferenceRequest {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw createProviderPreparationError("request must be an object", { field: "request" });
+  }
+
+  const raw = value as Partial<NormalizedInferenceRequest>;
+  if (typeof raw.input !== "string" || raw.input.trim().length === 0) {
+    throw createProviderPreparationError("request.input must be a non-empty string", {
+      field: "request.input",
+    });
+  }
+
+  const input = raw.input.trim();
+  const system = typeof raw.system === "string" ? raw.system.trim() : undefined;
+
+  if (raw.system !== undefined && typeof raw.system !== "string") {
+    throw createProviderPreparationError("request.system must be a string", {
+      field: "request.system",
+    });
+  }
+
+  const promptChars = input.length + (system?.length ?? 0);
+  if (promptChars > config.gracefulDegradation.maxPromptChars) {
+    throw createProviderPreparationError(
+      `request prompt must be at most ${config.gracefulDegradation.maxPromptChars} characters`,
+      {
+        field: "request",
+        maxChars: config.gracefulDegradation.maxPromptChars,
+        actualChars: promptChars,
+      },
+    );
+  }
+
+  if (
+    typeof raw.maxTokens !== "number" ||
+    !Number.isSafeInteger(raw.maxTokens) ||
+    raw.maxTokens <= 0 ||
+    raw.maxTokens > config.model.maxOutputTokens
+  ) {
+    throw createProviderPreparationError(
+      `request.maxTokens must be a positive safe integer no greater than ${config.model.maxOutputTokens}`,
+      {
+        field: "request.maxTokens",
+        maxTokens: config.model.maxOutputTokens,
+      },
+    );
+  }
+
+  if (typeof raw.temperature !== "number" || !Number.isFinite(raw.temperature)) {
+    throw createProviderPreparationError("request.temperature must be a finite number", {
+      field: "request.temperature",
+    });
+  }
+
+  if (raw.temperature < 0 || raw.temperature > 2) {
+    throw createProviderPreparationError("request.temperature must be between 0 and 2", {
+      field: "request.temperature",
+    });
+  }
+
+  if (typeof raw.topP !== "number" || !Number.isFinite(raw.topP)) {
+    throw createProviderPreparationError("request.topP must be a finite number", {
+      field: "request.topP",
+    });
+  }
+
+  if (raw.topP < 0.1 || raw.topP > 1) {
+    throw createProviderPreparationError("request.topP must be between 0.1 and 1", {
+      field: "request.topP",
+    });
+  }
+
+  if (typeof raw.cache !== "boolean") {
+    throw createProviderPreparationError("request.cache must be a boolean", {
+      field: "request.cache",
+    });
+  }
+
+  if (raw.seed !== undefined && !Number.isSafeInteger(raw.seed)) {
+    throw createProviderPreparationError("request.seed must be a safe integer", {
+      field: "request.seed",
+    });
+  }
+
+  const stop = normalizeProviderPreparationRequestStop(raw.stop);
+  const responseFormat = normalizeProviderPreparationResponseFormat(raw.responseFormat);
+  const dedupeKey = normalizeProviderPreparationRequestString(raw.dedupeKey, "request.dedupeKey");
+  if (dedupeKey !== undefined && dedupeKey.length > MAX_DEDUPE_KEY_CHARS) {
+    throw createProviderPreparationError(
+      `request.dedupeKey must be at most ${MAX_DEDUPE_KEY_CHARS} characters`,
+      {
+        field: "request.dedupeKey",
+        maxChars: MAX_DEDUPE_KEY_CHARS,
+        actualChars: dedupeKey.length,
+      },
+    );
+  }
+
+  const promptTemplateId = normalizeProviderPreparationRequestString(
+    raw.promptTemplateId,
+    "request.promptTemplateId",
+  );
+  const promptFamily = normalizeProviderPreparationRequestString(
+    raw.promptFamily,
+    "request.promptFamily",
+  );
+  const metadata = normalizeProviderPreparationStringRecord(raw.metadata, "request.metadata") ?? {};
+  const templateVariables = normalizeProviderPreparationStringRecord(
+    raw.templateVariables,
+    "request.templateVariables",
+  );
+
+  if (raw.promptLane !== undefined && raw.promptLane !== "short" && raw.promptLane !== "draft") {
+    throw createProviderPreparationError("request.promptLane must be short or draft", {
+      field: "request.promptLane",
+    });
+  }
+
+  return {
+    input,
+    ...(system ? { system } : {}),
+    maxTokens: raw.maxTokens,
+    temperature: raw.temperature,
+    topP: raw.topP,
+    ...(raw.seed !== undefined ? { seed: raw.seed } : {}),
+    ...(stop !== undefined ? { stop } : {}),
+    ...(responseFormat !== undefined ? { responseFormat } : {}),
+    cache: raw.cache,
+    ...(dedupeKey !== undefined ? { dedupeKey } : {}),
+    metadata,
+    ...(promptTemplateId !== undefined ? { promptTemplateId } : {}),
+    ...(templateVariables !== undefined ? { templateVariables } : {}),
+    ...(raw.promptLane !== undefined ? { promptLane: raw.promptLane } : {}),
+    ...(promptFamily !== undefined ? { promptFamily } : {}),
+  };
+}
+
 function truncateProviderDiagnosticString(value: string): string {
   if (value.length <= MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS) {
     return value;
@@ -2220,6 +2526,7 @@ function normalizeProviderSlotSnapshots(value: unknown): SchedulerSlotSnapshot[]
 
 function normalizeProviderRequestPreparation(
   value: ProviderRequestPreparation | undefined,
+  config: RayConfig,
 ): ProviderRequestPreparation | undefined {
   if (value === undefined) {
     return undefined;
@@ -2235,9 +2542,10 @@ function normalizeProviderRequestPreparation(
   const affinityKey = normalizeProviderPreparationAffinityKey(value.affinityKey);
   const slotSnapshots = normalizeProviderSlotSnapshots(value.slotSnapshots);
   const diagnostics = normalizeProviderPreparationDiagnostics(value.diagnostics);
+  const request = normalizeProviderPreparationRequest(value.request, config);
 
   return {
-    request: value.request,
+    request,
     ...(value.promptTokens !== undefined ? { promptTokens: value.promptTokens } : {}),
     ...(affinityKey !== undefined ? { affinityKey } : {}),
     ...(value.lane !== undefined ? { lane: value.lane } : {}),
@@ -3418,6 +3726,7 @@ export class RayRuntime {
 
       return normalizeProviderRequestPreparation(
         await Promise.race([preparationPromise, timeoutPromise]),
+        this.config,
       );
     } finally {
       if (timeout) {
