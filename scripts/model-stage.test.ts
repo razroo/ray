@@ -20,6 +20,7 @@ import {
   checkModelStageSources,
   applyModelStagePlan,
   createModelStagePlan,
+  evaluateModelStageMemoryFit,
   evaluateModelStageStorageHeadroom,
   formatApplyResult,
   formatCommandPlan,
@@ -116,6 +117,45 @@ test("evaluateModelStageStorageHeadroom keeps a post-copy reserve", () => {
   assert.throws(() => evaluateModelStageStorageHeadroom(1, -1), /availableMiB/);
 });
 
+test("evaluateModelStageMemoryFit bounds projected llama.cpp working sets", () => {
+  const fit = evaluateModelStageMemoryFit(2_000 * MiB + 1, {
+    memoryBudgetMiB: 4096,
+    memoryBudgetSource: "config",
+    safeMemoryBudgetMiB: 3276,
+    nonModelWorkingSetMiB: 1136,
+  });
+
+  assert.deepEqual(fit, {
+    sourceMiB: 2001,
+    nonModelWorkingSetMiB: 1136,
+    projectedWorkingSetMiB: 3137,
+    safeMemoryBudgetMiB: 3276,
+    memoryBudgetMiB: 4096,
+    memoryBudgetSource: "config",
+    ok: true,
+  });
+  assert.equal(
+    evaluateModelStageMemoryFit(2_200 * MiB, {
+      memoryBudgetMiB: 4096,
+      memoryBudgetSource: "config",
+      safeMemoryBudgetMiB: 3276,
+      nonModelWorkingSetMiB: 1136,
+    })?.ok,
+    false,
+  );
+  assert.equal(evaluateModelStageMemoryFit(1, {}), undefined);
+  assert.throws(
+    () =>
+      evaluateModelStageMemoryFit(-1, {
+        memoryBudgetMiB: 4096,
+        memoryBudgetSource: "config",
+        safeMemoryBudgetMiB: 3276,
+        nonModelWorkingSetMiB: 1136,
+      }),
+    /sourceBytes/,
+  );
+});
+
 test("resolveModelStageAvailableStorageMiB handles Bun statfs zero block size", () => {
   assert.equal(
     resolveModelStageAvailableStorageMiB({
@@ -158,6 +198,10 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
   assert.equal(plan.binaryPath, "/usr/local/bin/llama-server");
   assert.equal(plan.binaryDirectory, "/usr/local/bin");
   assert.equal(plan.modelPath, "/var/lib/ray/models/portable-1b.gguf");
+  assert.equal(plan.memoryBudgetMiB, 4096);
+  assert.equal(plan.memoryBudgetSource, "config");
+  assert.equal(plan.safeMemoryBudgetMiB, 3276);
+  assert.equal(plan.nonModelWorkingSetMiB, 1136);
   assert.deepEqual(plan.commands, [
     "timeout 60s sudo install -d -m 0755 '/usr/local/bin'",
     `binary_source_bytes="$(timeout 30s stat -c %s -- './bin/llama-server')" || exit "$?"; test "\${binary_source_bytes:-0}" -le 536870912 || { printf '%s\\n' 'llama-server source must be at most 512 MiB before copying to /usr/local/bin/llama-server.' >&2; exit 1; }`,
@@ -166,6 +210,7 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
     "timeout 30s sudo -u 'rayops' test -x '/usr/local/bin/llama-server'",
     "timeout 15s sudo -u 'rayops' timeout 5s '/usr/local/bin/llama-server' --help >/dev/null",
     "timeout 60s sudo install -d -m 0755 '/var/lib/ray/models'",
+    `source_mib="$(timeout 60s du -m './models/portable-1b.gguf' | awk 'NR==1 {print $1}')" || exit "$?"; projected_mib="$((\${source_mib:-0} + 1136))"; test "$projected_mib" -le 3276 || { printf '%s\\n' "Projected llama.cpp working set would be \${projected_mib} MiB, above the safe budget of 3276 MiB on the 4096 MiB config memory target. Use a smaller GGUF or reduce cache/context before staging." >&2; exit 1; }`,
     `du_output="$(timeout 60s du -m './models/portable-1b.gguf')" || exit "$?"; df_output="$(timeout 30s df -Pm '/var/lib/ray/models')" || exit "$?"; required_mib="$(printf '%s\\n' "$du_output" | awk 'NR==1 {print $1 + 256}')"; available_mib="$(printf '%s\\n' "$df_output" | awk 'NR==2 {print $4}')"; test "\${available_mib:-0}" -ge "\${required_mib:-0}" || { printf '%s\\n' 'Not enough free space in /var/lib/ray/models: keep at least 256 MiB free after copying the GGUF.' >&2; exit 1; }`,
     `magic="$(timeout 30s head -c 4 -- './models/portable-1b.gguf')" || exit "$?"; test "$magic" = 'GGUF' || { printf '%s\\n' 'GGUF source does not start with the GGUF header: ./models/portable-1b.gguf' >&2; exit 1; }`,
     "timeout 1800s sudo install -D -m 0640 -- './models/portable-1b.gguf' '/var/lib/ray/models/portable-1b.gguf'",
@@ -203,7 +248,35 @@ test("createModelStagePlan reads staging sources and checksums from env", async 
     plan.commands.join("\n"),
     /timeout 1800s sudo install -D -m 0640 -- '\/tmp\/ray-artifacts\/local-1b-q4\.gguf' '\/var\/lib\/ray\/models\/local-1b-q4\.gguf'/,
   );
+  assert.match(plan.commands.join("\n"), /Projected llama\.cpp working set would be/);
   assert.match(plan.commands.join("\n"), /timeout 30s df -Pm '\/var\/lib\/ray\/models'/);
+});
+
+test("createModelStagePlan uses deploy memory env for staging fit checks", async () => {
+  const plan = await createModelStagePlan({
+    cwd: repoRoot,
+    configPath: "./examples/config/ray.1b.generic.public.json",
+    env: {
+      RAY_DEPLOY_MEMORY_MIB: "8192",
+    },
+  });
+
+  assert.equal(plan.memoryBudgetMiB, 8192);
+  assert.equal(plan.memoryBudgetSource, "env");
+  assert.match(plan.commands.join("\n"), /8192 MiB env memory target/);
+});
+
+test("createModelStagePlan rejects malformed deploy memory env", async () => {
+  await assert.rejects(
+    createModelStagePlan({
+      cwd: repoRoot,
+      configPath: "./examples/config/ray.1b.generic.public.json",
+      env: {
+        RAY_DEPLOY_MEMORY_MIB: "0",
+      },
+    }),
+    /RAY_DEPLOY_MEMORY_MIB must be a positive integer/,
+  );
 });
 
 test("formatTextPlan prints an operator-ready staging plan", async () => {
@@ -222,6 +295,8 @@ test("formatTextPlan prints an operator-ready staging plan", async () => {
     /timeout 15s sudo -u 'ray' timeout 5s '\/usr\/local\/bin\/llama-server' --help >\/dev\/null/,
   );
   assert.match(text, /target GGUF: \/var\/lib\/ray\/models\/qwen2\.5-0\.5b-instruct-q4_k_m\.gguf/);
+  assert.match(text, /memory target: 4096 MiB config target/);
+  assert.match(text, /Projected llama\.cpp working set would be/);
   assert.match(text, /keep at least 256 MiB free after copying the GGUF/);
   assert.match(text, /timeout 30s head -c 4/);
   assert.match(text, /GGUF source does not start with the GGUF header/);
@@ -358,6 +433,35 @@ test("checkModelStageSources rejects oversized source binaries before startup pr
   await assert.rejects(
     checkModelStageSources(tempDir, plan),
     /llama-server source must be at most 512 MiB/,
+  );
+});
+
+test("checkModelStageSources rejects GGUF sources that exceed the memory target", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-memory-fit-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const binaryPath = path.join(tempDir, "llama-server");
+  const modelPath = path.join(tempDir, "model.gguf");
+  await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
+  await writeFile(modelPath, "GGUF", "utf8");
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o644);
+
+  const plan = await createModelStagePlan({
+    cwd: tempDir,
+    configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
+    env: {
+      RAY_DEPLOY_MEMORY_MIB: "1024",
+    },
+    binarySourcePath: "./llama-server",
+    sourcePath: "./model.gguf",
+  });
+
+  await assert.rejects(
+    checkModelStageSources(tempDir, plan),
+    /projected llama\.cpp working set.*safe budget/,
   );
 });
 

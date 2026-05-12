@@ -19,6 +19,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { loadRayConfig } from "../packages/config/src/index.ts";
 import { parseEnvironmentFile } from "../packages/deploy/src/cli.ts";
+import { estimateLlamaCppMemoryFit } from "../packages/deploy/src/index.ts";
 
 const DEFAULT_CONFIG_PATH = "./examples/config/ray.sub1b.public.json";
 const DEFAULT_SERVICE_USER = "ray";
@@ -98,6 +99,10 @@ export interface ModelStagePlan {
   binarySha256?: string;
   sourcePath?: string;
   sha256?: string;
+  memoryBudgetMiB?: number;
+  memoryBudgetSource?: "env" | "config";
+  safeMemoryBudgetMiB?: number;
+  nonModelWorkingSetMiB?: number;
   commands: string[];
 }
 
@@ -131,6 +136,16 @@ export interface ModelStageStorageStats {
   bsize?: number | bigint;
   blocks?: number | bigint;
   ffree?: number | bigint;
+}
+
+export interface ModelStageMemoryFit {
+  sourceMiB: number;
+  nonModelWorkingSetMiB: number;
+  projectedWorkingSetMiB: number;
+  safeMemoryBudgetMiB: number;
+  memoryBudgetMiB: number;
+  memoryBudgetSource: "env" | "config";
+  ok: boolean;
 }
 
 const HELP = `Stage local artifacts for a generated Ray llama.cpp service.
@@ -203,6 +218,35 @@ function normalizeServicePrincipal(value: string, label: string): string {
 
 function readNonEmptyEnvValue(value: string | undefined): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function parseOptionalPositiveIntegerEnv(
+  value: string | undefined,
+  label: string,
+): number | undefined {
+  const normalized = readNonEmptyEnvValue(value);
+  if (normalized === undefined) {
+    return undefined;
+  }
+
+  const parsed = Number(normalized);
+  if (!/^\d+$/.test(normalized) || !Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+
+  return parsed;
+}
+
+function resolvePresetMemoryBudgetMiB(preset: string): number {
+  switch (preset) {
+    case "single-vps-sub1b":
+    case "single-vps-sub1b-cx23":
+    case "single-vps-sub1b-cax11":
+    case "single-vps-1b-cx23":
+      return 4096;
+    default:
+      return 8192;
+  }
 }
 
 function normalizeOptionalPath(value: string, label: string): string {
@@ -409,6 +453,15 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
   )})" || exit "$?"; test "$magic" = ${shellQuote(GGUF_MAGIC)} || { printf '%s\\n' ${shellQuote(
     `GGUF source does not start with the ${GGUF_MAGIC} header: ${sourcePath}`,
   )} >&2; exit 1; }`;
+  const modelMemoryPreflight =
+    plan.memoryBudgetMiB !== undefined &&
+    plan.memoryBudgetSource !== undefined &&
+    plan.safeMemoryBudgetMiB !== undefined &&
+    plan.nonModelWorkingSetMiB !== undefined
+      ? `source_mib="$(timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s du -m ${shellQuote(
+          sourcePath,
+        )} | awk 'NR==1 {print $1}')" || exit "$?"; projected_mib="$((\${source_mib:-0} + ${plan.nonModelWorkingSetMiB}))"; test "$projected_mib" -le ${plan.safeMemoryBudgetMiB} || { printf '%s\\n' "Projected llama.cpp working set would be \${projected_mib} MiB, above the safe budget of ${plan.safeMemoryBudgetMiB} MiB on the ${plan.memoryBudgetMiB} MiB ${plan.memoryBudgetSource} memory target. Use a smaller GGUF or reduce cache/context before staging." >&2; exit 1; }`
+      : undefined;
   const commands = [
     `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo install -d -m 0755 ${shellQuote(plan.binaryDirectory)}`,
     binarySourcePreflight,
@@ -416,6 +469,7 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
     `timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s sudo -u ${shellQuote(plan.serviceUser)} test -x ${shellQuote(plan.binaryPath)}`,
     `timeout ${STAGE_SERVICE_PROBE_TIMEOUT_SECONDS}s sudo -u ${shellQuote(plan.serviceUser)} timeout ${LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS}s ${shellQuote(plan.binaryPath)} --help >/dev/null`,
     `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo install -d -m 0755 ${shellQuote(plan.modelDirectory)}`,
+    ...(modelMemoryPreflight ? [modelMemoryPreflight] : []),
     modelStoragePreflight,
     modelFormatPreflight,
     `timeout ${STAGE_MODEL_COPY_TIMEOUT_SECONDS}s sudo install -D -m 0640 -- ${shellQuote(sourcePath)} ${shellQuote(plan.modelPath)}`,
@@ -498,6 +552,21 @@ export async function createModelStagePlan(options: {
   const sha256 = sha256Value
     ? normalizeSha256(sha256Value, options.sha256 ? "--sha256" : MODEL_SHA256_ENV)
     : undefined;
+  const memoryBudgetOverrideMiB = parseOptionalPositiveIntegerEnv(
+    env.RAY_DEPLOY_MEMORY_MIB,
+    "RAY_DEPLOY_MEMORY_MIB",
+  );
+  const memoryBudgetMiB =
+    memoryBudgetOverrideMiB ??
+    loaded.config.model.operational?.memoryClassMiB ??
+    resolvePresetMemoryBudgetMiB(adapter.launchProfile.preset);
+  const memoryBudgetSource =
+    memoryBudgetOverrideMiB !== undefined ? ("env" as const) : ("config" as const);
+  const memoryEstimate = estimateLlamaCppMemoryFit(loaded.config, adapter.launchProfile, {
+    memoryBudgetMiB,
+    memoryBudgetSource: memoryBudgetSource === "env" ? "override" : "preset",
+    modelFileBytes: 0,
+  });
 
   const planWithoutCommands: Omit<ModelStagePlan, "commands"> = {
     configPath: loaded.configPath ?? path.resolve(cwd, options.configPath),
@@ -518,6 +587,14 @@ export async function createModelStagePlan(options: {
     ...(binarySha256 ? { binarySha256 } : {}),
     ...(sourcePath ? { sourcePath } : {}),
     ...(sha256 ? { sha256 } : {}),
+    memoryBudgetMiB,
+    memoryBudgetSource,
+    ...(memoryEstimate
+      ? {
+          safeMemoryBudgetMiB: memoryEstimate.safeBudgetMiB,
+          nonModelWorkingSetMiB: memoryEstimate.projectedWorkingSetMiB,
+        }
+      : {}),
   };
 
   return {
@@ -565,6 +642,16 @@ export function formatTextPlan(cwd: string, plan: ModelStagePlan): string {
 
   if (plan.binarySha256) {
     lines.push(`- expected binary sha256: ${plan.binarySha256}`);
+  }
+
+  if (
+    plan.memoryBudgetMiB !== undefined &&
+    plan.safeMemoryBudgetMiB !== undefined &&
+    plan.nonModelWorkingSetMiB !== undefined
+  ) {
+    lines.push(
+      `- memory target: ${plan.memoryBudgetMiB} MiB ${plan.memoryBudgetSource} target, ${plan.safeMemoryBudgetMiB} MiB safe budget, ${plan.nonModelWorkingSetMiB} MiB non-model working set`,
+    );
   }
 
   lines.push("", "Run on the VPS:");
@@ -699,13 +786,14 @@ export async function checkModelStageSources(cwd: string, plan: ModelStagePlan):
   if (plan.binarySha256) {
     await assertSha256(binarySourcePath, plan.binarySha256, "llama-server source");
   }
+  const modelStats = await assertRegularReadableFile(modelSourcePath, "GGUF source");
+  assertModelStageMemoryFit(modelStats.size, plan);
   await access(binarySourcePath, constants.X_OK).catch((error: unknown) => {
     throw new Error(
       `llama-server source is not executable at ${binarySourcePath}: ${error instanceof Error ? error.message : String(error)}`,
     );
   });
   await assertLlamaCppBinaryStarts(binarySourcePath, "llama-server source");
-  await assertRegularReadableFile(modelSourcePath, "GGUF source");
   await assertGgufMagicHeader(modelSourcePath, "GGUF source");
 
   if (plan.sha256) {
@@ -934,6 +1022,52 @@ export function evaluateModelStageStorageHeadroom(
     availableMiB,
     ok: availableMiB >= requiredMiB,
   };
+}
+
+export function evaluateModelStageMemoryFit(
+  sourceBytes: number,
+  plan: Pick<
+    ModelStagePlan,
+    "memoryBudgetMiB" | "memoryBudgetSource" | "safeMemoryBudgetMiB" | "nonModelWorkingSetMiB"
+  >,
+): ModelStageMemoryFit | undefined {
+  if (
+    plan.memoryBudgetMiB === undefined ||
+    plan.memoryBudgetSource === undefined ||
+    plan.safeMemoryBudgetMiB === undefined ||
+    plan.nonModelWorkingSetMiB === undefined
+  ) {
+    return undefined;
+  }
+
+  if (!Number.isSafeInteger(sourceBytes) || sourceBytes < 0) {
+    throw new Error("sourceBytes must be a non-negative safe integer");
+  }
+
+  const sourceMiB = Math.max(1, Math.ceil(sourceBytes / BYTES_PER_MIB));
+  const projectedWorkingSetMiB = sourceMiB + plan.nonModelWorkingSetMiB;
+
+  return {
+    sourceMiB,
+    nonModelWorkingSetMiB: plan.nonModelWorkingSetMiB,
+    projectedWorkingSetMiB,
+    safeMemoryBudgetMiB: plan.safeMemoryBudgetMiB,
+    memoryBudgetMiB: plan.memoryBudgetMiB,
+    memoryBudgetSource: plan.memoryBudgetSource,
+    ok: projectedWorkingSetMiB <= plan.safeMemoryBudgetMiB,
+  };
+}
+
+function assertModelStageMemoryFit(sourceBytes: number, plan: ModelStagePlan): void {
+  const fit = evaluateModelStageMemoryFit(sourceBytes, plan);
+
+  if (!fit || fit.ok) {
+    return;
+  }
+
+  throw new Error(
+    `GGUF source is ${fit.sourceMiB} MiB, producing a projected llama.cpp working set of ${fit.projectedWorkingSetMiB} MiB, above the safe budget of ${fit.safeMemoryBudgetMiB} MiB on the ${fit.memoryBudgetMiB} MiB ${fit.memoryBudgetSource} memory target. Use a smaller GGUF or reduce cache/context before staging.`,
+  );
 }
 
 async function assertModelStageStorageHeadroom(
