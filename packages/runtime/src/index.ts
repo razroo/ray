@@ -180,6 +180,7 @@ const MIN_PROVIDER_RESULT_OUTPUT_CHARS = 8_192;
 const MAX_PROVIDER_RESULT_OUTPUT_CHARS = 262_144;
 const MAX_PROVIDER_RESULT_CHARS_PER_TOKEN = 64;
 const MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS = 512;
+const MAX_PROVIDER_MODEL_ID_CHARS = 512;
 const MAX_PROVIDER_HEALTH_CHECKED_AT_CHARS = 128;
 const MAX_PROVIDER_HEALTH_STRING_CHARS = 512;
 const MAX_PROVIDER_HEALTH_DETAIL_DEPTH = 6;
@@ -1799,6 +1800,38 @@ function buildResponse(
   };
 }
 
+function truncateProviderModelId(value: string): string {
+  if (value.length <= MAX_PROVIDER_MODEL_ID_CHARS) {
+    return value;
+  }
+
+  let headChars = MAX_PROVIDER_MODEL_ID_CHARS;
+
+  for (;;) {
+    const omittedChars = value.length - headChars;
+    const suffix = `...[truncated ${omittedChars} chars]`;
+    const nextHeadChars = MAX_PROVIDER_MODEL_ID_CHARS - suffix.length;
+
+    if (nextHeadChars <= 0) {
+      return suffix.slice(0, MAX_PROVIDER_MODEL_ID_CHARS);
+    }
+
+    if (nextHeadChars === headChars) {
+      return `${value.slice(0, headChars)}${suffix}`;
+    }
+
+    headChars = nextHeadChars;
+  }
+}
+
+function normalizeProviderModelId(value: unknown, fallback: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    return fallback;
+  }
+
+  return truncateProviderModelId(value);
+}
+
 function estimateCachedInferencePayloadBytes(
   payload: CachedInferencePayload,
   cacheKey: string,
@@ -2599,6 +2632,7 @@ export class RayRuntime {
   private providerHealthInFlight: Promise<ProviderHealthSnapshot> | undefined;
   private activePreparations = 0;
   private readonly preparationQueue: PreparationQueueEntry[] = [];
+  private readonly providerModelId: string;
   private readonly memoryUsage: () => NodeJS.MemoryUsage;
   private readonly cgroupMemory: CgroupMemoryReader | undefined;
   private readonly cgroupCpu: CgroupCpuReader | undefined;
@@ -2620,6 +2654,7 @@ export class RayRuntime {
   constructor(config: RayConfig, options: CreateRayRuntimeOptions = {}) {
     this.config = snapshotRayConfig(config);
     this.provider = options.provider ?? createModelProvider(this.config.model);
+    this.providerModelId = normalizeProviderModelId(this.provider.modelId, this.config.model.id);
     this.logger =
       options.logger ??
       new Logger(this.config.telemetry.serviceName, this.config.telemetry.logLevel);
@@ -2669,7 +2704,7 @@ export class RayRuntime {
       };
 
       this.logger.info("provider warmed", {
-        modelId: this.provider.modelId,
+        modelId: this.providerModelId,
       });
     } catch (error) {
       this.warmState = "failed";
@@ -2888,7 +2923,7 @@ export class RayRuntime {
           requestId,
           latencyMs,
           queueTimeMs: scheduled.queueTimeMs,
-          modelId: this.provider.modelId,
+          modelId: this.providerModelId,
         });
       }
 
@@ -2960,7 +2995,7 @@ export class RayRuntime {
       inFlight: snapshot.inFlight,
       cacheEntries: this.cache.size(),
       profile: this.config.profile,
-      modelId: this.provider.modelId,
+      modelId: this.providerModelId,
       provider,
       runtime: runtimeHealth,
     };
@@ -3117,7 +3152,7 @@ export class RayRuntime {
     preparation?: ProviderRequestPreparation,
   ): CachedInferencePayload {
     return {
-      model: this.provider.modelId,
+      model: this.providerModelId,
       output: scheduled.value.output,
       usage: computeUsage(request, scheduled.value, preparation),
       degraded,

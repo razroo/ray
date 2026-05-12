@@ -716,6 +716,44 @@ test("runtime returns chars and provider token usage explicitly", async () => {
   });
 });
 
+test("runtime bounds retained provider model identifiers", async () => {
+  let inferCalls = 0;
+  const oversizedModelId = `model-${"x".repeat(700)}`;
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: oversizedModelId,
+    capabilities: {
+      streaming: false,
+      quantized: false,
+      localBackend: true,
+    },
+    async infer() {
+      inferCalls += 1;
+      return {
+        output: "done",
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+  const first = await runtime.infer({
+    input: "hello world",
+  });
+  const second = await runtime.infer({
+    input: "hello world",
+  });
+  const health = await runtime.health();
+
+  assert.equal(first.cached, false);
+  assert.equal(second.cached, true);
+  assert.equal(inferCalls, 1);
+  assert.equal(first.model.length, 512);
+  assert.equal(second.model, first.model);
+  assert.equal(health.modelId, first.model);
+  assert.notEqual(first.model, oversizedModelId);
+  assert.match(first.model, /\[truncated \d+ chars\]$/);
+});
+
 test("runtime health reports upstream unavailability", async () => {
   const provider: ModelProvider = {
     kind: "openai-compatible",

@@ -5,9 +5,9 @@ import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
-import { createRayRuntime } from "@ray/runtime";
+import { createRayRuntime, type RayRuntime } from "@ray/runtime";
 import { Logger } from "@ray/telemetry";
-import { RayError, type ModelProvider } from "@razroo/ray-core";
+import { RayError } from "@razroo/ray-core";
 import { DurableInferenceQueue } from "./async-jobs.js";
 
 const PERSISTED_JOB_FILE_LIMIT_BYTES = 2 * 1024 * 1024;
@@ -521,19 +521,27 @@ test("durable inference queue fails oversized persisted results without writing 
         },
       },
     });
-    const provider: ModelProvider = {
-      modelId: "x".repeat(PERSISTED_JOB_FILE_LIMIT_BYTES),
-      kind: "mock",
-      capabilities: {
-        streaming: false,
-        quantized: false,
-        localBackend: true,
-      },
+    const runtime = {
+      config,
       infer: async () => ({
+        id: "req_oversized_persisted_result",
+        model: "x".repeat(PERSISTED_JOB_FILE_LIMIT_BYTES),
         output: "done",
+        usage: {
+          chars: {
+            prompt: 0,
+            completion: 4,
+            total: 4,
+          },
+        },
+        cached: false,
+        deduplicated: false,
+        queueTimeMs: 0,
+        latencyMs: 1,
+        degraded: false,
+        createdAt: new Date().toISOString(),
       }),
-    };
-    const runtime = createRayRuntime(config, { provider });
+    } as unknown as RayRuntime;
     const logger = new Logger("test", "error");
     const queue = new DurableInferenceQueue({
       config: config.asyncQueue,
