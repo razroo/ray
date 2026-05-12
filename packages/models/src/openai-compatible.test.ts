@@ -11,6 +11,7 @@ import {
   BACKEND_ERROR_BODY_LIMIT_BYTES,
   BACKEND_RESPONSE_BODY_LIMIT_BYTES,
   adapterRequest,
+  extractAssistantText,
 } from "./providers/http.js";
 
 function createModel(
@@ -191,6 +192,46 @@ test("adapterRequest rejects invalid direct adapter config before dispatch", asy
         {},
       ),
     /adapter\.headers must not contain unreadable properties/,
+  );
+});
+
+test("extractAssistantText tolerates malformed OpenAI content parts", () => {
+  const text = extractAssistantText({
+    choices: [
+      {
+        message: {
+          content: [
+            null as never,
+            { type: "output_text" },
+            { type: "output_text", text: " hello" },
+            { type: "output_text", text: " world " },
+          ],
+        },
+      },
+    ],
+  });
+
+  assert.equal(text, "hello world");
+});
+
+test("extractAssistantText rejects excessive OpenAI content parts", () => {
+  assert.throws(
+    () =>
+      extractAssistantText({
+        choices: [
+          {
+            message: {
+              content: Array.from({ length: 513 }, () => ({ text: "x" })),
+            },
+          },
+        ],
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_invalid_response");
+      assert.equal((error as { status?: number }).status, 502);
+      return true;
+    },
   );
 });
 

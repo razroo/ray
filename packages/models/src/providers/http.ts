@@ -51,6 +51,7 @@ const MAX_ADAPTER_WARMUP_STOP_SEQUENCE_CHARS = 256;
 const MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLES = 32;
 const MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLE_KEY_CHARS = 128;
 const MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLE_VALUE_CHARS = 16_384;
+const MAX_ASSISTANT_CONTENT_PARTS = 512;
 const unsafeAdapterRecordKeys = new Set(["__proto__", "constructor", "prototype"]);
 
 interface LimitedResponseBody {
@@ -98,6 +99,19 @@ export function normalizeOpenAICompatibleTokenUsage(
       total: total !== undefined && total >= computedTotal ? total : computedTotal,
     },
   };
+}
+
+function extractAssistantContentPartText(part: unknown): string {
+  if (part === null || typeof part !== "object") {
+    return "";
+  }
+
+  try {
+    const text = (part as { text?: unknown }).text;
+    return typeof text === "string" ? text : "";
+  } catch {
+    return "";
+  }
 }
 
 function assertStringLength(value: string, label: string, maximum: number): void {
@@ -660,10 +674,24 @@ export function extractAssistantText(payload: OpenAICompatibleResponse): string 
   }
 
   if (Array.isArray(content)) {
-    const text = content
-      .map((part) => (typeof part.text === "string" ? part.text : ""))
-      .join("")
-      .trim();
+    if (content.length > MAX_ASSISTANT_CONTENT_PARTS) {
+      throw new RayError("The backend returned too many assistant content parts", {
+        code: "provider_invalid_response",
+        status: 502,
+        details: {
+          maxParts: MAX_ASSISTANT_CONTENT_PARTS,
+          actualParts: content.length,
+        },
+      });
+    }
+
+    let text = "";
+
+    for (const part of content) {
+      text += extractAssistantContentPartText(part);
+    }
+
+    text = text.trim();
 
     if (text.length > 0) {
       return text;
