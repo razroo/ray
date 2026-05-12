@@ -262,6 +262,10 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "$RAY_DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+          if ! ssh-keygen -y -f ~/.ssh/deploy_key >/dev/null 2>&1; then
+            echo "::error::RAY_DEPLOY_SSH_KEY must be an unencrypted private SSH key readable by OpenSSH."
+            exit 1
+          fi
           printf '%s\n' "$RAY_DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           KNOWN_HOST_LOOKUP=$(RAY_DEPLOY_HOST="$RAY_DEPLOY_HOST" SSH_PORT="${SSH_PORT:-22}" bun --eval '
           import { formatDeployKnownHostLookup } from "./packages/deploy/dist/cli.js";
