@@ -2063,6 +2063,30 @@ function truncateProviderHealthString(
   return `${value.slice(0, maxChars)}...[truncated ${value.length - maxChars} chars]`;
 }
 
+function truncateProviderHealthKey(value: string): string {
+  if (value.length <= MAX_PROVIDER_HEALTH_DETAIL_KEY_CHARS) {
+    return value;
+  }
+
+  let headChars = MAX_PROVIDER_HEALTH_DETAIL_KEY_CHARS;
+
+  for (;;) {
+    const omittedChars = value.length - headChars;
+    const suffix = `...[truncated ${omittedChars} chars]`;
+    const nextHeadChars = MAX_PROVIDER_HEALTH_DETAIL_KEY_CHARS - suffix.length;
+
+    if (nextHeadChars <= 0) {
+      return suffix.slice(0, MAX_PROVIDER_HEALTH_DETAIL_KEY_CHARS);
+    }
+
+    if (nextHeadChars === headChars) {
+      return `${value.slice(0, headChars)}${suffix}`;
+    }
+
+    headChars = nextHeadChars;
+  }
+}
+
 function assertProviderHealthString(
   value: unknown,
   field: string,
@@ -2222,7 +2246,7 @@ function snapshotProviderHealthDetail(value: unknown, seen: WeakSet<object>, dep
     }
 
     for (const key of keys.slice(0, MAX_PROVIDER_HEALTH_DETAIL_OBJECT_KEYS)) {
-      const safeKey = truncateProviderHealthString(key, MAX_PROVIDER_HEALTH_DETAIL_KEY_CHARS);
+      const safeKey = truncateProviderHealthKey(key);
 
       try {
         output[safeKey] = snapshotProviderHealthDetail(
@@ -2282,8 +2306,7 @@ function normalizeProviderCapabilityErrors(value: unknown): Record<string, strin
       continue;
     }
 
-    errors[truncateProviderHealthString(key, MAX_PROVIDER_HEALTH_DETAIL_KEY_CHARS)] =
-      truncateProviderHealthString(entry);
+    errors[truncateProviderHealthKey(key)] = truncateProviderHealthString(entry);
   }
 
   return Object.keys(errors).length > 0 ? errors : undefined;

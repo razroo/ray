@@ -45,6 +45,30 @@ function truncateDetailString(value: string, maxChars = MAX_ERROR_DETAIL_STRING_
   return `${value.slice(0, maxChars)}...[truncated ${value.length - maxChars} chars]`;
 }
 
+function truncateDetailKey(value: string): string {
+  if (value.length <= MAX_ERROR_DETAIL_KEY_CHARS) {
+    return value;
+  }
+
+  let headChars = MAX_ERROR_DETAIL_KEY_CHARS;
+
+  for (;;) {
+    const omittedChars = value.length - headChars;
+    const suffix = `...[truncated ${omittedChars} chars]`;
+    const nextHeadChars = MAX_ERROR_DETAIL_KEY_CHARS - suffix.length;
+
+    if (nextHeadChars <= 0) {
+      return suffix.slice(0, MAX_ERROR_DETAIL_KEY_CHARS);
+    }
+
+    if (nextHeadChars === headChars) {
+      return `${value.slice(0, headChars)}${suffix}`;
+    }
+
+    headChars = nextHeadChars;
+  }
+}
+
 function snapshotErrorDetail(value: unknown, seen: WeakSet<object>, depth = 0): unknown {
   if (value === null || value === undefined) {
     return value;
@@ -124,7 +148,7 @@ function snapshotErrorDetail(value: unknown, seen: WeakSet<object>, depth = 0): 
     }
 
     for (const key of keys.slice(0, MAX_ERROR_DETAIL_OBJECT_KEYS)) {
-      const safeKey = truncateDetailString(key, MAX_ERROR_DETAIL_KEY_CHARS);
+      const safeKey = truncateDetailKey(key);
 
       try {
         output[safeKey] = snapshotErrorDetail(

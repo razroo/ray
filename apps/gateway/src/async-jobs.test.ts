@@ -651,8 +651,9 @@ test("durable inference queue persists bounded JSON-safe job error details", asy
     assert.equal(errorDetails?.explode, "[Thrown: getter boom]");
     assert.equal(errorDetails?.bytes, "[Uint8Array 16 bytes]");
     assert.equal(errorDetails?.values?.at(-1), "[Truncated 8 items]");
-    assert.equal(errorDetails?.[`${longKey.slice(0, 128)}...[truncated 13 chars]`], "bounded-key");
+    assert.equal(errorDetails?.[`k${"x".repeat(104)}...[truncated 36 chars]`], "bounded-key");
     assert.equal(errorDetails?.[longKey], undefined);
+    assert.ok(Object.keys(errorDetails ?? {}).every((key) => key.length <= 128));
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }

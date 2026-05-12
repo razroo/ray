@@ -839,10 +839,8 @@ test("gateway serializes unusual health details without failing the response", a
   };
   assert.equal(body.provider.details.count, "2");
   assert.equal(body.provider.details.self, "[Circular]");
-  assert.equal(
-    body.provider.details[`${longKey.slice(0, 128)}...[truncated 13 chars]`],
-    "bounded-key",
-  );
+  assert.equal(body.provider.details[`k${"x".repeat(104)}...[truncated 36 chars]`], "bounded-key");
+  assert.ok(Object.keys(body.provider.details).every((key) => key.length <= 128));
 });
 
 test("gateway serializes unusual error details without masking the original status", async (t) => {

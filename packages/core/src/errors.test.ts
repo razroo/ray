@@ -66,8 +66,9 @@ test("RayError stores bounded JSON-safe details", () => {
   assert.equal(snapshot.explode, "[Thrown: getter boom]");
   assert.equal(snapshot.bytes, "[Uint8Array 16 bytes]");
   assert.equal(snapshot.values?.at(-1), "[Truncated 1 items]");
-  assert.equal(snapshot[`${longKey.slice(0, 128)}...[truncated 13 chars]`], "bounded-key");
+  assert.equal(snapshot[`k${"x".repeat(104)}...[truncated 36 chars]`], "bounded-key");
   assert.equal(snapshot[longKey], undefined);
+  assert.ok(Object.keys(snapshot).every((key) => key.length <= 128));
 });
 
 test("RayError converts nested Error details into bounded objects", () => {

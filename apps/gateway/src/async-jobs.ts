@@ -485,6 +485,30 @@ function truncateJobErrorString(value: string, maxChars = MAX_JOB_ERROR_MESSAGE_
   return `${value.slice(0, maxChars)}...[truncated ${value.length - maxChars} chars]`;
 }
 
+function truncateJobErrorDetailKey(value: string): string {
+  if (value.length <= MAX_JOB_ERROR_DETAIL_KEY_CHARS) {
+    return value;
+  }
+
+  let headChars = MAX_JOB_ERROR_DETAIL_KEY_CHARS;
+
+  for (;;) {
+    const omittedChars = value.length - headChars;
+    const suffix = `...[truncated ${omittedChars} chars]`;
+    const nextHeadChars = MAX_JOB_ERROR_DETAIL_KEY_CHARS - suffix.length;
+
+    if (nextHeadChars <= 0) {
+      return suffix.slice(0, MAX_JOB_ERROR_DETAIL_KEY_CHARS);
+    }
+
+    if (nextHeadChars === headChars) {
+      return `${value.slice(0, headChars)}${suffix}`;
+    }
+
+    headChars = nextHeadChars;
+  }
+}
+
 function truncateJobErrorDetailString(value: string, budget: JobErrorDetailBudget): string {
   const allowedChars = Math.min(value.length, MAX_JOB_ERROR_DETAIL_STRING_CHARS, budget.chars);
 
@@ -597,7 +621,7 @@ function sanitizeJobErrorDetail(
     const output: Record<string, unknown> = {};
 
     for (const key of keys.slice(0, MAX_JOB_ERROR_DETAIL_KEYS)) {
-      const safeKey = truncateJobErrorString(key, MAX_JOB_ERROR_DETAIL_KEY_CHARS);
+      const safeKey = truncateJobErrorDetailKey(key);
 
       if (budget.nodes <= 0) {
         output.__truncatedValues = true;

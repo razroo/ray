@@ -191,6 +191,30 @@ function truncateResponseString(value: string, maxChars = MAX_RESPONSE_STRING_CH
   return `${value.slice(0, maxChars)}...[truncated ${value.length - maxChars} chars]`;
 }
 
+function truncateResponseKey(value: string): string {
+  if (value.length <= MAX_RESPONSE_OBJECT_KEY_CHARS) {
+    return value;
+  }
+
+  let headChars = MAX_RESPONSE_OBJECT_KEY_CHARS;
+
+  for (;;) {
+    const omittedChars = value.length - headChars;
+    const suffix = `...[truncated ${omittedChars} chars]`;
+    const nextHeadChars = MAX_RESPONSE_OBJECT_KEY_CHARS - suffix.length;
+
+    if (nextHeadChars <= 0) {
+      return suffix.slice(0, MAX_RESPONSE_OBJECT_KEY_CHARS);
+    }
+
+    if (nextHeadChars === headChars) {
+      return `${value.slice(0, headChars)}${suffix}`;
+    }
+
+    headChars = nextHeadChars;
+  }
+}
+
 function sanitizeJsonResponseValue(value: unknown, seen: WeakSet<object>, depth = 0): unknown {
   if (value === null || value === undefined) {
     return value;
@@ -266,7 +290,7 @@ function sanitizeJsonResponseValue(value: unknown, seen: WeakSet<object>, depth 
     }
 
     for (const key of keys.slice(0, MAX_RESPONSE_OBJECT_KEYS)) {
-      const safeKey = truncateResponseString(key, MAX_RESPONSE_OBJECT_KEY_CHARS);
+      const safeKey = truncateResponseKey(key);
 
       try {
         output[safeKey] = sanitizeJsonResponseValue(

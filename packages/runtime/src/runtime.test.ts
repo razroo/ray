@@ -751,6 +751,8 @@ test("runtime bounds provider health snapshots before caching", async () => {
     message: "x".repeat(9_000),
     list: Array.from({ length: 70 }, (_entry, index) => index),
   };
+  const longKey = `k${"x".repeat(140)}`;
+  details[longKey] = "bounded-key";
   details.self = details;
   Object.defineProperty(details, "explode", {
     enumerable: true,
@@ -782,6 +784,7 @@ test("runtime bounds provider health snapshots before caching", async () => {
           totalSlots: 2,
           errors: {
             props: "p".repeat(9_000),
+            [longKey]: "capability-key",
           },
         },
         details,
@@ -803,6 +806,11 @@ test("runtime bounds provider health snapshots before caching", async () => {
   assert.equal(health.provider.details?.self, "[Circular]");
   assert.match(String(health.provider.details?.explode), /^\[Thrown:/);
   assert.equal((health.provider.details?.list as unknown[]).length, 65);
+  assert.equal(
+    health.provider.details?.[`k${"x".repeat(104)}...[truncated 36 chars]`],
+    "bounded-key",
+  );
+  assert.ok(Object.keys(health.provider.details ?? {}).every((key) => key.length <= 128));
   assert.match(
     String(health.provider.detectedCapabilities?.backendModel),
     /\[truncated 188 chars\]$/,
@@ -810,6 +818,15 @@ test("runtime bounds provider health snapshots before caching", async () => {
   assert.match(
     String(health.provider.detectedCapabilities?.errors?.props),
     /\[truncated 808 chars\]$/,
+  );
+  assert.equal(
+    health.provider.detectedCapabilities?.errors?.[`k${"x".repeat(104)}...[truncated 36 chars]`],
+    "capability-key",
+  );
+  assert.ok(
+    Object.keys(health.provider.detectedCapabilities?.errors ?? {}).every(
+      (key) => key.length <= 128,
+    ),
   );
 
   details.message = "mutated";
