@@ -56,6 +56,26 @@ test("collectConfigPaths returns sorted JSON config paths only", async (t) => {
   ]);
 });
 
+test("collectConfigPaths rejects excessive configs while streaming", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-config-collector-cap-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const configDir = path.join(tempDir, "configs");
+  await mkdir(configDir);
+  await Promise.all(
+    Array.from({ length: 129 }, (_value, index) =>
+      writeFile(path.join(configDir, `${index.toString().padStart(3, "0")}.json`), "{}"),
+    ),
+  );
+
+  await assert.rejects(
+    () => collectConfigPaths(tempDir, "configs"),
+    /Config directory must contain at most 128 JSON files/,
+  );
+});
+
 test("validateConfigFiles accepts every checked-in example config", async () => {
   const cwd = process.cwd();
   const configPaths = await collectConfigPaths(cwd, "examples/config");

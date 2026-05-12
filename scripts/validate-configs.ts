@@ -1,4 +1,4 @@
-import { readdir } from "node:fs/promises";
+import { opendir } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -143,18 +143,35 @@ export function parseArgs(argv: string[]): ValidateConfigsArgs {
 
 export async function collectConfigPaths(cwd: string, configDir: string): Promise<string[]> {
   const absoluteConfigDir = path.resolve(cwd, configDir);
-  const entries = await readdir(absoluteConfigDir, { withFileTypes: true });
-  const configPaths = entries
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-    .map((entry) => path.join(absoluteConfigDir, entry.name))
-    .sort();
+  const configPaths: string[] = [];
+  let directory: Awaited<ReturnType<typeof opendir>> | undefined;
+
+  try {
+    directory = await opendir(absoluteConfigDir);
+    for await (const entry of directory) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) {
+        continue;
+      }
+
+      configPaths.push(path.join(absoluteConfigDir, entry.name));
+      if (configPaths.length > MAX_CONFIG_FILES) {
+        throw new Error(`Config directory must contain at most ${MAX_CONFIG_FILES} JSON files`);
+      }
+    }
+  } finally {
+    if (directory) {
+      try {
+        await directory.close();
+      } catch {
+        // The async iterator closes the directory after normal completion.
+      }
+    }
+  }
+
+  configPaths.sort();
 
   if (configPaths.length === 0) {
     throw new Error(`No JSON config files found in ${absoluteConfigDir}`);
-  }
-
-  if (configPaths.length > MAX_CONFIG_FILES) {
-    throw new Error(`Config directory must contain at most ${MAX_CONFIG_FILES} JSON files`);
   }
 
   return configPaths;
