@@ -2,7 +2,7 @@
 
 Ray publishes **library** packages from this monorepo for TypeScript consumers. The gateway app (`apps/gateway`) stays source-first in the repo and is not published as an npm CLI in this layout.
 
-Push-time automation follows [**geometra**](https://github.com/razroo/geometra)-style naming: [**Quality checks**](../.github/workflows/quality.yml) runs a single job **`quality`** that executes **`bun run release:gate`** under Node 20 and Node 22. The gate covers lint, format check, full test build, public deploy bundle smoke rendering, and Bun pack smoke checks. Tags and **`gh release create`** follow the **`iso`** pattern ([**ray-core-release.yml**](../.github/workflows/ray-core-release.yml), [**ray-sdk-release.yml**](../.github/workflows/ray-sdk-release.yml)); publish workflows poll for the **`quality`** check run before `npm publish`, same idea as geometra's release workflow waiting on **`quality`**.
+Push-time automation follows [**geometra**](https://github.com/razroo/geometra)-style naming: [**Quality checks**](../.github/workflows/quality.yml) runs a single job **`quality`** that executes **`bun run release:gate`** under Node 20 and Node 22. The gate covers lint, format check, full test build, public deploy bundle smoke rendering, public model staging smoke rendering, and Bun pack smoke checks. Tags and **`gh release create`** follow the **`iso`** pattern ([**ray-core-release.yml**](../.github/workflows/ray-core-release.yml), [**ray-sdk-release.yml**](../.github/workflows/ray-sdk-release.yml)); publish workflows poll for the **`quality`** check run before `npm publish`, same idea as geometra's release workflow waiting on **`quality`**.
 
 ## Packages
 
