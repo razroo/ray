@@ -340,6 +340,7 @@ test "$caddy_status" -eq 0
 ```bash
 RAY_API_KEYS=replace-with-real-key bun run validate:config:all
 bun run deploy:smoke
+bun run deploy:scripts
 bun run model:stage:smoke
 bun run model:stage:1b
 bun run model:stage:1b:8gb
