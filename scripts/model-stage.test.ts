@@ -138,6 +138,7 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
     "sudo install -D -m 0755 -- './bin/llama-server' '/usr/local/bin/llama-server'",
     "printf '%s  %s\\n' 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' '/usr/local/bin/llama-server' | sha256sum -c -",
     "sudo -u 'rayops' test -x '/usr/local/bin/llama-server'",
+    "sudo -u 'rayops' timeout 5s '/usr/local/bin/llama-server' --help >/dev/null",
     "sudo install -d -m 0755 '/var/lib/ray/models'",
     `required_mib="$(du -m './models/portable-1b.gguf' | awk 'NR==1 {print $1 + 256}')"; available_mib="$(df -Pm '/var/lib/ray/models' | awk 'NR==2 {print $4}')"; test "\${available_mib:-0}" -ge "\${required_mib:-0}" || { printf '%s\\n' 'Not enough free space in /var/lib/ray/models: keep at least 256 MiB free after copying the GGUF.' >&2; exit 1; }`,
     "sudo install -D -m 0640 -- './models/portable-1b.gguf' '/var/lib/ray/models/portable-1b.gguf'",
@@ -185,6 +186,10 @@ test("formatTextPlan prints an operator-ready staging plan", async () => {
   assert.match(text, /Ray llama\.cpp artifact staging plan:/);
   assert.match(text, /binary source: pass --binary-source \/path\/to\/llama-server/);
   assert.match(text, /sudo install -D -m 0755 -- '\/path\/to\/llama-server'/);
+  assert.match(
+    text,
+    /sudo -u 'ray' timeout 5s '\/usr\/local\/bin\/llama-server' --help >\/dev\/null/,
+  );
   assert.match(text, /target GGUF: \/var\/lib\/ray\/models\/qwen2\.5-0\.5b-instruct-q4_k_m\.gguf/);
   assert.match(text, /keep at least 256 MiB free after copying the GGUF/);
   assert.match(text, /sudo install -D -m 0640 -- '\/path\/to\/model\.gguf'/);
@@ -204,6 +209,10 @@ test("formatCommandPlan prints shell commands only", async () => {
   assert.equal(text, plan.commands.join("\n"));
   assert.doesNotMatch(text, /Ray llama\.cpp artifact staging plan/);
   assert.match(text, /^sudo install -d -m 0755/);
+  assert.match(
+    text,
+    /sudo -u 'ray' timeout 5s '\/usr\/local\/bin\/llama-server' --help >\/dev\/null/,
+  );
   assert.match(text, /sudo -u 'ray' test -r/);
 });
 

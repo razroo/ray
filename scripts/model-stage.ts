@@ -24,6 +24,7 @@ const PRINCIPAL_LOOKUP_MAX_BUFFER_BYTES = 16 * 1024;
 const BYTES_PER_MIB = 1024 * 1024;
 const FALLBACK_STATFS_BLOCK_SIZE = 4096;
 const MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB = 256;
+const LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS = 5;
 const SYSTEMD_PRINCIPAL_PATTERN = /^(?:[A-Za-z_][A-Za-z0-9_-]{0,30}|[0-9]{1,10})$/;
 const SHA256_PATTERN = /^[a-fA-F0-9]{64}$/;
 const NUMERIC_PRINCIPAL_PATTERN = /^[0-9]{1,10}$/;
@@ -360,6 +361,7 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
     `sudo install -d -m 0755 ${shellQuote(plan.binaryDirectory)}`,
     `sudo install -D -m 0755 -- ${shellQuote(binarySourcePath)} ${shellQuote(plan.binaryPath)}`,
     `sudo -u ${shellQuote(plan.serviceUser)} test -x ${shellQuote(plan.binaryPath)}`,
+    `sudo -u ${shellQuote(plan.serviceUser)} timeout ${LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS}s ${shellQuote(plan.binaryPath)} --help >/dev/null`,
     `sudo install -d -m 0755 ${shellQuote(plan.modelDirectory)}`,
     modelStoragePreflight,
     `sudo install -D -m 0640 -- ${shellQuote(sourcePath)} ${shellQuote(plan.modelPath)}`,
