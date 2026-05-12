@@ -318,7 +318,10 @@ jobs:
 
           missing_packages=""
           if ! command -v curl >/dev/null 2>&1; then
-            missing_packages="$missing_packages curl ca-certificates"
+            missing_packages="$missing_packages curl"
+          fi
+          if [ ! -s /etc/ssl/certs/ca-certificates.crt ]; then
+            missing_packages="$missing_packages ca-certificates"
           fi
           if ! command -v unzip >/dev/null 2>&1; then
             missing_packages="$missing_packages unzip"
