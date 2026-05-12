@@ -42,6 +42,7 @@ type AsyncQueueStorageStatus = "directory" | "parent" | "not_directory" | "unrea
 type BinaryPreflightStatus = "found" | "missing" | "unreadable";
 type GatewayRuntimeBinaryStatus = BinaryPreflightStatus;
 type LlamaCppBinaryStatus = BinaryPreflightStatus;
+type EnvFileStatus = "found" | "missing" | "unreadable";
 type SwapStatus = "available" | "missing" | "unreadable";
 
 export interface DeploymentPreflight {
@@ -63,6 +64,10 @@ export interface DeploymentPreflight {
   llamaCppBinaryPath?: string;
   llamaCppBinaryStatus?: LlamaCppBinaryStatus;
   llamaCppBinaryError?: string;
+  envFilePath?: string;
+  envFileStatus?: EnvFileStatus;
+  envFileMode?: number;
+  envFileError?: string;
   swapStatus?: SwapStatus;
   swapTotalMiB?: number;
   swapError?: string;
@@ -93,6 +98,7 @@ const LLAMA_CPP_RUNTIME_RESERVE_MIB = 160;
 const MIN_SYSTEM_RESERVE_MIB = 768;
 const SYSTEM_RESERVE_RATIO = 0.2;
 const MIN_SMALL_VPS_SWAP_MIB = 1_024;
+const SECRET_ENV_FILE_OPEN_MODE_MASK = 0o077;
 const SCHEDULER_BYTES_PER_TOKEN = 768;
 const TIGHT_MEMORY_RATIO = 0.9;
 const LLAMA_CPP_SYSTEMD_SERVICE = "ray-llama-cpp.service";
@@ -554,6 +560,10 @@ function bytesToMiBRoundedUp(value: number): number {
 
 function formatMiB(value: number): string {
   return `${value.toLocaleString("en-US")} MiB`;
+}
+
+function formatFileMode(mode: number): string {
+  return `0${(mode & 0o777).toString(8).padStart(3, "0")}`;
 }
 
 function parseSwapTotalMiB(meminfo: string): number | undefined {
@@ -1051,6 +1061,35 @@ export function diagnoseConfig(
     });
   }
 
+  if (strictFilesystem && preflight?.envFileStatus !== undefined) {
+    const checkedEnvFile = preflight.envFilePath ?? envFile ?? "the configured EnvironmentFile";
+
+    if (preflight.envFileStatus === "missing") {
+      diagnostics.push({
+        level: "error",
+        code: "env_file_missing_on_disk",
+        message: `The configured EnvironmentFile was not found at ${checkedEnvFile}. Create it before rendering or restarting ray-gateway.service.`,
+      });
+    } else if (preflight.envFileStatus === "unreadable") {
+      diagnostics.push({
+        level: "error",
+        code: "env_file_unreadable",
+        message: `The configured EnvironmentFile at ${checkedEnvFile} could not be inspected${preflight.envFileError ? ` (${preflight.envFileError})` : ""}. Doctor cannot verify env-file readiness.`,
+      });
+    } else if (
+      preflight.envFileMode !== undefined &&
+      (preflight.envFileMode & SECRET_ENV_FILE_OPEN_MODE_MASK) !== 0
+    ) {
+      diagnostics.push({
+        level: "warn",
+        code: "env_file_permissions_open",
+        message: `EnvironmentFile ${checkedEnvFile} has mode ${formatFileMode(
+          preflight.envFileMode,
+        )}. /etc/ray/ray.env often contains API keys; use chmod 600 or similarly tight ownership before exposing Ray publicly.`,
+      });
+    }
+  }
+
   if (strictFilesystem && preflight?.gatewayRuntimeBinaryStatus !== undefined) {
     const runtimePath = preflight.gatewayRuntimeBinaryPath ?? "the configured gateway runtime";
 
@@ -1542,6 +1581,7 @@ export async function loadAndDiagnoseDeployment(options: {
     ...(options.memoryBudgetMiB !== undefined ? { memoryBudgetMiB: options.memoryBudgetMiB } : {}),
     ...(options.runtimeBinary !== undefined ? { runtimeBinary: options.runtimeBinary } : {}),
     ...(options.nodeBinary !== undefined ? { nodeBinary: options.nodeBinary } : {}),
+    ...(options.envFile !== undefined ? { envFile: options.envFile } : {}),
     ...(options.strictFilesystem !== undefined
       ? { strictFilesystem: options.strictFilesystem }
       : {}),
@@ -1692,6 +1732,51 @@ async function collectAsyncQueueStoragePreflight(
   }
 }
 
+async function collectEnvFilePreflight(
+  envFile: string | undefined,
+): Promise<Partial<DeploymentPreflight>> {
+  if (envFile === undefined) {
+    return {};
+  }
+
+  if (!path.isAbsolute(envFile)) {
+    return {
+      envFilePath: envFile,
+      envFileStatus: "unreadable",
+      envFileError: "EnvironmentFile path must be absolute",
+    };
+  }
+
+  try {
+    const envFileStat = await stat(envFile);
+
+    if (!envFileStat.isFile()) {
+      return {
+        envFilePath: envFile,
+        envFileStatus: "unreadable",
+        envFileError: "not a regular file",
+      };
+    }
+
+    return {
+      envFilePath: envFile,
+      envFileStatus: "found",
+      envFileMode: envFileStat.mode & 0o777,
+    };
+  } catch (error) {
+    const code =
+      error !== null && typeof error === "object" && "code" in error
+        ? (error as { code?: string }).code
+        : undefined;
+
+    return {
+      envFilePath: envFile,
+      envFileStatus: code === "ENOENT" ? "missing" : "unreadable",
+      envFileError: toErrorMessage(error),
+    };
+  }
+}
+
 async function collectGatewayRuntimePreflight(
   runtimeBinary: string | undefined,
 ): Promise<Partial<DeploymentPreflight>> {
@@ -1811,12 +1896,14 @@ async function collectDeploymentPreflight(
   options: {
     memoryBudgetMiB?: number;
     runtimeBinary?: string;
+    envFile?: string;
     strictFilesystem?: boolean;
     nodeBinary?: string;
   },
 ): Promise<DeploymentPreflight> {
   const hostMemoryMiB = Math.max(1, Math.floor(totalmem() / BYTES_PER_MIB));
   const storagePreflight = await collectAsyncQueueStoragePreflight(config);
+  const envFilePreflight = await collectEnvFilePreflight(options.envFile);
   const runtimePreflight = await collectGatewayRuntimePreflight(
     options.runtimeBinary ?? options.nodeBinary,
   );
@@ -1826,6 +1913,7 @@ async function collectDeploymentPreflight(
     return {
       hostMemoryMiB,
       ...storagePreflight,
+      ...envFilePreflight,
       ...runtimePreflight,
       ...swapPreflight,
     };
@@ -1843,6 +1931,7 @@ async function collectDeploymentPreflight(
   const preflight: DeploymentPreflight = {
     hostMemoryMiB,
     ...storagePreflight,
+    ...envFilePreflight,
     ...runtimePreflight,
     ...llamaBinaryPreflight,
     ...swapPreflight,

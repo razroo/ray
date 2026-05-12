@@ -1170,6 +1170,35 @@ test("diagnoseConfig errors when systemd EnvironmentFile paths are relative", ()
   assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "env_file_relative"));
 });
 
+test("loadAndDiagnoseDeployment warns when EnvironmentFile permissions are open in strict mode", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-env-file-mode-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+  await writeFile(envFile, "RAY_API_KEYS=secret\n");
+  await chmod(envFile, 0o644);
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    envFile,
+    strictFilesystem: true,
+    env: { RAY_API_KEYS: "secret" },
+  });
+
+  const diagnostic = inspected.diagnostics.find(
+    (entry) => entry.code === "env_file_permissions_open",
+  );
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /0644/);
+});
+
 test("loadAndDiagnoseDeployment errors when the projected memory fit exceeds a 4 GB target", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-memory-"));
   t.after(async () => {
