@@ -333,9 +333,9 @@ jobs:
             missing_packages="$missing_packages caddy"
           fi
           if [ -n "$missing_packages" ]; then
-            $SUDO apt-get update
+            $SUDO env DEBIAN_FRONTEND=noninteractive apt-get update
             # shellcheck disable=SC2086
-            $SUDO apt-get install -y $missing_packages
+            $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $missing_packages
           fi
 
           SERVICE_USER="${SERVICE_USER:-ray}"
