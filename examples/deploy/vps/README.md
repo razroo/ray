@@ -290,7 +290,7 @@ Set these GitHub secrets in your own repo or fork:
 - `RAY_DEPLOY_SSH_KEY` — private SSH key for the deploy user
 - `RAY_DEPLOY_KNOWN_HOSTS` — `known_hosts` entry for the VPS
 - `RAY_CONFIG_JSON` — optional full Ray config JSON to write to `/etc/ray/ray.json`
-- `RAY_ENV_FILE_CONTENTS` — optional complete contents of `/etc/ray/ray.env`
+- `RAY_ENV_FILE_CONTENTS` — complete contents of `/etc/ray/ray.env`; required when the deployed config has auth enabled
 
 Optional repository variables:
 
@@ -311,8 +311,8 @@ long enough to resolve deployment settings, excludes `.ray-deploy-*` from repo
 sync, and writes the live config directly to `/etc/ray/ray.json`.
 
 `RAY_ENV_FILE_CONTENTS` is the right place for auth keys or env overrides. The
-workflow also applies those overrides when choosing the post-restart health
-check port. For example:
+workflow validates auth API keys before opening SSH, then applies those
+overrides when choosing the post-restart health check port. For example:
 
 ```dotenv
 RAY_AUTH_API_KEY_ENV=RAY_API_KEYS

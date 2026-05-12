@@ -132,7 +132,7 @@ jobs:
           fi
 
           DEPLOY_SETTINGS=$(CONFIG_PATH="$CONFIG_PATH" bun --eval '
-          import { loadRayConfig } from "./packages/config/dist/index.js";
+          import { loadRayConfig, resolveAuthApiKeys } from "./packages/config/dist/index.js";
           import { parseEnvironmentFile } from "./packages/deploy/dist/cli.js";
 
           const readNonEmpty = (value) =>
@@ -141,15 +141,25 @@ jobs:
           const envOverrides = process.env.RAY_ENV_FILE_CONTENTS
             ? parseEnvironmentFile(process.env.RAY_ENV_FILE_CONTENTS)
             : {};
+          const mergedEnv = {
+            ...process.env,
+            ...envOverrides,
+          };
 
           const { config } = await loadRayConfig({
             cwd: process.cwd(),
             configPath: process.env.CONFIG_PATH,
-            env: {
-              ...process.env,
-              ...envOverrides,
-            },
+            env: mergedEnv,
           });
+
+          try {
+            resolveAuthApiKeys(config, mergedEnv);
+          } catch (error) {
+            process.stderr.write(
+              `::error::Auth is enabled for the deploy config, but RAY_ENV_FILE_CONTENTS does not provide usable API keys: ${error instanceof Error ? error.message : String(error)}\n`,
+            );
+            process.exit(1);
+          }
 
           process.stdout.write(JSON.stringify({
             healthPort: config.server.port,
