@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -11,6 +12,7 @@ import {
   loadWorkload,
   parseArgs,
   runBenchmark,
+  waitForBenchmarkChildHealth,
 } from "./benchmark.ts";
 
 async function withTestServer(
@@ -442,6 +444,18 @@ test("runBenchmark rejects oversized and malformed gateway success responses", a
         /Benchmark response\.id must be a non-empty string/,
       );
     },
+  );
+});
+
+test("waitForBenchmarkChildHealth fails fast with bounded child output", async () => {
+  const child = spawn(process.execPath, [
+    "-e",
+    "console.error('llama startup failed'); setTimeout(() => process.exit(42), 25);",
+  ]);
+
+  await assert.rejects(
+    () => waitForBenchmarkChildHealth(child, "llama.cpp server", "http://127.0.0.1:1", 30_000),
+    /llama\.cpp server exited before becoming healthy \(code=42 signal=null\)[\s\S]*llama startup failed/,
   );
 });
 

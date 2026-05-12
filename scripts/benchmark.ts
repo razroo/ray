@@ -1,5 +1,5 @@
 import { access, mkdir, mkdtemp, open, rm, stat, writeFile } from "node:fs/promises";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -38,6 +38,7 @@ const MAX_BENCHMARK_ERROR_RESPONSE_BYTES = 64 * 1024;
 const MAX_BENCHMARK_SUCCESS_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_BENCHMARK_HISTORY_FILE_BYTES = 8 * 1024 * 1024;
 const BENCHMARK_HISTORY_RETAIN_BYTES = 6 * 1024 * 1024;
+const MAX_BENCHMARK_CHILD_OUTPUT_BYTES = 32 * 1024;
 const BENCHMARK_REQUEST_TIMEOUT_MS = 180_000;
 const BENCHMARK_HEALTH_REQUEST_TIMEOUT_MS = 3_000;
 const BUN_RUNTIME_BINARY = process.env.RAY_BUN_BINARY ?? "bun";
@@ -54,6 +55,7 @@ const baselineAssertionKeys = new Set<keyof BenchmarkBaselineAssertions>([
   "minQualityScoreAvg",
   "minValidJsonRate",
 ]);
+const benchmarkChildOutputCaptures = new WeakMap<ChildProcess, BenchmarkChildOutputCapture>();
 
 interface BenchmarkArgs {
   baseUrl: string;
@@ -219,6 +221,13 @@ interface LaunchProfileBenchmarkResult {
 interface SchedulerBenchmarkResult {
   candidate: AutotuneCandidate;
   summary: BenchmarkSummary;
+}
+
+interface BenchmarkChildOutputCapture {
+  stdout: Buffer;
+  stderr: Buffer;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
 }
 
 interface BenchmarkBaselineAssertions {
@@ -1861,6 +1870,93 @@ function buildLaunchProfileRecommendations(
     .slice(0, 8);
 }
 
+function appendBoundedOutput(
+  current: Buffer,
+  chunk: unknown,
+): { buffer: Buffer; truncated: boolean } {
+  const incoming = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+  const totalLength = current.length + incoming.length;
+  const combined = Buffer.concat([current, incoming], totalLength);
+
+  if (combined.length <= MAX_BENCHMARK_CHILD_OUTPUT_BYTES) {
+    return {
+      buffer: combined,
+      truncated: false,
+    };
+  }
+
+  return {
+    buffer: combined.subarray(combined.length - MAX_BENCHMARK_CHILD_OUTPUT_BYTES),
+    truncated: true,
+  };
+}
+
+function attachBenchmarkChildOutputCapture(child: ChildProcess): BenchmarkChildOutputCapture {
+  const existing = benchmarkChildOutputCaptures.get(child);
+  if (existing) {
+    return existing;
+  }
+
+  const capture: BenchmarkChildOutputCapture = {
+    stdout: Buffer.alloc(0),
+    stderr: Buffer.alloc(0),
+    stdoutTruncated: false,
+    stderrTruncated: false,
+  };
+  benchmarkChildOutputCaptures.set(child, capture);
+
+  child.stdout?.on("data", (chunk: unknown) => {
+    const next = appendBoundedOutput(capture.stdout, chunk);
+    capture.stdout = next.buffer;
+    capture.stdoutTruncated = capture.stdoutTruncated || next.truncated;
+  });
+  child.stderr?.on("data", (chunk: unknown) => {
+    const next = appendBoundedOutput(capture.stderr, chunk);
+    capture.stderr = next.buffer;
+    capture.stderrTruncated = capture.stderrTruncated || next.truncated;
+  });
+
+  return capture;
+}
+
+function formatCapturedChildOutput(child: ChildProcess): string {
+  const capture = benchmarkChildOutputCaptures.get(child);
+  if (!capture) {
+    return "";
+  }
+
+  const parts: string[] = [];
+  const stderr = capture.stderr.toString("utf8").trim();
+  const stdout = capture.stdout.toString("utf8").trim();
+
+  if (stderr.length > 0) {
+    parts.push(`stderr${capture.stderrTruncated ? " (truncated)" : ""}:\n${stderr}`);
+  }
+  if (stdout.length > 0) {
+    parts.push(`stdout${capture.stdoutTruncated ? " (truncated)" : ""}:\n${stdout}`);
+  }
+
+  return parts.join("\n");
+}
+
+function formatChildExitStatus(code: number | null, signal: NodeJS.Signals | null): string {
+  return `code=${code ?? "null"} signal=${signal ?? "null"}`;
+}
+
+function buildBenchmarkChildExitError(
+  child: ChildProcess,
+  label: string,
+  code: number | null,
+  signal: NodeJS.Signals | null,
+): Error {
+  const output = formatCapturedChildOutput(child);
+  return new Error(
+    `${label} exited before becoming healthy (${formatChildExitStatus(code, signal)})${
+      output ? `\n${output}` : ""
+    }`,
+  );
+}
+
 async function waitForHealth(
   baseUrl: string,
   timeoutMs = 15_000,
@@ -1890,35 +1986,51 @@ async function waitForHealth(
   throw new Error(`Timed out waiting for health at ${baseUrl}${healthPath}`);
 }
 
-async function startGateway(configPath: string): Promise<ChildProcess> {
-  const child = spawn(
-    BUN_RUNTIME_BINARY,
-    ["--conditions=development", "./apps/gateway/src/index.ts", "--config", configPath],
-    {
-      cwd: process.cwd(),
-      stdio: "ignore",
-    },
-  );
+export async function waitForBenchmarkChildHealth(
+  child: ChildProcess,
+  label: string,
+  baseUrl: string,
+  timeoutMs = 15_000,
+  healthPath = "/health",
+): Promise<void> {
+  attachBenchmarkChildOutputCapture(child);
 
-  return child;
+  if (child.exitCode !== null || child.signalCode !== null) {
+    throw buildBenchmarkChildExitError(child, label, child.exitCode, child.signalCode);
+  }
+
+  let onExit: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined;
+  const exitPromise = new Promise<never>((_resolve, reject) => {
+    onExit = (code, signal) => {
+      reject(buildBenchmarkChildExitError(child, label, code, signal));
+    };
+    child.once("exit", onExit);
+  });
+
+  try {
+    await Promise.race([waitForHealth(baseUrl, timeoutMs, healthPath), exitPromise]);
+  } finally {
+    if (onExit) {
+      child.off("exit", onExit);
+    }
+  }
 }
 
-async function startLlamaCppServer(launchProfile: LlamaCppLaunchProfile): Promise<ChildProcess> {
-  await access(launchProfile.binaryPath);
-  await access(launchProfile.modelPath);
-
+async function spawnBenchmarkChild(
+  label: string,
+  command: string,
+  args: string[],
+  options: SpawnOptions,
+): Promise<ChildProcess> {
   return await new Promise<ChildProcess>((resolve, reject) => {
-    const child = spawn(launchProfile.binaryPath, launchProfile.extraArgs ?? [], {
-      cwd: process.cwd(),
-      stdio: "ignore",
-      env: {
-        ...process.env,
-        ...buildLlamaCppEnvironment(launchProfile),
-      },
+    const child = spawn(command, args, {
+      ...options,
+      stdio: ["ignore", "pipe", "pipe"],
     });
+    attachBenchmarkChildOutputCapture(child);
 
     const onError = (error: Error) => {
-      reject(error);
+      reject(new Error(`${label} failed to start: ${error.message}`));
     };
 
     child.once("error", onError);
@@ -1927,6 +2039,35 @@ async function startLlamaCppServer(launchProfile: LlamaCppLaunchProfile): Promis
       resolve(child);
     });
   });
+}
+
+async function startGateway(configPath: string): Promise<ChildProcess> {
+  return await spawnBenchmarkChild(
+    "Ray gateway",
+    BUN_RUNTIME_BINARY,
+    ["--conditions=development", "./apps/gateway/src/index.ts", "--config", configPath],
+    {
+      cwd: process.cwd(),
+    },
+  );
+}
+
+async function startLlamaCppServer(launchProfile: LlamaCppLaunchProfile): Promise<ChildProcess> {
+  await access(launchProfile.binaryPath);
+  await access(launchProfile.modelPath);
+
+  return await spawnBenchmarkChild(
+    "llama.cpp server",
+    launchProfile.binaryPath,
+    launchProfile.extraArgs ?? [],
+    {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        ...buildLlamaCppEnvironment(launchProfile),
+      },
+    },
+  );
 }
 
 async function stopChildProcess(child: ChildProcess): Promise<void> {
@@ -1960,7 +2101,7 @@ async function benchmarkGatewayConfig(options: {
 
   try {
     const baseUrl = buildBaseUrl(options.config.server.host, options.config.server.port);
-    await waitForHealth(baseUrl, 15_000, "/livez");
+    await waitForBenchmarkChildHealth(gateway, "Ray gateway", baseUrl, 15_000, "/livez");
     return await runBenchmark({
       baseUrl,
       workload: options.workload,
@@ -2048,7 +2189,12 @@ async function runLaunchProfileSweep(options: {
     const backend = await startLlamaCppServer(launchedProfile);
 
     try {
-      await waitForHealth(buildBaseUrl(launchedProfile.host, launchedProfile.port), 60_000);
+      await waitForBenchmarkChildHealth(
+        backend,
+        "llama.cpp server",
+        buildBaseUrl(launchedProfile.host, launchedProfile.port),
+        60_000,
+      );
       const candidateConfig = mergeConfig(options.config, {
         server: {
           port: getPortOffset(options.config.server.port, index),
@@ -2534,7 +2680,12 @@ async function runAutotune(
       };
       pinnedBackend = await startLlamaCppServer(launchedProfile);
 
-      await waitForHealth(buildBaseUrl(launchedProfile.host, launchedProfile.port), 60_000);
+      await waitForBenchmarkChildHealth(
+        pinnedBackend,
+        "llama.cpp server",
+        buildBaseUrl(launchedProfile.host, launchedProfile.port),
+        60_000,
+      );
       schedulerBaseConfig = mergeConfig(config, {
         model: {
           adapter: {
