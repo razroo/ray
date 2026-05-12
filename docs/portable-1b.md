@@ -147,13 +147,15 @@ before starting the generated llama.cpp service or running doctor.
 Print the exact staging commands for the resolved config and env-file values:
 
 ```bash
-bun run model:stage:1b:generic -- --ray-env-file /etc/ray/ray.env --source ./local-1b-q4.gguf
-bun run model:stage:1b:8gb:generic -- --ray-env-file /etc/ray/ray.env --source ./local-1b-q4.gguf
+bun run model:stage:1b:generic -- --ray-env-file /etc/ray/ray.env --binary-source ./llama-server --source ./local-1b-q4.gguf
+bun run model:stage:1b:8gb:generic -- --ray-env-file /etc/ray/ray.env --binary-source ./llama-server --source ./local-1b-q4.gguf
 ```
 
 Add `--sha256 <expected-hex-digest>` when the model source publishes a checksum.
-The output includes the target model path, resolved `llama-server` binary, owner,
-install command, checksum command, and service-user read test.
+Add `--binary-sha256 <expected-hex-digest>` when the compiled `llama-server`
+source publishes or produces a checksum. The output includes the resolved binary
+and model paths, install commands, checksum commands, ownership, and service-user
+execute/read tests.
 
 Set `RAY_AUTH_API_KEY_ENV` when an existing secret manager or deployment workflow
 uses a different environment variable for the Bearer keys.

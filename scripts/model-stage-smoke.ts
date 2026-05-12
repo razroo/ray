@@ -220,7 +220,7 @@ function displayPath(cwd: string, configPath: string): string {
 
 export function formatTextSummary(cwd: string, summary: ModelStageSmokeSummary): string {
   const lines = [
-    `Rendered ${summary.configCount} public Ray model staging plan${summary.configCount === 1 ? "" : "s"}:`,
+    `Rendered ${summary.configCount} public Ray llama.cpp artifact staging plan${summary.configCount === 1 ? "" : "s"}:`,
   ];
 
   for (const result of summary.results) {

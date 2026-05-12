@@ -6,6 +6,7 @@ import { parseEnvironmentFile } from "../packages/deploy/src/cli.ts";
 
 const DEFAULT_CONFIG_PATH = "./examples/config/ray.sub1b.public.json";
 const DEFAULT_SERVICE_USER = "ray";
+const PLACEHOLDER_BINARY_SOURCE_PATH = "/path/to/llama-server";
 const PLACEHOLDER_SOURCE_PATH = "/path/to/model.gguf";
 const MAX_CLI_ARGS = 28;
 const MAX_CLI_ARG_BYTES = 4_096;
@@ -19,6 +20,8 @@ export interface ModelStageArgs {
   envFile?: string;
   serviceUser?: string;
   serviceGroup?: string;
+  binarySourcePath?: string;
+  binarySha256?: string;
   sourcePath?: string;
   sha256?: string;
   json: boolean;
@@ -33,12 +36,15 @@ export interface ModelStagePlan {
   modelRef: string;
   alias: string;
   binaryPath: string;
+  binaryDirectory: string;
   modelPath: string;
   modelDirectory: string;
   host: string;
   port: number;
   serviceUser: string;
   serviceGroup: string;
+  binarySourcePath?: string;
+  binarySha256?: string;
   sourcePath?: string;
   sha256?: string;
   commands: string[];
@@ -56,6 +62,8 @@ Options:
   --ray-env-file <path>    Alias for --env-file.
   --user <name|uid>        Generated systemd service user. Default: RAY_DEPLOY_SERVICE_USER or ${DEFAULT_SERVICE_USER}.
   --group <name|gid>       Group that should own the GGUF. Default: same as --user.
+  --binary-source <path>   Local llama-server path to install into the configured binary path.
+  --binary-sha256 <hex>    Expected SHA-256 for the installed llama-server binary.
   --source <path>          Local GGUF path to install into the configured model path.
   --sha256 <hex>           Expected SHA-256 for the installed GGUF.
   --json                   Print machine-readable staging plan JSON.
@@ -184,6 +192,21 @@ export function parseArgs(argv: string[]): ModelStageArgs {
       continue;
     }
 
+    if (current === "--binary-source") {
+      args.binarySourcePath = normalizeOptionalPath(
+        requireFlagValue(current, argv[index + 1]),
+        current,
+      );
+      index += 1;
+      continue;
+    }
+
+    if (current === "--binary-sha256") {
+      args.binarySha256 = normalizeSha256(requireFlagValue(current, argv[index + 1]));
+      index += 1;
+      continue;
+    }
+
     if (current === "--sha256") {
       args.sha256 = normalizeSha256(requireFlagValue(current, argv[index + 1]));
       index += 1;
@@ -251,14 +274,26 @@ async function loadStageEnvironment(
 }
 
 function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
+  const binarySourcePath = plan.binarySourcePath ?? PLACEHOLDER_BINARY_SOURCE_PATH;
   const sourcePath = plan.sourcePath ?? PLACEHOLDER_SOURCE_PATH;
   const owner = `${plan.serviceUser}:${plan.serviceGroup}`;
   const commands = [
+    `sudo install -d -m 0755 ${shellQuote(plan.binaryDirectory)}`,
+    `sudo install -D -m 0755 -- ${shellQuote(binarySourcePath)} ${shellQuote(plan.binaryPath)}`,
+    `sudo -u ${shellQuote(plan.serviceUser)} test -x ${shellQuote(plan.binaryPath)}`,
     `sudo install -d -m 0755 ${shellQuote(plan.modelDirectory)}`,
     `sudo install -D -m 0640 -- ${shellQuote(sourcePath)} ${shellQuote(plan.modelPath)}`,
     `sudo chown ${shellQuote(owner)} ${shellQuote(plan.modelPath)}`,
     `sudo -u ${shellQuote(plan.serviceUser)} test -r ${shellQuote(plan.modelPath)}`,
   ];
+
+  if (plan.binarySha256) {
+    commands.splice(
+      2,
+      0,
+      `printf '%s  %s\\n' ${shellQuote(plan.binarySha256)} ${shellQuote(plan.binaryPath)} | sha256sum -c -`,
+    );
+  }
 
   if (plan.sha256) {
     commands.splice(
@@ -278,6 +313,8 @@ export async function createModelStagePlan(options: {
   envFile?: string;
   serviceUser?: string;
   serviceGroup?: string;
+  binarySourcePath?: string;
+  binarySha256?: string;
   sourcePath?: string;
   sha256?: string;
 }): Promise<ModelStagePlan> {
@@ -304,6 +341,11 @@ export async function createModelStagePlan(options: {
     "service group",
   );
   const modelPath = normalizeOptionalPath(adapter.launchProfile.modelPath, "model path");
+  const binaryPath = normalizeOptionalPath(adapter.launchProfile.binaryPath, "binary path");
+  const binarySourcePath = options.binarySourcePath
+    ? normalizeOptionalPath(options.binarySourcePath, "binary source path")
+    : undefined;
+  const binarySha256 = options.binarySha256 ? normalizeSha256(options.binarySha256) : undefined;
   const sourcePath = options.sourcePath
     ? normalizeOptionalPath(options.sourcePath, "source path")
     : undefined;
@@ -316,13 +358,16 @@ export async function createModelStagePlan(options: {
     adapterKind: adapter.kind,
     modelRef: adapter.modelRef,
     alias: adapter.launchProfile.alias,
-    binaryPath: adapter.launchProfile.binaryPath,
+    binaryPath,
+    binaryDirectory: path.dirname(binaryPath),
     modelPath,
     modelDirectory: path.dirname(modelPath),
     host: adapter.launchProfile.host,
     port: adapter.launchProfile.port,
     serviceUser,
     serviceGroup,
+    ...(binarySourcePath ? { binarySourcePath } : {}),
+    ...(binarySha256 ? { binarySha256 } : {}),
     ...(sourcePath ? { sourcePath } : {}),
     ...(sha256 ? { sha256 } : {}),
   };
@@ -342,13 +387,21 @@ function displayPath(cwd: string, filePath: string): string {
 
 export function formatTextPlan(cwd: string, plan: ModelStagePlan): string {
   const lines = [
-    "Ray model staging plan:",
+    "Ray llama.cpp artifact staging plan:",
     `- config: ${displayPath(cwd, plan.configPath)}${plan.profile ? ` profile=${plan.profile}` : ""}`,
     `- model: id=${plan.modelId} ref=${plan.modelRef} alias=${plan.alias}`,
     `- backend: ${plan.adapterKind} ${plan.host}:${plan.port} binary=${plan.binaryPath}`,
     `- target GGUF: ${plan.modelPath}`,
     `- service owner: ${plan.serviceUser}:${plan.serviceGroup}`,
   ];
+
+  if (plan.binarySourcePath) {
+    lines.push(`- binary source: ${plan.binarySourcePath}`);
+  } else {
+    lines.push(
+      `- binary source: pass --binary-source ${PLACEHOLDER_BINARY_SOURCE_PATH} to print a concrete install command`,
+    );
+  }
 
   if (plan.sourcePath) {
     lines.push(`- source GGUF: ${plan.sourcePath}`);
@@ -360,6 +413,10 @@ export function formatTextPlan(cwd: string, plan: ModelStagePlan): string {
 
   if (plan.sha256) {
     lines.push(`- expected sha256: ${plan.sha256}`);
+  }
+
+  if (plan.binarySha256) {
+    lines.push(`- expected binary sha256: ${plan.binarySha256}`);
   }
 
   lines.push("", "Run on the VPS:");
@@ -394,6 +451,8 @@ export async function runModelStageCli(
       ...(envFile ? { envFile } : {}),
       ...(args.serviceUser ? { serviceUser: args.serviceUser } : {}),
       ...(args.serviceGroup ? { serviceGroup: args.serviceGroup } : {}),
+      ...(args.binarySourcePath ? { binarySourcePath: args.binarySourcePath } : {}),
+      ...(args.binarySha256 ? { binarySha256: args.binarySha256 } : {}),
       ...(args.sourcePath ? { sourcePath: args.sourcePath } : {}),
       ...(args.sha256 ? { sha256: args.sha256 } : {}),
     });

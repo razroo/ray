@@ -14,6 +14,7 @@ const repoRoot = process.cwd();
 
 test("parseArgs accepts strict model staging options", () => {
   const digest = "a".repeat(64);
+  const binaryDigest = "c".repeat(64);
   const args = parseArgs([
     "--cwd",
     "/srv/ray",
@@ -25,6 +26,10 @@ test("parseArgs accepts strict model staging options", () => {
     "ray",
     "--group",
     "rayops",
+    "--binary-source",
+    "./bin/llama-server",
+    "--binary-sha256",
+    binaryDigest,
     "--source",
     "./models/local.gguf",
     "--sha256",
@@ -37,6 +42,8 @@ test("parseArgs accepts strict model staging options", () => {
   assert.equal(args.envFile, "/etc/ray/ray.env");
   assert.equal(args.serviceUser, "ray");
   assert.equal(args.serviceGroup, "rayops");
+  assert.equal(args.binarySourcePath, "./bin/llama-server");
+  assert.equal(args.binarySha256, binaryDigest);
   assert.equal(args.sourcePath, "./models/local.gguf");
   assert.equal(args.sha256, digest);
   assert.equal(args.json, true);
@@ -49,14 +56,17 @@ test("parseArgs rejects malformed model staging argv", () => {
     /argv\[1\] must be a string/,
   );
   assert.throws(() => parseArgs(["--source"]), /--source requires a value/);
+  assert.throws(() => parseArgs(["--binary-source"]), /--binary-source requires a value/);
   assert.throws(() => parseArgs(["--user", "ray user"]), /system account name/);
   assert.throws(() => parseArgs(["--sha256", "bad"]), /64-character hexadecimal/);
+  assert.throws(() => parseArgs(["--binary-sha256", "bad"]), /64-character hexadecimal/);
   assert.throws(() => parseArgs(["--unknown"]), /Unknown option: --unknown/);
   assert.throws(() => parseArgs(["model.gguf"]), /Unexpected positional argument/);
 });
 
 test("createModelStagePlan resolves config, env overrides, and install commands", async () => {
   const digest = "b".repeat(64);
+  const binaryDigest = "c".repeat(64);
   const plan = await createModelStagePlan({
     cwd: repoRoot,
     configPath: "./examples/config/ray.1b.generic.public.json",
@@ -69,6 +79,8 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
       RAY_LLAMA_CPP_BINARY_PATH: "/usr/local/bin/llama-server",
     },
     serviceGroup: "rayops",
+    binarySourcePath: "./bin/llama-server",
+    binarySha256: binaryDigest,
     sourcePath: "./models/portable-1b.gguf",
     sha256: digest,
   });
@@ -79,8 +91,14 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
   assert.equal(plan.alias, "portable-1b");
   assert.equal(plan.serviceUser, "rayops");
   assert.equal(plan.serviceGroup, "rayops");
+  assert.equal(plan.binaryPath, "/usr/local/bin/llama-server");
+  assert.equal(plan.binaryDirectory, "/usr/local/bin");
   assert.equal(plan.modelPath, "/var/lib/ray/models/portable-1b.gguf");
   assert.deepEqual(plan.commands, [
+    "sudo install -d -m 0755 '/usr/local/bin'",
+    "sudo install -D -m 0755 -- './bin/llama-server' '/usr/local/bin/llama-server'",
+    "printf '%s  %s\\n' 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' '/usr/local/bin/llama-server' | sha256sum -c -",
+    "sudo -u 'rayops' test -x '/usr/local/bin/llama-server'",
     "sudo install -d -m 0755 '/var/lib/ray/models'",
     "sudo install -D -m 0640 -- './models/portable-1b.gguf' '/var/lib/ray/models/portable-1b.gguf'",
     "sudo chown 'rayops:rayops' '/var/lib/ray/models/portable-1b.gguf'",
@@ -97,7 +115,9 @@ test("formatTextPlan prints an operator-ready staging plan", async () => {
   });
   const text = formatTextPlan(repoRoot, plan);
 
-  assert.match(text, /Ray model staging plan:/);
+  assert.match(text, /Ray llama\.cpp artifact staging plan:/);
+  assert.match(text, /binary source: pass --binary-source \/path\/to\/llama-server/);
+  assert.match(text, /sudo install -D -m 0755 -- '\/path\/to\/llama-server'/);
   assert.match(text, /target GGUF: \/var\/lib\/ray\/models\/qwen2\.5-0\.5b-instruct-q4_k_m\.gguf/);
   assert.match(text, /sudo install -D -m 0640 -- '\/path\/to\/model\.gguf'/);
   assert.match(text, /Then run doctor on the VPS/);
