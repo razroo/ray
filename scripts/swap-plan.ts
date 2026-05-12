@@ -8,6 +8,11 @@ const MAX_SWAP_SIZE_MIB = 65_536;
 const MAX_SWAPPINESS = 200;
 const MAX_CLI_ARGS = 8;
 const MAX_CLI_ARG_BYTES = 4_096;
+const MIN_CREATE_TIMEOUT_SECONDS = 300;
+const MAX_CREATE_TIMEOUT_SECONDS = 7_200;
+const CREATE_TIMEOUT_MIB_PER_SECOND = 8;
+const QUICK_TIMEOUT_SECONDS = 60;
+const INSPECT_TIMEOUT_SECONDS = 30;
 
 export interface SwapPlanArgs {
   path: string;
@@ -176,6 +181,13 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
+function calculateCreateTimeoutSeconds(sizeMiB: number): number {
+  return Math.min(
+    MAX_CREATE_TIMEOUT_SECONDS,
+    Math.max(MIN_CREATE_TIMEOUT_SECONDS, Math.ceil(sizeMiB / CREATE_TIMEOUT_MIB_PER_SECOND)),
+  );
+}
+
 export function createSwapPlan(
   options: { path?: string; sizeMiB?: number; swappiness?: number } = {},
 ): SwapPlan {
@@ -191,21 +203,22 @@ export function createSwapPlan(
   const quotedPath = shellQuote(swapPath);
   const fstabLine = `${swapPath} none swap sw 0 0`;
   const sysctlLine = `vm.swappiness=${swappiness}`;
+  const createTimeoutSeconds = calculateCreateTimeoutSeconds(sizeMiB);
 
   return {
     path: swapPath,
     sizeMiB,
     swappiness,
     commands: [
-      `sudo test ! -e ${quotedPath} || { echo 'Swap file already exists: ${swapPath}' >&2; exit 1; }`,
-      `if command -v fallocate >/dev/null 2>&1; then sudo fallocate -l ${sizeMiB}M ${quotedPath}; else sudo dd if=/dev/zero of=${quotedPath} bs=1M count=${sizeMiB} status=progress; fi`,
-      `sudo chmod 600 ${quotedPath}`,
-      `sudo mkswap ${quotedPath}`,
-      `sudo swapon ${quotedPath}`,
-      `sudo grep -Fq ${shellQuote(fstabLine)} /etc/fstab || printf '%s\\n' ${shellQuote(fstabLine)} | sudo tee -a /etc/fstab >/dev/null`,
-      `printf '%s\\n' ${shellQuote(sysctlLine)} | sudo tee /etc/sysctl.d/99-ray-swap.conf >/dev/null`,
-      `sudo sysctl ${shellQuote(sysctlLine)}`,
-      "swapon --show",
+      `timeout ${INSPECT_TIMEOUT_SECONDS}s sudo test ! -e ${quotedPath}; status=$?; if [ "$status" -eq 1 ]; then echo 'Swap file already exists: ${swapPath}' >&2; exit 1; elif [ "$status" -ne 0 ]; then exit "$status"; fi`,
+      `if command -v fallocate >/dev/null 2>&1; then timeout ${createTimeoutSeconds}s sudo fallocate -l ${sizeMiB}M ${quotedPath}; else timeout ${createTimeoutSeconds}s sudo dd if=/dev/zero of=${quotedPath} bs=1M count=${sizeMiB} status=progress; fi`,
+      `timeout ${QUICK_TIMEOUT_SECONDS}s sudo chmod 600 ${quotedPath}`,
+      `timeout ${QUICK_TIMEOUT_SECONDS}s sudo mkswap ${quotedPath}`,
+      `timeout ${QUICK_TIMEOUT_SECONDS}s sudo swapon ${quotedPath}`,
+      `timeout ${INSPECT_TIMEOUT_SECONDS}s sudo grep -Fq ${shellQuote(fstabLine)} /etc/fstab; status=$?; if [ "$status" -eq 0 ]; then :; elif [ "$status" -eq 1 ]; then printf '%s\\n' ${shellQuote(fstabLine)} | timeout ${QUICK_TIMEOUT_SECONDS}s sudo tee -a /etc/fstab >/dev/null; else exit "$status"; fi`,
+      `printf '%s\\n' ${shellQuote(sysctlLine)} | timeout ${QUICK_TIMEOUT_SECONDS}s sudo tee /etc/sysctl.d/99-ray-swap.conf >/dev/null`,
+      `timeout ${QUICK_TIMEOUT_SECONDS}s sudo sysctl ${shellQuote(sysctlLine)}`,
+      `timeout ${INSPECT_TIMEOUT_SECONDS}s swapon --show`,
     ],
   };
 }

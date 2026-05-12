@@ -43,14 +43,34 @@ test("createSwapPlan prints guarded swap-file commands", () => {
   assert.equal(plan.path, "/var/lib/ray/swapfile");
   assert.equal(plan.sizeMiB, 2_048);
   assert.equal(plan.swappiness, 5);
-  assert.match(plan.commands[0] ?? "", /test ! -e '\/var\/lib\/ray\/swapfile'/);
-  assert.match(plan.commands[1] ?? "", /fallocate -l 2048M '\/var\/lib\/ray\/swapfile'/);
-  assert.match(plan.commands.join("\n"), /chmod 600 '\/var\/lib\/ray\/swapfile'/);
-  assert.match(plan.commands.join("\n"), /mkswap '\/var\/lib\/ray\/swapfile'/);
-  assert.match(plan.commands.join("\n"), /swapon '\/var\/lib\/ray\/swapfile'/);
+  assert.match(plan.commands[0] ?? "", /timeout 30s sudo test ! -e '\/var\/lib\/ray\/swapfile'/);
+  assert.match(plan.commands[0] ?? "", /elif \[ "\$status" -ne 0 \]; then exit "\$status"; fi/);
+  assert.match(
+    plan.commands[1] ?? "",
+    /timeout 300s sudo fallocate -l 2048M '\/var\/lib\/ray\/swapfile'/,
+  );
+  assert.match(plan.commands[1] ?? "", /timeout 300s sudo dd/);
+  assert.match(plan.commands.join("\n"), /timeout 60s sudo chmod 600 '\/var\/lib\/ray\/swapfile'/);
+  assert.match(plan.commands.join("\n"), /timeout 60s sudo mkswap '\/var\/lib\/ray\/swapfile'/);
+  assert.match(plan.commands.join("\n"), /timeout 60s sudo swapon '\/var\/lib\/ray\/swapfile'/);
   assert.match(plan.commands.join("\n"), /\/var\/lib\/ray\/swapfile none swap sw 0 0/);
+  assert.match(plan.commands.join("\n"), /timeout 30s sudo grep -Fq/);
+  assert.match(plan.commands.join("\n"), /timeout 60s sudo tee -a \/etc\/fstab/);
   assert.match(plan.commands.join("\n"), /vm\.swappiness=5/);
-  assert.match(plan.commands.join("\n"), /\/etc\/sysctl\.d\/99-ray-swap\.conf/);
+  assert.match(
+    plan.commands.join("\n"),
+    /timeout 60s sudo tee \/etc\/sysctl\.d\/99-ray-swap\.conf/,
+  );
+  assert.match(plan.commands.join("\n"), /timeout 60s sudo sysctl 'vm\.swappiness=5'/);
+  assert.match(plan.commands.join("\n"), /timeout 30s swapon --show/);
+});
+
+test("createSwapPlan scales creation timeout for large swap files", () => {
+  const plan = createSwapPlan({
+    sizeMiB: 16_384,
+  });
+
+  assert.match(plan.commands[1] ?? "", /timeout 2048s sudo fallocate -l 16384M '\/swapfile'/);
 });
 
 test("formatTextPlan prints operator-ready swap instructions", () => {
