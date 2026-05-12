@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import * as path from "node:path";
 import { sanitizeConfig, snapshotRayConfig } from "@ray/config";
 import { TtlCache } from "@ray/cache";
 import { createModelProvider } from "@ray/models";
@@ -73,6 +75,37 @@ interface PreparationQueueEntry {
   reject: (error: unknown) => void;
 }
 
+export interface CgroupMemorySnapshot {
+  currentMiB: number;
+  limitMiB?: number;
+  pressureRatio?: number;
+}
+
+export interface CgroupMemoryReaderOptions {
+  procSelfCgroupPath?: string;
+  cgroupV2Root?: string;
+  cgroupV1MemoryRoot?: string;
+  readTextFile?: (filePath: string) => Promise<string>;
+}
+
+interface CgroupMemoryCandidate {
+  currentPath: string;
+  limitPath: string;
+}
+
+interface MemoryPressureSnapshot {
+  processRssMiB: number;
+  cgroupMemoryCurrentMiB?: number;
+  cgroupMemoryLimitMiB?: number;
+  cgroupMemoryPressureRatio?: number;
+}
+
+type MemoryPressureSource = "process_rss" | "cgroup";
+export type CgroupMemoryReader = () =>
+  | CgroupMemorySnapshot
+  | Promise<CgroupMemorySnapshot | undefined>
+  | undefined;
+
 const MAX_DEDUPE_KEY_CHARS = 512;
 const MAX_METADATA_ENTRIES = 32;
 const MAX_METADATA_KEY_CHARS = 128;
@@ -80,6 +113,12 @@ const MAX_METADATA_VALUE_CHARS = 1_024;
 const MAX_STOP_SEQUENCES = 16;
 const MAX_STOP_SEQUENCE_CHARS = 256;
 const BYTES_PER_MIB = 1024 * 1024;
+const CGROUP_V2_ROOT = "/sys/fs/cgroup";
+const CGROUP_V1_MEMORY_ROOT = "/sys/fs/cgroup/memory";
+const PROC_SELF_CGROUP = "/proc/self/cgroup";
+const CGROUP_MEMORY_CACHE_TTL_MS = 250;
+const CGROUP_MEMORY_PRESSURE_RATIO = 0.9;
+const CGROUP_UNLIMITED_LIMIT_BYTES = 1024 ** 5;
 const unsafeMetadataKeys = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_LEARNED_FAMILY_HISTORY_KEYS = 512;
 
@@ -90,6 +129,7 @@ export interface CreateRayRuntimeOptions {
   scheduler?: RequestScheduler<ProviderResult>;
   cache?: TtlCache<CachedInferencePayload>;
   memoryUsage?: () => NodeJS.MemoryUsage;
+  cgroupMemory?: CgroupMemoryReader | false;
 }
 
 function assertRequestObject(request: InferenceRequest): void {
@@ -585,14 +625,14 @@ function applyQueueDepthDegradation(
 function applyMemoryPressureDegradation(
   config: RayConfig,
   request: NormalizedInferenceRequest,
-  processRssMiB: number,
+  memoryPressureSources: MemoryPressureSource[],
 ): { request: NormalizedInferenceRequest; degraded: boolean } {
   if (!config.gracefulDegradation.enabled) {
     return { request, degraded: false };
   }
 
   if (
-    processRssMiB < config.gracefulDegradation.memoryRssThresholdMiB ||
+    memoryPressureSources.length === 0 ||
     request.maxTokens <= config.gracefulDegradation.degradeToMaxTokens
   ) {
     return { request, degraded: false };
@@ -615,7 +655,8 @@ function buildDegradationDiagnostics(options: {
   appliedMaxTokens: number;
   queueDepth: number;
   queueDepthThreshold: number;
-  processRssMiB: number;
+  memoryPressureSources: MemoryPressureSource[];
+  memoryPressure: MemoryPressureSnapshot;
   memoryRssThresholdMiB: number;
 }): DegradationDiagnostics {
   const reasons: DegradationDiagnostics["reasons"] = [];
@@ -639,13 +680,197 @@ function buildDegradationDiagnostics(options: {
     appliedMaxTokens: options.appliedMaxTokens,
     queueDepth: options.queueDepth,
     queueDepthThreshold: options.queueDepthThreshold,
-    processRssMiB: options.processRssMiB,
+    ...(options.memoryPressureSources.length > 0
+      ? { memoryPressureSources: options.memoryPressureSources }
+      : {}),
+    processRssMiB: options.memoryPressure.processRssMiB,
     memoryRssThresholdMiB: options.memoryRssThresholdMiB,
+    ...(options.memoryPressure.cgroupMemoryCurrentMiB !== undefined
+      ? { cgroupMemoryCurrentMiB: options.memoryPressure.cgroupMemoryCurrentMiB }
+      : {}),
+    ...(options.memoryPressure.cgroupMemoryLimitMiB !== undefined
+      ? { cgroupMemoryLimitMiB: options.memoryPressure.cgroupMemoryLimitMiB }
+      : {}),
+    ...(options.memoryPressure.cgroupMemoryPressureRatio !== undefined
+      ? { cgroupMemoryPressureRatio: options.memoryPressure.cgroupMemoryPressureRatio }
+      : {}),
   };
 }
 
 function bytesToMiB(value: number): number {
   return Number((value / BYTES_PER_MIB).toFixed(2));
+}
+
+async function defaultReadTextFile(filePath: string): Promise<string> {
+  return await readFile(filePath, "utf8");
+}
+
+function parseCgroupByteValue(raw: string, options: { allowMax: boolean }): number | undefined {
+  const value = raw.trim();
+
+  if (options.allowMax && value === "max") {
+    return undefined;
+  }
+
+  if (!/^\d+$/.test(value)) {
+    return undefined;
+  }
+
+  const bytes = Number(value);
+
+  if (!Number.isFinite(bytes) || bytes < 0) {
+    return undefined;
+  }
+
+  if (options.allowMax && bytes >= CGROUP_UNLIMITED_LIMIT_BYTES) {
+    return undefined;
+  }
+
+  return bytes;
+}
+
+function resolveCgroupFile(root: string, cgroupPath: string, fileName: string): string | undefined {
+  const resolvedRoot = path.resolve(root);
+  const relativeCgroupPath = cgroupPath === "/" ? "" : cgroupPath.replace(/^\/+/, "");
+  const resolvedPath = path.resolve(resolvedRoot, relativeCgroupPath, fileName);
+
+  if (resolvedPath === resolvedRoot || !resolvedPath.startsWith(`${resolvedRoot}${path.sep}`)) {
+    return undefined;
+  }
+
+  return resolvedPath;
+}
+
+function resolveCgroupMemoryCandidates(
+  procCgroup: string,
+  options: Required<Pick<CgroupMemoryReaderOptions, "cgroupV2Root" | "cgroupV1MemoryRoot">>,
+): CgroupMemoryCandidate[] {
+  const candidates: CgroupMemoryCandidate[] = [];
+  const seen = new Set<string>();
+
+  for (const line of procCgroup.split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue;
+    }
+
+    const parts = line.split(":");
+
+    if (parts.length < 3) {
+      continue;
+    }
+
+    const hierarchy = parts[0] ?? "";
+    const controllers = parts[1] ?? "";
+    const cgroupPath = parts.slice(2).join(":") || "/";
+    const isUnifiedCgroup = hierarchy === "0" && controllers === "";
+    const isMemoryController = controllers.split(",").includes("memory");
+    const root = isUnifiedCgroup
+      ? options.cgroupV2Root
+      : isMemoryController
+        ? options.cgroupV1MemoryRoot
+        : undefined;
+
+    if (!root) {
+      continue;
+    }
+
+    const currentPath = resolveCgroupFile(
+      root,
+      cgroupPath,
+      isUnifiedCgroup ? "memory.current" : "memory.usage_in_bytes",
+    );
+    const limitPath = resolveCgroupFile(
+      root,
+      cgroupPath,
+      isUnifiedCgroup ? "memory.max" : "memory.limit_in_bytes",
+    );
+
+    if (!currentPath || !limitPath) {
+      continue;
+    }
+
+    const key = `${currentPath}\n${limitPath}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    candidates.push({ currentPath, limitPath });
+  }
+
+  return candidates;
+}
+
+export async function readCgroupMemorySnapshot(
+  options: CgroupMemoryReaderOptions = {},
+): Promise<CgroupMemorySnapshot | undefined> {
+  const readTextFile = options.readTextFile ?? defaultReadTextFile;
+  let procCgroup: string;
+
+  try {
+    procCgroup = await readTextFile(options.procSelfCgroupPath ?? PROC_SELF_CGROUP);
+  } catch {
+    return undefined;
+  }
+
+  const candidates = resolveCgroupMemoryCandidates(procCgroup, {
+    cgroupV2Root: options.cgroupV2Root ?? CGROUP_V2_ROOT,
+    cgroupV1MemoryRoot: options.cgroupV1MemoryRoot ?? CGROUP_V1_MEMORY_ROOT,
+  });
+
+  for (const candidate of candidates) {
+    try {
+      const currentRaw = await readTextFile(candidate.currentPath);
+      const currentBytes = parseCgroupByteValue(currentRaw, { allowMax: false });
+
+      if (currentBytes === undefined) {
+        continue;
+      }
+
+      const limitRaw = await readTextFile(candidate.limitPath).catch(() => undefined);
+      const limitBytes =
+        limitRaw === undefined ? undefined : parseCgroupByteValue(limitRaw, { allowMax: true });
+      const snapshot: CgroupMemorySnapshot = {
+        currentMiB: bytesToMiB(currentBytes),
+      };
+
+      if (limitBytes !== undefined && limitBytes > 0) {
+        snapshot.limitMiB = bytesToMiB(limitBytes);
+        snapshot.pressureRatio = Number((currentBytes / limitBytes).toFixed(4));
+      }
+
+      return snapshot;
+    } catch {
+      continue;
+    }
+  }
+
+  return undefined;
+}
+
+function resolveMemoryPressureSources(
+  config: RayConfig,
+  snapshot: MemoryPressureSnapshot,
+): MemoryPressureSource[] {
+  if (!config.gracefulDegradation.enabled) {
+    return [];
+  }
+
+  const sources: MemoryPressureSource[] = [];
+
+  if (snapshot.processRssMiB >= config.gracefulDegradation.memoryRssThresholdMiB) {
+    sources.push("process_rss");
+  }
+
+  if (
+    snapshot.cgroupMemoryPressureRatio !== undefined &&
+    snapshot.cgroupMemoryPressureRatio >= CGROUP_MEMORY_PRESSURE_RATIO
+  ) {
+    sources.push("cgroup");
+  }
+
+  return sources;
 }
 
 function buildCacheKey(config: RayConfig, request: NormalizedInferenceRequest): string {
@@ -963,6 +1188,13 @@ export class RayRuntime {
   private activePreparations = 0;
   private readonly preparationQueue: PreparationQueueEntry[] = [];
   private readonly memoryUsage: () => NodeJS.MemoryUsage;
+  private readonly cgroupMemory: CgroupMemoryReader | undefined;
+  private cgroupMemoryCache:
+    | {
+        checkedAtMs: number;
+        snapshot: CgroupMemorySnapshot | undefined;
+      }
+    | undefined;
 
   readonly config: RayConfig;
 
@@ -982,6 +1214,10 @@ export class RayRuntime {
         ttlMs: this.config.cache.ttlMs,
       });
     this.memoryUsage = options.memoryUsage ?? process.memoryUsage;
+    this.cgroupMemory =
+      options.cgroupMemory === false
+        ? undefined
+        : (options.cgroupMemory ?? (() => readCgroupMemorySnapshot()));
   }
 
   async warm(): Promise<void> {
@@ -1047,11 +1283,12 @@ export class RayRuntime {
       learnedCap.request,
       queueSnapshot.queueDepth,
     );
-    const processRssMiB = this.getProcessRssMiB();
+    const memoryPressure = await this.getMemoryPressureSnapshot();
+    const memoryPressureSources = resolveMemoryPressureSources(this.config, memoryPressure);
     const memoryPressureDegraded = applyMemoryPressureDegradation(
       this.config,
       queueDepthDegraded.request,
-      processRssMiB,
+      memoryPressureSources,
     );
     const degraded = {
       request: memoryPressureDegraded.request,
@@ -1070,7 +1307,8 @@ export class RayRuntime {
         appliedMaxTokens: degraded.request.maxTokens,
         queueDepth: queueSnapshot.queueDepth,
         queueDepthThreshold: this.config.gracefulDegradation.queueDepthThreshold,
-        processRssMiB,
+        memoryPressureSources,
+        memoryPressure,
         memoryRssThresholdMiB: this.config.gracefulDegradation.memoryRssThresholdMiB,
       }),
       promptCompiler: compiled.diagnostics,
@@ -1084,7 +1322,7 @@ export class RayRuntime {
         : undefined;
 
     this.recordSchedulerMetrics(queueSnapshot);
-    this.recordMemoryPressureMetrics(processRssMiB);
+    this.recordMemoryPressureMetrics(memoryPressure, memoryPressureSources);
     this.metrics.gauge("prompt.compiler.chars_saved", compiled.diagnostics.charsSaved);
     this.metrics.gauge(
       "learned_output_cap.max_tokens_ratio",
@@ -1236,13 +1474,12 @@ export class RayRuntime {
   async health(): Promise<HealthSnapshot> {
     const snapshot = this.scheduler.snapshot();
     const provider = await this.getProviderHealth();
-    const processRssMiB = this.getProcessRssMiB();
+    const memoryPressure = await this.getMemoryPressureSnapshot();
+    const memoryPressureSources = resolveMemoryPressureSources(this.config, memoryPressure);
     const queueDegraded =
       snapshot.queueDepth >= this.config.gracefulDegradation.queueDepthThreshold;
-    const memoryDegraded =
-      this.config.gracefulDegradation.enabled &&
-      processRssMiB >= this.config.gracefulDegradation.memoryRssThresholdMiB;
-    this.recordMemoryPressureMetrics(processRssMiB);
+    const memoryDegraded = memoryPressureSources.length > 0;
+    this.recordMemoryPressureMetrics(memoryPressure, memoryPressureSources);
     const status =
       provider.status === "unavailable"
         ? "unavailable"
@@ -1586,18 +1823,87 @@ export class RayRuntime {
     }
   }
 
-  private recordMemoryPressureMetrics(processRssMiB: number): void {
-    this.metrics.gauge("process.memory.rss_mib", processRssMiB);
+  private async getMemoryPressureSnapshot(): Promise<MemoryPressureSnapshot> {
+    const processRssMiB = this.getProcessRssMiB();
+    const cgroupMemory = await this.getCgroupMemorySnapshot();
+
+    return {
+      processRssMiB,
+      ...(cgroupMemory
+        ? {
+            cgroupMemoryCurrentMiB: cgroupMemory.currentMiB,
+            ...(cgroupMemory.limitMiB !== undefined
+              ? { cgroupMemoryLimitMiB: cgroupMemory.limitMiB }
+              : {}),
+            ...(cgroupMemory.pressureRatio !== undefined
+              ? { cgroupMemoryPressureRatio: cgroupMemory.pressureRatio }
+              : {}),
+          }
+        : {}),
+    };
+  }
+
+  private async getCgroupMemorySnapshot(): Promise<CgroupMemorySnapshot | undefined> {
+    if (!this.cgroupMemory) {
+      return undefined;
+    }
+
+    const now = Date.now();
+
+    if (
+      this.cgroupMemoryCache &&
+      now - this.cgroupMemoryCache.checkedAtMs < CGROUP_MEMORY_CACHE_TTL_MS
+    ) {
+      return this.cgroupMemoryCache.snapshot;
+    }
+
+    try {
+      const snapshot = await this.cgroupMemory();
+      this.cgroupMemoryCache = {
+        checkedAtMs: now,
+        snapshot,
+      };
+      return snapshot;
+    } catch {
+      this.cgroupMemoryCache = {
+        checkedAtMs: now,
+        snapshot: undefined,
+      };
+      return undefined;
+    }
+  }
+
+  private recordMemoryPressureMetrics(
+    memoryPressure: MemoryPressureSnapshot,
+    memoryPressureSources: MemoryPressureSource[],
+  ): void {
+    this.metrics.gauge("process.memory.rss_mib", memoryPressure.processRssMiB);
     this.metrics.gauge(
       "process.memory.rss_threshold_mib",
       this.config.gracefulDegradation.memoryRssThresholdMiB,
     );
+    if (memoryPressure.cgroupMemoryCurrentMiB !== undefined) {
+      this.metrics.gauge(
+        "process.memory.cgroup_current_mib",
+        memoryPressure.cgroupMemoryCurrentMiB,
+      );
+    }
+    if (memoryPressure.cgroupMemoryLimitMiB !== undefined) {
+      this.metrics.gauge("process.memory.cgroup_limit_mib", memoryPressure.cgroupMemoryLimitMiB);
+    }
+    if (memoryPressure.cgroupMemoryPressureRatio !== undefined) {
+      this.metrics.gauge(
+        "process.memory.cgroup_pressure_ratio",
+        memoryPressure.cgroupMemoryPressureRatio,
+      );
+      this.metrics.gauge(
+        "process.memory.cgroup_pressure",
+        memoryPressure.cgroupMemoryPressureRatio >= CGROUP_MEMORY_PRESSURE_RATIO ? 1 : 0,
+      );
+    }
     this.metrics.gauge(
       "process.memory.pressure",
-      this.config.gracefulDegradation.enabled &&
-        processRssMiB >= this.config.gracefulDegradation.memoryRssThresholdMiB
-        ? 1
-        : 0,
+      this.config.gracefulDegradation.enabled && memoryPressureSources.length > 0 ? 1 : 0,
     );
   }
 

@@ -1,8 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
 import type { ModelProvider } from "@razroo/ray-core";
-import { createRayRuntime } from "./index.js";
+import { createRayRuntime, readCgroupMemorySnapshot } from "./index.js";
 
 test("runtime rejects invalid direct config", () => {
   const config = createDefaultConfig("tiny");
@@ -100,6 +103,94 @@ test("runtime clamps output under configured process RSS pressure", async () => 
   assert.equal(result.diagnostics?.degradation?.memoryRssThresholdMiB, 1);
   assert.equal(health.status, "degraded");
   assert.equal(metrics.gauges["process.memory.pressure"], 1);
+});
+
+test("runtime clamps output under cgroup memory pressure", async () => {
+  let observedMaxTokens = 0;
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "cgroup-pressure-model",
+    capabilities: {
+      streaming: false,
+      quantized: false,
+      localBackend: true,
+    },
+    async infer(request) {
+      observedMaxTokens = request.maxTokens;
+      return {
+        output: "degraded",
+      };
+    },
+  };
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    gracefulDegradation: {
+      enabled: true,
+      degradeToMaxTokens: 32,
+      memoryRssThresholdMiB: 4_096,
+    },
+  });
+  const runtime = createRayRuntime(config, {
+    provider,
+    memoryUsage: () => ({
+      rss: 32 * 1024 * 1024,
+      heapTotal: 0,
+      heapUsed: 0,
+      external: 0,
+      arrayBuffers: 0,
+    }),
+    cgroupMemory: () => ({
+      currentMiB: 950,
+      limitMiB: 1_000,
+      pressureRatio: 0.95,
+    }),
+  });
+
+  const result = await runtime.infer({
+    input: "hello world",
+    maxTokens: 128,
+    cache: false,
+  });
+  const health = await runtime.health();
+  const metrics = runtime.metricsSnapshot();
+
+  assert.equal(observedMaxTokens, 32);
+  assert.equal(result.degraded, true);
+  assert.equal(result.diagnostics?.degradation?.applied, true);
+  assert.deepEqual(result.diagnostics?.degradation?.reasons, ["memory_pressure"]);
+  assert.deepEqual(result.diagnostics?.degradation?.memoryPressureSources, ["cgroup"]);
+  assert.equal(result.diagnostics?.degradation?.processRssMiB, 32);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemoryCurrentMiB, 950);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemoryLimitMiB, 1_000);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemoryPressureRatio, 0.95);
+  assert.equal(health.status, "degraded");
+  assert.equal(metrics.gauges["process.memory.cgroup_current_mib"], 950);
+  assert.equal(metrics.gauges["process.memory.cgroup_limit_mib"], 1_000);
+  assert.equal(metrics.gauges["process.memory.cgroup_pressure_ratio"], 0.95);
+  assert.equal(metrics.gauges["process.memory.cgroup_pressure"], 1);
+  assert.equal(metrics.gauges["process.memory.pressure"], 1);
+});
+
+test("readCgroupMemorySnapshot reads unified cgroup memory files", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-cgroup-memory-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const cgroupDir = join(tempDir, "ray.slice", "ray-gateway.service");
+  const procCgroupPath = join(tempDir, "self-cgroup");
+
+  await mkdir(cgroupDir, { recursive: true });
+  await writeFile(procCgroupPath, "0::/ray.slice/ray-gateway.service\n", "utf8");
+  await writeFile(join(cgroupDir, "memory.current"), String(900 * 1024 * 1024), "utf8");
+  await writeFile(join(cgroupDir, "memory.max"), String(1_000 * 1024 * 1024), "utf8");
+
+  const snapshot = await readCgroupMemorySnapshot({
+    procSelfCgroupPath: procCgroupPath,
+    cgroupV2Root: tempDir,
+  });
+
+  assert.equal(snapshot?.currentMiB, 900);
+  assert.equal(snapshot?.limitMiB, 1_000);
+  assert.equal(snapshot?.pressureRatio, 0.9);
 });
 
 test("runtime returns chars and provider token usage explicitly", async () => {

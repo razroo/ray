@@ -272,5 +272,6 @@ Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 - Tune `scheduler.concurrency` conservatively. Tiny hardware collapses faster from overcommit than underutilization.
 - Keep `scheduler.requestTimeoutMs` slightly above `model.adapter.timeoutMs` so provider timeouts remain visible.
 - Use `RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB` when the gateway process needs to clamp output before RSS pressure becomes a swap or OOM problem.
+- Ray also samples Linux cgroup memory files when available and marks memory pressure when the service or container reaches 90% of its configured cgroup memory limit.
 - Keep the cache bounded. Ray is designed to stay predictable under memory pressure.
 - Prefer quantized models that fit comfortably rather than models that technically boot.

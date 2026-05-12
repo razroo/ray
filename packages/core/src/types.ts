@@ -475,8 +475,12 @@ export interface DegradationDiagnostics {
   appliedMaxTokens: number;
   queueDepth: number;
   queueDepthThreshold: number;
+  memoryPressureSources?: Array<"process_rss" | "cgroup">;
   processRssMiB?: number;
   memoryRssThresholdMiB?: number;
+  cgroupMemoryCurrentMiB?: number;
+  cgroupMemoryLimitMiB?: number;
+  cgroupMemoryPressureRatio?: number;
 }
 
 export interface InferenceDiagnostics {
