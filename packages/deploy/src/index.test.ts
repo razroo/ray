@@ -24,6 +24,10 @@ test("renderSystemdService includes hardening directives", () => {
     stateDirectory: "ray",
   });
 
+  assert.match(
+    service,
+    /ExecStart=\/usr\/local\/bin\/bun \/srv\/ray\/apps\/gateway\/dist\/index\.js/,
+  );
   assert.match(service, /NoNewPrivileges=true/);
   assert.match(service, /ProtectSystem=full/);
   assert.match(service, /EnvironmentFile=\/etc\/ray\/ray.env/);
@@ -135,7 +139,7 @@ test("renderSystemdService rejects unsafe systemd execution directives", () => {
         user: "ray",
         nodeBinary: "node",
       }),
-    /nodeBinary must be an absolute path/,
+    /runtimeBinary must be an absolute path/,
   );
 
   assert.throws(
@@ -437,7 +441,7 @@ test("renderDeploymentBundle includes llama.cpp service for generic 1b profiles"
       RAY_API_KEYS: "test-key",
     },
     memoryBudgetMiB: 4096,
-    nodeBinary: "/opt/node 22/bin/node",
+    runtimeBinary: "/usr/local/bin/bun",
   });
 
   assert.match(bundle.service, /Ray Gateway/);
@@ -445,7 +449,7 @@ test("renderDeploymentBundle includes llama.cpp service for generic 1b profiles"
     bundle.service,
     new RegExp(`WorkingDirectory=${process.cwd().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
   );
-  assert.match(bundle.service, /ExecStart="\/opt\/node 22\/bin\/node"/);
+  assert.match(bundle.service, /ExecStart=\/usr\/local\/bin\/bun/);
   assert.match(bundle.service, /StateDirectory=ray/);
   assert.match(bundle.service, /Wants=ray-llama-cpp\.service/);
   assert.match(bundle.service, /After=network\.target ray-llama-cpp\.service/);

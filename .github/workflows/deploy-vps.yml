@@ -48,7 +48,7 @@ jobs:
       RAY_DEPLOY_DOMAIN: ${{ vars.RAY_DEPLOY_DOMAIN }}
       RAY_DEPLOY_INSTALL_CADDY: ${{ vars.RAY_DEPLOY_INSTALL_CADDY }}
       RAY_CONFIG_PATH_VAR: ${{ vars.RAY_CONFIG_PATH }}
-      RAY_NODE_MAJOR: ${{ vars.RAY_NODE_MAJOR }}
+      RAY_GATEWAY_RUNTIME_BINARY: ${{ vars.RAY_GATEWAY_RUNTIME_BINARY }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -169,14 +169,13 @@ jobs:
         run: |
           set -euo pipefail
           SSH_USER="${SSH_USER:-root}"
-          NODE_MAJOR="${RAY_NODE_MAJOR:-22}"
           INSTALL_CADDY="${INSTALL_CADDY:-false}"
           TARGET="$SSH_USER@$RAY_DEPLOY_HOST"
           shell_quote() {
             printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
           }
 
-          ssh -i ~/.ssh/deploy_key "$TARGET" "NODE_MAJOR=$(shell_quote "$NODE_MAJOR") INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") bash -s" <<'ENDSSH'
+          ssh -i ~/.ssh/deploy_key "$TARGET" "INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") bash -s" <<'ENDSSH'
           set -euo pipefail
 
           SUDO=""
@@ -189,18 +188,6 @@ jobs:
           fi
           DEPLOY_USER="$(id -un)"
           DEPLOY_GROUP="$(id -gn)"
-
-          NEED_NODE=1
-          if [ -x /usr/bin/node ]; then
-            if /usr/bin/node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 20 || (major === 20 && minor >= 11) ? 0 : 1)'; then
-              NEED_NODE=0
-            fi
-          fi
-
-          if [ "$NEED_NODE" -eq 1 ]; then
-            curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | $SUDO bash -
-            $SUDO apt-get install -y nodejs
-          fi
 
           if [ "${INSTALL_CADDY:-false}" = "true" ] && ! command -v caddy >/dev/null 2>&1; then
             $SUDO apt-get update
@@ -245,6 +232,7 @@ jobs:
           set -euo pipefail
           SSH_USER="${SSH_USER:-root}"
           TARGET="$SSH_USER@$RAY_DEPLOY_HOST"
+          GATEWAY_RUNTIME_BINARY="${RAY_GATEWAY_RUNTIME_BINARY:-/usr/local/bin/bun}"
           ENV_B64="$(printf '%s' "${RAY_ENV_FILE_CONTENTS:-}" | base64 -w 0)"
           CONFIG_B64="$(printf '%s' "${RAY_CONFIG_JSON:-}" | base64 -w 0)"
           shell_quote() {
@@ -252,7 +240,7 @@ jobs:
           }
 
           ssh -i ~/.ssh/deploy_key "$TARGET" \
-            "CONFIG_SOURCE=$(shell_quote "$CONFIG_SOURCE") CONFIG_REL=$(shell_quote "$CONFIG_REL") CONFIG_B64=$(shell_quote "$CONFIG_B64") HEALTH_PORT=$(shell_quote "$HEALTH_PORT") DEPLOY_DOMAIN=$(shell_quote "$DEPLOY_DOMAIN") INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") ENV_B64=$(shell_quote "$ENV_B64") bash -s" <<'ENDSSH'
+            "CONFIG_SOURCE=$(shell_quote "$CONFIG_SOURCE") CONFIG_REL=$(shell_quote "$CONFIG_REL") CONFIG_B64=$(shell_quote "$CONFIG_B64") HEALTH_PORT=$(shell_quote "$HEALTH_PORT") DEPLOY_DOMAIN=$(shell_quote "$DEPLOY_DOMAIN") INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") GATEWAY_RUNTIME_BINARY=$(shell_quote "$GATEWAY_RUNTIME_BINARY") ENV_B64=$(shell_quote "$ENV_B64") bash -s" <<'ENDSSH'
           set -euo pipefail
 
           SUDO=""
@@ -288,7 +276,7 @@ jobs:
           fi
           $SUDO chmod 600 /etc/ray/ray.env
 
-          $SUDO /usr/bin/node /srv/ray/packages/deploy/dist/cli.js doctor \
+          $SUDO /usr/local/bin/bun /srv/ray/packages/deploy/dist/cli.js doctor \
             --cwd /srv/ray \
             --config /etc/ray/ray.json \
             --ray-env-file /etc/ray/ray.env
@@ -303,12 +291,12 @@ jobs:
           }
           trap cleanup_render_dir EXIT
 
-          $SUDO /usr/bin/node /srv/ray/packages/deploy/dist/cli.js render \
+          $SUDO /usr/local/bin/bun /srv/ray/packages/deploy/dist/cli.js render \
             --cwd /srv/ray \
             --config /etc/ray/ray.json \
             --user ray \
             --domain "$DEPLOY_DOMAIN" \
-            --node-binary /usr/bin/node \
+            --gateway-runtime-binary "$GATEWAY_RUNTIME_BINARY" \
             --ray-env-file /etc/ray/ray.env \
             --output-dir "$RENDER_DIR" >/dev/null
 

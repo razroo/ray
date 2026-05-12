@@ -14,6 +14,7 @@ export interface CliOptions {
   envFile?: string;
   outputDir?: string;
   memoryBudgetMiB?: number;
+  runtimeBinary?: string;
   nodeBinary?: string;
 }
 
@@ -300,6 +301,12 @@ export function parseCliArgs(argv: string[]): CliOptions {
 
     if (current === "--env-file" || current === "--ray-env-file") {
       options.envFile = requireFlagValue(current, next);
+      index += 1;
+      continue;
+    }
+
+    if (current === "--gateway-runtime-binary") {
+      options.runtimeBinary = requireFlagValue(current, next);
       index += 1;
       continue;
     }

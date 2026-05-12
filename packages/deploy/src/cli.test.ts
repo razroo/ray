@@ -92,7 +92,14 @@ test("parseCliArgs accepts render output directories", () => {
   assert.equal(options.outputDir, "/tmp/ray-render");
 });
 
-test("parseCliArgs accepts explicit systemd Node binaries", () => {
+test("parseCliArgs accepts explicit gateway runtime binaries", () => {
+  const options = parseCliArgs(["render", "--gateway-runtime-binary", "/usr/local/bin/bun"]);
+
+  assert.equal(options.command, "render");
+  assert.equal(options.runtimeBinary, "/usr/local/bin/bun");
+});
+
+test("parseCliArgs keeps --node-binary as a compatibility alias", () => {
   const options = parseCliArgs(["render", "--node-binary", "/opt/node 22/bin/node"]);
 
   assert.equal(options.command, "render");
@@ -247,8 +254,8 @@ test("runCli render writes deployment files when output-dir is provided", async 
     "ray.env",
     "--memory-mib",
     "4096",
-    "--node-binary",
-    "/opt/node 22/bin/node",
+    "--gateway-runtime-binary",
+    "/usr/local/bin/bun",
     "--output-dir",
     outputDir,
   ]);
@@ -262,7 +269,7 @@ test("runCli render writes deployment files when output-dir is provided", async 
   assert.match(service, /Description=Ray Gateway/);
   assert.match(service, new RegExp(`WorkingDirectory=${escapeRegExp(tempDir)}`));
   assert.match(service, new RegExp(`EnvironmentFile=${escapeRegExp(envFile)}`));
-  assert.match(service, /ExecStart="\/opt\/node 22\/bin\/node"/);
+  assert.match(service, /ExecStart=\/usr\/local\/bin\/bun/);
   assert.match(service, /Wants=ray-llama-cpp\.service/);
   assert.match(llamaService, /Description=llama\.cpp Server for Ray/);
   assert.doesNotMatch(llamaService, /EnvironmentFile=/);

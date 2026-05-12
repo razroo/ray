@@ -20,7 +20,7 @@ Ray stays lean by separating serving control from model execution:
 - the backend owns token generation
 - Ray owns scheduling, cache policy, request shaping, observability, and deploy ergonomics
 
-That keeps the Node process small while still making self-hosted inference operationally usable.
+That keeps the gateway process small while still making self-hosted inference operationally usable.
 
 ## Deployment Flow
 
@@ -29,8 +29,6 @@ That keeps the Node process small while still making self-hosted inference opera
 ```bash
 sudo apt-get update
 sudo apt-get install -y curl git build-essential caddy
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs
 curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.9"
 sudo install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
 id -u ray >/dev/null 2>&1 || sudo useradd --system --home /srv/ray --shell /usr/sbin/nologin ray
@@ -156,10 +154,10 @@ When the deploy renderer emits a llama.cpp unit, install it as
 `Wants=` and `After=` dependencies on that local backend service.
 
 ```bash
-node packages/deploy/dist/cli.js render \
+bun packages/deploy/dist/cli.js render \
   --cwd /srv/ray \
   --config /etc/ray/ray.json \
-  --node-binary /usr/bin/node \
+  --gateway-runtime-binary /usr/local/bin/bun \
   --ray-env-file /etc/ray/ray.env \
   --output-dir /tmp/ray-rendered
 sudo cp /tmp/ray-rendered/ray-gateway.service /etc/systemd/system/ray-gateway.service
@@ -227,7 +225,7 @@ Optional repository variables:
 - `RAY_DEPLOY_DOMAIN` — Caddy site address to render, defaults to `ray.local`
 - `RAY_DEPLOY_INSTALL_CADDY` — set to `true` to install and reload the generated Caddyfile; requires `RAY_DEPLOY_DOMAIN`
 - `RAY_CONFIG_PATH` — repo-relative config path to install, defaults to `./examples/config/ray.sub1b.public.json`
-- `RAY_NODE_MAJOR` — Node major version to install when `/usr/bin/node` is missing or too old, defaults to `22`
+- `RAY_GATEWAY_RUNTIME_BINARY` — absolute JavaScript runtime path rendered into `ray-gateway.service`, defaults to `/usr/local/bin/bun`
 - `RAY_AUTO_DEPLOY` — set to `true` if pushes to `main` should auto-deploy
 
 Use `RAY_CONFIG_JSON` when the live deployment needs host-specific or private

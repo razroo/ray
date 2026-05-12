@@ -13,6 +13,7 @@ export interface SystemdServiceOptions {
   stateDirectory?: string;
   after?: string[];
   wants?: string[];
+  runtimeBinary?: string;
   nodeBinary?: string;
 }
 
@@ -707,10 +708,10 @@ export function renderSystemdService(options: SystemdServiceOptions): string {
   assertOptionalSystemdDependencyArray(after, "after");
   assertOptionalSystemdDependencyArray(wants, "wants");
 
-  const nodeBinary = options.nodeBinary === undefined ? "/usr/bin/node" : options.nodeBinary;
-  assertSystemdScalar(nodeBinary, "nodeBinary");
+  const runtimeBinary = options.runtimeBinary ?? options.nodeBinary ?? "/usr/local/bin/bun";
+  assertSystemdScalar(runtimeBinary, "runtimeBinary");
   assertSystemdScalar(options.workingDirectory, "workingDirectory");
-  assertAbsolutePath(nodeBinary, "nodeBinary");
+  assertAbsolutePath(runtimeBinary, "runtimeBinary");
   assertAbsolutePath(options.workingDirectory, "workingDirectory");
   if (options.envFile !== undefined) {
     assertSystemdScalar(options.envFile, "envFile");
@@ -733,7 +734,7 @@ export function renderSystemdService(options: SystemdServiceOptions): string {
   const absoluteConfigPath = path.resolve(options.workingDirectory, options.configPath);
   const gatewayEntryPoint = path.join(options.workingDirectory, "apps/gateway/dist/index.js");
   const execStart = formatSystemdExecStart([
-    nodeBinary,
+    runtimeBinary,
     gatewayEntryPoint,
     "--config",
     absoluteConfigPath,
@@ -1438,6 +1439,7 @@ export async function renderDeploymentBundle(options: {
   envFile?: string;
   env?: NodeJS.ProcessEnv;
   memoryBudgetMiB?: number;
+  runtimeBinary?: string;
   nodeBinary?: string;
 }): Promise<{
   service: string;
@@ -1463,6 +1465,7 @@ export async function renderDeploymentBundle(options: {
       workingDirectory: cwd,
       configPath: options.configPath,
       user: options.user,
+      ...(options.runtimeBinary ? { runtimeBinary: options.runtimeBinary } : {}),
       ...(options.nodeBinary ? { nodeBinary: options.nodeBinary } : {}),
       ...(envFile ? { envFile } : {}),
       ...(stateDirectory ? { stateDirectory } : {}),
