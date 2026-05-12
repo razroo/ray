@@ -1199,6 +1199,43 @@ test("loadAndDiagnoseDeployment warns when EnvironmentFile permissions are open 
   assert.match(diagnostic.message, /0644/);
 });
 
+test("diagnoseConfig errors when the generated service user is missing in strict mode", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      serviceUser: "ray-missing",
+      serviceUserStatus: "missing",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "service_user_missing");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+});
+
+test("loadAndDiagnoseDeployment reports an existing generated service user in strict mode", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-service-user-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    user: "root",
+    strictFilesystem: true,
+  });
+
+  const diagnostic = inspected.diagnostics.find((entry) => entry.code === "service_user_ok");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+});
+
 test("loadAndDiagnoseDeployment errors when the projected memory fit exceeds a 4 GB target", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-memory-"));
   t.after(async () => {

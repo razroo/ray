@@ -258,7 +258,7 @@ bun run doctor:1b:generic
 bun run doctor:1b:8gb:generic
 ```
 
-`bun run doctor` targets the public `sub1b` deploy profile. The 1B doctor commands target the public generic 1B deploy profiles with explicit 4 GB and 8 GB memory budgets. Run them on the VPS after the GGUF exists at the configured path and `/etc/ray/ray.env` is populated. Doctor also verifies the configured `llama-server` binary, warns if the env file is group/world-readable, checks that the async queue storage path can be created and has at least `asyncQueue.minFreeStorageMiB` free, warns when small llama.cpp VPS profiles have no swap cushion, and, when passed `--gateway-runtime-binary`, verifies that the rendered gateway runtime exists and is executable.
+`bun run doctor` targets the public `sub1b` deploy profile. The 1B doctor commands target the public generic 1B deploy profiles with explicit 4 GB and 8 GB memory budgets. Run them on the VPS after the GGUF exists at the configured path and `/etc/ray/ray.env` is populated. Doctor also verifies the generated systemd service user, verifies the configured `llama-server` binary, warns if the env file is group/world-readable, checks that the async queue storage path can be created and has at least `asyncQueue.minFreeStorageMiB` free, warns when small llama.cpp VPS profiles have no swap cushion, and, when passed `--gateway-runtime-binary`, verifies that the rendered gateway runtime exists and is executable.
 
 ### Benchmark Contract
 

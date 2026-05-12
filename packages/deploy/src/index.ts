@@ -43,6 +43,7 @@ type BinaryPreflightStatus = "found" | "missing" | "unreadable";
 type GatewayRuntimeBinaryStatus = BinaryPreflightStatus;
 type LlamaCppBinaryStatus = BinaryPreflightStatus;
 type EnvFileStatus = "found" | "missing" | "unreadable";
+type ServiceUserStatus = "found" | "missing" | "unreadable";
 type SwapStatus = "available" | "missing" | "unreadable";
 
 export interface DeploymentPreflight {
@@ -68,6 +69,9 @@ export interface DeploymentPreflight {
   envFileStatus?: EnvFileStatus;
   envFileMode?: number;
   envFileError?: string;
+  serviceUser?: string;
+  serviceUserStatus?: ServiceUserStatus;
+  serviceUserError?: string;
   swapStatus?: SwapStatus;
   swapTotalMiB?: number;
   swapError?: string;
@@ -574,6 +578,28 @@ function parseSwapTotalMiB(meminfo: string): number | undefined {
 
   const swapKiB = Number(match[1]);
   return Number.isSafeInteger(swapKiB) && swapKiB >= 0 ? Math.floor(swapKiB / 1024) : undefined;
+}
+
+function passwdContainsUser(passwd: string, user: string): boolean {
+  const numericUid = /^\d+$/.test(user) ? user : undefined;
+
+  for (const rawLine of passwd.split("\n")) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith("#")) {
+      continue;
+    }
+
+    const fields = line.split(":");
+    if (fields.length < 3) {
+      continue;
+    }
+
+    if (fields[0] === user || (numericUid !== undefined && fields[2] === numericUid)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function shouldRequireSwapCushion(
@@ -1090,6 +1116,30 @@ export function diagnoseConfig(
     }
   }
 
+  if (strictFilesystem && preflight?.serviceUserStatus !== undefined) {
+    const serviceUser = preflight.serviceUser ?? "the configured service user";
+
+    if (preflight.serviceUserStatus === "missing") {
+      diagnostics.push({
+        level: "error",
+        code: "service_user_missing",
+        message: `The generated systemd service user "${serviceUser}" was not found on this host. Create it before rendering or restarting Ray services, or pass --user with an existing system account.`,
+      });
+    } else if (preflight.serviceUserStatus === "unreadable") {
+      diagnostics.push({
+        level: "error",
+        code: "service_user_unreadable",
+        message: `Doctor could not inspect the generated systemd service user "${serviceUser}"${preflight.serviceUserError ? ` (${preflight.serviceUserError})` : ""}. Verify the account exists before restarting Ray services.`,
+      });
+    } else {
+      diagnostics.push({
+        level: "info",
+        code: "service_user_ok",
+        message: `Generated systemd service user "${serviceUser}" exists on this host.`,
+      });
+    }
+  }
+
   if (strictFilesystem && preflight?.gatewayRuntimeBinaryStatus !== undefined) {
     const runtimePath = preflight.gatewayRuntimeBinaryPath ?? "the configured gateway runtime";
 
@@ -1565,6 +1615,7 @@ export async function loadAndDiagnoseDeployment(options: {
   envFile?: string;
   memoryBudgetMiB?: number;
   runtimeBinary?: string;
+  user?: string;
   strictFilesystem?: boolean;
   nodeBinary?: string;
 }): Promise<{
@@ -1582,6 +1633,7 @@ export async function loadAndDiagnoseDeployment(options: {
     ...(options.runtimeBinary !== undefined ? { runtimeBinary: options.runtimeBinary } : {}),
     ...(options.nodeBinary !== undefined ? { nodeBinary: options.nodeBinary } : {}),
     ...(options.envFile !== undefined ? { envFile: options.envFile } : {}),
+    ...(options.user !== undefined ? { user: options.user } : {}),
     ...(options.strictFilesystem !== undefined
       ? { strictFilesystem: options.strictFilesystem }
       : {}),
@@ -1777,6 +1829,29 @@ async function collectEnvFilePreflight(
   }
 }
 
+async function collectServiceUserPreflight(
+  user: string | undefined,
+  strictFilesystem: boolean,
+): Promise<Partial<DeploymentPreflight>> {
+  if (user === undefined || !strictFilesystem) {
+    return {};
+  }
+
+  try {
+    const passwd = await readFile("/etc/passwd", "utf8");
+    return {
+      serviceUser: user,
+      serviceUserStatus: passwdContainsUser(passwd, user) ? "found" : "missing",
+    };
+  } catch (error) {
+    return {
+      serviceUser: user,
+      serviceUserStatus: "unreadable",
+      serviceUserError: toErrorMessage(error),
+    };
+  }
+}
+
 async function collectGatewayRuntimePreflight(
   runtimeBinary: string | undefined,
 ): Promise<Partial<DeploymentPreflight>> {
@@ -1897,6 +1972,7 @@ async function collectDeploymentPreflight(
     memoryBudgetMiB?: number;
     runtimeBinary?: string;
     envFile?: string;
+    user?: string;
     strictFilesystem?: boolean;
     nodeBinary?: string;
   },
@@ -1904,6 +1980,10 @@ async function collectDeploymentPreflight(
   const hostMemoryMiB = Math.max(1, Math.floor(totalmem() / BYTES_PER_MIB));
   const storagePreflight = await collectAsyncQueueStoragePreflight(config);
   const envFilePreflight = await collectEnvFilePreflight(options.envFile);
+  const serviceUserPreflight = await collectServiceUserPreflight(
+    options.user,
+    options.strictFilesystem === true,
+  );
   const runtimePreflight = await collectGatewayRuntimePreflight(
     options.runtimeBinary ?? options.nodeBinary,
   );
@@ -1914,6 +1994,7 @@ async function collectDeploymentPreflight(
       hostMemoryMiB,
       ...storagePreflight,
       ...envFilePreflight,
+      ...serviceUserPreflight,
       ...runtimePreflight,
       ...swapPreflight,
     };
@@ -1932,6 +2013,7 @@ async function collectDeploymentPreflight(
     hostMemoryMiB,
     ...storagePreflight,
     ...envFilePreflight,
+    ...serviceUserPreflight,
     ...runtimePreflight,
     ...llamaBinaryPreflight,
     ...swapPreflight,
