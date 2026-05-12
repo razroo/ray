@@ -709,6 +709,33 @@ function resolveCgroupCpuPressure(
   );
 }
 
+function applyRecentCgroupCpuThrottlingRatio(
+  snapshot: CgroupCpuSnapshot | undefined,
+  previous: CgroupCpuSnapshot | undefined,
+): CgroupCpuSnapshot | undefined {
+  if (
+    !snapshot ||
+    snapshot.periods === undefined ||
+    snapshot.throttledPeriods === undefined ||
+    previous?.periods === undefined ||
+    previous.throttledPeriods === undefined
+  ) {
+    return snapshot;
+  }
+
+  const periodDelta = snapshot.periods - previous.periods;
+  const throttledDelta = snapshot.throttledPeriods - previous.throttledPeriods;
+
+  if (periodDelta <= 0 || throttledDelta < 0) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    throttledRatio: Number((throttledDelta / periodDelta).toFixed(4)),
+  };
+}
+
 function applyCpuPressureDegradation(
   config: RayConfig,
   request: NormalizedInferenceRequest,
@@ -2548,7 +2575,10 @@ export class RayRuntime {
     }
 
     try {
-      const snapshot = await this.cgroupCpu();
+      const snapshot = applyRecentCgroupCpuThrottlingRatio(
+        await this.cgroupCpu(),
+        this.cgroupCpuCache?.snapshot,
+      );
       this.cgroupCpuCache = {
         checkedAtMs: now,
         snapshot,

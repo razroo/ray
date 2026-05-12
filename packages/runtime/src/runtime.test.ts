@@ -601,6 +601,36 @@ test("runtime health exposes cgroup CPU throttling", async () => {
   assert.equal(health.runtime?.cpu?.cgroupCpuThrottledThreshold, 0.2);
 });
 
+test("runtime evaluates cgroup CPU throttling from recent counter deltas", async () => {
+  const snapshots = [
+    {
+      periods: 100,
+      throttledPeriods: 60,
+      throttledRatio: 0.6,
+    },
+    {
+      periods: 200,
+      throttledPeriods: 61,
+      throttledRatio: 0.305,
+    },
+  ];
+  let snapshotIndex = 0;
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), {
+    cgroupCpu: () => snapshots[Math.min(snapshotIndex++, snapshots.length - 1)],
+  });
+
+  const initialHealth = await runtime.health();
+  assert.equal(initialHealth.status, "degraded");
+  assert.equal(initialHealth.runtime?.cpu?.cgroupCpuThrottledRatio, 0.6);
+
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  const recoveredHealth = await runtime.health();
+  assert.equal(recoveredHealth.status, "ok");
+  assert.equal(recoveredHealth.runtime?.cpu?.degraded, false);
+  assert.equal(recoveredHealth.runtime?.cpu?.cgroupCpuThrottledRatio, 0.01);
+});
+
 test("runtime returns chars and provider token usage explicitly", async () => {
   const provider: ModelProvider = {
     kind: "mock",
