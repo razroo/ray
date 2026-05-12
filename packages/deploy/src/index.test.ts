@@ -555,6 +555,43 @@ test("renderDeploymentBundle includes llama.cpp service for generic 1b profiles"
   );
 });
 
+test("renderDeploymentBundle redacts adapter headers from summary output", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-summary-redaction-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = join(tempDir, "ray.json");
+  const config = mergeConfig(createDefaultConfig("vps"), {
+    model: {
+      adapter: {
+        headers: {
+          authorization: "Bearer upstream-secret",
+          "x-provider-token": "shared-secret",
+        },
+      },
+    },
+  });
+  await writeFile(configPath, `${JSON.stringify(config)}\n`, "utf8");
+
+  const bundle = await renderDeploymentBundle({
+    cwd: tempDir,
+    configPath,
+    user: "ray",
+    domain: "ray.example.com",
+  });
+  const { adapter } = bundle.summary.model;
+
+  if (adapter.kind !== "openai-compatible" && adapter.kind !== "llama.cpp") {
+    throw new Error("Expected HTTP adapter with headers");
+  }
+
+  assert.deepEqual(adapter.headers, {
+    authorization: "[redacted]",
+    "x-provider-token": "[redacted]",
+  });
+  assert.doesNotMatch(JSON.stringify(bundle.summary), /upstream-secret|shared-secret/);
+});
+
 test("renderLlamaCppService emits a single-vps launch profile", () => {
   const config = mergeConfig(createDefaultConfig("vps"), {
     model: {

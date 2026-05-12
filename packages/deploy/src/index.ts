@@ -4,7 +4,7 @@ import { access, readFile, stat, statfs } from "node:fs/promises";
 import { isIP } from "node:net";
 import { tmpdir, totalmem } from "node:os";
 import path from "node:path";
-import { loadRayConfig, resolveAuthApiKeys } from "@ray/config";
+import { loadRayConfig, resolveAuthApiKeys, sanitizeConfig } from "@ray/config";
 import { toErrorMessage, type LlamaCppLaunchProfile, type RayConfig } from "@razroo/ray-core";
 
 export interface SystemdServiceOptions {
@@ -1136,6 +1136,21 @@ function resolveLlamaCppSystemdControls(
   return {
     ...resolveLlamaCppMemoryControls(launchProfile, preflight),
     cpuWeight: LLAMA_CPP_CPU_WEIGHT,
+  };
+}
+
+function sanitizeDeploymentSummaryConfig(
+  config: RayConfig,
+): Pick<DeploymentBundleSummary, "profile" | "model" | "server"> {
+  const sanitized = sanitizeConfig(config) as unknown as Pick<
+    RayConfig,
+    "profile" | "model" | "server"
+  >;
+
+  return {
+    profile: sanitized.profile,
+    model: sanitized.model,
+    server: sanitized.server,
   };
 }
 
@@ -2339,6 +2354,7 @@ export async function renderDeploymentBundle(options: {
           inspected.preflight,
         )
       : undefined;
+  const summaryConfig = sanitizeDeploymentSummaryConfig(inspected.config);
 
   return {
     service: renderSystemdService({
@@ -2376,9 +2392,7 @@ export async function renderDeploymentBundle(options: {
         }
       : {}),
     summary: {
-      profile: inspected.config.profile,
-      model: inspected.config.model,
-      server: inspected.config.server,
+      ...summaryConfig,
       diagnostics: inspected.diagnostics,
       preflight: inspected.preflight,
       systemd: {
