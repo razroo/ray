@@ -31,7 +31,8 @@ sudo apt-get update
 sudo apt-get install -y curl git build-essential caddy
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs
-sudo corepack enable
+curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.9"
+sudo install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
 id -u ray >/dev/null 2>&1 || sudo useradd --system --home /srv/ray --shell /usr/sbin/nologin ray
 sudo install -d -m 0755 /srv/ray /etc/ray /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
 sudo chown "$(id -un):$(id -gn)" /srv/ray
@@ -79,8 +80,8 @@ On an 8 GB node, [ray.1b.8gb.generic.public.json](../../config/ray.1b.8gb.generi
 ```bash
 git clone https://github.com/razroo/ray.git /srv/ray
 cd /srv/ray
-pnpm install
-pnpm build
+bun install
+bun run build
 sudo chmod -R a+rX /srv/ray
 sudo chown -R ray:ray /var/lib/ray
 ```
@@ -197,13 +198,13 @@ test "$caddy_status" -eq 0
 ### 8. Run the deployment checks
 
 ```bash
-RAY_API_KEYS=replace-with-real-key pnpm validate:config:public
-RAY_API_KEYS=replace-with-real-key pnpm validate:config:1b:generic:public
-RAY_API_KEYS=replace-with-real-key pnpm validate:config:1b:public
-pnpm doctor:1b:generic
-pnpm doctor
-pnpm benchmark:assert:cx23
-pnpm benchmark:assert:cx23:1b
+RAY_API_KEYS=replace-with-real-key bun run validate:config:public
+RAY_API_KEYS=replace-with-real-key bun run validate:config:1b:generic:public
+RAY_API_KEYS=replace-with-real-key bun run validate:config:1b:public
+bun run doctor:1b:generic
+bun run doctor
+bun run benchmark:assert:cx23
+bun run benchmark:assert:cx23:1b
 ```
 
 ### 9. Optional GitHub Actions deploy

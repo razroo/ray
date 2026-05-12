@@ -25,8 +25,8 @@ For below-1B split-role experiments, use [ray.sub1b.classifier.json](../../examp
 ## Local development (this repo)
 
 ```bash
-pnpm build
-pnpm dev:hetzner-email-ai
+bun run build
+bun run dev:hetzner-email-ai
 ```
 
 Ensure an OpenAI-compatible backend is up at the URL in `model.adapter` before sending traffic.
@@ -62,15 +62,15 @@ If `razroo-email-ai` checks availability before sending inference, point the Ray
 Benchmark the 1B email path with:
 
 ```bash
-pnpm benchmark:assert:cx23:1b
-pnpm benchmark:assert:8gb:1b
-pnpm benchmark:1b:prompt-formats
-pnpm autotune:1b
+bun run benchmark:assert:cx23:1b
+bun run benchmark:assert:8gb:1b
+bun run benchmark:1b:prompt-formats
+bun run autotune:1b
 ```
 
 The workload in [email-1b-workload.jsonl](../../examples/workloads/email-1b-workload.jsonl) exercises cold outreach, follow-up, reply classification, reply rewrite, and a direct section-generation prompt shaped like the app's product flow. It asserts JSON validity for classification and rejects common prompt echo, stop-token leakage, and generic email filler. Benchmark runs can append JSONL history under `.ray/benchmarks/history` so prompt/config changes can be compared over time.
 
-[email-prompt-families-1b.json](../../examples/evals/email-prompt-families-1b.json) is the smaller golden eval set for prompt wording changes. Run it with `pnpm eval:prompt-families:1b` against a live Ray gateway. The output includes provider diagnostics for `promptFormat`, `promptFormatReason`, `modelRef`, `launchPreset`, cached tokens, slot reuse, and context window.
+[email-prompt-families-1b.json](../../examples/evals/email-prompt-families-1b.json) is the smaller golden eval set for prompt wording changes. Run it with `bun run eval:prompt-families:1b` against a live Ray gateway. The output includes provider diagnostics for `promptFormat`, `promptFormatReason`, `modelRef`, `launchPreset`, cached tokens, slot reuse, and context window.
 
 For longer-running or high-volume work, prefer `POST /v1/jobs` over holding an HTTP connection open. Ray persists the job to disk, processes it in the background, and can `POST` the terminal payload to `callbackUrl` when the work completes. Completed jobs stay queryable until `asyncQueue.completedTtlMs` expires, while pending callbacks are preserved until delivery succeeds or callback attempts are exhausted. Callback URLs resolve to public network addresses by default; use the async queue allowlist only for explicitly trusted private callbacks.
 

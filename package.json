@@ -4,10 +4,14 @@
   "version": "0.1.0",
   "description": "Shrink AI to run on cheap VPS infrastructure.",
   "license": "MIT",
-  "packageManager": "pnpm@9.12.3",
+  "packageManager": "bun@1.3.9",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "engines": {
     "node": ">=20.11.0",
-    "pnpm": ">=9.0.0"
+    "bun": ">=1.3.0"
   },
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
@@ -58,13 +62,13 @@
     "autotune:hetzner-email-ai": "node --import tsx ./scripts/benchmark.ts --autotune --config ./examples/config/ray.hetzner-cx23-qwen0.6b.json --workload ./examples/workloads/email-workload.jsonl --concurrency 2 --requests 16",
     "autotune:1b": "node --import tsx ./scripts/benchmark.ts --autotune --config ./examples/config/ray.1b.json --workload ./examples/workloads/email-1b-workload.jsonl --concurrency 1 --requests 10",
     "autotune:1b:8gb": "node --import tsx ./scripts/benchmark.ts --autotune --config ./examples/config/ray.1b.8gb.json --workload ./examples/workloads/email-1b-workload.jsonl --concurrency 2 --requests 16",
-    "test": "pnpm build && node ./scripts/test.mjs",
-    "release:gate": "pnpm lint && pnpm format:check && pnpm test && pnpm pack:check",
+    "test": "bun run build && node ./scripts/test.mjs",
+    "release:gate": "bun run lint && bun run format:check && bun run test && bun run pack:check",
     "release:verify-npm": "node ./scripts/release/verify-npm.mjs",
     "release:github": "bash scripts/release/gh-release.sh",
     "changeset": "changeset",
     "changeset:status": "changeset status --verbose",
-    "version": "changeset version && pnpm install",
+    "version": "changeset version && bun install",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

@@ -36,7 +36,7 @@ async function collect(current) {
 await collect(root);
 
 if (testFiles.length === 0) {
-  console.error("No built test files were found. Run `pnpm build` first.");
+  console.error("No built test files were found. Run `bun run build` first.");
   process.exit(1);
 }
 

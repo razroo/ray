@@ -106,8 +106,8 @@ That means some features are deliberately not the priority in the first versions
 
 The stack is intentionally pragmatic:
 
-- **pnpm** workspace (`pnpm` 9+, Node **20.11+** per `engines`; GitHub Actions uses Node 22 for CI parity)
-- TypeScript with a project reference build (`pnpm build` / `pnpm typecheck`)
+- **Bun** workspace (Bun **1.3+**, Node **20.11+** per `engines`; GitHub Actions runs the gate under Node 20 and Node 22 for CI parity)
+- TypeScript with a project reference build (`bun run build` / `bun run typecheck`)
 - Bare `http` gateway — no mandatory web framework on the hot path
 - ESLint + Prettier + Changesets at the repo root
 
@@ -162,7 +162,7 @@ Deliberate omissions in the MVP:
 ### Install
 
 ```bash
-pnpm install
+bun install
 ```
 
 ### Run locally (tiny profile — mock provider)
@@ -170,7 +170,7 @@ pnpm install
 No external model server required:
 
 ```bash
-pnpm dev:tiny
+bun run dev:tiny
 ```
 
 In another terminal:
@@ -194,7 +194,7 @@ The durable queue caps retained job records with `asyncQueue.maxJobs` and prunes
 ### Build
 
 ```bash
-pnpm build
+bun run build
 ```
 
 ### Default cheap-VPS profile (sub-1B llama.cpp backend)
@@ -202,10 +202,10 @@ pnpm build
 Expects a local `llama.cpp` server on `127.0.0.1:8081` (see [ray.sub1b.json](examples/config/ray.sub1b.json)). The default sub-1B path is tuned for a CX23-class 2 vCPU / 4 GB x86 VPS; use [ray.sub1b.cax11.json](examples/config/ray.sub1b.cax11.json) for the ARM CAX11 variant.
 
 ```bash
-pnpm start
+bun run start
 ```
 
-For the roomier 3B-style OpenAI-compatible profile, use `pnpm start:vps`.
+For the roomier 3B-style OpenAI-compatible profile, use `bun run start:vps`.
 
 ### Portable 1B llama.cpp profiles
 
@@ -214,8 +214,8 @@ Use the 1B profile when the product needs better instruction following than the 
 The generic starting points are [ray.1b.generic.json](examples/config/ray.1b.generic.json) for a conservative 4 GB single-slot VPS and [ray.1b.8gb.generic.json](examples/config/ray.1b.8gb.generic.json) for an 8 GB two-slot node. The Qwen/Hetzner configs remain checked-in reference baselines, not the product boundary.
 
 ```bash
-pnpm start:1b:generic
-pnpm start:1b:8gb:generic
+bun run start:1b:generic
+bun run start:1b:8gb:generic
 ```
 
 Common portable model overrides can live in `/etc/ray/ray.env`, so operators do not need to fork JSON for every 1B model:
@@ -250,24 +250,24 @@ the operator.
 ### Validate config / doctor
 
 ```bash
-pnpm validate:config
-pnpm doctor
-pnpm doctor:1b:generic
-pnpm doctor:1b:8gb:generic
+bun run validate:config
+bun run doctor
+bun run doctor:1b:generic
+bun run doctor:1b:8gb:generic
 ```
 
-`pnpm doctor` targets the public `sub1b` deploy profile. The 1B doctor commands target the public generic 1B deploy profiles with explicit 4 GB and 8 GB memory budgets. Run them on the VPS after the GGUF exists at the configured path and `/etc/ray/ray.env` is populated.
+`bun run doctor` targets the public `sub1b` deploy profile. The 1B doctor commands target the public generic 1B deploy profiles with explicit 4 GB and 8 GB memory budgets. Run them on the VPS after the GGUF exists at the configured path and `/etc/ray/ray.env` is populated.
 
 ### Benchmark Contract
 
 On a real Hetzner box, the benchmark script can now emit structured JSON and assert against checked-in baselines:
 
 ```bash
-pnpm benchmark:assert:cx23
-pnpm benchmark:assert:cax11
-pnpm benchmark:assert:cx23:1b
-pnpm benchmark:assert:8gb:1b
-pnpm benchmark:1b:prompt-formats
+bun run benchmark:assert:cx23
+bun run benchmark:assert:cax11
+bun run benchmark:assert:cx23:1b
+bun run benchmark:assert:8gb:1b
+bun run benchmark:1b:prompt-formats
 ```
 
 Those commands write the latest report to `.ray/benchmarks/`, append JSONL history when configured, and compare the run against the baseline JSON in `examples/benchmarks/baselines/`. The 1B workload also checks scored output quality signals such as JSON validity, prompt echo, stop-token leakage, call-to-action presence, forbidden wrappers, and generic email filler.
@@ -275,7 +275,7 @@ Those commands write the latest report to `.ray/benchmarks/`, append JSONL histo
 For prompt-family quality checks across cold outreach, follow-up, classification, rewrite, and section generation:
 
 ```bash
-pnpm eval:prompt-families:1b
+bun run eval:prompt-families:1b
 ```
 
 The structured benchmark output includes provider diagnostics such as prompt format, request shape, model ref, launch preset, slot reuse, cached tokens, JSON repair attempts, and context window so a quality regression can be tied back to the backend path Ray chose. `/health` also exposes detected backend capabilities, and `/v1/config` includes sanitized capability hints for the configured profile.
@@ -285,10 +285,10 @@ The structured benchmark output includes provider diagnostics such as prompt for
 Same command **[Quality checks](.github/workflows/quality.yml)** runs on **`main`** under Node 20 and Node 22:
 
 ```bash
-pnpm run release:gate
+bun run release:gate
 ```
 
-That runs lint, Prettier `--check`, tests (`pnpm test` builds then runs the Tap suite), and npm pack smoke checks for the public packages.
+That runs lint, Prettier `--check`, tests (`bun run test` builds then runs the Tap suite), and Bun pack smoke checks for the public packages.
 
 ## Example config profiles
 
@@ -325,9 +325,9 @@ Install: `npm install @razroo/ray-sdk` (pulls **`@razroo/ray-core`**).
 
 ### Versioning and releases
 
-- **Changesets** — [`iso`](https://github.com/razroo/iso)-style workflow: `pnpm run changeset` on PRs that affect publishable APIs, then `pnpm run version` on `main` to bump linked packages and **`CHANGELOG.md`** ([`.changeset/config.json`](.changeset/config.json)).
-- **GitHub Releases** — tags `core-v…` and `sdk-v…`, then **`gh release create`** (shortcut: **`pnpm run release:github -- --yes`** after `pnpm run version` is on `main`); workflows publish with provenance. Details: [docs/npm-publishing.md](docs/npm-publishing.md).
-- **Post-publish check** — `pnpm run release:verify-npm -- <version>` against the npm registry.
+- **Changesets** — [`iso`](https://github.com/razroo/iso)-style workflow: `bun run changeset` on PRs that affect publishable APIs, then `bun run version` on `main` to bump linked packages and **`CHANGELOG.md`** ([`.changeset/config.json`](.changeset/config.json)).
+- **GitHub Releases** — tags `core-v…` and `sdk-v…`, then **`gh release create`** (shortcut: **`bun run release:github -- --yes`** after `bun run version` is on `main`); workflows publish with provenance. Details: [docs/npm-publishing.md](docs/npm-publishing.md).
+- **Post-publish check** — `bun run release:verify-npm -- <version>` against the npm registry.
 
 ### Security and repository hygiene
 
@@ -336,7 +336,7 @@ Install: `npm install @razroo/ray-sdk` (pulls **`@razroo/ray-core`**).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Short version: keep changes scoped, run **`pnpm run release:gate`** before pushing, add a **changeset** when **`@razroo/ray-core`** or **`@razroo/ray-sdk`** behavior changes.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Short version: keep changes scoped, run **`bun run release:gate`** before pushing, add a **changeset** when **`@razroo/ray-core`** or **`@razroo/ray-sdk`** behavior changes.
 
 ## Architecture notes
 

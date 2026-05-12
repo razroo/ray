@@ -18,12 +18,12 @@ Ray is being built as a lean inference runtime for cheap VPS hardware. Contribut
 
 ## Development
 
-1. Install Node 20+ and `pnpm`.
-2. Run `pnpm install`.
-3. Start the default sub-1B `llama.cpp` path with `pnpm dev`, or use `pnpm dev:tiny` if you do not have a local model backend running yet.
-4. Build with `pnpm build`.
-5. Run tests with `pnpm test`.
-6. Run `pnpm run release:gate` before opening a PR — same command CI runs (**Quality checks** → **`quality`** job: lint, format check, tests).
+1. Install Node 20+ and Bun 1.3+.
+2. Run `bun install`.
+3. Start the default sub-1B `llama.cpp` path with `bun run dev`, or use `bun run dev:tiny` if you do not have a local model backend running yet.
+4. Build with `bun run build`.
+5. Run tests with `bun run test`.
+6. Run `bun run release:gate` before opening a PR — same command CI runs (**Quality checks** → **`quality`** job: lint, format check, tests).
 
 ## Engineering bar
 
@@ -38,5 +38,5 @@ Ray is being built as a lean inference runtime for cheap VPS hardware. Contribut
 - Keep changes scoped.
 - Include doc updates when architecture or operator-facing behavior changes.
 - Add or extend tests when changing scheduler, cache, config, or transport behavior.
-- For user-visible or API changes in **`@razroo/ray-core`** or **`@razroo/ray-sdk`**, add a [Changeset](https://github.com/changesets/changesets) (`pnpm run changeset`). For repo-only or private-package work, add an empty changeset if `pnpm run changeset:status` requires it: `pnpm exec changeset add --empty`.
+- For user-visible or API changes in **`@razroo/ray-core`** or **`@razroo/ray-sdk`**, add a [Changeset](https://github.com/changesets/changesets) (`bun run changeset`). For repo-only or private-package work, add an empty changeset if `bun run changeset:status` requires it: `bunx changeset add --empty`.
 - Call out memory, cold-start, or deployment tradeoffs in the PR description.

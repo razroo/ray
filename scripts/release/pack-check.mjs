@@ -6,7 +6,7 @@ import { gunzipSync } from "node:zlib";
 
 const root = process.cwd();
 const destination = path.join(root, ".ray", "packs");
-const pnpmBin = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const bunBin = process.platform === "win32" ? "bun.exe" : "bun";
 const packages = [
   {
     name: "@razroo/ray-core",
@@ -22,7 +22,7 @@ const packages = [
 
 async function runPack(packageConfig) {
   await new Promise((resolve, reject) => {
-    const child = spawn(pnpmBin, ["pack", "--pack-destination", destination], {
+    const child = spawn(bunBin, ["pm", "pack", "--destination", destination], {
       cwd: packageConfig.cwd,
       stdio: "inherit",
     });

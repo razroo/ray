@@ -1,7 +1,7 @@
 dist
 node_modules
 .playwright-mcp
-pnpm-lock.yaml
+bun.lock
 **/.DS_Store
 **/*.sh
 **/*.jsonl

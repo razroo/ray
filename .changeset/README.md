@@ -5,9 +5,9 @@ Version bumps and `CHANGELOG.md` updates for publishable packages (**`@razroo/ra
 Quick reference:
 
 ```bash
-pnpm run changeset          # add a changeset after you change publishable APIs or behavior
-pnpm run changeset:status   # preview what the next version step would touch
-pnpm run version            # apply pending changesets → bump versions + write changelogs + refresh lockfile
+bun run changeset          # add a changeset after you change publishable APIs or behavior
+bun run changeset:status   # preview what the next version step would touch
+bun run version            # apply pending changesets, bump versions, write changelogs, and refresh lockfile
 ```
 
-Then commit the version bump, tag (`core-v…`, `sdk-v…`), and create GitHub Releases per [docs/npm-publishing.md](../docs/npm-publishing.md).
+Then commit the version bump, tag (`core-v...`, `sdk-v...`), and create GitHub Releases per [docs/npm-publishing.md](../docs/npm-publishing.md).

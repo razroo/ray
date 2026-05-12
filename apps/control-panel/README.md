@@ -1,6 +1,6 @@
 # Control Panel
 
-This app is **deferred**. The workspace entry exists so the monorepo layout stays honest and `pnpm` can resolve `apps/*` consistently.
+This app is **deferred**. The workspace entry exists so the monorepo layout stays honest and Bun can resolve `apps/*` consistently.
 
 Ray should earn a UI after the single-node runtime, configuration model, and deployment workflow are stable. Until then, the gateway, docs, example configs, and the published `@razroo/ray-sdk` client are the product surface.
 

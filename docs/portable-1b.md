@@ -66,8 +66,8 @@ For 8 GB nodes, start by raising context, slots, and cache RAM through the 8 GB 
 Run the doctor command on the target machine after the GGUF exists and `/etc/ray/ray.env` is populated:
 
 ```bash
-pnpm doctor:1b:generic
-pnpm doctor:1b:8gb:generic
+bun run doctor:1b:generic
+bun run doctor:1b:8gb:generic
 ```
 
 Doctor checks auth/env readiness, model file presence, launch profile consistency, and projected memory fit against the selected memory budget.
@@ -77,10 +77,10 @@ Doctor checks auth/env readiness, model file presence, launch profile consistenc
 The checked-in 1B email workload is a starter quality gate, not a universal benchmark:
 
 ```bash
-pnpm benchmark:assert:cx23:1b
-pnpm benchmark:assert:8gb:1b
-pnpm benchmark:1b:prompt-formats
-pnpm autotune:1b
+bun run benchmark:assert:cx23:1b
+bun run benchmark:assert:8gb:1b
+bun run benchmark:1b:prompt-formats
+bun run autotune:1b
 ```
 
 For a different product, keep the benchmark harness and replace the workload JSONL with prompts that represent the real application. The important metrics are prompt/cache reuse, queue delay, TTFT, completion tokens per second, and output quality checks that match the product.

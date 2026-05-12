@@ -2,7 +2,7 @@
 
 Ray publishes **library** packages from this monorepo for TypeScript consumers. The gateway app (`apps/gateway`) stays source-first in the repo and is not published as an npm CLI in this layout.
 
-Push-time automation follows [**geometra**](https://github.com/razroo/geometra)-style naming: [**Quality checks**](../.github/workflows/quality.yml) runs a single job **`quality`** that executes **`pnpm release:gate`** under Node 20 and Node 22. The gate covers lint, format check, full test build, and npm pack smoke checks. Tags and **`gh release create`** follow the **`iso`** pattern ([**ray-core-release.yml**](../.github/workflows/ray-core-release.yml), [**ray-sdk-release.yml**](../.github/workflows/ray-sdk-release.yml)); publish workflows poll for the **`quality`** check run before `npm publish`, same idea as geometra’s release workflow waiting on **`quality`**.
+Push-time automation follows [**geometra**](https://github.com/razroo/geometra)-style naming: [**Quality checks**](../.github/workflows/quality.yml) runs a single job **`quality`** that executes **`bun run release:gate`** under Node 20 and Node 22. The gate covers lint, format check, full test build, and Bun pack smoke checks. Tags and **`gh release create`** follow the **`iso`** pattern ([**ray-core-release.yml**](../.github/workflows/ray-core-release.yml), [**ray-sdk-release.yml**](../.github/workflows/ray-sdk-release.yml)); publish workflows poll for the **`quality`** check run before `npm publish`, same idea as geometra's release workflow waiting on **`quality`**.
 
 ## Packages
 
@@ -23,7 +23,7 @@ Configure **`NPM_TOKEN`** on the GitHub repo (fine-grained or classic token allo
 
 - Node 20+ matches the supported runtime; CI also runs the gate under Node 22.
 - [GitHub CLI](https://cli.github.com/) (`gh`) for releases.
-- `pnpm` 9 and repo install as in the root `README.md`.
+- Bun 1.3+ and repo install as in the root `README.md`.
 
 ### Tag naming
 
@@ -45,28 +45,28 @@ Publish **`@razroo/ray-core`** before **`@razroo/ray-sdk`** when both change, so
 During development, when a PR changes publishable APIs or behavior, add a changeset:
 
 ```bash
-pnpm run changeset
+bun run changeset
 ```
 
 Inspect what the next merge would release:
 
 ```bash
-pnpm run changeset:status
+bun run changeset:status
 ```
 
 On **`main`**, when you are ready to apply pending changesets and refresh **CHANGELOG.md** files:
 
 ```bash
-pnpm run version
+bun run version
 ```
 
-That runs `changeset version` and then **`pnpm install`** to sync the lockfile (like `iso` runs `npm install --package-lock-only` after versioning). Commit the result (version bumps + changelogs + `pnpm-lock.yaml`).
+That runs `changeset version` and then **`bun install`** to sync `bun.lock`. Commit the result (version bumps + changelogs + `bun.lock`).
 
-Infrastructure-only PRs can add an empty changeset: `pnpm exec changeset add --empty`.
+Infrastructure-only PRs can add an empty changeset: `bunx changeset add --empty`.
 
 ## Cut a release (GH + npm)
 
-1. Ensure **`pnpm run version`** has been run and the version bump is committed on **`main`**.
+1. Ensure **`bun run version`** has been run and the version bump is committed on **`main`**.
 
 2. Create **annotated tags** pointing at that commit:
 
@@ -90,17 +90,17 @@ Infrastructure-only PRs can add an empty changeset: `pnpm exec changeset add --e
 4. Workflow behavior:
    - Uses **`gh api`** to confirm the **`quality`** check run on the tagged commit succeeded (geometra-style gate before npm).
    - Runs **`packages/*/scripts/release/check-source.mjs`** so the tag matches `package.json`.
-   - **`pnpm build`** then **`pnpm publish --filter … --provenance`** with OIDC provenance (`id-token: write`).
+   - **`bun run build`**, **`bun pm pack`**, then **`npm publish <tarball> --provenance`** with OIDC provenance (`id-token: write`).
 
 5. Omit or delete a faulty GitHub Release and tag before re-cutting; avoid amending published tags.
 
 ### One-command tags + GitHub Releases (`gh`)
 
-After **`pnpm run version`** is committed on **`main`** and pushed (`git push origin main`), you can create both tags and GitHub Releases with:
+After **`bun run version`** is committed on **`main`** and pushed (`git push origin main`), you can create both tags and GitHub Releases with:
 
 ```bash
-pnpm run release:github -- --dry-run   # plan only
-pnpm run release:github -- --yes     # tag, git push tags, gh release create ×2
+bun run release:github -- --dry-run   # plan only
+bun run release:github -- --yes     # tag, git push tags, gh release create ×2
 ```
 
 Requires [**GitHub CLI**](https://cli.github.com/) (`gh`) authenticated (`gh auth login`). NPM publish still runs in Actions when each release is **published**.
@@ -110,21 +110,21 @@ Requires [**GitHub CLI**](https://cli.github.com/) (`gh`) authenticated (`gh aut
 From the repo root (mirrors CI’s **`release:gate`**):
 
 ```bash
-pnpm install
-pnpm run release:gate
+bun install
+bun run release:gate
 ```
 
 After a successful publish, confirm **`latest`** on npm (optional smoke, like geometra’s **`verify-npm`**):
 
 ```bash
-pnpm run release:verify-npm -- <version-you-just-published>
+bun run release:verify-npm -- <version-you-just-published>
 ```
 
 Sanity-check `package.json` matches the semver you intend for the tag:
 
 ```bash
-pnpm --filter @razroo/ray-core run release:check-source -- "$(node -p 'require("./packages/core/package.json").version')"
-pnpm --filter @razroo/ray-sdk run release:check-source -- "$(node -p 'require("./packages/sdk/package.json").version')"
+cd packages/core && bun run release:check-source -- "$(node -p 'require("./package.json").version')"
+cd packages/sdk && bun run release:check-source -- "$(node -p 'require("./package.json").version')"
 ```
 
 ## Consumers

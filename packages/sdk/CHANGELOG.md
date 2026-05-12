@@ -19,4 +19,4 @@
 
 ### Patch changes
 
-- _Changelog from this point forward is updated by [Changesets](https://github.com/changesets/changesets) when you run `pnpm run version` at the repo root._
+- _Changelog from this point forward is updated by [Changesets](https://github.com/changesets/changesets) when you run `bun run version` at the repo root._

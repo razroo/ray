@@ -581,7 +581,7 @@ export function parseArgs(argv: string[]): BenchmarkArgs {
 }
 
 function printUsage(): void {
-  console.log("Usage: pnpm benchmark -- [options]");
+  console.log("Usage: bun run benchmark -- [options]");
   console.log("");
   console.log("Options:");
   console.log("  --base-url <url>        Gateway base URL. Default: http://127.0.0.1:3000");

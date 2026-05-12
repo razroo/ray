@@ -36,10 +36,9 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
 
-      - name: Enable pnpm via Corepack
-        run: |
-          corepack enable
-          corepack prepare pnpm@9.12.3 --activate
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.9"
 
       - name: Set version from release tag
         run: |
@@ -80,15 +79,30 @@ jobs:
         run: node ./scripts/release/check-source.mjs "$VERSION"
 
       - name: Install (workspace root)
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
         working-directory: .
 
       - name: Build
-        run: pnpm build
+        run: bun run build
         working-directory: .
+
+      - name: Pack package
+        id: pack
+        run: |
+          set -euo pipefail
+          PACK_DIR="$RUNNER_TEMP/ray-packs"
+          rm -rf "$PACK_DIR"
+          mkdir -p "$PACK_DIR"
+          bun pm pack --destination "$PACK_DIR"
+          TARBALL="$(find "$PACK_DIR" -name '*.tgz' -print -quit)"
+          if [ -z "$TARBALL" ]; then
+            echo "::error::Bun did not produce a package tarball."
+            exit 1
+          fi
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
 
       - name: Publish to npm (with provenance)
         working-directory: .
-        run: pnpm publish --filter @razroo/ray-sdk --access public --no-git-checks --provenance
+        run: npm publish "${{ steps.pack.outputs.tarball }}" --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

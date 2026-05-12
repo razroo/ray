@@ -19,8 +19,7 @@ on:
       - examples/config/**
       - examples/deploy/vps/**
       - package.json
-      - pnpm-lock.yaml
-      - pnpm-workspace.yaml
+      - bun.lock
       - tsconfig.base.json
       - tsconfig.build.json
       - .github/workflows/deploy-vps.yml
@@ -60,10 +59,9 @@ jobs:
           node-version: "22"
           package-manager-cache: false
 
-      - name: Enable pnpm via Corepack
-        run: |
-          corepack enable
-          corepack prepare pnpm@9.12.3 --activate
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.9"
 
       - name: Verify deploy secrets are present
         run: |
@@ -76,10 +74,10 @@ jobs:
           done
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Build
-        run: pnpm build
+        run: bun run build
 
       - name: Resolve config and health port
         id: settings
@@ -262,13 +260,21 @@ jobs:
             SUDO="sudo"
           fi
 
-          if command -v corepack >/dev/null 2>&1; then
-            $SUDO corepack enable
-            $SUDO corepack prepare pnpm@9.12.3 --activate
+          if [ ! -x /usr/local/bin/bun ]; then
+            if command -v bun >/dev/null 2>&1; then
+              $SUDO install -m 0755 "$(command -v bun)" /usr/local/bin/bun
+            else
+              curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.9"
+              if [ ! -x "$HOME/.bun/bin/bun" ]; then
+                echo "Bun install completed but $HOME/.bun/bin/bun was not found."
+                exit 1
+              fi
+              $SUDO install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
+            fi
           fi
 
           cd /srv/ray
-          pnpm install --prod --frozen-lockfile --ignore-scripts
+          /usr/local/bin/bun install --production --frozen-lockfile --ignore-scripts
 
           if [ "${CONFIG_SOURCE:-repo}" = "secret" ] && [ -n "${CONFIG_B64:-}" ]; then
             printf '%s' "$CONFIG_B64" | base64 -d | $SUDO tee /etc/ray/ray.json >/dev/null
