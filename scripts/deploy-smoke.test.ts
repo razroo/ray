@@ -25,6 +25,7 @@ test("parseArgs accepts strict deploy smoke options", () => {
     "--systemd-env-file",
     "/etc/ray/ray.env",
     "--json",
+    "--verbose",
   ]);
 
   assert.equal(args.cwd, "/srv/ray");
@@ -34,6 +35,7 @@ test("parseArgs accepts strict deploy smoke options", () => {
   assert.equal(args.serviceUser, "ray");
   assert.equal(args.systemdEnvFile, "/etc/ray/ray.env");
   assert.equal(args.json, true);
+  assert.equal(args.verbose, true);
 });
 
 test("parseArgs rejects malformed deploy smoke argv", () => {
@@ -94,7 +96,13 @@ test("smokeDeployConfigs renders every checked-in public deploy profile", async 
         result.hasLlamaCppService,
     ),
   );
-  assert.match(formatTextSummary(cwd, summary), /gatewaySwapMax=128MiB/);
-  assert.match(formatTextSummary(cwd, summary), /llamaSwapMax=\d+MiB/);
-  assert.match(formatTextSummary(cwd, summary), /Summary: warnings=\d+ errors=0/);
+  const compactSummary = formatTextSummary(cwd, summary);
+  assert.match(compactSummary, /gatewaySwapMax=128MiB/);
+  assert.match(compactSummary, /llamaSwapMax=\d+MiB/);
+  assert.match(compactSummary, /Run with --verbose to print warning diagnostics/);
+  assert.doesNotMatch(compactSummary, /warn auth_keys_unverified:/);
+
+  const verboseSummary = formatTextSummary(cwd, summary, { verbose: true });
+  assert.match(verboseSummary, /warn auth_keys_unverified:/);
+  assert.match(verboseSummary, /Summary: warnings=\d+ errors=0/);
 });

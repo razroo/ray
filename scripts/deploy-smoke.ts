@@ -20,6 +20,7 @@ export interface DeploySmokeArgs {
   serviceUser: string;
   systemdEnvFile: string;
   json: boolean;
+  verbose: boolean;
   help: boolean;
 }
 
@@ -57,6 +58,7 @@ Options:
   --user <name>                systemd service user to render. Default: ${DEFAULT_SERVICE_USER}
   --systemd-env-file <path>    EnvironmentFile path rendered into systemd units. Default: ${DEFAULT_SYSTEMD_ENV_FILE}
   --json                       Print machine-readable summary JSON.
+  --verbose                    Print warning diagnostic details in text output.
   -h, --help                   Show this help.
 `;
 
@@ -103,6 +105,7 @@ export function parseArgs(argv: string[]): DeploySmokeArgs {
     serviceUser: DEFAULT_SERVICE_USER,
     systemdEnvFile: DEFAULT_SYSTEMD_ENV_FILE,
     json: false,
+    verbose: false,
     help: false,
   };
 
@@ -147,6 +150,11 @@ export function parseArgs(argv: string[]): DeploySmokeArgs {
 
     if (current === "--json") {
       args.json = true;
+      continue;
+    }
+
+    if (current === "--verbose") {
+      args.verbose = true;
       continue;
     }
 
@@ -263,7 +271,11 @@ function displayPath(cwd: string, configPath: string): string {
     : configPath;
 }
 
-export function formatTextSummary(cwd: string, summary: DeploySmokeSummary): string {
+export function formatTextSummary(
+  cwd: string,
+  summary: DeploySmokeSummary,
+  options: { verbose?: boolean } = {},
+): string {
   const lines = [
     `Rendered ${summary.configCount} public Ray deploy profile${summary.configCount === 1 ? "" : "s"}:`,
   ];
@@ -279,15 +291,15 @@ export function formatTextSummary(cwd: string, summary: DeploySmokeSummary): str
     );
 
     for (const diagnostic of result.diagnostics) {
-      if (diagnostic.level !== "error") {
+      if (diagnostic.level !== "error" && !(options.verbose && diagnostic.level === "warn")) {
         continue;
       }
-      lines.push(`  error ${diagnostic.code}: ${diagnostic.message}`);
+      lines.push(`  ${diagnostic.level} ${diagnostic.code}: ${diagnostic.message}`);
     }
   }
 
-  if (summary.warningCount > 0) {
-    lines.push("Warnings are expected on hosts without the target /var/lib/ray storage layout.");
+  if (summary.warningCount > 0 && !options.verbose) {
+    lines.push("Run with --verbose to print warning diagnostics.");
   }
 
   lines.push(
@@ -321,7 +333,9 @@ export async function runDeploySmokeCli(
     });
 
     io.stdout.write(
-      args.json ? `${JSON.stringify(summary, null, 2)}\n` : `${formatTextSummary(cwd, summary)}\n`,
+      args.json
+        ? `${JSON.stringify(summary, null, 2)}\n`
+        : `${formatTextSummary(cwd, summary, { verbose: args.verbose })}\n`,
     );
     return summary.ok ? 0 : 1;
   } catch (error) {
