@@ -340,6 +340,46 @@ function workflowWindowIncludes(lines: string[], index: number, pattern: string)
   return false;
 }
 
+function workflowLineNumber(lines: string[], pattern: string): number | undefined {
+  const lineIndex = lines.findIndex((line) => line.includes(pattern));
+  return lineIndex >= 0 ? lineIndex + 1 : undefined;
+}
+
+function validateDeployWorkflowPublicCaddyAuthGuard(
+  workflowPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  if (
+    !contents.includes("RAY_DEPLOY_INSTALL_CADDY") ||
+    !contents.includes("systemctl reload caddy")
+  ) {
+    return [];
+  }
+
+  if (
+    contents.includes("authEnabled: config.auth.enabled") &&
+    contents.includes('[ "$INSTALL_CADDY" = "true" ] && [ "$AUTH_ENABLED" != "true" ]')
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "workflow_public_caddy_auth_guard_missing",
+      workflowPath,
+      line: workflowLineNumber(lines, "RAY_DEPLOY_INSTALL_CADDY"),
+      message:
+        "VPS deploy workflow must refuse RAY_DEPLOY_INSTALL_CADDY=true when the resolved config has auth.enabled=false.",
+    },
+  ];
+}
+
 async function validateWorkflow(
   workflowPath: string,
 ): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
@@ -409,6 +449,8 @@ async function validateWorkflow(
       });
     }
   }
+
+  diagnostics.push(...validateDeployWorkflowPublicCaddyAuthGuard(workflowPath, contents, lines));
 
   return {
     lineCount: lines.length,

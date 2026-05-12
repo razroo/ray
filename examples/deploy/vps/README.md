@@ -395,8 +395,10 @@ long enough to resolve deployment settings, excludes `.ray-deploy-*` from repo
 sync, and writes the live config directly to `/etc/ray/ray.json`.
 
 `RAY_ENV_FILE_CONTENTS` is the right place for auth keys or env overrides. The
-workflow validates auth API keys before opening SSH, then applies those
-overrides when choosing the post-restart health check port. For example:
+workflow validates auth API keys before opening SSH, refuses
+`RAY_DEPLOY_INSTALL_CADDY=true` when the resolved config still has
+`auth.enabled=false`, then applies those overrides when choosing the post-restart
+health check port. For example:
 
 ```dotenv
 RAY_AUTH_API_KEY_ENV=RAY_API_KEYS

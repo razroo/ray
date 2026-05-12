@@ -113,6 +113,19 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
       "",
     ].join("\n"),
   );
+  await writeFile(
+    path.join(workflowDir, "deploy-vps.yml"),
+    [
+      "name: Deploy VPS",
+      "env:",
+      "  RAY_DEPLOY_INSTALL_CADDY: ${{ vars.RAY_DEPLOY_INSTALL_CADDY }}",
+      "jobs:",
+      "  deploy:",
+      "    steps:",
+      "      - run: sudo systemctl reload caddy",
+      "",
+    ].join("\n"),
+  );
 
   const summary = await validatePackageRuntimeCoverage({
     cwd: tempDir,
@@ -130,6 +143,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("unbounded_workflow_health_probe"));
   assert.ok(codes.includes("unbounded_workflow_curl_install"));
   assert.ok(codes.includes("workflow_ssh_missing_keepalive"));
+  assert.ok(codes.includes("workflow_public_caddy_auth_guard_missing"));
   assert.ok(codes.includes("non_bun_lockfile_present"));
 });
 

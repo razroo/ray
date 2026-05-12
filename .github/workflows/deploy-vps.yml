@@ -225,6 +225,7 @@ jobs:
 
           process.stdout.write(JSON.stringify({
             healthPort: config.server.port,
+            authEnabled: config.auth.enabled,
             serviceUser:
               readNonEmpty(envOverrides.RAY_DEPLOY_SERVICE_USER) ??
               readNonEmpty(process.env.RAY_DEPLOY_SERVICE_USER) ??
@@ -232,10 +233,16 @@ jobs:
           }));
           ')
           HEALTH_PORT=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).healthPort')
+          AUTH_ENABLED=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'String(JSON.parse(process.env.DEPLOY_SETTINGS).authEnabled)')
           SERVICE_USER=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).serviceUser')
 
           if ! printf '%s' "$SERVICE_USER" | grep -Eq '^[A-Za-z_][A-Za-z0-9_-]{0,30}$'; then
             echo "::error::RAY_DEPLOY_SERVICE_USER must be a system account name using only letters, digits, underscores, or hyphens."
+            exit 1
+          fi
+
+          if [ "$INSTALL_CADDY" = "true" ] && [ "$AUTH_ENABLED" != "true" ]; then
+            echo "::error::RAY_DEPLOY_INSTALL_CADDY=true exposes Ray through Caddy, but the resolved config has auth.enabled=false. Use a public config or enable RAY_AUTH_ENABLED=true."
             exit 1
           fi
 
@@ -247,6 +254,7 @@ jobs:
           echo "config_source=$CONFIG_SOURCE" >> "$GITHUB_OUTPUT"
           echo "config_rel=$CONFIG_REL" >> "$GITHUB_OUTPUT"
           echo "health_port=$HEALTH_PORT" >> "$GITHUB_OUTPUT"
+          echo "auth_enabled=$AUTH_ENABLED" >> "$GITHUB_OUTPUT"
           echo "service_user=$SERVICE_USER" >> "$GITHUB_OUTPUT"
           echo "deploy_domain=$DEPLOY_DOMAIN" >> "$GITHUB_OUTPUT"
           echo "install_caddy=$INSTALL_CADDY" >> "$GITHUB_OUTPUT"
