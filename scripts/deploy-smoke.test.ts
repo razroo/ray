@@ -66,6 +66,26 @@ test("collectPublicConfigPaths returns sorted public JSON config paths only", as
   ]);
 });
 
+test("collectPublicConfigPaths rejects excessive public configs while streaming", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-deploy-smoke-config-cap-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const configDir = path.join(tempDir, "configs");
+  await mkdir(configDir);
+  await Promise.all(
+    Array.from({ length: 129 }, (_value, index) =>
+      writeFile(path.join(configDir, `${index.toString().padStart(3, "0")}.public.json`), "{}"),
+    ),
+  );
+
+  await assert.rejects(
+    () => collectPublicConfigPaths(tempDir, "configs"),
+    /Config directory must contain at most 128 public JSON files/,
+  );
+});
+
 test("smokeDeployConfigs renders every checked-in public deploy profile", async () => {
   const cwd = process.cwd();
   const configPaths = await collectPublicConfigPaths(cwd, "examples/config");
