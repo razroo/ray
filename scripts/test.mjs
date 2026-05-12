@@ -7,6 +7,8 @@ const root = process.cwd();
 const testFiles = [];
 const scriptTestFiles = [];
 const skipNames = new Set([".git", "node_modules"]);
+const bunBinary = process.env.RAY_BUN_BINARY ?? (process.versions.bun ? process.execPath : "bun");
+const nodeBinary = process.env.RAY_NODE_BINARY ?? "node";
 
 async function collect(current) {
   const entries = await fs.readdir(current, { withFileTypes: true });
@@ -40,9 +42,9 @@ if (testFiles.length === 0) {
   process.exit(1);
 }
 
-function runTestCommand(args) {
+function runTestCommand(binary, args) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, args, {
+    const child = spawn(binary, args, {
       cwd: root,
       stdio: "inherit",
     });
@@ -53,18 +55,21 @@ function runTestCommand(args) {
   });
 }
 
-let code = await runTestCommand(["--test", "--test-concurrency=1", ...testFiles]);
+let code = await runTestCommand(nodeBinary, [
+  "--test",
+  "--test-concurrency=1",
+  ...testFiles.sort(),
+]);
 if (code !== 0) {
   process.exit(code);
 }
 
 if (scriptTestFiles.length > 0) {
-  code = await runTestCommand([
-    "--import",
-    "tsx",
-    "--test",
-    "--test-concurrency=1",
-    ...scriptTestFiles,
+  code = await runTestCommand(bunBinary, [
+    "test",
+    "--max-concurrency=1",
+    "--timeout=120000",
+    ...scriptTestFiles.sort(),
   ]);
   if (code !== 0) {
     process.exit(code);
