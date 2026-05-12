@@ -246,6 +246,25 @@ async function writeDeploymentBundleFiles(
   return files;
 }
 
+function assertRenderableDeploymentBundle(
+  bundle: Awaited<ReturnType<typeof renderDeploymentBundle>>,
+): void {
+  const errorCodes = bundle.summary.diagnostics
+    .filter((diagnostic) => diagnostic.level === "error")
+    .map((diagnostic) => diagnostic.code);
+
+  if (errorCodes.length === 0) {
+    return;
+  }
+
+  const shownCodes = errorCodes.slice(0, 8).join(", ");
+  const overflow = errorCodes.length > 8 ? ", ..." : "";
+
+  throw new Error(
+    `Refusing to render deployment with ${errorCodes.length} error diagnostic(s): ${shownCodes}${overflow}. Run validate or doctor for details.`,
+  );
+}
+
 export function parseCliArgs(argv: string[]): CliOptions {
   assertCliArgv(argv);
 
@@ -354,6 +373,7 @@ export async function runCli(argv: string[]): Promise<void> {
       ...resolvedOptions,
       env,
     });
+    assertRenderableDeploymentBundle(bundle);
 
     if (resolvedOptions.outputDir) {
       const files = await writeDeploymentBundleFiles(resolvedOptions.outputDir, bundle);

@@ -156,8 +156,10 @@ When the deploy renderer emits a llama.cpp unit, install it as
 `Wants=` and `After=` dependencies on that local backend service.
 The render output also includes `summary.json` with doctor diagnostics,
 preflight facts, and generated systemd resource controls; inspect it before
-copying units into place. Adapter headers are redacted in this summary.
-Relative `--output-dir` values are resolved from the rendered `--cwd`.
+copying units into place. Render refuses to print or write units while error
+diagnostics are present; run validate or doctor to inspect those failures first.
+Adapter headers are redacted in this summary. Relative `--output-dir` values are
+resolved from the rendered `--cwd`.
 
 ```bash
 bun packages/deploy/dist/cli.js render \

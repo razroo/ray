@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createDefaultConfig, mergeConfig } from "@ray/config";
 import { parseCliArgs, parseEnvironmentFile, runCli } from "./cli.js";
 
 function escapeRegExp(value: string): string {
@@ -289,6 +290,55 @@ test("runCli render writes deployment files when output-dir is provided", async 
   });
   assert.match(rendered, /ray-gateway\.service/);
   assert.doesNotMatch(rendered, /# Ray systemd service/);
+});
+
+test("runCli render refuses to write deployment files when diagnostics contain errors", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-render-errors-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = join(tempDir, "ray.json");
+  const envFile = join(tempDir, "ray.env");
+  const outputDir = join(tempDir, "rendered");
+  const config = mergeConfig(createDefaultConfig("1b"), {
+    server: {
+      host: "0.0.0.0",
+    },
+  });
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  await writeFile(envFile, "RAY_API_KEYS=test-key\n", "utf8");
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await assert.rejects(
+    () =>
+      runCli([
+        "render",
+        "--cwd",
+        tempDir,
+        "--config",
+        configPath,
+        "--ray-env-file",
+        envFile,
+        "--output-dir",
+        outputDir,
+      ]),
+    /Refusing to render deployment with 1 error diagnostic\(s\): gateway_bind_host_public/,
+  );
+
+  await assert.rejects(
+    () => readFile(join(outputDir, "ray-gateway.service"), "utf8"),
+    (error: unknown) =>
+      error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT",
+  );
+  assert.deepEqual(output, []);
 });
 
 test("runCli validate prints deployment preflight details", async (t) => {
