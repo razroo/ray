@@ -554,16 +554,14 @@ jobs:
           /usr/local/bin/bun install --production --frozen-lockfile --ignore-scripts
 
           if [ "${CONFIG_SOURCE:-repo}" = "secret" ] && [ -n "${CONFIG_B64:-}" ]; then
-            printf '%s' "$CONFIG_B64" | base64 -d | $SUDO tee /etc/ray/ray.json >/dev/null
+            printf '%s' "$CONFIG_B64" | base64 -d | $SUDO install -m 0640 -o root -g "$SERVICE_GROUP" /dev/stdin /etc/ray/ray.json
           else
-            $SUDO cp "/srv/ray/$CONFIG_REL" /etc/ray/ray.json
+            $SUDO install -m 0640 -o root -g "$SERVICE_GROUP" "/srv/ray/$CONFIG_REL" /etc/ray/ray.json
           fi
-          $SUDO chown "root:$SERVICE_GROUP" /etc/ray/ray.json
-          $SUDO chmod 0640 /etc/ray/ray.json
           if [ -n "${ENV_B64:-}" ]; then
-            printf '%s' "$ENV_B64" | base64 -d | $SUDO tee /etc/ray/ray.env >/dev/null
+            printf '%s' "$ENV_B64" | base64 -d | $SUDO install -m 0600 -o root -g root /dev/stdin /etc/ray/ray.env
           else
-            printf 'RAY_LOG_LEVEL=info\n' | $SUDO tee /etc/ray/ray.env >/dev/null
+            printf 'RAY_LOG_LEVEL=info\n' | $SUDO install -m 0600 -o root -g root /dev/stdin /etc/ray/ray.env
           fi
           if [ -n "${RAY_DEPLOY_MEMORY_MIB:-}" ] && ! $SUDO grep -Eq '^RAY_DEPLOY_MEMORY_MIB=' /etc/ray/ray.env; then
             if [ -s /etc/ray/ray.env ] && [ -n "$($SUDO tail -c 1 /etc/ray/ray.env)" ]; then

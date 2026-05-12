@@ -380,6 +380,35 @@ function validateDeployWorkflowPublicCaddyAuthGuard(
   ];
 }
 
+function validateDeployWorkflowSecretFileInstalls(
+  workflowPath: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+    if (
+      /\btee\s+\/etc\/ray\/ray\.(?:env|json)\b/.test(line) ||
+      /\btee\s+-a\s+\/etc\/ray\/ray\.json\b/.test(line)
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_secret_file_install_mode_missing",
+        workflowPath,
+        line: index + 1,
+        message:
+          "VPS deploy workflow should install /etc/ray config and env files with install -m so secret files are created with their final restrictive mode.",
+      });
+    }
+  }
+
+  return diagnostics;
+}
+
 async function validateWorkflow(
   workflowPath: string,
 ): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
@@ -451,6 +480,7 @@ async function validateWorkflow(
   }
 
   diagnostics.push(...validateDeployWorkflowPublicCaddyAuthGuard(workflowPath, contents, lines));
+  diagnostics.push(...validateDeployWorkflowSecretFileInstalls(workflowPath, lines));
 
   return {
     lineCount: lines.length,

@@ -137,11 +137,9 @@ Put the final file somewhere stable, for example:
 
 ```bash
 sudo mkdir -p /etc/ray
-sudo cp examples/config/ray.1b.generic.public.json /etc/ray/ray.json
 SERVICE_USER="${RAY_DEPLOY_SERVICE_USER:-ray}"
 SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
-sudo chown "root:$SERVICE_GROUP" /etc/ray/ray.json
-sudo chmod 0640 /etc/ray/ray.json
+sudo install -m 0640 -o root -g "$SERVICE_GROUP" examples/config/ray.1b.generic.public.json /etc/ray/ray.json
 ```
 
 For portable deployments, keep model-specific and cheap-node sizing values in
@@ -262,7 +260,7 @@ RAY_RATE_LIMIT_TRUST_PROXY_HEADERS=true
 If you enable inference auth, populate the API keys env file before starting the gateway:
 
 ```bash
-sudo tee /etc/ray/ray.env >/dev/null <<'EOF'
+sudo install -m 0600 -o root -g root /dev/stdin /etc/ray/ray.env <<'EOF'
 RAY_AUTH_API_KEY_ENV=RAY_API_KEYS
 RAY_API_KEYS=replace-with-comma-separated-client-api-keys
 EOF

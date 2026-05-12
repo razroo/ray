@@ -122,6 +122,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
       "jobs:",
       "  deploy:",
       "    steps:",
+      "      - run: printf secret | sudo tee /etc/ray/ray.env >/dev/null",
       "      - run: sudo systemctl reload caddy",
       "",
     ].join("\n"),
@@ -144,6 +145,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("unbounded_workflow_curl_install"));
   assert.ok(codes.includes("workflow_ssh_missing_keepalive"));
   assert.ok(codes.includes("workflow_public_caddy_auth_guard_missing"));
+  assert.ok(codes.includes("workflow_secret_file_install_mode_missing"));
   assert.ok(codes.includes("non_bun_lockfile_present"));
 });
 
