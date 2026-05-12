@@ -220,9 +220,13 @@ bun run start:1b:generic
 bun run start:1b:8gb:generic
 ```
 
-Common portable model overrides can live in `/etc/ray/ray.env`, so operators do not need to fork JSON for every 1B model:
+Common portable deploy and model overrides can live in `/etc/ray/ray.env`, so operators do not need to fork JSON for every 1B model:
 
 ```dotenv
+RAY_DEPLOY_SERVICE_USER=ray
+RAY_DEPLOY_DOMAIN=ray.local
+RAY_DEPLOY_MEMORY_MIB=4096
+RAY_GATEWAY_RUNTIME_BINARY=/usr/local/bin/bun
 RAY_MODEL_ID=local-1b-q4
 RAY_MODEL_REF=local-1b-q4
 RAY_MODEL_FAMILY=llama-compatible
@@ -287,6 +291,10 @@ RAY_RATE_LIMIT_MAX_REQUESTS=75
 RAY_RATE_LIMIT_MAX_KEYS=4096
 RAY_RATE_LIMIT_KEY_STRATEGY=ip+api-key
 ```
+
+`RAY_DEPLOY_SERVICE_USER`, `RAY_DEPLOY_DOMAIN`, `RAY_DEPLOY_MEMORY_MIB`,
+and `RAY_GATEWAY_RUNTIME_BINARY` are consumed by the deploy CLI while
+rendering units or running doctor. Explicit CLI flags win over env-file values.
 
 Create `/var/lib/ray/models` on the VPS and put the GGUF at `RAY_MODEL_PATH`
 before starting the generated llama.cpp service or running doctor.
