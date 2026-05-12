@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import * as path from "node:path";
 import { sanitizeConfig, snapshotRayConfig } from "@ray/config";
 import { TtlCache } from "@ray/cache";
@@ -165,6 +165,7 @@ const CGROUP_V2_ROOT = "/sys/fs/cgroup";
 const CGROUP_V1_MEMORY_ROOT = "/sys/fs/cgroup/memory";
 const CGROUP_V1_CPU_ROOT = "/sys/fs/cgroup/cpu";
 const PROC_SELF_CGROUP = "/proc/self/cgroup";
+const MAX_CGROUP_TEXT_FILE_BYTES = 64 * 1024;
 const CGROUP_MEMORY_CACHE_TTL_MS = 250;
 const CGROUP_CPU_CACHE_TTL_MS = 250;
 const CGROUP_MEMORY_PRESSURE_RATIO = 0.9;
@@ -972,8 +973,34 @@ function resolveSaturationRatio(value: number, capacity: number): number {
   return Number((value / Math.max(1, capacity)).toFixed(4));
 }
 
+async function readTextFileBounded(filePath: string, maxBytes: number): Promise<string> {
+  let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
+
+  try {
+    fileHandle = await open(filePath, "r");
+    const buffer = Buffer.alloc(maxBytes + 1);
+    let offset = 0;
+
+    while (offset < buffer.length) {
+      const { bytesRead } = await fileHandle.read(buffer, offset, buffer.length - offset, offset);
+      if (bytesRead === 0) {
+        break;
+      }
+      offset += bytesRead;
+    }
+
+    if (offset > maxBytes) {
+      throw new Error(`cgroup text file must be at most ${maxBytes} bytes: ${filePath}`);
+    }
+
+    return buffer.subarray(0, offset).toString("utf8");
+  } finally {
+    await fileHandle?.close().catch(() => undefined);
+  }
+}
+
 async function defaultReadTextFile(filePath: string): Promise<string> {
-  return await readFile(filePath, "utf8");
+  return await readTextFileBounded(filePath, MAX_CGROUP_TEXT_FILE_BYTES);
 }
 
 function parseCgroupByteValue(raw: string, options: { allowMax: boolean }): number | undefined {

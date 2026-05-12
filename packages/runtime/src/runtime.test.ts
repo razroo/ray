@@ -427,6 +427,27 @@ test("readCgroupMemorySnapshot falls back to memory.max when memory.high is unli
   assert.equal(snapshot?.oomKillEvents, undefined);
 });
 
+test("readCgroupMemorySnapshot skips oversized cgroup memory files", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-cgroup-memory-oversized-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const cgroupDir = join(tempDir, "ray.slice", "ray-gateway.service");
+  const procCgroupPath = join(tempDir, "self-cgroup");
+
+  await mkdir(cgroupDir, { recursive: true });
+  await writeFile(procCgroupPath, "0::/ray.slice/ray-gateway.service\n", "utf8");
+  await writeFile(join(cgroupDir, "memory.current"), "7".repeat(64 * 1024 + 1), "utf8");
+  await writeFile(join(cgroupDir, "memory.max"), String(1_000 * 1024 * 1024), "utf8");
+
+  const snapshot = await readCgroupMemorySnapshot({
+    procSelfCgroupPath: procCgroupPath,
+    cgroupV2Root: tempDir,
+  });
+
+  assert.equal(snapshot, undefined);
+});
+
 test("readCgroupCpuSnapshot reads unified cgroup cpu.stat files", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-cgroup-cpu-"));
   t.after(async () => {
@@ -492,6 +513,27 @@ test("readCgroupCpuSnapshot reads legacy cgroup cpu.stat throttling", async (t) 
   assert.equal(snapshot?.throttledPeriods, 20);
   assert.equal(snapshot?.throttledUsec, 250_000);
   assert.equal(snapshot?.throttledRatio, 0.25);
+});
+
+test("readCgroupCpuSnapshot skips oversized cgroup cpu files", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-cgroup-cpu-oversized-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const cgroupDir = join(tempDir, "ray.slice", "ray-gateway.service");
+  const procCgroupPath = join(tempDir, "self-cgroup");
+
+  await mkdir(cgroupDir, { recursive: true });
+  await writeFile(procCgroupPath, "0::/ray.slice/ray-gateway.service\n", "utf8");
+  await writeFile(join(cgroupDir, "cpu.stat"), "usage_usec ".concat("1".repeat(64 * 1024)), "utf8");
+  await writeFile(join(cgroupDir, "cpu.max"), "5".repeat(64 * 1024 + 1), "utf8");
+
+  const snapshot = await readCgroupCpuSnapshot({
+    procSelfCgroupPath: procCgroupPath,
+    cgroupV2Root: tempDir,
+  });
+
+  assert.equal(snapshot, undefined);
 });
 
 test("runtime collected metrics refresh live queue and cgroup pressure gauges", async () => {
