@@ -168,6 +168,7 @@ const PROC_SELF_CGROUP = "/proc/self/cgroup";
 const CGROUP_MEMORY_CACHE_TTL_MS = 250;
 const CGROUP_CPU_CACHE_TTL_MS = 250;
 const CGROUP_MEMORY_PRESSURE_RATIO = 0.9;
+const CGROUP_CPU_THROTTLED_RATIO = 0.2;
 const CGROUP_UNLIMITED_LIMIT_BYTES = 1024 ** 5;
 const unsafeMetadataKeys = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_LEARNED_FAMILY_HISTORY_KEYS = 512;
@@ -698,16 +699,50 @@ function applyMemoryPressureDegradation(
   };
 }
 
+function resolveCgroupCpuPressure(
+  config: RayConfig,
+  snapshot: CgroupCpuSnapshot | undefined,
+): boolean {
+  return (
+    config.gracefulDegradation.enabled &&
+    snapshot?.throttledRatio !== undefined &&
+    snapshot.throttledRatio >= CGROUP_CPU_THROTTLED_RATIO
+  );
+}
+
+function applyCpuPressureDegradation(
+  config: RayConfig,
+  request: NormalizedInferenceRequest,
+  cgroupCpu: CgroupCpuSnapshot | undefined,
+): { request: NormalizedInferenceRequest; degraded: boolean } {
+  if (
+    !resolveCgroupCpuPressure(config, cgroupCpu) ||
+    request.maxTokens <= config.gracefulDegradation.degradeToMaxTokens
+  ) {
+    return { request, degraded: false };
+  }
+
+  return {
+    request: {
+      ...request,
+      maxTokens: config.gracefulDegradation.degradeToMaxTokens,
+    },
+    degraded: true,
+  };
+}
+
 function buildDegradationDiagnostics(options: {
   promptLengthDegraded: boolean;
   queueDepthDegraded: boolean;
   memoryPressureDegraded: boolean;
+  cpuPressureDegraded: boolean;
   requestedMaxTokens: number;
   appliedMaxTokens: number;
   queueDepth: number;
   queueDepthThreshold: number;
   memoryPressureSources: MemoryPressureSource[];
   memoryPressure: MemoryPressureSnapshot;
+  cgroupCpu: CgroupCpuSnapshot | undefined;
   memoryRssThresholdMiB: number;
 }): DegradationDiagnostics {
   const reasons: DegradationDiagnostics["reasons"] = [];
@@ -722,6 +757,10 @@ function buildDegradationDiagnostics(options: {
 
   if (options.memoryPressureDegraded) {
     reasons.push("memory_pressure");
+  }
+
+  if (options.cpuPressureDegraded) {
+    reasons.push("cpu_pressure");
   }
 
   return {
@@ -764,6 +803,12 @@ function buildDegradationDiagnostics(options: {
     ...(options.memoryPressure.cgroupMemoryOomKillEvents !== undefined
       ? { cgroupMemoryOomKillEvents: options.memoryPressure.cgroupMemoryOomKillEvents }
       : {}),
+    ...(options.cgroupCpu?.throttledRatio !== undefined
+      ? {
+          cgroupCpuThrottledRatio: options.cgroupCpu.throttledRatio,
+          cgroupCpuThrottledThreshold: CGROUP_CPU_THROTTLED_RATIO,
+        }
+      : {}),
   };
 }
 
@@ -775,6 +820,7 @@ function buildRuntimeHealthDiagnostics(options: {
   memoryPressureSources: MemoryPressureSource[];
   memoryPressure: MemoryPressureSnapshot;
   memoryRssThresholdMiB: number;
+  cpuDegraded: boolean;
   cgroupCpu: CgroupCpuSnapshot | undefined;
 }): RuntimeHealthDiagnostics {
   return {
@@ -846,6 +892,7 @@ function buildRuntimeHealthDiagnostics(options: {
     ...(options.cgroupCpu
       ? {
           cpu: {
+            degraded: options.cpuDegraded,
             ...(options.cgroupCpu.usageUsec !== undefined
               ? { cgroupCpuUsageUsec: options.cgroupCpu.usageUsec }
               : {}),
@@ -874,7 +921,10 @@ function buildRuntimeHealthDiagnostics(options: {
               ? { cgroupCpuThrottledUsec: options.cgroupCpu.throttledUsec }
               : {}),
             ...(options.cgroupCpu.throttledRatio !== undefined
-              ? { cgroupCpuThrottledRatio: options.cgroupCpu.throttledRatio }
+              ? {
+                  cgroupCpuThrottledRatio: options.cgroupCpu.throttledRatio,
+                  cgroupCpuThrottledThreshold: CGROUP_CPU_THROTTLED_RATIO,
+                }
               : {}),
           },
         }
@@ -1776,19 +1826,28 @@ export class RayRuntime {
       learnedCap.request,
       queueSnapshot.queueDepth,
     );
-    const memoryPressure = await this.getMemoryPressureSnapshot();
+    const [memoryPressure, cgroupCpu] = await Promise.all([
+      this.getMemoryPressureSnapshot(),
+      this.getCgroupCpuSnapshot(),
+    ]);
     const memoryPressureSources = resolveMemoryPressureSources(this.config, memoryPressure);
     const memoryPressureDegraded = applyMemoryPressureDegradation(
       this.config,
       queueDepthDegraded.request,
       memoryPressureSources,
     );
+    const cpuPressureDegraded = applyCpuPressureDegradation(
+      this.config,
+      memoryPressureDegraded.request,
+      cgroupCpu,
+    );
     const degraded = {
-      request: memoryPressureDegraded.request,
+      request: cpuPressureDegraded.request,
       degraded:
         promptLengthDegraded.degraded ||
         queueDepthDegraded.degraded ||
-        memoryPressureDegraded.degraded,
+        memoryPressureDegraded.degraded ||
+        cpuPressureDegraded.degraded,
     };
     const tuned = applyAdaptiveTuning(this.config, degraded.request, this.recentAdaptiveSamples);
     const runtimeDiagnostics: InferenceDiagnostics = {
@@ -1796,12 +1855,14 @@ export class RayRuntime {
         promptLengthDegraded: promptLengthDegraded.degraded,
         queueDepthDegraded: queueDepthDegraded.degraded,
         memoryPressureDegraded: memoryPressureDegraded.degraded,
+        cpuPressureDegraded: cpuPressureDegraded.degraded,
         requestedMaxTokens: learnedCap.request.maxTokens,
         appliedMaxTokens: degraded.request.maxTokens,
         queueDepth: queueSnapshot.queueDepth,
         queueDepthThreshold: this.config.gracefulDegradation.queueDepthThreshold,
         memoryPressureSources,
         memoryPressure,
+        cgroupCpu,
         memoryRssThresholdMiB: this.config.gracefulDegradation.memoryRssThresholdMiB,
       }),
       promptCompiler: compiled.diagnostics,
@@ -1816,6 +1877,7 @@ export class RayRuntime {
 
     this.recordSchedulerMetrics(queueSnapshot);
     this.recordMemoryPressureMetrics(memoryPressure, memoryPressureSources);
+    this.recordCgroupCpuMetrics(cgroupCpu);
     this.metrics.gauge("prompt.compiler.chars_saved", compiled.diagnostics.charsSaved);
     this.metrics.gauge(
       "learned_output_cap.max_tokens_ratio",
@@ -1977,6 +2039,7 @@ export class RayRuntime {
     const queueDegraded =
       snapshot.queueDepth >= this.config.gracefulDegradation.queueDepthThreshold;
     const memoryDegraded = memoryPressureSources.length > 0;
+    const cpuDegraded = resolveCgroupCpuPressure(this.config, cgroupCpu);
     const runtimeHealth = buildRuntimeHealthDiagnostics({
       queueDegraded,
       queueSnapshot: snapshot,
@@ -1985,6 +2048,7 @@ export class RayRuntime {
       memoryPressureSources,
       memoryPressure,
       memoryRssThresholdMiB: this.config.gracefulDegradation.memoryRssThresholdMiB,
+      cpuDegraded,
       cgroupCpu,
     });
     this.recordMemoryPressureMetrics(memoryPressure, memoryPressureSources);
@@ -1995,7 +2059,8 @@ export class RayRuntime {
         : provider.status === "degraded" ||
             provider.status === "warming" ||
             queueDegraded ||
-            memoryDegraded
+            memoryDegraded ||
+            cpuDegraded
           ? "degraded"
           : "ok";
 
@@ -2529,6 +2594,11 @@ export class RayRuntime {
     }
     if (snapshot.throttledRatio !== undefined) {
       this.metrics.gauge("process.cpu.cgroup_throttled_ratio", snapshot.throttledRatio);
+      this.metrics.gauge("process.cpu.cgroup_throttled_threshold", CGROUP_CPU_THROTTLED_RATIO);
+      this.metrics.gauge(
+        "process.cpu.pressure",
+        resolveCgroupCpuPressure(this.config, snapshot) ? 1 : 0,
+      );
     }
   }
 

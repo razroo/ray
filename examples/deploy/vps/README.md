@@ -302,7 +302,7 @@ Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 - Keep `scheduler.requestTimeoutMs` slightly above `model.adapter.timeoutMs` so provider timeouts remain visible.
 - Use `RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB` when the gateway process needs to clamp output before RSS pressure becomes a swap or OOM problem.
 - Keep a modest swap file on 4 GB llama.cpp VPS targets. Doctor reads `/proc/meminfo` and warns when the small-VPS profile has no swap cushion.
-- Ray samples cgroup CPU quota and throttling counters when available and exposes effective quota cores, throttled periods, throttled time, and throttled ratio in health and metrics so small-node CPU contention is visible without extra agents.
+- Ray samples cgroup CPU quota and throttling counters when available, exposes effective quota cores, throttled periods, throttled time, and throttled ratio in health and metrics, and clamps output under sustained throttling when graceful degradation is enabled.
 - Ray also samples Linux cgroup memory files when available, marks memory pressure when the service or container reaches 90% of its configured cgroup memory limit, and exposes process RSS pressure ratio plus cgroup v2 `memory.events` counters in health and metrics so operators can see when `MemoryHigh` or OOM boundaries were crossed.
 - Detailed `/health` exposes provider-preparation, queue depth, in-flight work, queued-token, and in-flight-token saturation ratios so operators can see admission pressure without a separate metrics scrape.
 - The `/metrics` endpoint refreshes live provider-preparation, queue, cache, async-job saturation, async storage headroom, and cgroup resource gauges before responding, so a scraper can observe current pressure without a separate health probe.

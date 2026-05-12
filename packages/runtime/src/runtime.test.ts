@@ -236,6 +236,75 @@ test("runtime clamps output under cgroup memory pressure", async () => {
   assert.equal(metrics.gauges["process.memory.pressure"], 1);
 });
 
+test("runtime clamps output under cgroup CPU throttling", async () => {
+  let observedMaxTokens = 0;
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "cpu-pressure-model",
+    capabilities: {
+      streaming: false,
+      quantized: false,
+      localBackend: true,
+    },
+    async infer(request) {
+      observedMaxTokens = request.maxTokens;
+      return {
+        output: "degraded",
+      };
+    },
+  };
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    gracefulDegradation: {
+      enabled: true,
+      degradeToMaxTokens: 32,
+      memoryRssThresholdMiB: 4_096,
+    },
+  });
+  const runtime = createRayRuntime(config, {
+    provider,
+    cgroupMemory: false,
+    memoryUsage: () => ({
+      rss: 32 * 1024 * 1024,
+      heapTotal: 0,
+      heapUsed: 0,
+      external: 0,
+      arrayBuffers: 0,
+    }),
+    cgroupCpu: () => ({
+      quotaUsec: 50_000,
+      periodUsec: 100_000,
+      quotaCores: 0.5,
+      periods: 100,
+      throttledPeriods: 25,
+      throttledUsec: 150_000,
+      throttledRatio: 0.25,
+    }),
+  });
+
+  const result = await runtime.infer({
+    input: "hello world",
+    maxTokens: 128,
+    cache: false,
+  });
+  const health = await runtime.health();
+  const metrics = runtime.metricsSnapshot();
+
+  assert.equal(observedMaxTokens, 32);
+  assert.equal(result.degraded, true);
+  assert.equal(result.diagnostics?.degradation?.applied, true);
+  assert.deepEqual(result.diagnostics?.degradation?.reasons, ["cpu_pressure"]);
+  assert.equal(result.diagnostics?.degradation?.cgroupCpuThrottledRatio, 0.25);
+  assert.equal(result.diagnostics?.degradation?.cgroupCpuThrottledThreshold, 0.2);
+  assert.equal(health.status, "degraded");
+  assert.equal(health.runtime?.cpu?.degraded, true);
+  assert.equal(health.runtime?.cpu?.cgroupCpuQuotaCores, 0.5);
+  assert.equal(health.runtime?.cpu?.cgroupCpuThrottledRatio, 0.25);
+  assert.equal(health.runtime?.cpu?.cgroupCpuThrottledThreshold, 0.2);
+  assert.equal(metrics.gauges["process.cpu.cgroup_throttled_ratio"], 0.25);
+  assert.equal(metrics.gauges["process.cpu.cgroup_throttled_threshold"], 0.2);
+  assert.equal(metrics.gauges["process.cpu.pressure"], 1);
+});
+
 test("runtime health exposes queue saturation ratios", async () => {
   let inferenceStarts = 0;
   const releaseHandlers: Array<() => void> = [];
@@ -494,6 +563,8 @@ test("runtime collected metrics refresh live queue and cgroup pressure gauges", 
   assert.equal(metrics.gauges["process.cpu.cgroup_throttled_periods"], 10);
   assert.equal(metrics.gauges["process.cpu.cgroup_throttled_usec"], 25_000);
   assert.equal(metrics.gauges["process.cpu.cgroup_throttled_ratio"], 0.05);
+  assert.equal(metrics.gauges["process.cpu.cgroup_throttled_threshold"], 0.2);
+  assert.equal(metrics.gauges["process.cpu.pressure"], 0);
 });
 
 test("runtime health exposes cgroup CPU throttling", async () => {
@@ -508,13 +579,14 @@ test("runtime health exposes cgroup CPU throttling", async () => {
       periods: 400,
       throttledPeriods: 80,
       throttledUsec: 125_000,
-      throttledRatio: 0.2,
+      throttledRatio: 0.1,
     }),
   });
 
   const health = await runtime.health();
 
   assert.equal(health.status, "ok");
+  assert.equal(health.runtime?.cpu?.degraded, false);
   assert.equal(health.runtime?.cpu?.cgroupCpuUsageUsec, 4_000_000);
   assert.equal(health.runtime?.cpu?.cgroupCpuUserUsec, 3_000_000);
   assert.equal(health.runtime?.cpu?.cgroupCpuSystemUsec, 1_000_000);
@@ -524,7 +596,8 @@ test("runtime health exposes cgroup CPU throttling", async () => {
   assert.equal(health.runtime?.cpu?.cgroupCpuPeriods, 400);
   assert.equal(health.runtime?.cpu?.cgroupCpuThrottledPeriods, 80);
   assert.equal(health.runtime?.cpu?.cgroupCpuThrottledUsec, 125_000);
-  assert.equal(health.runtime?.cpu?.cgroupCpuThrottledRatio, 0.2);
+  assert.equal(health.runtime?.cpu?.cgroupCpuThrottledRatio, 0.1);
+  assert.equal(health.runtime?.cpu?.cgroupCpuThrottledThreshold, 0.2);
 });
 
 test("runtime returns chars and provider token usage explicitly", async () => {

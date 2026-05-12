@@ -476,7 +476,7 @@ export type MemoryPressureSource = "process_rss" | "cgroup";
 
 export interface DegradationDiagnostics {
   applied: boolean;
-  reasons: Array<"prompt_length" | "queue_depth" | "memory_pressure">;
+  reasons: Array<"prompt_length" | "queue_depth" | "memory_pressure" | "cpu_pressure">;
   requestedMaxTokens: number;
   appliedMaxTokens: number;
   queueDepth: number;
@@ -493,6 +493,8 @@ export interface DegradationDiagnostics {
   cgroupMemoryMaxEvents?: number;
   cgroupMemoryOomEvents?: number;
   cgroupMemoryOomKillEvents?: number;
+  cgroupCpuThrottledRatio?: number;
+  cgroupCpuThrottledThreshold?: number;
 }
 
 export interface InferenceDiagnostics {
@@ -561,6 +563,7 @@ export interface RuntimeHealthDiagnostics {
     cgroupMemoryOomKillEvents?: number;
   };
   cpu?: {
+    degraded: boolean;
     cgroupCpuUsageUsec?: number;
     cgroupCpuUserUsec?: number;
     cgroupCpuSystemUsec?: number;
@@ -571,6 +574,7 @@ export interface RuntimeHealthDiagnostics {
     cgroupCpuThrottledPeriods?: number;
     cgroupCpuThrottledUsec?: number;
     cgroupCpuThrottledRatio?: number;
+    cgroupCpuThrottledThreshold?: number;
   };
 }
 

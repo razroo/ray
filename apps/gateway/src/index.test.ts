@@ -509,6 +509,8 @@ test("gateway metrics endpoint refreshes live runtime gauges", async (t) => {
   assert.equal(body.gauges["process.cpu.cgroup_throttled_periods"], 15);
   assert.equal(body.gauges["process.cpu.cgroup_throttled_usec"], 50_000);
   assert.equal(body.gauges["process.cpu.cgroup_throttled_ratio"], 0.05);
+  assert.equal(body.gauges["process.cpu.cgroup_throttled_threshold"], 0.2);
+  assert.equal(body.gauges["process.cpu.pressure"], 0);
 });
 
 test("gateway metrics endpoint exposes async queue saturation", async (t) => {
