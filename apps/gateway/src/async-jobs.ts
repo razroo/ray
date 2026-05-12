@@ -1365,6 +1365,10 @@ export class DurableInferenceQueue {
           filePath,
           error: toErrorMessage(error),
         });
+
+        if (error instanceof SyntaxError || error instanceof PersistedJobValidationError) {
+          await this.removeInvalidPersistedJob(filePath);
+        }
       }
     }
 
@@ -1723,6 +1727,17 @@ export class DurableInferenceQueue {
       await fs.rm(filePath, { force: true });
     } catch (error) {
       this.options.logger.warn("failed to remove stale async job temp file", {
+        filePath,
+        error: toErrorMessage(error),
+      });
+    }
+  }
+
+  private async removeInvalidPersistedJob(filePath: string): Promise<void> {
+    try {
+      await fs.rm(filePath, { force: true });
+    } catch (error) {
+      this.options.logger.warn("failed to remove invalid persisted async job", {
         filePath,
         error: toErrorMessage(error),
       });

@@ -652,6 +652,13 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.match(completedJob.result?.output ?? "", /good persisted job/);
 
     await queue.stop();
+
+    const entries = await readdir(jobsDir);
+    assert.equal(entries.includes("job_bad.json"), false);
+    assert.equal(entries.includes("job_mismatch.json"), false);
+    assert.equal(entries.includes("job_id_too_long.json"), false);
+    assert.equal(entries.includes("job_callback_too_long.json"), false);
+    assert.equal(entries.includes("job_good.json"), true);
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }
@@ -715,6 +722,10 @@ test("durable inference queue skips oversized persisted jobs during recovery", a
     assert.match(completedJob.result?.output ?? "", /good persisted job after oversized file/);
 
     await queue.stop();
+
+    const entries = await readdir(jobsDir);
+    assert.equal(entries.includes("job_oversized.json"), false);
+    assert.equal(entries.includes("job_good.json"), true);
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }
