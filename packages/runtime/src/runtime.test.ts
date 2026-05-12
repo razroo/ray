@@ -275,6 +275,44 @@ test("readCgroupMemorySnapshot falls back to memory.max when memory.high is unli
   assert.equal(snapshot?.oomKillEvents, undefined);
 });
 
+test("runtime collected metrics refresh live queue and cgroup pressure gauges", async () => {
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), {
+    memoryUsage: () => ({
+      rss: 32 * 1024 * 1024,
+      heapTotal: 0,
+      heapUsed: 0,
+      external: 0,
+      arrayBuffers: 0,
+    }),
+    cgroupMemory: () => ({
+      currentMiB: 700,
+      highMiB: 800,
+      limitMiB: 1_000,
+      pressureRatio: 0.875,
+      highEvents: 2,
+      maxEvents: 0,
+      oomEvents: 0,
+      oomKillEvents: 0,
+    }),
+  });
+
+  const metrics = await runtime.collectMetricsSnapshot();
+
+  assert.equal(metrics.gauges["queue.depth"], 0);
+  assert.equal(metrics.gauges["queue.tokens"], 0);
+  assert.equal(metrics.gauges["inference.in_flight"], 0);
+  assert.equal(metrics.gauges["cache.entries"], 0);
+  assert.equal(metrics.gauges["process.memory.cgroup_current_mib"], 700);
+  assert.equal(metrics.gauges["process.memory.cgroup_high_mib"], 800);
+  assert.equal(metrics.gauges["process.memory.cgroup_limit_mib"], 1_000);
+  assert.equal(metrics.gauges["process.memory.cgroup_pressure_ratio"], 0.875);
+  assert.equal(metrics.gauges["process.memory.cgroup_pressure"], 0);
+  assert.equal(metrics.gauges["process.memory.cgroup_high_events"], 2);
+  assert.equal(metrics.gauges["process.memory.cgroup_max_events"], 0);
+  assert.equal(metrics.gauges["process.memory.cgroup_oom_events"], 0);
+  assert.equal(metrics.gauges["process.memory.cgroup_oom_kill_events"], 0);
+});
+
 test("runtime returns chars and provider token usage explicitly", async () => {
   const provider: ModelProvider = {
     kind: "mock",

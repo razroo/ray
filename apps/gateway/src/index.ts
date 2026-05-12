@@ -565,7 +565,7 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
           return;
         }
 
-        writeJsonWithoutReadingBody(request, response, 200, runtime.metricsSnapshot());
+        writeJsonWithoutReadingBody(request, response, 200, await runtime.collectMetricsSnapshot());
         return;
       }
 

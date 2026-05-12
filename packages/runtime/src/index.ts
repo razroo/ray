@@ -1682,6 +1682,18 @@ export class RayRuntime {
     return this.scheduler.snapshot();
   }
 
+  async collectMetricsSnapshot(): Promise<RuntimeMetricsSnapshot> {
+    const queueSnapshot = this.scheduler.snapshot();
+    const memoryPressure = await this.getMemoryPressureSnapshot();
+    const memoryPressureSources = resolveMemoryPressureSources(this.config, memoryPressure);
+
+    this.recordSchedulerMetrics(queueSnapshot);
+    this.recordMemoryPressureMetrics(memoryPressure, memoryPressureSources);
+    this.metrics.gauge("cache.entries", this.cache.size());
+
+    return this.metricsSnapshot();
+  }
+
   metricsSnapshot(): RuntimeMetricsSnapshot {
     return this.metrics.snapshot(this.config.telemetry.includeDebugMetrics);
   }

@@ -6,8 +6,8 @@ import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
-import type { RayRuntime } from "@ray/runtime";
-import { RayError, type HealthSnapshot } from "@razroo/ray-core";
+import { createRayRuntime, type RayRuntime } from "@ray/runtime";
+import { RayError, type HealthSnapshot, type RuntimeMetricsSnapshot } from "@razroo/ray-core";
 import type { LogFields, Logger } from "@ray/telemetry";
 import { createGatewayServer, parseCliArgs, startGateway } from "./index.js";
 
@@ -432,6 +432,53 @@ test("gateway protects detailed operational endpoints when auth is enabled", asy
     },
   });
   assert.equal(accepted.status, 200);
+});
+
+test("gateway metrics endpoint refreshes live runtime gauges", async (t) => {
+  const config = createDefaultConfig("tiny");
+  const runtime = createRayRuntime(config, {
+    memoryUsage: () => ({
+      rss: 32 * 1024 * 1024,
+      heapTotal: 0,
+      heapUsed: 0,
+      external: 0,
+      arrayBuffers: 0,
+    }),
+    cgroupMemory: () => ({
+      currentMiB: 640,
+      highMiB: 800,
+      limitMiB: 1_000,
+      pressureRatio: 0.8,
+      highEvents: 1,
+      maxEvents: 0,
+      oomEvents: 0,
+      oomKillEvents: 0,
+    }),
+  });
+  const gateway = createGatewayServer({
+    config,
+    runtime,
+  });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/metrics`);
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as RuntimeMetricsSnapshot;
+
+  assert.equal(body.gauges["queue.depth"], 0);
+  assert.equal(body.gauges["cache.entries"], 0);
+  assert.equal(body.gauges["process.memory.cgroup_current_mib"], 640);
+  assert.equal(body.gauges["process.memory.cgroup_high_mib"], 800);
+  assert.equal(body.gauges["process.memory.cgroup_limit_mib"], 1_000);
+  assert.equal(body.gauges["process.memory.cgroup_pressure_ratio"], 0.8);
+  assert.equal(body.gauges["process.memory.cgroup_high_events"], 1);
 });
 
 test("gateway returns service unavailable when detailed health is unavailable", async (t) => {
