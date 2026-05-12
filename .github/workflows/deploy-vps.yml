@@ -390,6 +390,7 @@ jobs:
 
           rsync -az --delete \
             -e "$SSH_COMMAND" \
+            --timeout=120 \
             --exclude '.git' \
             --exclude '.github' \
             --exclude '.ray' \

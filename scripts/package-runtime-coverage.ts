@@ -345,6 +345,28 @@ function workflowLineNumber(lines: string[], pattern: string): number | undefine
   return lineIndex >= 0 ? lineIndex + 1 : undefined;
 }
 
+function workflowCommandContinuationIncludes(
+  lines: string[],
+  index: number,
+  pattern: string,
+): boolean {
+  const end = Math.min(lines.length, index + 12);
+
+  for (let windowIndex = index; windowIndex < end; windowIndex += 1) {
+    const rawLine = lines[windowIndex] ?? "";
+    if (rawLine.includes(pattern)) {
+      return true;
+    }
+
+    const line = rawLine.trim();
+    if (windowIndex > index && (line.length === 0 || line.startsWith("- "))) {
+      break;
+    }
+  }
+
+  return false;
+}
+
 function validateDeployWorkflowPublicCaddyAuthGuard(
   workflowPath: string,
   contents: string,
@@ -433,6 +455,35 @@ function validateDeployWorkflowAptGuards(
         line: index + 1,
         message:
           "VPS deploy workflow apt-get update/install calls must set an overall timeout, Acquire::Retries, and Dpkg::Lock::Timeout so package bootstrap cannot hang indefinitely.",
+      });
+    }
+  }
+
+  return diagnostics;
+}
+
+function validateDeployWorkflowRsyncGuards(
+  workflowPath: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+    if (
+      /^(?:-\s+run:\s+)?rsync\b/.test(line) &&
+      !workflowCommandContinuationIncludes(lines, index, "--timeout")
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_rsync_timeout_missing",
+        workflowPath,
+        line: index + 1,
+        message:
+          "VPS deploy workflow rsync calls must pass --timeout so stalled repository transfers fail instead of hanging a deploy indefinitely.",
       });
     }
   }
@@ -539,6 +590,7 @@ async function validateWorkflow(
   diagnostics.push(...validateDeployWorkflowPublicCaddyAuthGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowSecretFileInstalls(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowAptGuards(workflowPath, lines));
+  diagnostics.push(...validateDeployWorkflowRsyncGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRemoteBunInstallGuards(workflowPath, lines));
 
   return {

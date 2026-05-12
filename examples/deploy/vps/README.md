@@ -428,9 +428,10 @@ validation fail before systemd tries to start the generated units. The
 configured gateway runtime binary defaults to `/usr/local/bin/bun`. All workflow
 SSH and rsync calls run in batch mode with `StrictHostKeyChecking=yes`,
 `IdentitiesOnly=yes`, the validated `RAY_DEPLOY_KNOWN_HOSTS` file, a short
-connect timeout, and OpenSSH keepalives so stalled sessions fail instead of
-holding the deploy job indefinitely. Remote sudo calls use `sudo -n` so a deploy
-user without passwordless sudo fails immediately instead of hanging in CI.
+connect timeout, OpenSSH keepalives, and an rsync I/O timeout so stalled
+sessions or repository transfers fail instead of holding the deploy job
+indefinitely. Remote sudo calls use `sudo -n` so a deploy user without
+passwordless sudo fails immediately instead of hanging in CI.
 
 When `RAY_DEPLOY_INSTALL_CADDY=true`, the workflow installs Caddy if needed,
 validates the rendered Caddyfile before installing it to `/etc/caddy/Caddyfile`,

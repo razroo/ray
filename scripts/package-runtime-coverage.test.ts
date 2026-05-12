@@ -124,6 +124,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
       "    steps:",
       "      - run: printf secret | sudo tee /etc/ray/ray.env >/dev/null",
       "      - run: sudo apt-get install -y curl",
+      "      - run: rsync -az --delete ./ ray@example:/srv/ray/",
       "      - run: /usr/local/bin/bun install --production --frozen-lockfile --ignore-scripts",
       "      - run: sudo systemctl reload caddy",
       "",
@@ -149,6 +150,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("workflow_public_caddy_auth_guard_missing"));
   assert.ok(codes.includes("workflow_secret_file_install_mode_missing"));
   assert.ok(codes.includes("workflow_apt_get_unbounded"));
+  assert.ok(codes.includes("workflow_rsync_timeout_missing"));
   assert.ok(codes.includes("workflow_remote_bun_install_unbounded"));
   assert.ok(codes.includes("non_bun_lockfile_present"));
 });
