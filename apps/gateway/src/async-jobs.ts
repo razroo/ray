@@ -50,6 +50,7 @@ const MAX_CALLBACK_ALLOWED_HOSTS = 64;
 const MAX_CALLBACK_ALLOWED_HOST_CHARS = 253;
 const MAX_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB = 1_048_576;
 const BYTES_PER_MIB = 1024 * 1024;
+const DNS_HOST_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export type CallbackAddressLookup = (
   hostname: string,
@@ -252,6 +253,61 @@ function assertAsyncQueueStringArray(
   }
 }
 
+function isValidDnsHostname(value: string): boolean {
+  if (value.length === 0 || value.length > MAX_CALLBACK_ALLOWED_HOST_CHARS) {
+    return false;
+  }
+
+  return value.split(".").every((label) => DNS_HOST_LABEL_PATTERN.test(label));
+}
+
+function isValidCallbackAllowedHostPattern(value: string): boolean {
+  if (value.trim() !== value) {
+    return false;
+  }
+
+  const normalized = value.toLowerCase().replace(/\.$/, "");
+
+  if (normalized.length === 0 || normalized.includes("://") || /[/?#@]/.test(normalized)) {
+    return false;
+  }
+
+  if (normalized.startsWith("[") || normalized.endsWith("]")) {
+    if (!normalized.startsWith("[") || !normalized.endsWith("]")) {
+      return false;
+    }
+
+    return isIP(normalized.slice(1, -1)) === 6;
+  }
+
+  if (normalized.startsWith("*.")) {
+    return isValidDnsHostname(normalized.slice(2));
+  }
+
+  if (normalized.includes("*")) {
+    return false;
+  }
+
+  return isIP(normalized) > 0 || isValidDnsHostname(normalized);
+}
+
+function assertCallbackAllowedHosts(value: string[], label: string): void {
+  assertAsyncQueueStringArray(
+    value,
+    label,
+    MAX_CALLBACK_ALLOWED_HOSTS,
+    MAX_CALLBACK_ALLOWED_HOST_CHARS,
+  );
+
+  for (const entry of value) {
+    if (!isValidCallbackAllowedHostPattern(entry)) {
+      throw new TypeError(
+        `${label} entries must be exact host/IP literals or wildcard DNS patterns like *.example.com`,
+      );
+    }
+  }
+}
+
 function snapshotAsyncQueueConfig(config: AsyncQueueConfig): AsyncQueueConfig {
   assertBoolean(config.enabled, "asyncQueue.enabled");
   assertBoolean(config.callbackAllowPrivateNetwork, "asyncQueue.callbackAllowPrivateNetwork");
@@ -296,12 +352,7 @@ function snapshotAsyncQueueConfig(config: AsyncQueueConfig): AsyncQueueConfig {
     "asyncQueue.maxCallbackAttempts",
     Number.MAX_SAFE_INTEGER,
   );
-  assertAsyncQueueStringArray(
-    config.callbackAllowedHosts,
-    "asyncQueue.callbackAllowedHosts",
-    MAX_CALLBACK_ALLOWED_HOSTS,
-    MAX_CALLBACK_ALLOWED_HOST_CHARS,
-  );
+  assertCallbackAllowedHosts(config.callbackAllowedHosts, "asyncQueue.callbackAllowedHosts");
 
   return {
     enabled: config.enabled,

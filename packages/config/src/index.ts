@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { isIP } from "node:net";
 import path from "node:path";
 import {
   type LlamaCppLaunchProfile,
@@ -89,6 +90,7 @@ const MAX_PROMPT_SCAFFOLD_CACHE_ENTRIES = 4_096;
 const MAX_AUTH_API_KEY_ENV_CHARS = 64 * 1024;
 const MAX_AUTH_API_KEYS = 128;
 const MAX_AUTH_API_KEY_CHARS = 1_024;
+const DNS_HOST_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export interface LoadRayConfigOptions {
   configPath?: string;
@@ -1092,6 +1094,61 @@ function assertStringArray(
   }
 }
 
+function isValidDnsHostname(value: string): boolean {
+  if (value.length === 0 || value.length > MAX_CALLBACK_ALLOWED_HOST_CHARS) {
+    return false;
+  }
+
+  return value.split(".").every((entry) => DNS_HOST_LABEL_PATTERN.test(entry));
+}
+
+function isValidCallbackAllowedHostPattern(value: string): boolean {
+  if (value.trim() !== value) {
+    return false;
+  }
+
+  const normalized = value.toLowerCase().replace(/\.$/, "");
+
+  if (normalized.length === 0 || normalized.includes("://") || /[/?#@]/.test(normalized)) {
+    return false;
+  }
+
+  if (normalized.startsWith("[") || normalized.endsWith("]")) {
+    if (!normalized.startsWith("[") || !normalized.endsWith("]")) {
+      return false;
+    }
+
+    return isIP(normalized.slice(1, -1)) === 6;
+  }
+
+  if (normalized.startsWith("*.")) {
+    return isValidDnsHostname(normalized.slice(2));
+  }
+
+  if (normalized.includes("*")) {
+    return false;
+  }
+
+  return isIP(normalized) > 0 || isValidDnsHostname(normalized);
+}
+
+function assertCallbackAllowedHosts(value: string[] | undefined, label: string): void {
+  assertStringArray(value, label, MAX_CONFIG_STRING_ARRAY_ENTRIES, MAX_CALLBACK_ALLOWED_HOST_CHARS);
+
+  for (const entry of value ?? []) {
+    if (!isValidCallbackAllowedHostPattern(entry)) {
+      throw new RayError(
+        `${label} entries must be exact host/IP literals or wildcard DNS patterns like *.example.com`,
+        {
+          code: "config_validation_error",
+          status: 500,
+          details: { value: entry },
+        },
+      );
+    }
+  }
+}
+
 function assertModelOperationalMetadata(config: RayConfig): void {
   const metadata = config.model.operational;
 
@@ -1242,11 +1299,9 @@ function validateConfig(config: RayConfig): RayConfig {
     MAX_CALLBACK_TIMEOUT_MS,
   );
   assertPositiveInteger(config.asyncQueue.maxCallbackAttempts, "asyncQueue.maxCallbackAttempts");
-  assertStringArray(
+  assertCallbackAllowedHosts(
     config.asyncQueue.callbackAllowedHosts,
     "asyncQueue.callbackAllowedHosts",
-    MAX_CONFIG_STRING_ARRAY_ENTRIES,
-    MAX_CALLBACK_ALLOWED_HOST_CHARS,
   );
   assertPositiveIntegerAtMost(config.cache.maxEntries, "cache.maxEntries", MAX_CACHE_ENTRIES);
   assertPositiveIntegerAtMost(config.cache.ttlMs, "cache.ttlMs", MAX_CACHE_TTL_MS);

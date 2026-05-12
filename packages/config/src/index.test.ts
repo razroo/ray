@@ -915,6 +915,70 @@ test("loadRayConfig rejects oversized structured config collections", async (t) 
   );
 });
 
+test("loadRayConfig validates async callback allowed host patterns", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-config-callback-hosts-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const validConfigPath = join(tempDir, "ray.callback-hosts.valid.json");
+  await writeFile(
+    validConfigPath,
+    JSON.stringify({
+      profile: "tiny",
+      asyncQueue: {
+        callbackAllowedHosts: [
+          "callback.example",
+          "*.trusted.example",
+          "127.0.0.1",
+          "[2001:db8::1]",
+        ],
+      },
+    }),
+  );
+
+  const loaded = await loadRayConfig({
+    cwd: process.cwd(),
+    configPath: validConfigPath,
+    env: {},
+  });
+
+  assert.deepEqual(loaded.config.asyncQueue.callbackAllowedHosts, [
+    "callback.example",
+    "*.trusted.example",
+    "127.0.0.1",
+    "[2001:db8::1]",
+  ]);
+
+  for (const [index, callbackAllowedHost] of [
+    "https://callback.example/ray-callback",
+    "callback.example:443",
+    "bad host.example",
+    "*",
+    "callback.*.example",
+  ].entries()) {
+    const invalidConfigPath = join(tempDir, `ray.callback-hosts.${index}.invalid.json`);
+    await writeFile(
+      invalidConfigPath,
+      JSON.stringify({
+        profile: "tiny",
+        asyncQueue: {
+          callbackAllowedHosts: [callbackAllowedHost],
+        },
+      }),
+    );
+
+    await assert.rejects(
+      loadRayConfig({
+        cwd: process.cwd(),
+        configPath: invalidConfigPath,
+        env: {},
+      }),
+      /asyncQueue\.callbackAllowedHosts entries must be exact host\/IP literals/,
+    );
+  }
+});
+
 test("loadRayConfig rejects invalid async queue completed job TTLs", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-config-invalid-"));
   t.after(async () => {

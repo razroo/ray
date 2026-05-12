@@ -84,6 +84,46 @@ test("durable inference queue rejects invalid direct config", () => {
       }),
     /asyncQueue\.callbackAllowPrivateNetwork/,
   );
+  assert.throws(
+    () =>
+      new DurableInferenceQueue({
+        config: {
+          ...config,
+          callbackAllowedHosts: ["https://callback.example/ray-callback"],
+        },
+        runtime,
+        logger,
+      }),
+    /asyncQueue\.callbackAllowedHosts entries must be exact host\/IP literals/,
+  );
+  assert.throws(
+    () =>
+      new DurableInferenceQueue({
+        config: {
+          ...config,
+          callbackAllowedHosts: ["*"],
+        },
+        runtime,
+        logger,
+      }),
+    /asyncQueue\.callbackAllowedHosts entries must be exact host\/IP literals/,
+  );
+  assert.doesNotThrow(
+    () =>
+      new DurableInferenceQueue({
+        config: {
+          ...config,
+          callbackAllowedHosts: [
+            "callback.example",
+            "*.trusted.example",
+            "127.0.0.1",
+            "[2001:db8::1]",
+          ],
+        },
+        runtime,
+        logger,
+      }),
+  );
 });
 
 test("durable inference queue snapshots config at construction", async () => {
@@ -908,6 +948,25 @@ test("durable inference queue rejects private and non-global callbacks by defaul
         }),
       /private, local, or non-global/,
     );
+
+    const wildcardAllowlistQueue = new DurableInferenceQueue({
+      config: {
+        ...config.asyncQueue,
+        callbackAllowedHosts: ["*.trusted.example"],
+      },
+      runtime,
+      logger,
+      lookupImpl: async () => {
+        throw new Error("allowlisted callback hosts should not require DNS admission checks");
+      },
+    });
+
+    const accepted = await wildcardAllowlistQueue.enqueue({
+      input: "Allow trusted callback host",
+      callbackUrl: "https://hooks.trusted.example/ray-callback",
+    });
+
+    assert.equal(accepted.status, "queued");
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }
