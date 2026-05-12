@@ -201,6 +201,7 @@ test("runCli render applies env-file overrides to generated llama.cpp service", 
       "RAY_MODEL_PATH=/var/lib/ray/models/env-local-1b.gguf",
       "RAY_MODEL_FAMILY=llama-compatible",
       "RAY_MODEL_QUANTIZATION=q4_k_m",
+      "RAY_GATEWAY_RUNTIME_BINARY=/opt/ray/bin/bun",
       "",
     ].join("\n"),
   );
@@ -229,9 +230,50 @@ test("runCli render applies env-file overrides to generated llama.cpp service", 
   const rendered = output.join("\n");
   const llamaSection = rendered.split("# llama.cpp systemd service").at(1) ?? "";
   assert.match(rendered, /EnvironmentFile=.*ray\.env/);
+  assert.match(rendered, /ExecStart=\/opt\/ray\/bin\/bun/);
   assert.match(rendered, /LLAMA_ARG_MODEL=\/var\/lib\/ray\/models\/env-local-1b\.gguf/);
   assert.match(rendered, /LLAMA_ARG_ALIAS=env-local-1b/);
   assert.doesNotMatch(llamaSection, /EnvironmentFile=.*ray\.env/);
+});
+
+test("runCli explicit gateway runtime flag overrides env-file runtime", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-runtime-env-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(
+    envFile,
+    ["RAY_API_KEYS=test-key", "RAY_GATEWAY_RUNTIME_BINARY=/opt/ray/bin/bun", ""].join("\n"),
+    "utf8",
+  );
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli([
+    "render",
+    "--cwd",
+    ".",
+    "--config",
+    "./examples/config/ray.1b.generic.public.json",
+    "--ray-env-file",
+    envFile,
+    "--memory-mib",
+    "4096",
+    "--gateway-runtime-binary",
+    "/usr/local/bin/bun",
+  ]);
+
+  const rendered = output.join("\n");
+  assert.match(rendered, /ExecStart=\/usr\/local\/bin\/bun/);
+  assert.doesNotMatch(rendered, /ExecStart=\/opt\/ray\/bin\/bun/);
 });
 
 test("runCli render writes deployment files when output-dir is provided", async (t) => {

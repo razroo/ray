@@ -78,6 +78,10 @@ function parsePositiveIntegerFlag(value: string, label: string): number {
   return parsed;
 }
 
+function readNonEmptyEnvValue(value: string | undefined): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
 function decodeDoubleQuotedEnvValue(value: string): string {
   return value.replace(/\\(["\\nrt])/g, (_match, escaped: string) => {
     if (escaped === "n") {
@@ -373,19 +377,28 @@ export async function runCli(argv: string[]): Promise<void> {
     ...(options.outputDir ? { outputDir: path.resolve(cwd, options.outputDir) } : {}),
   };
   const env = await loadEnvironment(resolvedOptions);
+  const envRuntimeBinary = readNonEmptyEnvValue(env.RAY_GATEWAY_RUNTIME_BINARY);
+  const deploymentOptions: CliOptions = {
+    ...resolvedOptions,
+    ...(resolvedOptions.runtimeBinary === undefined &&
+    resolvedOptions.nodeBinary === undefined &&
+    envRuntimeBinary !== undefined
+      ? { runtimeBinary: envRuntimeBinary }
+      : {}),
+  };
 
-  if (resolvedOptions.command === "render") {
+  if (deploymentOptions.command === "render") {
     const bundle = await renderDeploymentBundle({
-      ...resolvedOptions,
+      ...deploymentOptions,
       env,
-      ...(resolvedOptions.strictFilesystem !== undefined
-        ? { strictFilesystem: resolvedOptions.strictFilesystem }
+      ...(deploymentOptions.strictFilesystem !== undefined
+        ? { strictFilesystem: deploymentOptions.strictFilesystem }
         : {}),
     });
     assertRenderableDeploymentBundle(bundle);
 
-    if (resolvedOptions.outputDir) {
-      const files = await writeDeploymentBundleFiles(resolvedOptions.outputDir, bundle);
+    if (deploymentOptions.outputDir) {
+      const files = await writeDeploymentBundleFiles(deploymentOptions.outputDir, bundle);
       console.log(JSON.stringify({ files }, null, 2));
       return;
     }
@@ -404,10 +417,10 @@ export async function runCli(argv: string[]): Promise<void> {
     console.log(JSON.stringify(bundle.summary, null, 2));
   } else {
     const inspected = await loadAndDiagnoseDeployment({
-      ...resolvedOptions,
+      ...deploymentOptions,
       env,
       strictFilesystem:
-        resolvedOptions.command === "doctor" || resolvedOptions.strictFilesystem === true,
+        deploymentOptions.command === "doctor" || deploymentOptions.strictFilesystem === true,
     });
     const hasErrors = inspected.diagnostics.some((diagnostic) => diagnostic.level === "error");
 

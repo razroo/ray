@@ -287,7 +287,7 @@ Optional repository variables:
 - `RAY_DEPLOY_DOMAIN` — Caddy site address to render, defaults to `ray.local`
 - `RAY_DEPLOY_INSTALL_CADDY` — set to `true` to install and reload the generated Caddyfile; requires `RAY_DEPLOY_DOMAIN`
 - `RAY_CONFIG_PATH` — repo-relative config path to install, defaults to `./examples/config/ray.sub1b.public.json`
-- `RAY_GATEWAY_RUNTIME_BINARY` — absolute JavaScript runtime path rendered into `ray-gateway.service`, defaults to `/usr/local/bin/bun`
+- `RAY_GATEWAY_RUNTIME_BINARY` — absolute JavaScript runtime path rendered into `ray-gateway.service`, defaults to `/usr/local/bin/bun`; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--gateway-runtime-binary` is omitted
 - `RAY_DEPLOY_READY_TIMEOUT_SECONDS` — bounded wait for `/readyz` after service restart before reloading Caddy, defaults to `120`
 - `RAY_AUTO_DEPLOY` — set to `true` if pushes to `main` should auto-deploy
 
@@ -338,7 +338,7 @@ Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 - Enable `auth.enabled` before exposing Ray publicly; it also protects detailed `/health`, `/metrics`, and `/v1/config` responses.
 - Keep `/etc/ray/ray.env` private, for example with `sudo chmod 600 /etc/ray/ray.env`; doctor warns when the env file is group/world-readable.
 - Create the generated service user before manual render/restart steps; doctor verifies the configured `--user` exists before systemd uses it.
-- Install Bun 1.3+ at `/usr/local/bin/bun` or pass the same `--gateway-runtime-binary` used at render time; doctor verifies the generated service user can execute the rendered gateway runtime and, for identifiable Bun/Node binaries, that its version satisfies Ray's engine requirements before systemd uses it.
+- Install Bun 1.3+ at `/usr/local/bin/bun`, set `RAY_GATEWAY_RUNTIME_BINARY`, or pass the same `--gateway-runtime-binary` used at render time; doctor verifies the generated service user can execute the rendered gateway runtime and, for identifiable Bun/Node binaries, that its version satisfies Ray's engine requirements before systemd uses it.
 - Keep `/etc/ray/ray.json` readable by the generated service user, for example with `root:ray` ownership and mode `0640`; doctor verifies this before systemd uses it.
 - Keep the Ray checkout at the generated `WorkingDirectory` such as `/srv/ray`, not under `/home`, `/root`, or `/run/user`; doctor verifies the directory exists, is not hidden by `ProtectHome=true`, and has read/execute mode bits for the generated service user before systemd uses it.
 - Run `bun run build` before rendering or restarting services; doctor verifies the built gateway entrypoint exists under the generated `WorkingDirectory` and is readable by the generated service user.
