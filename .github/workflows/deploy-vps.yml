@@ -129,7 +129,7 @@ jobs:
             CONFIG_REL="${CONFIG_PATH#./}"
           fi
 
-          HEALTH_PORT=$(CONFIG_PATH="$CONFIG_PATH" node --input-type=module <<'EOF'
+          HEALTH_PORT=$(CONFIG_PATH="$CONFIG_PATH" bun --eval '
           import { loadRayConfig } from "./packages/config/dist/index.js";
           import { parseEnvironmentFile } from "./packages/deploy/dist/cli.js";
 
@@ -147,8 +147,7 @@ jobs:
           });
 
           process.stdout.write(String(config.server.port));
-          EOF
-          )
+          ')
 
           if [ "$CONFIG_SOURCE" = "secret" ]; then
             rm -f "$CONFIG_PATH"
