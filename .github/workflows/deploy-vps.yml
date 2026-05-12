@@ -45,6 +45,7 @@ jobs:
       RAY_ENV_FILE_CONTENTS: ${{ secrets.RAY_ENV_FILE_CONTENTS }}
       RAY_CONFIG_JSON: ${{ secrets.RAY_CONFIG_JSON }}
       RAY_DEPLOY_SSH_USER: ${{ vars.RAY_DEPLOY_SSH_USER }}
+      RAY_DEPLOY_SERVICE_USER: ${{ vars.RAY_DEPLOY_SERVICE_USER }}
       RAY_DEPLOY_DOMAIN: ${{ vars.RAY_DEPLOY_DOMAIN }}
       RAY_DEPLOY_INSTALL_CADDY: ${{ vars.RAY_DEPLOY_INSTALL_CADDY }}
       RAY_CONFIG_PATH_VAR: ${{ vars.RAY_CONFIG_PATH }}
@@ -129,9 +130,12 @@ jobs:
             CONFIG_REL="${CONFIG_PATH#./}"
           fi
 
-          HEALTH_PORT=$(CONFIG_PATH="$CONFIG_PATH" bun --eval '
+          DEPLOY_SETTINGS=$(CONFIG_PATH="$CONFIG_PATH" bun --eval '
           import { loadRayConfig } from "./packages/config/dist/index.js";
           import { parseEnvironmentFile } from "./packages/deploy/dist/cli.js";
+
+          const readNonEmpty = (value) =>
+            typeof value === "string" && value.trim().length > 0 ? value : undefined;
 
           const envOverrides = process.env.RAY_ENV_FILE_CONTENTS
             ? parseEnvironmentFile(process.env.RAY_ENV_FILE_CONTENTS)
@@ -146,8 +150,21 @@ jobs:
             },
           });
 
-          process.stdout.write(String(config.server.port));
+          process.stdout.write(JSON.stringify({
+            healthPort: config.server.port,
+            serviceUser:
+              readNonEmpty(envOverrides.RAY_DEPLOY_SERVICE_USER) ??
+              readNonEmpty(process.env.RAY_DEPLOY_SERVICE_USER) ??
+              "ray",
+          }));
           ')
+          HEALTH_PORT=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).healthPort')
+          SERVICE_USER=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).serviceUser')
+
+          if ! printf '%s' "$SERVICE_USER" | grep -Eq '^[A-Za-z_][A-Za-z0-9_-]{0,30}$'; then
+            echo "::error::RAY_DEPLOY_SERVICE_USER must be a system account name using only letters, digits, underscores, or hyphens."
+            exit 1
+          fi
 
           if [ "$CONFIG_SOURCE" = "secret" ]; then
             rm -f "$CONFIG_PATH"
@@ -157,6 +174,7 @@ jobs:
           echo "config_source=$CONFIG_SOURCE" >> "$GITHUB_OUTPUT"
           echo "config_rel=$CONFIG_REL" >> "$GITHUB_OUTPUT"
           echo "health_port=$HEALTH_PORT" >> "$GITHUB_OUTPUT"
+          echo "service_user=$SERVICE_USER" >> "$GITHUB_OUTPUT"
           echo "deploy_domain=$DEPLOY_DOMAIN" >> "$GITHUB_OUTPUT"
           echo "install_caddy=$INSTALL_CADDY" >> "$GITHUB_OUTPUT"
           echo "ready_timeout_seconds=$READY_TIMEOUT_SECONDS" >> "$GITHUB_OUTPUT"
@@ -172,17 +190,19 @@ jobs:
       - name: Bootstrap remote runtime
         env:
           SSH_USER: ${{ vars.RAY_DEPLOY_SSH_USER }}
+          SERVICE_USER: ${{ steps.settings.outputs.service_user }}
           INSTALL_CADDY: ${{ steps.settings.outputs.install_caddy }}
         run: |
           set -euo pipefail
           SSH_USER="${SSH_USER:-root}"
+          SERVICE_USER="${SERVICE_USER:-ray}"
           INSTALL_CADDY="${INSTALL_CADDY:-false}"
           TARGET="$SSH_USER@$RAY_DEPLOY_HOST"
           shell_quote() {
             printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
           }
 
-          ssh -i ~/.ssh/deploy_key "$TARGET" "INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") bash -s" <<'ENDSSH'
+          ssh -i ~/.ssh/deploy_key "$TARGET" "INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") SERVICE_USER=$(shell_quote "$SERVICE_USER") bash -s" <<'ENDSSH'
           set -euo pipefail
 
           SUDO=""
@@ -201,13 +221,15 @@ jobs:
             $SUDO apt-get install -y caddy
           fi
 
-          if ! id -u ray >/dev/null 2>&1; then
-            $SUDO useradd --system --home /srv/ray --shell /usr/sbin/nologin ray
+          SERVICE_USER="${SERVICE_USER:-ray}"
+          if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
+            $SUDO useradd --system --home /srv/ray --shell /usr/sbin/nologin "$SERVICE_USER"
           fi
+          SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
 
           $SUDO install -d -m 0755 /srv/ray /etc/ray /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
           $SUDO chown -R "$DEPLOY_USER:$DEPLOY_GROUP" /srv/ray
-          $SUDO chown -R ray:ray /var/lib/ray
+          $SUDO chown -R "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray
           ENDSSH
 
       - name: Sync repository to VPS
@@ -235,12 +257,14 @@ jobs:
           HEALTH_PORT: ${{ steps.settings.outputs.health_port }}
           DEPLOY_DOMAIN: ${{ steps.settings.outputs.deploy_domain }}
           INSTALL_CADDY: ${{ steps.settings.outputs.install_caddy }}
+          SERVICE_USER: ${{ steps.settings.outputs.service_user }}
           READY_TIMEOUT_SECONDS: ${{ steps.settings.outputs.ready_timeout_seconds }}
         run: |
           set -euo pipefail
           SSH_USER="${SSH_USER:-root}"
           TARGET="$SSH_USER@$RAY_DEPLOY_HOST"
           GATEWAY_RUNTIME_BINARY="${RAY_GATEWAY_RUNTIME_BINARY:-/usr/local/bin/bun}"
+          SERVICE_USER="${SERVICE_USER:-ray}"
           ENV_B64="$(printf '%s' "${RAY_ENV_FILE_CONTENTS:-}" | base64 -w 0)"
           CONFIG_B64="$(printf '%s' "${RAY_CONFIG_JSON:-}" | base64 -w 0)"
           shell_quote() {
@@ -248,13 +272,15 @@ jobs:
           }
 
           ssh -i ~/.ssh/deploy_key "$TARGET" \
-            "CONFIG_SOURCE=$(shell_quote "$CONFIG_SOURCE") CONFIG_REL=$(shell_quote "$CONFIG_REL") CONFIG_B64=$(shell_quote "$CONFIG_B64") HEALTH_PORT=$(shell_quote "$HEALTH_PORT") DEPLOY_DOMAIN=$(shell_quote "$DEPLOY_DOMAIN") INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") READY_TIMEOUT_SECONDS=$(shell_quote "$READY_TIMEOUT_SECONDS") GATEWAY_RUNTIME_BINARY=$(shell_quote "$GATEWAY_RUNTIME_BINARY") ENV_B64=$(shell_quote "$ENV_B64") bash -s" <<'ENDSSH'
+            "CONFIG_SOURCE=$(shell_quote "$CONFIG_SOURCE") CONFIG_REL=$(shell_quote "$CONFIG_REL") CONFIG_B64=$(shell_quote "$CONFIG_B64") HEALTH_PORT=$(shell_quote "$HEALTH_PORT") DEPLOY_DOMAIN=$(shell_quote "$DEPLOY_DOMAIN") INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") SERVICE_USER=$(shell_quote "$SERVICE_USER") READY_TIMEOUT_SECONDS=$(shell_quote "$READY_TIMEOUT_SECONDS") GATEWAY_RUNTIME_BINARY=$(shell_quote "$GATEWAY_RUNTIME_BINARY") ENV_B64=$(shell_quote "$ENV_B64") bash -s" <<'ENDSSH'
           set -euo pipefail
 
           SUDO=""
           if [ "$(id -u)" -ne 0 ]; then
             SUDO="sudo"
           fi
+          SERVICE_USER="${SERVICE_USER:-ray}"
+          SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
 
           dump_service_debug() {
             unit="$1"
@@ -363,7 +389,7 @@ jobs:
           else
             $SUDO cp "/srv/ray/$CONFIG_REL" /etc/ray/ray.json
           fi
-          $SUDO chown root:ray /etc/ray/ray.json
+          $SUDO chown "root:$SERVICE_GROUP" /etc/ray/ray.json
           $SUDO chmod 0640 /etc/ray/ray.json
           if [ -n "${ENV_B64:-}" ]; then
             printf '%s' "$ENV_B64" | base64 -d | $SUDO tee /etc/ray/ray.env >/dev/null
@@ -375,6 +401,7 @@ jobs:
           $SUDO /usr/local/bin/bun /srv/ray/packages/deploy/dist/cli.js doctor \
             --cwd /srv/ray \
             --config /etc/ray/ray.json \
+            --user "$SERVICE_USER" \
             --gateway-runtime-binary "$GATEWAY_RUNTIME_BINARY" \
             --ray-env-file /etc/ray/ray.env
 
@@ -391,7 +418,7 @@ jobs:
           $SUDO /usr/local/bin/bun /srv/ray/packages/deploy/dist/cli.js render \
             --cwd /srv/ray \
             --config /etc/ray/ray.json \
-            --user ray \
+            --user "$SERVICE_USER" \
             --domain "$DEPLOY_DOMAIN" \
             --gateway-runtime-binary "$GATEWAY_RUNTIME_BINARY" \
             --ray-env-file /etc/ray/ray.env \
@@ -415,7 +442,7 @@ jobs:
           fi
 
           $SUDO chmod -R a+rX /srv/ray
-          $SUDO chown -R ray:ray /var/lib/ray
+          $SUDO chown -R "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray
           $SUDO systemctl daemon-reload
           if [ -f /etc/systemd/system/ray-llama-cpp.service ]; then
             if ! $SUDO systemctl enable ray-llama-cpp.service; then

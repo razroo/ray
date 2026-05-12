@@ -9,7 +9,7 @@ export interface CliOptions {
   command: Command;
   cwd: string;
   configPath: string;
-  user: string;
+  user?: string;
   domain?: string;
   envFile?: string;
   outputDir?: string;
@@ -295,7 +295,6 @@ export function parseCliArgs(argv: string[]): CliOptions {
     command,
     cwd: process.cwd(),
     configPath: "./examples/config/ray.sub1b.public.json",
-    user: "ray",
   };
 
   for (; index < argv.length; index += 1) {
@@ -385,13 +384,15 @@ export async function runCli(argv: string[]): Promise<void> {
   };
   const env = await loadEnvironment(resolvedOptions);
   const envRuntimeBinary = readNonEmptyEnvValue(env.RAY_GATEWAY_RUNTIME_BINARY);
+  const envServiceUser = readNonEmptyEnvValue(env.RAY_DEPLOY_SERVICE_USER);
   const envDomain = readNonEmptyEnvValue(env.RAY_DEPLOY_DOMAIN);
   const envMemoryBudgetMiB = parseOptionalPositiveIntegerEnv(
     env.RAY_DEPLOY_MEMORY_MIB,
     "RAY_DEPLOY_MEMORY_MIB",
   );
-  const deploymentOptions: CliOptions & { domain: string } = {
+  const deploymentOptions: CliOptions & { domain: string; user: string } = {
     ...resolvedOptions,
+    user: resolvedOptions.user ?? envServiceUser ?? "ray",
     domain: resolvedOptions.domain ?? envDomain ?? "ray.local",
     ...(resolvedOptions.memoryBudgetMiB === undefined && envMemoryBudgetMiB !== undefined
       ? { memoryBudgetMiB: envMemoryBudgetMiB }

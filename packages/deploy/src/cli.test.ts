@@ -100,6 +100,13 @@ test("parseCliArgs accepts explicit deploy domains", () => {
   assert.equal(options.domain, "ray.example.com");
 });
 
+test("parseCliArgs accepts explicit service users", () => {
+  const options = parseCliArgs(["render", "--user", "ray_gpu"]);
+
+  assert.equal(options.command, "render");
+  assert.equal(options.user, "ray_gpu");
+});
+
 test("parseCliArgs accepts strict filesystem checks", () => {
   const options = parseCliArgs(["render", "--strict-filesystem"]);
 
@@ -358,6 +365,84 @@ test("runCli explicit deploy domain overrides env-file domain", async (t) => {
   const rendered = output.join("\n");
   assert.match(rendered, /^cli\.example\.com \{/m);
   assert.doesNotMatch(rendered, /^env\.example\.com \{/m);
+});
+
+test("runCli render applies env-file service user to generated systemd units", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-user-env-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(
+    envFile,
+    ["RAY_API_KEYS=test-key", "RAY_DEPLOY_SERVICE_USER=ray_gpu", ""].join("\n"),
+    "utf8",
+  );
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli([
+    "render",
+    "--cwd",
+    ".",
+    "--config",
+    "./examples/config/ray.1b.generic.public.json",
+    "--ray-env-file",
+    envFile,
+    "--memory-mib",
+    "4096",
+  ]);
+
+  const rendered = output.join("\n");
+  assert.match(rendered, /^User=ray_gpu$/m);
+  assert.doesNotMatch(rendered, /^User=ray$/m);
+});
+
+test("runCli explicit service user overrides env-file service user", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-user-flag-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(
+    envFile,
+    ["RAY_API_KEYS=test-key", "RAY_DEPLOY_SERVICE_USER=env_ray", ""].join("\n"),
+    "utf8",
+  );
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli([
+    "render",
+    "--cwd",
+    ".",
+    "--config",
+    "./examples/config/ray.1b.generic.public.json",
+    "--ray-env-file",
+    envFile,
+    "--memory-mib",
+    "4096",
+    "--user",
+    "cli_ray",
+  ]);
+
+  const rendered = output.join("\n");
+  assert.match(rendered, /^User=cli_ray$/m);
+  assert.doesNotMatch(rendered, /^User=env_ray$/m);
 });
 
 test("runCli render writes deployment files when output-dir is provided", async (t) => {
