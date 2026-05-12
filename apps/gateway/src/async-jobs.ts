@@ -49,6 +49,7 @@ const MAX_CALLBACK_TIMEOUT_MS = 30_000;
 const MAX_CALLBACK_ALLOWED_HOSTS = 64;
 const MAX_CALLBACK_ALLOWED_HOST_CHARS = 253;
 const MAX_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB = 1_048_576;
+const MAX_ASYNC_ATTEMPTS = 100;
 const BYTES_PER_MIB = 1024 * 1024;
 const DNS_HOST_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -339,11 +340,7 @@ function snapshotAsyncQueueConfig(config: AsyncQueueConfig): AsyncQueueConfig {
     "asyncQueue.dispatchConcurrency",
     MAX_ASYNC_DISPATCH_CONCURRENCY,
   );
-  assertPositiveSafeIntegerAtMost(
-    config.maxAttempts,
-    "asyncQueue.maxAttempts",
-    Number.MAX_SAFE_INTEGER,
-  );
+  assertPositiveSafeIntegerAtMost(config.maxAttempts, "asyncQueue.maxAttempts", MAX_ASYNC_ATTEMPTS);
   assertPositiveSafeIntegerAtMost(
     config.callbackTimeoutMs,
     "asyncQueue.callbackTimeoutMs",
@@ -352,7 +349,7 @@ function snapshotAsyncQueueConfig(config: AsyncQueueConfig): AsyncQueueConfig {
   assertPositiveSafeIntegerAtMost(
     config.maxCallbackAttempts,
     "asyncQueue.maxCallbackAttempts",
-    Number.MAX_SAFE_INTEGER,
+    MAX_ASYNC_ATTEMPTS,
   );
   assertCallbackAllowedHosts(config.callbackAllowedHosts, "asyncQueue.callbackAllowedHosts");
 

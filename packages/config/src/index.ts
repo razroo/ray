@@ -80,6 +80,7 @@ const MAX_ADAPTER_TIMEOUT_MS = 120_000;
 const MAX_ASYNC_COMPLETED_TTL_MS = 604_800_000;
 const MAX_ASYNC_POLL_INTERVAL_MS = 60_000;
 const MAX_CALLBACK_TIMEOUT_MS = 30_000;
+const MAX_ASYNC_ATTEMPTS = 100;
 const MAX_CACHE_TTL_MS = 86_400_000;
 const MAX_GRACEFUL_DEGRADATION_PROMPT_CHARS = 65_536;
 const MAX_GRACEFUL_DEGRADATION_MEMORY_RSS_MIB = 65_536;
@@ -1914,13 +1915,21 @@ function validateConfig(config: RayConfig): RayConfig {
     "asyncQueue.dispatchConcurrency",
     MAX_ASYNC_DISPATCH_CONCURRENCY,
   );
-  assertPositiveInteger(config.asyncQueue.maxAttempts, "asyncQueue.maxAttempts");
+  assertPositiveIntegerAtMost(
+    config.asyncQueue.maxAttempts,
+    "asyncQueue.maxAttempts",
+    MAX_ASYNC_ATTEMPTS,
+  );
   assertPositiveIntegerAtMost(
     config.asyncQueue.callbackTimeoutMs,
     "asyncQueue.callbackTimeoutMs",
     MAX_CALLBACK_TIMEOUT_MS,
   );
-  assertPositiveInteger(config.asyncQueue.maxCallbackAttempts, "asyncQueue.maxCallbackAttempts");
+  assertPositiveIntegerAtMost(
+    config.asyncQueue.maxCallbackAttempts,
+    "asyncQueue.maxCallbackAttempts",
+    MAX_ASYNC_ATTEMPTS,
+  );
   assertCallbackAllowedHosts(
     config.asyncQueue.callbackAllowedHosts,
     "asyncQueue.callbackAllowedHosts",

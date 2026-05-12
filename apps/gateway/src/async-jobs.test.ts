@@ -65,6 +65,30 @@ test("durable inference queue rejects invalid direct config", () => {
       new DurableInferenceQueue({
         config: {
           ...config,
+          maxAttempts: 101,
+        },
+        runtime,
+        logger,
+      }),
+    /asyncQueue\.maxAttempts/,
+  );
+  assert.throws(
+    () =>
+      new DurableInferenceQueue({
+        config: {
+          ...config,
+          maxCallbackAttempts: 101,
+        },
+        runtime,
+        logger,
+      }),
+    /asyncQueue\.maxCallbackAttempts/,
+  );
+  assert.throws(
+    () =>
+      new DurableInferenceQueue({
+        config: {
+          ...config,
           minFreeStorageMiB: 0,
         },
         runtime,

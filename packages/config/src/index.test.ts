@@ -899,6 +899,46 @@ test("loadRayConfig rejects oversized scheduler admission budgets", async (t) =>
     }),
     /asyncQueue\.dispatchConcurrency must be less than or equal to 8/,
   );
+
+  const attemptsConfigPath = join(tempDir, "ray.async-attempts.invalid.json");
+  await writeFile(
+    attemptsConfigPath,
+    JSON.stringify({
+      profile: "tiny",
+      asyncQueue: {
+        maxAttempts: 101,
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: attemptsConfigPath,
+      env: {},
+    }),
+    /asyncQueue\.maxAttempts must be less than or equal to 100/,
+  );
+
+  const callbackAttemptsConfigPath = join(tempDir, "ray.async-callback-attempts.invalid.json");
+  await writeFile(
+    callbackAttemptsConfigPath,
+    JSON.stringify({
+      profile: "tiny",
+      asyncQueue: {
+        maxCallbackAttempts: 101,
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: callbackAttemptsConfigPath,
+      env: {},
+    }),
+    /asyncQueue\.maxCallbackAttempts must be less than or equal to 100/,
+  );
 });
 
 test("loadRayConfig rejects oversized scalar resource budgets", async (t) => {
