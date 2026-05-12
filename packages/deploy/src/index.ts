@@ -42,6 +42,7 @@ type AsyncQueueStorageStatus = "directory" | "parent" | "not_directory" | "unrea
 type BinaryPreflightStatus = "found" | "missing" | "unreadable";
 type GatewayRuntimeBinaryStatus = BinaryPreflightStatus;
 type LlamaCppBinaryStatus = BinaryPreflightStatus;
+type GatewayEntrypointStatus = BinaryPreflightStatus;
 type EnvFileStatus = "found" | "missing" | "unreadable";
 type ServiceUserStatus = "found" | "missing" | "unreadable";
 type SwapStatus = "available" | "missing" | "unreadable";
@@ -62,6 +63,9 @@ export interface DeploymentPreflight {
   gatewayRuntimeBinaryPath?: string;
   gatewayRuntimeBinaryStatus?: GatewayRuntimeBinaryStatus;
   gatewayRuntimeBinaryError?: string;
+  gatewayEntrypointPath?: string;
+  gatewayEntrypointStatus?: GatewayEntrypointStatus;
+  gatewayEntrypointError?: string;
   llamaCppBinaryPath?: string;
   llamaCppBinaryStatus?: LlamaCppBinaryStatus;
   llamaCppBinaryError?: string;
@@ -106,6 +110,7 @@ const SECRET_ENV_FILE_OPEN_MODE_MASK = 0o077;
 const SCHEDULER_BYTES_PER_TOKEN = 768;
 const TIGHT_MEMORY_RATIO = 0.9;
 const LLAMA_CPP_SYSTEMD_SERVICE = "ray-llama-cpp.service";
+const GATEWAY_ENTRYPOINT_RELATIVE_PATH = "apps/gateway/dist/index.js";
 const MAX_SYSTEMD_DEPENDENCY_UNITS = 32;
 const MAX_SYSTEMD_DEPENDENCY_UNIT_CHARS = 256;
 const MAX_LLAMA_CPP_EXTRA_ARGS = 64;
@@ -804,7 +809,7 @@ export function renderSystemdService(options: SystemdServiceOptions): string {
   const wantsLine = formatSystemdDependencyLine("Wants", wants ?? []);
   const afterLine = formatSystemdDependencyLine("After", ["network.target", ...(after ?? [])]);
   const absoluteConfigPath = path.resolve(options.workingDirectory, options.configPath);
-  const gatewayEntryPoint = path.join(options.workingDirectory, "apps/gateway/dist/index.js");
+  const gatewayEntryPoint = path.join(options.workingDirectory, GATEWAY_ENTRYPOINT_RELATIVE_PATH);
   const execStart = formatSystemdExecStart([
     runtimeBinary,
     gatewayEntryPoint,
@@ -1160,6 +1165,30 @@ export function diagnoseConfig(
         level: "info",
         code: "gateway_runtime_ok",
         message: `Gateway runtime binary is executable at ${runtimePath}.`,
+      });
+    }
+  }
+
+  if (strictFilesystem && preflight?.gatewayEntrypointStatus !== undefined) {
+    const entrypointPath = preflight.gatewayEntrypointPath ?? GATEWAY_ENTRYPOINT_RELATIVE_PATH;
+
+    if (preflight.gatewayEntrypointStatus === "missing") {
+      diagnostics.push({
+        level: "error",
+        code: "gateway_entrypoint_missing",
+        message: `The built Ray gateway entrypoint was not found at ${entrypointPath}. Run bun run build before rendering or restarting ray-gateway.service.`,
+      });
+    } else if (preflight.gatewayEntrypointStatus === "unreadable") {
+      diagnostics.push({
+        level: "error",
+        code: "gateway_entrypoint_unreadable",
+        message: `The built Ray gateway entrypoint at ${entrypointPath} could not be inspected${preflight.gatewayEntrypointError ? ` (${preflight.gatewayEntrypointError})` : ""}. Doctor cannot verify that ray-gateway.service will start.`,
+      });
+    } else {
+      diagnostics.push({
+        level: "info",
+        code: "gateway_entrypoint_ok",
+        message: `Built Ray gateway entrypoint exists at ${entrypointPath}.`,
       });
     }
   }
@@ -1629,6 +1658,7 @@ export async function loadAndDiagnoseDeployment(options: {
     ...(options.env ? { env: options.env } : {}),
   });
   const preflight = await collectDeploymentPreflight(loaded.config, {
+    cwd: options.cwd,
     ...(options.memoryBudgetMiB !== undefined ? { memoryBudgetMiB: options.memoryBudgetMiB } : {}),
     ...(options.runtimeBinary !== undefined ? { runtimeBinary: options.runtimeBinary } : {}),
     ...(options.nodeBinary !== undefined ? { nodeBinary: options.nodeBinary } : {}),
@@ -1898,6 +1928,45 @@ async function collectGatewayRuntimePreflight(
   }
 }
 
+async function collectGatewayEntrypointPreflight(
+  cwd: string,
+  strictFilesystem: boolean,
+): Promise<Partial<DeploymentPreflight>> {
+  if (!strictFilesystem) {
+    return {};
+  }
+
+  const entrypointPath = path.resolve(cwd, GATEWAY_ENTRYPOINT_RELATIVE_PATH);
+
+  try {
+    const entrypointStat = await stat(entrypointPath);
+
+    if (!entrypointStat.isFile()) {
+      return {
+        gatewayEntrypointPath: entrypointPath,
+        gatewayEntrypointStatus: "unreadable",
+        gatewayEntrypointError: "not a regular file",
+      };
+    }
+
+    return {
+      gatewayEntrypointPath: entrypointPath,
+      gatewayEntrypointStatus: "found",
+    };
+  } catch (error) {
+    const code =
+      error !== null && typeof error === "object" && "code" in error
+        ? (error as { code?: string }).code
+        : undefined;
+
+    return {
+      gatewayEntrypointPath: entrypointPath,
+      gatewayEntrypointStatus: code === "ENOENT" ? "missing" : "unreadable",
+      gatewayEntrypointError: toErrorMessage(error),
+    };
+  }
+}
+
 async function collectLlamaCppBinaryPreflight(
   launchProfile: LlamaCppLaunchProfile,
 ): Promise<Partial<DeploymentPreflight>> {
@@ -1969,6 +2038,7 @@ async function collectSwapPreflight(): Promise<Partial<DeploymentPreflight>> {
 async function collectDeploymentPreflight(
   config: RayConfig,
   options: {
+    cwd: string;
     memoryBudgetMiB?: number;
     runtimeBinary?: string;
     envFile?: string;
@@ -1984,6 +2054,10 @@ async function collectDeploymentPreflight(
     options.user,
     options.strictFilesystem === true,
   );
+  const gatewayEntrypointPreflight = await collectGatewayEntrypointPreflight(
+    options.cwd,
+    options.strictFilesystem === true,
+  );
   const runtimePreflight = await collectGatewayRuntimePreflight(
     options.runtimeBinary ?? options.nodeBinary,
   );
@@ -1995,6 +2069,7 @@ async function collectDeploymentPreflight(
       ...storagePreflight,
       ...envFilePreflight,
       ...serviceUserPreflight,
+      ...gatewayEntrypointPreflight,
       ...runtimePreflight,
       ...swapPreflight,
     };
@@ -2014,6 +2089,7 @@ async function collectDeploymentPreflight(
     ...storagePreflight,
     ...envFilePreflight,
     ...serviceUserPreflight,
+    ...gatewayEntrypointPreflight,
     ...runtimePreflight,
     ...llamaBinaryPreflight,
     ...swapPreflight,

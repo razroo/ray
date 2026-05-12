@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -1234,6 +1234,58 @@ test("loadAndDiagnoseDeployment reports an existing generated service user in st
   const diagnostic = inspected.diagnostics.find((entry) => entry.code === "service_user_ok");
   assert.ok(diagnostic);
   assert.equal(diagnostic.level, "info");
+});
+
+test("loadAndDiagnoseDeployment errors when the built gateway entrypoint is missing in strict mode", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-gateway-entrypoint-missing-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    strictFilesystem: true,
+  });
+
+  const diagnostic = inspected.diagnostics.find(
+    (entry) => entry.code === "gateway_entrypoint_missing",
+  );
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /bun run build/);
+});
+
+test("loadAndDiagnoseDeployment reports the built gateway entrypoint in strict mode", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-gateway-entrypoint-ok-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  const entrypointPath = join(tempDir, "apps", "gateway", "dist", "index.js");
+  await mkdir(join(tempDir, "apps", "gateway", "dist"), { recursive: true });
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+  await writeFile(entrypointPath, "export {};\n");
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    strictFilesystem: true,
+  });
+
+  const diagnostic = inspected.diagnostics.find((entry) => entry.code === "gateway_entrypoint_ok");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+  assert.match(
+    diagnostic.message,
+    new RegExp(entrypointPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+  );
 });
 
 test("loadAndDiagnoseDeployment errors when the projected memory fit exceeds a 4 GB target", async (t) => {
