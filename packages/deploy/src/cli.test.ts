@@ -93,6 +93,13 @@ test("parseCliArgs accepts render output directories", () => {
   assert.equal(options.outputDir, "/tmp/ray-render");
 });
 
+test("parseCliArgs accepts strict filesystem checks", () => {
+  const options = parseCliArgs(["render", "--strict-filesystem"]);
+
+  assert.equal(options.command, "render");
+  assert.equal(options.strictFilesystem, true);
+});
+
 test("parseCliArgs accepts explicit gateway runtime binaries", () => {
   const options = parseCliArgs(["render", "--gateway-runtime-binary", "/usr/local/bin/bun"]);
 
@@ -341,6 +348,51 @@ test("runCli render refuses to write deployment files when diagnostics contain e
   assert.deepEqual(output, []);
 });
 
+test("runCli render strict-filesystem refuses to write when host checks fail", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-render-strict-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = join(tempDir, "ray.json");
+  const outputDir = join(tempDir, "rendered");
+  await writeFile(configPath, `${JSON.stringify(createDefaultConfig("tiny"), null, 2)}\n`, "utf8");
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await assert.rejects(
+    () =>
+      runCli([
+        "render",
+        "--cwd",
+        tempDir,
+        "--config",
+        configPath,
+        "--user",
+        "ray_missing_strict_user",
+        "--gateway-runtime-binary",
+        process.execPath,
+        "--strict-filesystem",
+        "--output-dir",
+        outputDir,
+      ]),
+    /service_user_missing/,
+  );
+
+  await assert.rejects(
+    () => readFile(join(outputDir, "ray-gateway.service"), "utf8"),
+    (error: unknown) =>
+      error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT",
+  );
+  assert.deepEqual(output, []);
+});
+
 test("runCli validate prints deployment preflight details", async (t) => {
   const output: string[] = [];
   const originalLog = console.log;
@@ -366,6 +418,45 @@ test("runCli validate prints deployment preflight details", async (t) => {
   assert.equal(parsed.preflight.memoryBudgetMiB, 4096);
   assert.equal(parsed.preflight.memoryBudgetSource, "override");
   assert.ok(Array.isArray(parsed.diagnostics));
+});
+
+test("runCli validate strict-filesystem prints host check diagnostics", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-validate-strict-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, `${JSON.stringify(createDefaultConfig("tiny"), null, 2)}\n`, "utf8");
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli([
+    "validate",
+    "--cwd",
+    tempDir,
+    "--config",
+    configPath,
+    "--user",
+    "ray_missing_strict_user",
+    "--gateway-runtime-binary",
+    process.execPath,
+    "--strict-filesystem",
+  ]);
+
+  const parsed = JSON.parse(output.join("\n"));
+  assert.equal(parsed.preflight.serviceUserStatus, "missing");
+  assert.ok(
+    parsed.diagnostics.some(
+      (diagnostic: { code?: unknown }) => diagnostic.code === "service_user_missing",
+    ),
+  );
 });
 
 test("runCli render removes stale llama.cpp service files from reused output directories", async (t) => {

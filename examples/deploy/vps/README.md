@@ -158,8 +158,10 @@ The render output also includes `summary.json` with doctor diagnostics,
 preflight facts, and generated systemd resource controls; inspect it before
 copying units into place. Render refuses to print or write units while error
 diagnostics are present; run validate or doctor to inspect those failures first.
-Adapter headers are redacted in this summary. Relative `--output-dir` values are
-resolved from the rendered `--cwd`.
+Pass `--strict-filesystem` on the VPS to make render check the same service-user,
+runtime, build-output, model-file, and storage paths that doctor checks. Adapter
+headers are redacted in this summary. Relative `--output-dir` values are resolved
+from the rendered `--cwd`.
 
 ```bash
 bun packages/deploy/dist/cli.js render \
@@ -167,6 +169,7 @@ bun packages/deploy/dist/cli.js render \
   --config /etc/ray/ray.json \
   --gateway-runtime-binary /usr/local/bin/bun \
   --ray-env-file /etc/ray/ray.env \
+  --strict-filesystem \
   --output-dir /tmp/ray-rendered
 cat /tmp/ray-rendered/summary.json
 sudo cp /tmp/ray-rendered/ray-gateway.service /etc/systemd/system/ray-gateway.service

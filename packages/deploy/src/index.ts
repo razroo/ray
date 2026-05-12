@@ -2327,6 +2327,7 @@ export async function renderDeploymentBundle(options: {
   memoryBudgetMiB?: number;
   runtimeBinary?: string;
   nodeBinary?: string;
+  strictFilesystem?: boolean;
 }): Promise<{
   service: string;
   caddyfile: string;
@@ -2340,6 +2341,9 @@ export async function renderDeploymentBundle(options: {
     ...options,
     cwd,
     ...(envFile ? { envFile } : {}),
+    ...(options.strictFilesystem !== undefined
+      ? { strictFilesystem: options.strictFilesystem }
+      : {}),
   });
   const stateDirectory = inferRayStateDirectory(inspected.config);
   const rendersLlamaCppService =

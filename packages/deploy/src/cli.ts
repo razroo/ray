@@ -16,6 +16,7 @@ export interface CliOptions {
   memoryBudgetMiB?: number;
   runtimeBinary?: string;
   nodeBinary?: string;
+  strictFilesystem?: boolean;
 }
 
 interface RenderedDeploymentFiles {
@@ -351,6 +352,11 @@ export function parseCliArgs(argv: string[]): CliOptions {
       continue;
     }
 
+    if (current === "--strict-filesystem") {
+      options.strictFilesystem = true;
+      continue;
+    }
+
     throw new Error(`Unknown option: ${current}`);
   }
 
@@ -372,6 +378,9 @@ export async function runCli(argv: string[]): Promise<void> {
     const bundle = await renderDeploymentBundle({
       ...resolvedOptions,
       env,
+      ...(resolvedOptions.strictFilesystem !== undefined
+        ? { strictFilesystem: resolvedOptions.strictFilesystem }
+        : {}),
     });
     assertRenderableDeploymentBundle(bundle);
 
@@ -397,7 +406,8 @@ export async function runCli(argv: string[]): Promise<void> {
     const inspected = await loadAndDiagnoseDeployment({
       ...resolvedOptions,
       env,
-      strictFilesystem: resolvedOptions.command === "doctor",
+      strictFilesystem:
+        resolvedOptions.command === "doctor" || resolvedOptions.strictFilesystem === true,
     });
     const hasErrors = inspected.diagnostics.some((diagnostic) => diagnostic.level === "error");
 
