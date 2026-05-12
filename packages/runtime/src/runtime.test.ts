@@ -290,6 +290,7 @@ test("readCgroupCpuSnapshot reads unified cgroup cpu.stat files", async (t) => {
     "usage_usec 1000000\nuser_usec 700000\nsystem_usec 300000\nnr_periods 100\nnr_throttled 12\nthrottled_usec 45000\n",
     "utf8",
   );
+  await writeFile(join(cgroupDir, "cpu.max"), "50000 100000\n", "utf8");
 
   const snapshot = await readCgroupCpuSnapshot({
     procSelfCgroupPath: procCgroupPath,
@@ -299,6 +300,9 @@ test("readCgroupCpuSnapshot reads unified cgroup cpu.stat files", async (t) => {
   assert.equal(snapshot?.usageUsec, 1_000_000);
   assert.equal(snapshot?.userUsec, 700_000);
   assert.equal(snapshot?.systemUsec, 300_000);
+  assert.equal(snapshot?.quotaUsec, 50_000);
+  assert.equal(snapshot?.periodUsec, 100_000);
+  assert.equal(snapshot?.quotaCores, 0.5);
   assert.equal(snapshot?.periods, 100);
   assert.equal(snapshot?.throttledPeriods, 12);
   assert.equal(snapshot?.throttledUsec, 45_000);
@@ -320,6 +324,8 @@ test("readCgroupCpuSnapshot reads legacy cgroup cpu.stat throttling", async (t) 
     "nr_periods 80\nnr_throttled 20\nthrottled_time 250000000\n",
     "utf8",
   );
+  await writeFile(join(cgroupDir, "cpu.cfs_quota_us"), "200000\n", "utf8");
+  await writeFile(join(cgroupDir, "cpu.cfs_period_us"), "100000\n", "utf8");
 
   const snapshot = await readCgroupCpuSnapshot({
     procSelfCgroupPath: procCgroupPath,
@@ -327,6 +333,9 @@ test("readCgroupCpuSnapshot reads legacy cgroup cpu.stat throttling", async (t) 
   });
 
   assert.equal(snapshot?.usageUsec, undefined);
+  assert.equal(snapshot?.quotaUsec, 200_000);
+  assert.equal(snapshot?.periodUsec, 100_000);
+  assert.equal(snapshot?.quotaCores, 2);
   assert.equal(snapshot?.periods, 80);
   assert.equal(snapshot?.throttledPeriods, 20);
   assert.equal(snapshot?.throttledUsec, 250_000);
@@ -356,6 +365,9 @@ test("runtime collected metrics refresh live queue and cgroup pressure gauges", 
       usageUsec: 2_000_000,
       userUsec: 1_500_000,
       systemUsec: 500_000,
+      quotaUsec: 50_000,
+      periodUsec: 100_000,
+      quotaCores: 0.5,
       periods: 200,
       throttledPeriods: 10,
       throttledUsec: 25_000,
@@ -381,6 +393,9 @@ test("runtime collected metrics refresh live queue and cgroup pressure gauges", 
   assert.equal(metrics.gauges["process.cpu.cgroup_usage_usec"], 2_000_000);
   assert.equal(metrics.gauges["process.cpu.cgroup_user_usec"], 1_500_000);
   assert.equal(metrics.gauges["process.cpu.cgroup_system_usec"], 500_000);
+  assert.equal(metrics.gauges["process.cpu.cgroup_quota_usec"], 50_000);
+  assert.equal(metrics.gauges["process.cpu.cgroup_period_usec"], 100_000);
+  assert.equal(metrics.gauges["process.cpu.cgroup_quota_cores"], 0.5);
   assert.equal(metrics.gauges["process.cpu.cgroup_periods"], 200);
   assert.equal(metrics.gauges["process.cpu.cgroup_throttled_periods"], 10);
   assert.equal(metrics.gauges["process.cpu.cgroup_throttled_usec"], 25_000);
@@ -393,6 +408,9 @@ test("runtime health exposes cgroup CPU throttling", async () => {
       usageUsec: 4_000_000,
       userUsec: 3_000_000,
       systemUsec: 1_000_000,
+      quotaUsec: 100_000,
+      periodUsec: 100_000,
+      quotaCores: 1,
       periods: 400,
       throttledPeriods: 80,
       throttledUsec: 125_000,
@@ -406,6 +424,9 @@ test("runtime health exposes cgroup CPU throttling", async () => {
   assert.equal(health.runtime?.cpu?.cgroupCpuUsageUsec, 4_000_000);
   assert.equal(health.runtime?.cpu?.cgroupCpuUserUsec, 3_000_000);
   assert.equal(health.runtime?.cpu?.cgroupCpuSystemUsec, 1_000_000);
+  assert.equal(health.runtime?.cpu?.cgroupCpuQuotaUsec, 100_000);
+  assert.equal(health.runtime?.cpu?.cgroupCpuPeriodUsec, 100_000);
+  assert.equal(health.runtime?.cpu?.cgroupCpuQuotaCores, 1);
   assert.equal(health.runtime?.cpu?.cgroupCpuPeriods, 400);
   assert.equal(health.runtime?.cpu?.cgroupCpuThrottledPeriods, 80);
   assert.equal(health.runtime?.cpu?.cgroupCpuThrottledUsec, 125_000);

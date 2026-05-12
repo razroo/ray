@@ -548,6 +548,9 @@ export interface RuntimeHealthDiagnostics {
     cgroupCpuUsageUsec?: number;
     cgroupCpuUserUsec?: number;
     cgroupCpuSystemUsec?: number;
+    cgroupCpuQuotaUsec?: number;
+    cgroupCpuPeriodUsec?: number;
+    cgroupCpuQuotaCores?: number;
     cgroupCpuPeriods?: number;
     cgroupCpuThrottledPeriods?: number;
     cgroupCpuThrottledUsec?: number;

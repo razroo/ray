@@ -99,6 +99,9 @@ export interface CgroupCpuSnapshot {
   usageUsec?: number;
   userUsec?: number;
   systemUsec?: number;
+  quotaUsec?: number;
+  periodUsec?: number;
+  quotaCores?: number;
   periods?: number;
   throttledPeriods?: number;
   throttledUsec?: number;
@@ -122,6 +125,9 @@ interface CgroupMemoryCandidate {
 interface CgroupCpuCandidate {
   statPath: string;
   statVersion: "v1" | "v2";
+  maxPath?: string;
+  quotaPath?: string;
+  periodPath?: string;
 }
 
 interface MemoryPressureSnapshot {
@@ -821,6 +827,15 @@ function buildRuntimeHealthDiagnostics(options: {
             ...(options.cgroupCpu.systemUsec !== undefined
               ? { cgroupCpuSystemUsec: options.cgroupCpu.systemUsec }
               : {}),
+            ...(options.cgroupCpu.quotaUsec !== undefined
+              ? { cgroupCpuQuotaUsec: options.cgroupCpu.quotaUsec }
+              : {}),
+            ...(options.cgroupCpu.periodUsec !== undefined
+              ? { cgroupCpuPeriodUsec: options.cgroupCpu.periodUsec }
+              : {}),
+            ...(options.cgroupCpu.quotaCores !== undefined
+              ? { cgroupCpuQuotaCores: options.cgroupCpu.quotaCores }
+              : {}),
             ...(options.cgroupCpu.periods !== undefined
               ? { cgroupCpuPeriods: options.cgroupCpu.periods }
               : {}),
@@ -954,6 +969,56 @@ function parseCgroupCpuStat(raw: string, statVersion: "v1" | "v2"): CgroupCpuSna
   return Object.keys(snapshot).length > 0 ? snapshot : undefined;
 }
 
+function parsePositiveCgroupInteger(raw: string): number | undefined {
+  const value = raw.trim();
+
+  if (!/^\d+$/.test(value)) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function buildCgroupCpuQuotaSnapshot(
+  quotaUsec: number | undefined,
+  periodUsec: number | undefined,
+): CgroupCpuSnapshot | undefined {
+  const snapshot: CgroupCpuSnapshot = {
+    ...(quotaUsec !== undefined ? { quotaUsec } : {}),
+    ...(periodUsec !== undefined ? { periodUsec } : {}),
+  };
+
+  if (quotaUsec !== undefined && periodUsec !== undefined && periodUsec > 0) {
+    snapshot.quotaCores = Number((quotaUsec / periodUsec).toFixed(4));
+  }
+
+  return Object.keys(snapshot).length > 0 ? snapshot : undefined;
+}
+
+function parseCgroupCpuMax(raw: string): CgroupCpuSnapshot | undefined {
+  const parts = raw.trim().split(/\s+/);
+
+  if (parts.length < 2) {
+    return undefined;
+  }
+
+  const quotaUsec = parts[0] === "max" ? undefined : parsePositiveCgroupInteger(parts[0] ?? "");
+  const periodUsec = parsePositiveCgroupInteger(parts[1] ?? "");
+
+  return buildCgroupCpuQuotaSnapshot(quotaUsec, periodUsec);
+}
+
+function parseCgroupCpuCfsQuota(raw: string): number | undefined {
+  const value = raw.trim();
+
+  if (value === "-1") {
+    return undefined;
+  }
+
+  return parsePositiveCgroupInteger(value);
+}
+
 function resolveCgroupFile(root: string, cgroupPath: string, fileName: string): string | undefined {
   const resolvedRoot = path.resolve(root);
   const relativeCgroupPath = cgroupPath === "/" ? "" : cgroupPath.replace(/^\/+/, "");
@@ -1072,6 +1137,13 @@ function resolveCgroupCpuCandidates(
     }
 
     const statPath = resolveCgroupFile(root, cgroupPath, "cpu.stat");
+    const maxPath = isUnifiedCgroup ? resolveCgroupFile(root, cgroupPath, "cpu.max") : undefined;
+    const quotaPath = isUnifiedCgroup
+      ? undefined
+      : resolveCgroupFile(root, cgroupPath, "cpu.cfs_quota_us");
+    const periodPath = isUnifiedCgroup
+      ? undefined
+      : resolveCgroupFile(root, cgroupPath, "cpu.cfs_period_us");
 
     if (!statPath || seen.has(statPath)) {
       continue;
@@ -1081,6 +1153,9 @@ function resolveCgroupCpuCandidates(
     candidates.push({
       statPath,
       statVersion: isUnifiedCgroup ? "v2" : "v1",
+      ...(maxPath ? { maxPath } : {}),
+      ...(quotaPath ? { quotaPath } : {}),
+      ...(periodPath ? { periodPath } : {}),
     });
   }
 
@@ -1186,10 +1261,30 @@ export async function readCgroupCpuSnapshot(
 
   for (const candidate of candidates) {
     try {
-      const statRaw = await readTextFile(candidate.statPath);
-      const snapshot = parseCgroupCpuStat(statRaw, candidate.statVersion);
+      const statRaw = await readTextFile(candidate.statPath).catch(() => undefined);
+      const statSnapshot =
+        statRaw === undefined ? undefined : parseCgroupCpuStat(statRaw, candidate.statVersion);
+      const quotaSnapshot =
+        candidate.statVersion === "v2"
+          ? candidate.maxPath
+            ? parseCgroupCpuMax(await readTextFile(candidate.maxPath).catch(() => ""))
+            : undefined
+          : buildCgroupCpuQuotaSnapshot(
+              candidate.quotaPath
+                ? parseCgroupCpuCfsQuota(await readTextFile(candidate.quotaPath).catch(() => ""))
+                : undefined,
+              candidate.periodPath
+                ? parsePositiveCgroupInteger(
+                    await readTextFile(candidate.periodPath).catch(() => ""),
+                  )
+                : undefined,
+            );
+      const snapshot = {
+        ...(statSnapshot ?? {}),
+        ...(quotaSnapshot ?? {}),
+      };
 
-      if (snapshot) {
+      if (Object.keys(snapshot).length > 0) {
         return snapshot;
       }
     } catch {
@@ -2320,6 +2415,15 @@ export class RayRuntime {
     }
     if (snapshot.systemUsec !== undefined) {
       this.metrics.gauge("process.cpu.cgroup_system_usec", snapshot.systemUsec);
+    }
+    if (snapshot.quotaUsec !== undefined) {
+      this.metrics.gauge("process.cpu.cgroup_quota_usec", snapshot.quotaUsec);
+    }
+    if (snapshot.periodUsec !== undefined) {
+      this.metrics.gauge("process.cpu.cgroup_period_usec", snapshot.periodUsec);
+    }
+    if (snapshot.quotaCores !== undefined) {
+      this.metrics.gauge("process.cpu.cgroup_quota_cores", snapshot.quotaCores);
     }
     if (snapshot.periods !== undefined) {
       this.metrics.gauge("process.cpu.cgroup_periods", snapshot.periods);
