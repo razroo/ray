@@ -1611,7 +1611,8 @@ test("diagnoseConfig errors when the generated service user cannot access gatewa
   const diagnostics = diagnoseConfig(config, process.env, undefined, {
     strictFilesystem: true,
     preflight: {
-      serviceUser: "ray",
+      serviceUser: "cli_ray",
+      serviceUserPrimaryGroup: "rayops",
       configFilePath: "/etc/ray/ray.json",
       configFileStatus: "found",
       configFileAccessStatus: "blocked",
@@ -1636,8 +1637,10 @@ test("diagnoseConfig errors when the generated service user cannot access gatewa
   );
   assert.ok(configDiagnostic);
   assert.equal(configDiagnostic.level, "error");
-  assert.match(configDiagnostic.message, /ray/);
+  assert.match(configDiagnostic.message, /cli_ray/);
   assert.match(configDiagnostic.message, /read permission/);
+  assert.match(configDiagnostic.message, /root:rayops ownership/);
+  assert.doesNotMatch(configDiagnostic.message, /root:ray ownership/);
 
   const runtimeDiagnostic = diagnostics.find(
     (entry) => entry.code === "gateway_runtime_service_user_inaccessible",

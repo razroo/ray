@@ -135,6 +135,7 @@ export interface DeploymentPreflight {
   serviceUserStatus?: ServiceUserStatus;
   serviceUserUid?: number;
   serviceUserGid?: number;
+  serviceUserPrimaryGroup?: string;
   serviceUserGroupIds?: number[];
   serviceUserError?: string;
   swapStatus?: SwapStatus;
@@ -874,6 +875,33 @@ function parseSupplementaryGroupIds(
   }
 
   return [...groupIds];
+}
+
+function resolveGroupNameByGid(groupFile: string, targetGid: number): string | undefined {
+  for (const rawLine of groupFile.split("\n")) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith("#")) {
+      continue;
+    }
+
+    const fields = line.split(":");
+    if (fields.length < 3) {
+      continue;
+    }
+
+    const name = fields[0];
+    const gidField = fields[2];
+    if (name === undefined || name.length === 0 || gidField === undefined) {
+      continue;
+    }
+
+    const gid = parseNonNegativeInteger(gidField);
+    if (gid === targetGid) {
+      return name;
+    }
+  }
+
+  return undefined;
 }
 
 function resolveModeBitsForIdentity(fileStat: Stats, identity: ServiceUserIdentity): number {
@@ -1758,6 +1786,9 @@ export function diagnoseConfig(
 
   if (strictFilesystem && preflight?.configFileStatus !== undefined) {
     const configFilePath = preflight.configFilePath ?? "the configured Ray config file";
+    const configFileOwnershipExample = preflight.serviceUserPrimaryGroup
+      ? `root:${preflight.serviceUserPrimaryGroup}`
+      : "root:<service-user-primary-group>";
 
     if (isSystemdProtectHomePath(configFilePath)) {
       diagnostics.push({
@@ -1781,7 +1812,7 @@ export function diagnoseConfig(
       diagnostics.push({
         level: "error",
         code: "config_file_service_user_inaccessible",
-        message: `The generated systemd service user "${preflight.serviceUser ?? "the configured service user"}" cannot read the generated gateway config file at ${configFilePath}${preflight.configFileAccessError ? ` (${preflight.configFileAccessError})` : ""}. Grant read access, for example with root:ray ownership and mode 0640, before restarting ray-gateway.service.`,
+        message: `The generated systemd service user "${preflight.serviceUser ?? "the configured service user"}" cannot read the generated gateway config file at ${configFilePath}${preflight.configFileAccessError ? ` (${preflight.configFileAccessError})` : ""}. Grant read access, for example with ${configFileOwnershipExample} ownership and mode 0640, before restarting ray-gateway.service.`,
       });
     } else {
       diagnostics.push({
@@ -2693,8 +2724,11 @@ async function collectServiceUserPreflight(
       };
     }
 
+    let serviceUserPrimaryGroup: string | undefined;
+
     try {
       const groupFile = await readFile("/etc/group", "utf8");
+      serviceUserPrimaryGroup = resolveGroupNameByGid(groupFile, identity.gid);
       identity.groupIds = parseSupplementaryGroupIds(groupFile, identity.name, identity.gid);
     } catch {
       // The primary gid from /etc/passwd is enough for conservative mode-bit checks.
@@ -2705,6 +2739,7 @@ async function collectServiceUserPreflight(
       serviceUserStatus: "found",
       serviceUserUid: identity.uid,
       serviceUserGid: identity.gid,
+      ...(serviceUserPrimaryGroup ? { serviceUserPrimaryGroup } : {}),
       serviceUserGroupIds: identity.groupIds,
     };
   } catch (error) {
