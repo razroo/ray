@@ -193,6 +193,9 @@ bun run doctor:1b:8gb:generic
 ```
 
 Doctor checks auth/env readiness, env-file permissions, generated systemd user readiness, service-user access to the rendered config file, Bun runtime (`/usr/local/bin/bun` by default, `RAY_GATEWAY_RUNTIME_BINARY`, or `--gateway-runtime-binary`) including identifiable Bun/Node version compatibility, generated WorkingDirectory, built gateway entrypoint, `llama-server` binary, GGUF model file, and async queue storage, launch profile consistency, projected memory fit against the selected memory budget, async queue storage headroom, and swap cushion for the 4 GB llama.cpp profile before the service starts.
+If doctor reports a missing swap cushion on a 4 GB VPS, run `bun run swap:plan`
+to print guarded commands for creating the default 1 GiB swap file, then rerun
+doctor before sustained inference.
 
 ## Benchmark The Actual Workload
 
