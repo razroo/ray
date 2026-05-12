@@ -164,8 +164,8 @@ override env-file values.
 Use `--commands-only` when you want reviewed shell commands without the
 explanatory staging summary.
 Use `--check-sources` when the source artifacts are already on the VPS and you
-want the helper to verify file access and any provided checksums before printing
-the staging plan.
+want the helper to verify file access, binary startup, and any provided
+checksums before printing the staging plan.
 Use `--apply` on the VPS after reviewing those source paths to verify and stage
 the configured `llama-server` and GGUF into their resolved target locations,
 then run the staged `llama-server --help` probe as the service identity. Apply

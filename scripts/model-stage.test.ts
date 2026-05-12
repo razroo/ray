@@ -244,6 +244,33 @@ test("checkModelStageSources verifies concrete artifact inputs", async (t) => {
   await assert.doesNotReject(checkModelStageSources(tempDir, plan));
 });
 
+test("checkModelStageSources rejects source binaries that fail the startup probe", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-source-probe-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const binaryPath = path.join(tempDir, "llama-server");
+  const modelPath = path.join(tempDir, "model.gguf");
+  await writeFile(binaryPath, "#!/bin/sh\necho 'wrong architecture' >&2\nexit 126\n", "utf8");
+  await writeFile(modelPath, "gguf", "utf8");
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o644);
+
+  const plan = await createModelStagePlan({
+    cwd: tempDir,
+    configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
+    env: {},
+    binarySourcePath: "./llama-server",
+    sourcePath: "./model.gguf",
+  });
+
+  await assert.rejects(
+    checkModelStageSources(tempDir, plan),
+    /llama-server source failed startup probe.*wrong architecture/s,
+  );
+});
+
 test("checkModelStageSources rejects checksum mismatches", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-bad-sha-"));
   t.after(async () => {
@@ -341,7 +368,7 @@ test("applyModelStagePlan installs verified artifacts into the resolved target p
   assert.equal(modelStats.gid, gid);
 });
 
-test("applyModelStagePlan rejects staged binaries that fail the startup probe", async (t) => {
+test("applyModelStagePlan rejects source binaries that fail the startup probe", async (t) => {
   const uid = process.getuid?.();
   const gid = process.getgid?.();
   if (uid === undefined || gid === undefined) {
@@ -378,7 +405,7 @@ test("applyModelStagePlan rejects staged binaries that fail the startup probe", 
 
   await assert.rejects(
     applyModelStagePlan(tempDir, plan),
-    /installed llama-server binary failed startup probe.*missing shared library/s,
+    /llama-server source failed startup probe.*missing shared library/s,
   );
 });
 

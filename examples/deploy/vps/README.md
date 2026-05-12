@@ -93,8 +93,8 @@ override env-file values when both are present.
 Add `--commands-only` when you want reviewed shell commands without the
 explanatory staging summary.
 Add `--check-sources` when the source artifacts are already on the VPS and you
-want the helper to verify file access and any provided checksums before printing
-the staging plan.
+want the helper to verify file access, binary startup, and any provided
+checksums before printing the staging plan.
 Add `--apply` on the VPS after reviewing those source paths to verify and stage
 the configured `llama-server` and GGUF into their resolved target locations,
 then run the staged `llama-server --help` probe as the service identity.

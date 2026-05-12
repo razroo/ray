@@ -600,6 +600,7 @@ export async function checkModelStageSources(cwd: string, plan: ModelStagePlan):
       `llama-server source is not executable at ${binarySourcePath}: ${error instanceof Error ? error.message : String(error)}`,
     );
   });
+  await assertLlamaCppBinaryStarts(binarySourcePath, "llama-server source");
   await assertRegularReadableFile(modelSourcePath, "GGUF source");
 
   if (plan.binarySha256) {
@@ -757,21 +758,20 @@ function getFailedProcessOutput(error: unknown): string | undefined {
 
 async function assertLlamaCppBinaryStarts(
   binaryPath: string,
-  uid: number,
-  gid: number,
+  label: string,
+  serviceIdentity?: { uid: number; gid: number },
 ): Promise<void> {
   try {
     await execFileAsync(binaryPath, ["--help"], {
       timeout: LLAMA_CPP_BINARY_SMOKE_TIMEOUT_MS,
       maxBuffer: LLAMA_CPP_BINARY_SMOKE_MAX_BUFFER_BYTES,
       encoding: "utf8",
-      uid,
-      gid,
+      ...(serviceIdentity ? { uid: serviceIdentity.uid, gid: serviceIdentity.gid } : {}),
     });
   } catch (error) {
     const output = getFailedProcessOutput(error);
     throw new Error(
-      `installed llama-server binary failed startup probe at ${binaryPath}: ${
+      `${label} failed startup probe at ${binaryPath}: ${
         error instanceof Error ? error.message : String(error)
       }${output ? `; output: ${output}` : ""}`,
     );
@@ -797,7 +797,7 @@ export async function applyModelStagePlan(
     await assertSha256(binaryTargetPath, plan.binarySha256, "installed llama-server binary");
   }
   await access(binaryTargetPath, constants.X_OK);
-  await assertLlamaCppBinaryStarts(binaryTargetPath, uid, gid);
+  await assertLlamaCppBinaryStarts(binaryTargetPath, "installed llama-server binary", { uid, gid });
 
   await mkdir(path.dirname(modelTargetPath), { recursive: true, mode: 0o755 });
   if (path.resolve(modelSourcePath) !== path.resolve(modelTargetPath)) {

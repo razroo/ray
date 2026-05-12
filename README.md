@@ -308,8 +308,8 @@ include `RAY_LLAMA_CPP_BINARY_SOURCE_PATH`, `RAY_LLAMA_CPP_BINARY_SHA256`,
 Use `--commands-only` when you want reviewed shell commands without the
 explanatory staging summary.
 Use `--check-sources` to fail early when the local `llama-server` or GGUF source
-path is missing, unreadable, not executable, or does not match a provided
-checksum before reviewing the plan.
+path is missing, unreadable, not executable, fails the `llama-server --help`
+startup probe, or does not match a provided checksum before reviewing the plan.
 Use `--apply` on the VPS after reviewing those source paths to verify and copy
 the artifacts into the resolved binary and model locations with the generated
 service ownership, then run the staged `llama-server --help` probe as that
