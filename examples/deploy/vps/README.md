@@ -288,7 +288,7 @@ Set these GitHub secrets in your own repo or fork:
 
 - `RAY_DEPLOY_HOST` — VPS hostname or IP
 - `RAY_DEPLOY_SSH_KEY` — private SSH key for the deploy user
-- `RAY_DEPLOY_KNOWN_HOSTS` — `known_hosts` entry for the VPS; when `RAY_DEPLOY_SSH_PORT` is not `22`, use the OpenSSH bracket form such as `[ray.example.com]:2222 ssh-ed25519 ...`
+- `RAY_DEPLOY_KNOWN_HOSTS` — `known_hosts` entry for the VPS; the workflow validates it before opening SSH, and when `RAY_DEPLOY_SSH_PORT` is not `22`, use the OpenSSH bracket form such as `[ray.example.com]:2222 ssh-ed25519 ...`
 - `RAY_CONFIG_JSON` — optional full Ray config JSON to write to `/etc/ray/ray.json`
 - `RAY_ENV_FILE_CONTENTS` — complete contents of `/etc/ray/ray.env`; required when the deployed config has auth enabled
 
@@ -329,6 +329,8 @@ RAY_RATE_LIMIT_MAX_REQUESTS=75
 ```
 
 The workflow validates the configured gateway runtime path before opening SSH,
+checks that `RAY_DEPLOY_KNOWN_HOSTS` contains an entry for the configured host
+and SSH port,
 installs missing remote deploy prerequisites such as `curl`, `ca-certificates`,
 and `rsync`, refreshes `/usr/local/bin/bun` when it is missing or older than the
 repo's supported Bun runtime, then runs `ray deploy doctor` on the VPS before

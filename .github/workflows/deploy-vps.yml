@@ -241,12 +241,35 @@ jobs:
           echo "ssh_port=$SSH_PORT" >> "$GITHUB_OUTPUT"
 
       - name: Set up SSH
+        env:
+          SSH_PORT: ${{ steps.settings.outputs.ssh_port }}
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh
           printf '%s\n' "$RAY_DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           printf '%s\n' "$RAY_DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          KNOWN_HOST_LOOKUP=$(RAY_DEPLOY_HOST="$RAY_DEPLOY_HOST" SSH_PORT="${SSH_PORT:-22}" bun --eval '
+          import { formatDeployKnownHostLookup } from "./packages/deploy/dist/cli.js";
+
+          try {
+            process.stdout.write(
+              formatDeployKnownHostLookup(
+                process.env.RAY_DEPLOY_HOST ?? "",
+                process.env.SSH_PORT ?? "22",
+              ),
+            );
+          } catch (error) {
+            process.stderr.write(
+              `::error::${error instanceof Error ? error.message : String(error)}\n`,
+            );
+            process.exit(1);
+          }
+          ')
+          if ! ssh-keygen -F "$KNOWN_HOST_LOOKUP" -f ~/.ssh/known_hosts >/dev/null; then
+            echo "::error::RAY_DEPLOY_KNOWN_HOSTS must contain a host key entry for $KNOWN_HOST_LOOKUP."
+            exit 1
+          fi
 
       - name: Bootstrap remote runtime
         env:

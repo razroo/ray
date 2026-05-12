@@ -245,6 +245,25 @@ export function parseDeploySshPort(value: string, label = "RAY_DEPLOY_SSH_PORT")
   return parsed;
 }
 
+export function formatDeployKnownHostLookup(
+  host: string,
+  port: number | string,
+  label = "RAY_DEPLOY_HOST",
+): string {
+  if (typeof host !== "string") {
+    throw new Error(`${label} must be a string`);
+  }
+
+  if (host.length === 0 || host.trim() !== host || /[\0\r\n\s]/.test(host)) {
+    throw new Error(`${label} must be a non-empty SSH host without whitespace`);
+  }
+
+  const sshPort =
+    typeof port === "number" ? parseDeploySshPort(String(port)) : parseDeploySshPort(port);
+
+  return sshPort === 22 ? host : `[${host}]:${sshPort}`;
+}
+
 function parseOptionalPositiveIntegerEnv(
   value: string | undefined,
   label: string,

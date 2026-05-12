@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
 import {
+  formatDeployKnownHostLookup,
   normalizeGatewayRuntimeBinaryPath,
   normalizeRepoConfigPath,
   parseDeploySshPort,
@@ -130,6 +131,23 @@ test("parseDeploySshPort rejects invalid deploy SSH ports", () => {
   assert.throws(() => parseDeploySshPort("65536"), /integer from 1 to 65535/);
   assert.throws(() => parseDeploySshPort("22/tcp"), /integer from 1 to 65535/);
   assert.throws(() => parseDeploySshPort("22.5"), /integer from 1 to 65535/);
+});
+
+test("formatDeployKnownHostLookup formats default and custom SSH ports", () => {
+  assert.equal(formatDeployKnownHostLookup("ray.example.com", 22), "ray.example.com");
+  assert.equal(formatDeployKnownHostLookup("203.0.113.10", "22"), "203.0.113.10");
+  assert.equal(formatDeployKnownHostLookup("ray.example.com", 2222), "[ray.example.com]:2222");
+  assert.equal(formatDeployKnownHostLookup("203.0.113.10", "2222"), "[203.0.113.10]:2222");
+});
+
+test("formatDeployKnownHostLookup rejects malformed SSH host values", () => {
+  assert.throws(() => formatDeployKnownHostLookup("", 22), /non-empty SSH host/);
+  assert.throws(() => formatDeployKnownHostLookup(" ray.example.com", 22), /non-empty SSH host/);
+  assert.throws(() => formatDeployKnownHostLookup("ray example.com", 22), /non-empty SSH host/);
+  assert.throws(
+    () => formatDeployKnownHostLookup(`ray.example.com${"\n"}other.example.com`, 22),
+    /non-empty SSH host/,
+  );
 });
 
 test("parseCliArgs rejects malformed memory budget overrides", () => {
