@@ -1907,6 +1907,47 @@ test("runtime trims oversized prompts before prompt compilation", async () => {
   assert.equal(result.diagnostics?.promptCompiler?.charsBefore, 32);
 });
 
+test("runtime applies prompt length degradation to system and input together", async () => {
+  let observedInput = "";
+  let observedSystem: string | undefined;
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "combined-prompt-budget-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async infer(request) {
+      observedInput = request.input;
+      observedSystem = request.system;
+      return {
+        output: "trimmed",
+      };
+    },
+  };
+  const runtime = createRayRuntime(
+    mergeConfig(createDefaultConfig("tiny"), {
+      gracefulDegradation: {
+        enabled: true,
+        maxPromptChars: 32,
+        queueDepthThreshold: 1_000,
+      },
+    }),
+    { provider },
+  );
+  const result = await runtime.infer({
+    system: "s".repeat(128),
+    input: "hello world",
+    cache: false,
+  });
+
+  assert.equal(result.degraded, true);
+  assert.equal(observedInput, "hello world");
+  assert.equal(observedInput.length + (observedSystem?.length ?? 0), 32);
+  assert.equal(result.diagnostics?.promptCompiler?.charsBefore, 32);
+});
+
 test("runtime times out and aborts stalled provider preparation", async () => {
   let prepareAborted = false;
   let inferCalled = false;

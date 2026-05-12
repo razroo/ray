@@ -691,15 +691,31 @@ function applyPromptLengthDegradation(
     return { request, degraded: false };
   }
 
-  if (request.input.length <= config.gracefulDegradation.maxPromptChars) {
+  const maxPromptChars = config.gracefulDegradation.maxPromptChars;
+  const promptChars = request.input.length + (request.system?.length ?? 0);
+
+  if (promptChars <= maxPromptChars) {
     return { request, degraded: false };
   }
 
+  const input = request.input.slice(0, maxPromptChars).trim();
+  const boundedInput = input.length > 0 ? input : request.input.slice(0, 1);
+  const systemBudget = Math.max(0, maxPromptChars - boundedInput.length);
+  const system =
+    request.system && systemBudget > 0 ? request.system.slice(0, systemBudget).trim() : undefined;
+  const degradedRequest: NormalizedInferenceRequest = {
+    ...request,
+    input: boundedInput,
+  };
+
+  if (system) {
+    degradedRequest.system = system;
+  } else {
+    delete degradedRequest.system;
+  }
+
   return {
-    request: {
-      ...request,
-      input: request.input.slice(0, config.gracefulDegradation.maxPromptChars),
-    },
+    request: degradedRequest,
     degraded: true,
   };
 }
