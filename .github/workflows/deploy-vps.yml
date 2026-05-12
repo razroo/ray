@@ -589,6 +589,39 @@ jobs:
               --group "$SERVICE_GROUP" \
               --ray-env-file /etc/ray/ray.env
             echo "::endgroup::"
+
+            SOURCE_CHECK_STATUS=0
+            $SUDO /usr/local/bin/bun --eval '
+            import { readFileSync } from "node:fs";
+            import { parseEnvironmentFile } from "/srv/ray/packages/deploy/dist/cli.js";
+
+            const env = parseEnvironmentFile(readFileSync("/etc/ray/ray.env", "utf8"));
+            const hasBinarySource =
+              typeof env.RAY_LLAMA_CPP_BINARY_SOURCE_PATH === "string" &&
+              env.RAY_LLAMA_CPP_BINARY_SOURCE_PATH.trim().length > 0;
+            const hasModelSource =
+              typeof env.RAY_MODEL_SOURCE_PATH === "string" &&
+              env.RAY_MODEL_SOURCE_PATH.trim().length > 0;
+            process.exit(hasBinarySource && hasModelSource ? 0 : hasBinarySource || hasModelSource ? 2 : 1);
+            ' || SOURCE_CHECK_STATUS=$?
+            if [ "$SOURCE_CHECK_STATUS" = "0" ]; then
+              echo "::group::Verify llama.cpp artifact source files"
+              if ! $SUDO /usr/local/bin/bun /srv/ray/scripts/model-stage.ts \
+                --cwd /srv/ray \
+                --config /etc/ray/ray.json \
+                --user "$SERVICE_USER" \
+                --group "$SERVICE_GROUP" \
+                --ray-env-file /etc/ray/ray.env \
+                --check-sources \
+                --commands-only >/dev/null; then
+                echo "::endgroup::"
+                exit 1
+              fi
+              echo "Configured llama.cpp artifact sources are present, readable, and checksum-valid when checksums are configured."
+              echo "::endgroup::"
+            elif [ "$SOURCE_CHECK_STATUS" = "2" ]; then
+              echo "::warning::Set both RAY_LLAMA_CPP_BINARY_SOURCE_PATH and RAY_MODEL_SOURCE_PATH to enable deploy-time source artifact verification."
+            fi
           else
             echo "No generated llama.cpp artifact staging plan for this config."
           fi

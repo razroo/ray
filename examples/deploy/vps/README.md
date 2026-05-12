@@ -407,8 +407,10 @@ the configured host and SSH port,
 installs missing remote deploy prerequisites such as `curl`, `ca-certificates`,
 `unzip`, and `rsync`, refreshes `/usr/local/bin/bun` when it is missing or older
 than the repo's supported Bun runtime, prints the resolved llama.cpp binary and
-GGUF staging plan for llama.cpp deploy configs, then runs `ray deploy doctor` on
-the VPS before restarting services. Missing API keys, missing GGUF files,
+GGUF staging plan for llama.cpp deploy configs, verifies source artifacts first
+when both `RAY_LLAMA_CPP_BINARY_SOURCE_PATH` and `RAY_MODEL_SOURCE_PATH` are set
+in `/etc/ray/ray.env`, then runs `ray deploy doctor` on the VPS before
+restarting services. Missing API keys, missing GGUF files,
 memory-fit errors, exhausted async queue storage reserves, and unsupported
 gateway runtimes fail before systemd tries to start the generated units. The
 configured gateway runtime binary defaults to `/usr/local/bin/bun`. All workflow
