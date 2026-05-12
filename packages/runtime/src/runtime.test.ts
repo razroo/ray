@@ -1013,7 +1013,7 @@ test("runtime bounds concurrent provider preparation before scheduling inference
         concurrency: 1,
         maxQueue: 1,
         affinityLookahead: 1,
-        requestTimeoutMs: 500,
+        requestTimeoutMs: 2_000,
       },
     }),
     { provider },
@@ -1029,10 +1029,28 @@ test("runtime bounds concurrent provider preparation before scheduling inference
     input: "second",
     cache: false,
   });
-  await new Promise((resolve) => setImmediate(resolve));
+  let health = await runtime.health();
+  await waitForCondition(async () => {
+    health = await runtime.health();
+    return health.runtime?.preparation.active === 1 && health.runtime.preparation.queued === 1;
+  });
 
   assert.equal(prepareStarts, 1);
   assert.equal(maxActivePreparations, 1);
+  assert.equal(health.runtime?.preparation.active, 1);
+  assert.equal(health.runtime?.preparation.concurrency, 1);
+  assert.equal(health.runtime?.preparation.activeRatio, 1);
+  assert.equal(health.runtime?.preparation.queued, 1);
+  assert.equal(health.runtime?.preparation.maxQueue, 1);
+  assert.equal(health.runtime?.preparation.queuedRatio, 1);
+
+  const metrics = await runtime.collectMetricsSnapshot();
+  assert.equal(metrics.gauges["preparation.active"], 1);
+  assert.equal(metrics.gauges["preparation.concurrency"], 1);
+  assert.equal(metrics.gauges["preparation.active_ratio"], 1);
+  assert.equal(metrics.gauges["preparation.queued"], 1);
+  assert.equal(metrics.gauges["preparation.max_queue"], 1);
+  assert.equal(metrics.gauges["preparation.queued_ratio"], 1);
 
   await assert.rejects(
     runtime.infer({

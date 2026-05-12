@@ -142,6 +142,8 @@ interface MemoryPressureSnapshot {
   cgroupMemoryOomKillEvents?: number;
 }
 
+type PreparationSnapshot = RuntimeHealthDiagnostics["preparation"];
+
 export type CgroupMemoryReader = () =>
   | CgroupMemorySnapshot
   | Promise<CgroupMemorySnapshot | undefined>
@@ -769,6 +771,7 @@ function buildRuntimeHealthDiagnostics(options: {
   queueDegraded: boolean;
   queueSnapshot: SchedulerSnapshot;
   queueDepthThreshold: number;
+  preparationSnapshot: PreparationSnapshot;
   memoryPressureSources: MemoryPressureSource[];
   memoryPressure: MemoryPressureSnapshot;
   memoryRssThresholdMiB: number;
@@ -805,6 +808,7 @@ function buildRuntimeHealthDiagnostics(options: {
       ),
       maxInflightTokens: options.queueSnapshot.maxInflightTokens,
     },
+    preparation: options.preparationSnapshot,
     memory: {
       degraded: options.memoryPressureSources.length > 0,
       sources: options.memoryPressureSources,
@@ -1963,6 +1967,7 @@ export class RayRuntime {
 
   async health(): Promise<HealthSnapshot> {
     const snapshot = this.scheduler.snapshot();
+    const preparationSnapshot = this.preparationSnapshot();
     const [provider, memoryPressure, cgroupCpu] = await Promise.all([
       this.getProviderHealth(),
       this.getMemoryPressureSnapshot(),
@@ -1976,6 +1981,7 @@ export class RayRuntime {
       queueDegraded,
       queueSnapshot: snapshot,
       queueDepthThreshold: this.config.gracefulDegradation.queueDepthThreshold,
+      preparationSnapshot,
       memoryPressureSources,
       memoryPressure,
       memoryRssThresholdMiB: this.config.gracefulDegradation.memoryRssThresholdMiB,
@@ -2012,6 +2018,7 @@ export class RayRuntime {
 
   async collectMetricsSnapshot(): Promise<RuntimeMetricsSnapshot> {
     const queueSnapshot = this.scheduler.snapshot();
+    const preparationSnapshot = this.preparationSnapshot();
     const [memoryPressure, cgroupCpu] = await Promise.all([
       this.getMemoryPressureSnapshot(),
       this.getCgroupCpuSnapshot(),
@@ -2019,6 +2026,7 @@ export class RayRuntime {
     const memoryPressureSources = resolveMemoryPressureSources(this.config, memoryPressure);
 
     this.recordSchedulerMetrics(queueSnapshot);
+    this.recordPreparationMetrics(preparationSnapshot);
     this.recordMemoryPressureMetrics(memoryPressure, memoryPressureSources);
     this.recordCgroupCpuMetrics(cgroupCpu);
     this.recordCacheMetrics();
@@ -2032,6 +2040,23 @@ export class RayRuntime {
 
   sanitizedConfig(): Record<string, unknown> {
     return sanitizeConfig(this.config);
+  }
+
+  private preparationSnapshot(): PreparationSnapshot {
+    return {
+      active: this.activePreparations,
+      concurrency: this.config.scheduler.concurrency,
+      activeRatio: resolveSaturationRatio(
+        this.activePreparations,
+        this.config.scheduler.concurrency,
+      ),
+      queued: this.preparationQueue.length,
+      maxQueue: this.config.scheduler.maxQueue,
+      queuedRatio: resolveSaturationRatio(
+        this.preparationQueue.length,
+        this.config.scheduler.maxQueue,
+      ),
+    };
   }
 
   private async getProviderHealth(): Promise<ProviderHealthSnapshot> {
@@ -2349,6 +2374,15 @@ export class RayRuntime {
       "inference.in_flight_tokens_ratio",
       snapshot.inFlightTokens / Math.max(1, snapshot.maxInflightTokens),
     );
+  }
+
+  private recordPreparationMetrics(snapshot: PreparationSnapshot): void {
+    this.metrics.gauge("preparation.active", snapshot.active);
+    this.metrics.gauge("preparation.concurrency", snapshot.concurrency);
+    this.metrics.gauge("preparation.active_ratio", snapshot.activeRatio);
+    this.metrics.gauge("preparation.queued", snapshot.queued);
+    this.metrics.gauge("preparation.max_queue", snapshot.maxQueue);
+    this.metrics.gauge("preparation.queued_ratio", snapshot.queuedRatio);
   }
 
   private recordCacheMetrics(): void {

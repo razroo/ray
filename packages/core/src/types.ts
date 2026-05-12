@@ -537,6 +537,14 @@ export interface RuntimeHealthDiagnostics {
     inFlightTokensRatio: number;
     maxInflightTokens: number;
   };
+  preparation: {
+    active: number;
+    concurrency: number;
+    activeRatio: number;
+    queued: number;
+    maxQueue: number;
+    queuedRatio: number;
+  };
   memory: {
     degraded: boolean;
     sources: MemoryPressureSource[];

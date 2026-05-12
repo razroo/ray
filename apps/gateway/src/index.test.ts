@@ -489,6 +489,8 @@ test("gateway metrics endpoint refreshes live runtime gauges", async (t) => {
   assert.equal(body.gauges["queue.max_depth"], config.scheduler.maxQueue);
   assert.equal(body.gauges["queue.depth_ratio"], 0);
   assert.equal(body.gauges["queue.max_tokens"], config.scheduler.maxQueuedTokens);
+  assert.equal(body.gauges["preparation.active"], 0);
+  assert.equal(body.gauges["preparation.queued"], 0);
   assert.equal(body.gauges["inference.concurrency"], config.scheduler.concurrency);
   assert.equal(body.gauges["inference.in_flight_ratio"], 0);
   assert.equal(body.gauges["cache.entries"], 0);
