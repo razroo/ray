@@ -523,7 +523,7 @@ jobs:
               fi
             fi
 
-            curl -fsSL https://bun.sh/install | bash -s "bun-v${install_bun_version}"
+            curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 https://bun.sh/install | bash -s "bun-v${install_bun_version}"
             if [ ! -x "$HOME/.bun/bin/bun" ]; then
               echo "Bun install completed but $HOME/.bun/bin/bun was not found."
               exit 1

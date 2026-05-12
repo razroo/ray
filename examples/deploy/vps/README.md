@@ -29,7 +29,7 @@ That keeps the gateway process small while still making self-hosted inference op
 ```bash
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends ca-certificates curl unzip git build-essential caddy
-curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.9"
+curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 https://bun.sh/install | bash -s "bun-v1.3.9"
 sudo install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
 SERVICE_USER="${RAY_DEPLOY_SERVICE_USER:-ray}"
 id -u "$SERVICE_USER" >/dev/null 2>&1 || sudo useradd --system --home /srv/ray --shell /usr/sbin/nologin "$SERVICE_USER"

@@ -323,6 +323,10 @@ function isLocalHealthCurl(line: string): boolean {
   );
 }
 
+function isPipedShellCurl(line: string): boolean {
+  return /\bcurl\b/.test(line) && /\|\s*(?:bash|sh)\b/.test(line);
+}
+
 async function validateWorkflow(
   workflowPath: string,
 ): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
@@ -358,6 +362,22 @@ async function validateWorkflow(
         line: index + 1,
         message:
           "Workflow localhost health probes must pass curl --max-time so VPS deploy readiness loops honor their timeout windows.",
+      });
+    }
+
+    if (
+      isPipedShellCurl(line) &&
+      (!line.includes("--max-time") ||
+        !line.includes("--connect-timeout") ||
+        !line.includes("--retry"))
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "unbounded_workflow_curl_install",
+        workflowPath,
+        line: index + 1,
+        message:
+          "Workflow curl-to-shell installers must pass curl --retry, --connect-timeout, and --max-time so VPS bootstrap cannot hang on a stalled external download.",
       });
     }
   }
