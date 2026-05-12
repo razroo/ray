@@ -1650,6 +1650,39 @@ test("diagnoseConfig errors when the generated service user cannot write async q
   assert.match(diagnostic.message, /write\/execute permission/);
 });
 
+test("diagnoseConfig treats the default async queue root as systemd-managed", () => {
+  const config = mergeConfig(createDefaultConfig("1b"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir: "/var/lib/ray/async-queue",
+      minFreeStorageMiB: 256,
+    },
+  });
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      serviceUser: "ray",
+      asyncQueueStoragePath: "/var/lib/ray/async-queue",
+      asyncQueueStorageCheckPath: "/var/lib",
+      asyncQueueStorageStatus: "parent",
+      asyncQueueStorageAvailableMiB: 8_192,
+      asyncQueueStorageAccessStatus: "blocked",
+      asyncQueueStorageAccessError: "write/execute permission is not granted on /var/lib",
+      asyncQueueStorageManagedByStateDirectory: true,
+    },
+  });
+
+  assert.ok(
+    !diagnostics.some((entry) => entry.code === "async_queue_storage_service_user_inaccessible"),
+  );
+  const diagnostic = diagnostics.find((entry) => entry.code === "async_queue_storage_ok");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+  assert.match(diagnostic.message, /StateDirectory=ray/);
+  assert.match(diagnostic.message, /\/var\/lib\/ray/);
+});
+
 test("diagnoseConfig errors when async queue storage is read-only under ProtectSystem", () => {
   const config = mergeConfig(createDefaultConfig("1b"), {
     asyncQueue: {

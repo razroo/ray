@@ -111,6 +111,7 @@ export interface DeploymentPreflight {
   asyncQueueStorageError?: string;
   asyncQueueStorageAccessStatus?: ServiceUserAccessStatus;
   asyncQueueStorageAccessError?: string;
+  asyncQueueStorageManagedByStateDirectory?: boolean;
   gatewayRuntimeBinaryPath?: string;
   gatewayRuntimeBinaryStatus?: GatewayRuntimeBinaryStatus;
   gatewayRuntimeBinaryError?: string;
@@ -204,6 +205,9 @@ const SECRET_ENV_FILE_OPEN_MODE_MASK = 0o077;
 const SCHEDULER_BYTES_PER_TOKEN = 768;
 const TIGHT_MEMORY_RATIO = 0.9;
 const LLAMA_CPP_SYSTEMD_SERVICE = "ray-llama-cpp.service";
+const RAY_STATE_DIRECTORY_NAME = "ray";
+const RAY_STATE_DIRECTORY_PATH = "/var/lib/ray";
+const RAY_STATE_DIRECTORY_PARENT_PATH = path.dirname(RAY_STATE_DIRECTORY_PATH);
 const GATEWAY_ENTRYPOINT_RELATIVE_PATH = "apps/gateway/dist/index.js";
 const DEFAULT_GATEWAY_RUNTIME_BINARY = "/usr/local/bin/bun";
 const BINARY_SOURCE_ENV = "RAY_LLAMA_CPP_BINARY_SOURCE_PATH";
@@ -340,6 +344,17 @@ function isSystemdProtectSystemReadOnlyPath(value: string): boolean {
   return ["/etc", "/usr", "/boot"].some((protectedPath) => isPathInside(protectedPath, resolved));
 }
 
+function isRayStateDirectoryStoragePath(value: string): boolean {
+  return path.isAbsolute(value) && isPathInside(RAY_STATE_DIRECTORY_PATH, path.resolve(value));
+}
+
+function isRayStateDirectoryCreationPath(storagePath: string, checkPath: string): boolean {
+  return (
+    isRayStateDirectoryStoragePath(storagePath) &&
+    path.resolve(checkPath) === RAY_STATE_DIRECTORY_PARENT_PATH
+  );
+}
+
 function isLoopbackHost(value: string): boolean {
   const host = normalizeHostLiteral(value);
 
@@ -388,8 +403,8 @@ function inferRayStateDirectory(config: RayConfig): string | undefined {
 
   const storageDir = path.resolve(config.asyncQueue.storageDir);
 
-  if (isPathInside("/var/lib/ray", storageDir)) {
-    return "ray";
+  if (isRayStateDirectoryStoragePath(storageDir)) {
+    return RAY_STATE_DIRECTORY_NAME;
   }
 
   return undefined;
@@ -2286,7 +2301,8 @@ export function diagnoseConfig(
     } else if (
       strictFilesystem &&
       preflight?.asyncQueueStorageAccessStatus === "blocked" &&
-      preflight.asyncQueueStorageStatus !== undefined
+      preflight.asyncQueueStorageStatus !== undefined &&
+      preflight.asyncQueueStorageManagedByStateDirectory !== true
     ) {
       diagnostics.push({
         level: "error",
@@ -2308,13 +2324,17 @@ export function diagnoseConfig(
           message: `Async queue storage has ${formatMiB(preflight.asyncQueueStorageAvailableMiB)} free at ${checkedPath}, below asyncQueue.minFreeStorageMiB (${formatMiB(config.asyncQueue.minFreeStorageMiB)}) for ${storagePath}. Move the queue to a larger persistent volume or lower the reserve only after sizing the VPS disk.`,
         });
       } else {
+        const writableStatus =
+          preflight.asyncQueueStorageAccessStatus === "ok"
+            ? `, and is writable by "${preflight.serviceUser ?? "the configured service user"}"`
+            : preflight.asyncQueueStorageManagedByStateDirectory
+              ? `, and StateDirectory=${RAY_STATE_DIRECTORY_NAME} will create ${RAY_STATE_DIRECTORY_PATH} for "${preflight.serviceUser ?? "the configured service user"}"`
+              : "";
         diagnostics.push({
           level: "info",
           code: "async_queue_storage_ok",
           message: `Async queue storage has ${formatMiB(preflight.asyncQueueStorageAvailableMiB)} free at ${checkedPath}, satisfying asyncQueue.minFreeStorageMiB (${formatMiB(config.asyncQueue.minFreeStorageMiB)}) for ${storagePath}${
-            preflight.asyncQueueStorageAccessStatus === "ok"
-              ? `, and is writable by "${preflight.serviceUser ?? "the configured service user"}"`
-              : ""
+            writableStatus
           }.`,
         });
       }
@@ -3025,13 +3045,17 @@ async function collectAsyncQueueStoragePreflight(
       const storageStats = await statfs(checkPath);
       const availableMiB = resolveAvailableStorageMiB(storageStats);
       const storageStatus = checkPath === storagePath ? "directory" : "parent";
+      const managedByStateDirectory =
+        storageStatus === "parent" && isRayStateDirectoryCreationPath(storagePath, checkPath);
       const serviceUserAccess = serviceUserIdentity
-        ? await verifyServiceUserPathAccess(
-            checkPath,
-            serviceUserIdentity,
-            storageStatus === "directory" ? 0o7 : 0o3,
-            storageStatus === "directory" ? "read/write/execute" : "write/execute",
-          )
+        ? managedByStateDirectory
+          ? undefined
+          : await verifyServiceUserPathAccess(
+              checkPath,
+              serviceUserIdentity,
+              storageStatus === "directory" ? 0o7 : 0o3,
+              storageStatus === "directory" ? "read/write/execute" : "write/execute",
+            )
         : undefined;
 
       return {
@@ -3039,6 +3063,7 @@ async function collectAsyncQueueStoragePreflight(
         asyncQueueStorageCheckPath: checkPath,
         asyncQueueStorageStatus: storageStatus,
         ...(availableMiB !== undefined ? { asyncQueueStorageAvailableMiB: availableMiB } : {}),
+        ...(managedByStateDirectory ? { asyncQueueStorageManagedByStateDirectory: true } : {}),
         ...(serviceUserAccess
           ? {
               asyncQueueStorageAccessStatus: serviceUserAccess.status,
