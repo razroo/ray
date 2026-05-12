@@ -470,6 +470,7 @@ file, package metadata, and the llama.cpp staging helper used during deploy.
 - Use `/livez` for reverse-proxy liveness checks, and `/readyz` when a dependent app needs a minimal backend-aware readiness check; the gateway binds before provider warmup finishes, so a slow local model backend should not make systemd treat the gateway process itself as dead.
 - Let the generated Caddy upstream timeouts track `scheduler.requestTimeoutMs`; public proxy sockets should not outlive Ray's own request budget for long.
 - The generated systemd units enable CPU, memory, and IO accounting, so `systemctl show ray-gateway -p CPUUsageNSec -p MemoryCurrent -p IOReadBytes -p IOWriteBytes` can confirm pressure without extra agents.
+- The generated systemd units rate-limit journal output so crash loops or verbose local backends cannot quickly fill a small VPS disk.
 - The generated systemd units set `CPUWeight` so the lightweight gateway gets a larger CPU share than the local model backend when both contend on a small node.
 - The generated systemd units also set `MemoryHigh`, `MemoryMax`, and `MemorySwapMax` cgroup ceilings from the gateway profile and llama.cpp memory budget so backend and gateway memory pressure stays bounded on one-node VPS hosts without letting one service consume the whole swap cushion.
 - Use `RAY_DEPLOY_MEMORY_MIB` in the deploy env file, or pass `--memory-mib`, when render or doctor should size llama.cpp against an explicit VPS memory class instead of the detected host or launch-profile preset. The explicit flag wins when both are present.

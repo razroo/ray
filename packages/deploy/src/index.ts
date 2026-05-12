@@ -1486,6 +1486,8 @@ ${envFileLine}Environment=NODE_ENV=production
 ${execStart}
 Restart=always
 RestartSec=2
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=200
 TimeoutStopSec=35
 KillSignal=SIGTERM
 KillMode=mixed
@@ -1606,6 +1608,8 @@ User=${options.user}
 ${envFileLine}${environmentLines}${execStart}
 Restart=always
 RestartSec=2
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=200
 TimeoutStopSec=35
 KillSignal=SIGTERM
 KillMode=mixed
