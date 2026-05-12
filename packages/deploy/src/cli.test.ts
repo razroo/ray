@@ -107,6 +107,21 @@ test("parseCliArgs accepts explicit service users", () => {
   assert.equal(options.user, "ray_gpu");
 });
 
+test("parseCliArgs rejects malformed service users", () => {
+  assert.throws(
+    () => parseCliArgs(["render", "--user", "ray deploy"]),
+    /--user must be a system account name/,
+  );
+  assert.throws(
+    () => parseCliArgs(["render", "--user", "%i"]),
+    /--user must be a system account name/,
+  );
+  assert.throws(
+    () => parseCliArgs(["render", "--user", "ray;root"]),
+    /--user must be a system account name/,
+  );
+});
+
 test("parseCliArgs accepts strict filesystem checks", () => {
   const options = parseCliArgs(["render", "--strict-filesystem"]);
 
@@ -443,6 +458,33 @@ test("runCli explicit service user overrides env-file service user", async (t) =
   const rendered = output.join("\n");
   assert.match(rendered, /^User=cli_ray$/m);
   assert.doesNotMatch(rendered, /^User=env_ray$/m);
+});
+
+test("runCli rejects malformed env-file service users", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-user-invalid-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(
+    envFile,
+    ["RAY_API_KEYS=test-key", "RAY_DEPLOY_SERVICE_USER=ray;root", ""].join("\n"),
+    "utf8",
+  );
+
+  await assert.rejects(
+    () =>
+      runCli([
+        "validate",
+        "--cwd",
+        ".",
+        "--config",
+        "./examples/config/ray.sub1b.public.json",
+        "--ray-env-file",
+        envFile,
+      ]),
+    /RAY_DEPLOY_SERVICE_USER must be a system account name/,
+  );
 });
 
 test("runCli render writes deployment files when output-dir is provided", async (t) => {

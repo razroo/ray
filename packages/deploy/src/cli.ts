@@ -34,6 +34,7 @@ const MAX_DEPLOY_ENV_VALUE_CHARS = MAX_DEPLOY_ENV_FILE_BYTES;
 const unsafeDeployEnvKeys = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_DEPLOY_CLI_ARGS = 64;
 const MAX_DEPLOY_CLI_ARG_BYTES = 4_096;
+const SYSTEMD_USER_PATTERN = /^(?:[A-Za-z_][A-Za-z0-9_-]{0,30}|[0-9]{1,10})$/;
 
 function assertCliArgv(argv: unknown): asserts argv is string[] {
   if (!Array.isArray(argv)) {
@@ -82,12 +83,29 @@ function readNonEmptyEnvValue(value: string | undefined): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
+function parseServiceUserValue(value: string, label: string): string {
+  if (!SYSTEMD_USER_PATTERN.test(value)) {
+    throw new Error(
+      `${label} must be a system account name or numeric UID using only letters, digits, underscores, or hyphens`,
+    );
+  }
+
+  return value;
+}
+
 function parseOptionalPositiveIntegerEnv(
   value: string | undefined,
   label: string,
 ): number | undefined {
   const normalized = readNonEmptyEnvValue(value);
   return normalized === undefined ? undefined : parsePositiveIntegerFlag(normalized, label);
+}
+
+function parseOptionalServiceUserEnv(value: string | undefined): string | undefined {
+  const normalized = readNonEmptyEnvValue(value);
+  return normalized === undefined
+    ? undefined
+    : parseServiceUserValue(normalized, "RAY_DEPLOY_SERVICE_USER");
 }
 
 function decodeDoubleQuotedEnvValue(value: string): string {
@@ -318,7 +336,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     }
 
     if (current === "--user") {
-      options.user = requireFlagValue(current, next);
+      options.user = parseServiceUserValue(requireFlagValue(current, next), current);
       index += 1;
       continue;
     }
@@ -384,7 +402,7 @@ export async function runCli(argv: string[]): Promise<void> {
   };
   const env = await loadEnvironment(resolvedOptions);
   const envRuntimeBinary = readNonEmptyEnvValue(env.RAY_GATEWAY_RUNTIME_BINARY);
-  const envServiceUser = readNonEmptyEnvValue(env.RAY_DEPLOY_SERVICE_USER);
+  const envServiceUser = parseOptionalServiceUserEnv(env.RAY_DEPLOY_SERVICE_USER);
   const envDomain = readNonEmptyEnvValue(env.RAY_DEPLOY_DOMAIN);
   const envMemoryBudgetMiB = parseOptionalPositiveIntegerEnv(
     env.RAY_DEPLOY_MEMORY_MIB,
