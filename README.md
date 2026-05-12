@@ -334,6 +334,7 @@ bun run validate:config
 bun run validate:config:all
 bun run deploy:smoke
 bun run deploy:scripts
+bun run package:runtime
 bun run model:stage:smoke
 bun run model:stage
 bun run model:stage:1b
