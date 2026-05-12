@@ -517,6 +517,32 @@ function validateDeployWorkflowRsyncGuards(
   return diagnostics;
 }
 
+function validateDeployWorkflowSshSessionGuards(
+  workflowPath: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+    if (/^(?:-\s+run:\s+)?ssh\s/.test(line) && !line.includes("timeout ")) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_ssh_session_timeout_missing",
+        workflowPath,
+        line: index + 1,
+        message:
+          "VPS deploy workflow remote SSH sessions must run under an overall timeout so a connected but wedged host cannot hold the deploy job indefinitely.",
+      });
+    }
+  }
+
+  return diagnostics;
+}
+
 function validateDeployWorkflowServiceCommandGuards(
   workflowPath: string,
   lines: string[],
@@ -685,6 +711,7 @@ async function validateWorkflow(
   diagnostics.push(...validateDeployWorkflowStateOwnershipGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowAptGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRsyncGuards(workflowPath, lines));
+  diagnostics.push(...validateDeployWorkflowSshSessionGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowServiceCommandGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRemoteBunInstallGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRemoteBunCommandGuards(workflowPath, lines));
