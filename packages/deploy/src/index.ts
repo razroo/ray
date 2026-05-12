@@ -39,7 +39,9 @@ export interface DeploymentDiagnostic {
 
 type MemoryBudgetSource = "override" | "preset" | "host";
 type AsyncQueueStorageStatus = "directory" | "parent" | "not_directory" | "unreadable";
-type GatewayRuntimeBinaryStatus = "found" | "missing" | "unreadable";
+type BinaryPreflightStatus = "found" | "missing" | "unreadable";
+type GatewayRuntimeBinaryStatus = BinaryPreflightStatus;
+type LlamaCppBinaryStatus = BinaryPreflightStatus;
 type SwapStatus = "available" | "missing" | "unreadable";
 
 export interface DeploymentPreflight {
@@ -58,6 +60,9 @@ export interface DeploymentPreflight {
   gatewayRuntimeBinaryPath?: string;
   gatewayRuntimeBinaryStatus?: GatewayRuntimeBinaryStatus;
   gatewayRuntimeBinaryError?: string;
+  llamaCppBinaryPath?: string;
+  llamaCppBinaryStatus?: LlamaCppBinaryStatus;
+  llamaCppBinaryError?: string;
   swapStatus?: SwapStatus;
   swapTotalMiB?: number;
   swapError?: string;
@@ -1270,6 +1275,30 @@ export function diagnoseConfig(
         });
       }
 
+      if (strictFilesystem && preflight?.llamaCppBinaryStatus !== undefined) {
+        const binaryPath = preflight.llamaCppBinaryPath ?? launchProfile.binaryPath;
+
+        if (preflight.llamaCppBinaryStatus === "missing") {
+          diagnostics.push({
+            level: "error",
+            code: "llama_binary_missing",
+            message: `The configured llama.cpp binary was not found at ${binaryPath}. Install llama-server there or set RAY_LLAMA_CPP_BINARY_PATH before rendering the generated backend service.`,
+          });
+        } else if (preflight.llamaCppBinaryStatus === "unreadable") {
+          diagnostics.push({
+            level: "error",
+            code: "llama_binary_unreadable",
+            message: `The configured llama.cpp binary at ${binaryPath} could not be executed${preflight.llamaCppBinaryError ? ` (${preflight.llamaCppBinaryError})` : ""}. Doctor cannot verify that ray-llama-cpp.service will start.`,
+          });
+        } else {
+          diagnostics.push({
+            level: "info",
+            code: "llama_binary_ok",
+            message: `llama.cpp binary is executable at ${binaryPath}.`,
+          });
+        }
+      }
+
       if (!path.isAbsolute(launchProfile.modelPath)) {
         diagnostics.push({
           level: "error",
@@ -1709,6 +1738,50 @@ async function collectGatewayRuntimePreflight(
   }
 }
 
+async function collectLlamaCppBinaryPreflight(
+  launchProfile: LlamaCppLaunchProfile,
+): Promise<Partial<DeploymentPreflight>> {
+  const binaryPath = launchProfile.binaryPath;
+
+  if (!path.isAbsolute(binaryPath)) {
+    return {
+      llamaCppBinaryPath: binaryPath,
+      llamaCppBinaryStatus: "unreadable",
+      llamaCppBinaryError: "binary path must be absolute",
+    };
+  }
+
+  try {
+    const binaryStat = await stat(binaryPath);
+
+    if (!binaryStat.isFile()) {
+      return {
+        llamaCppBinaryPath: binaryPath,
+        llamaCppBinaryStatus: "unreadable",
+        llamaCppBinaryError: "not a regular file",
+      };
+    }
+
+    await access(binaryPath, constants.X_OK);
+
+    return {
+      llamaCppBinaryPath: binaryPath,
+      llamaCppBinaryStatus: "found",
+    };
+  } catch (error) {
+    const code =
+      error !== null && typeof error === "object" && "code" in error
+        ? (error as { code?: string }).code
+        : undefined;
+
+    return {
+      llamaCppBinaryPath: binaryPath,
+      llamaCppBinaryStatus: code === "ENOENT" ? "missing" : "unreadable",
+      llamaCppBinaryError: toErrorMessage(error),
+    };
+  }
+}
+
 async function collectSwapPreflight(): Promise<Partial<DeploymentPreflight>> {
   try {
     const meminfo = await readFile("/proc/meminfo", "utf8");
@@ -1759,6 +1832,7 @@ async function collectDeploymentPreflight(
   }
 
   const launchProfile = config.model.adapter.launchProfile;
+  const llamaBinaryPreflight = await collectLlamaCppBinaryPreflight(launchProfile);
   const budget = resolveMemoryBudget({
     preset: launchProfile.preset,
     ...(options.memoryBudgetMiB !== undefined
@@ -1770,6 +1844,7 @@ async function collectDeploymentPreflight(
     hostMemoryMiB,
     ...storagePreflight,
     ...runtimePreflight,
+    ...llamaBinaryPreflight,
     ...swapPreflight,
     memoryBudgetMiB: budget.memoryBudgetMiB,
     memoryBudgetSource: budget.memoryBudgetSource,

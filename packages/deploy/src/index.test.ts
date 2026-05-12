@@ -1284,6 +1284,72 @@ test("loadAndDiagnoseDeployment errors when the configured model file is missing
   assert.match(diagnostic.message, /was not found/);
 });
 
+test("loadAndDiagnoseDeployment errors when the configured llama.cpp binary is missing in strict mode", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-llama-binary-missing-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const modelPath = join(tempDir, "model.gguf");
+  await writeFile(modelPath, "");
+
+  const config = createDefaultConfig("1b");
+  if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
+    throw new Error("Expected llama.cpp launch profile");
+  }
+  config.model.adapter.launchProfile.binaryPath = join(tempDir, "missing-llama-server");
+  config.model.adapter.launchProfile.modelPath = modelPath;
+
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    strictFilesystem: true,
+    memoryBudgetMiB: 4_096,
+  });
+
+  const diagnostic = inspected.diagnostics.find((entry) => entry.code === "llama_binary_missing");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+});
+
+test("loadAndDiagnoseDeployment reports an executable llama.cpp binary in strict mode", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-llama-binary-ok-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const modelPath = join(tempDir, "model.gguf");
+  const binaryPath = join(tempDir, "llama-server");
+  await writeFile(modelPath, "");
+  await writeFile(binaryPath, "#!/bin/sh\n");
+  await chmod(binaryPath, 0o755);
+
+  const config = createDefaultConfig("1b");
+  if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
+    throw new Error("Expected llama.cpp launch profile");
+  }
+  config.model.adapter.launchProfile.binaryPath = binaryPath;
+  config.model.adapter.launchProfile.modelPath = modelPath;
+
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    strictFilesystem: true,
+    memoryBudgetMiB: 4_096,
+  });
+
+  const diagnostic = inspected.diagnostics.find((entry) => entry.code === "llama_binary_ok");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+  assert.match(diagnostic.message, new RegExp(binaryPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
 test("loadAndDiagnoseDeployment errors when the configured gateway runtime is missing in strict mode", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-runtime-missing-"));
   t.after(async () => {

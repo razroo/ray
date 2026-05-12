@@ -269,6 +269,7 @@ Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 - The generated systemd units also set OOM policy and OOM score adjustments so the lightweight gateway is less kill-prone than the local model backend under last-resort memory pressure.
 - The generated systemd units also drop Linux capabilities, restrict address families to local/IP sockets, deny realtime scheduling, and hide host devices and kernel controls. Keep custom service overrides equally narrow unless a backend explicitly needs broader access.
 - Keep generated-service paths out of `/home`, `/root`, and `/run/user`; the units use `ProtectHome=true`, so put GGUF files under `/var/lib/ray/models` and `llama-server` under `/usr/local/bin`.
+- Doctor verifies that `model.adapter.launchProfile.binaryPath` points at an executable `llama-server` before the generated backend service is restarted.
 - Keep `cacheRamMiB` pinned for `llama.cpp`. The upstream default is too large for a 4 GB VPS.
 - Tune `scheduler.concurrency` conservatively. Tiny hardware collapses faster from overcommit than underutilization.
 - Keep `scheduler.requestTimeoutMs` slightly above `model.adapter.timeoutMs` so provider timeouts remain visible.
