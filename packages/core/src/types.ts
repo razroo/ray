@@ -1,4 +1,4 @@
-export type RayProfile = "tiny" | "sub1b" | "1b" | "1b-8gb" | "vps" | "balanced";
+export type RayProfile = "tiny" | "sub1b" | "sub1b-cax11" | "1b" | "1b-8gb" | "vps" | "balanced";
 export type LogLevel = "debug" | "info" | "warn" | "error";
 export type ProviderKind = "mock" | "openai-compatible" | "llama.cpp";
 export type Quantization = "q4_0" | "q4_k_m" | "q5_k_m" | "q8_0" | "fp16" | "unknown";

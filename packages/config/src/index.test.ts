@@ -57,8 +57,31 @@ test("loadRayConfig accepts the cax11 sub1b launch preset", async () => {
     env: {},
   });
 
-  assert.equal(loaded.config.profile, "sub1b");
+  assert.equal(loaded.config.profile, "sub1b-cax11");
   assert.equal(loaded.config.scheduler.concurrency, 1);
+
+  if (
+    loaded.config.model.adapter.kind !== "llama.cpp" ||
+    !loaded.config.model.adapter.launchProfile
+  ) {
+    throw new Error("Expected a llama.cpp launch profile");
+  }
+
+  assert.equal(loaded.config.model.adapter.launchProfile.preset, "single-vps-sub1b-cax11");
+});
+
+test("loadRayConfig accepts the sub1b-cax11 profile from environment", async () => {
+  const loaded = await loadRayConfig({
+    cwd: process.cwd(),
+    env: {
+      RAY_PROFILE: "sub1b-cax11",
+    },
+  });
+
+  assert.equal(loaded.config.profile, "sub1b-cax11");
+  assert.equal(loaded.config.scheduler.concurrency, 1);
+  assert.equal(loaded.config.scheduler.requestTimeoutMs, 22_000);
+  assert.equal(loaded.config.adaptiveTuning.minCompletionTokensPerSecond, 10);
 
   if (
     loaded.config.model.adapter.kind !== "llama.cpp" ||

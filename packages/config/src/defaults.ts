@@ -71,7 +71,7 @@ function createSub1bDefaults(machineClass: Sub1bMachineClass): RayConfig {
   const launchProfile = createSub1bLaunchProfile(machineClass);
 
   return {
-    profile: "sub1b",
+    profile: machineClass === "cax11" ? "sub1b-cax11" : "sub1b",
     server: {
       host: "127.0.0.1",
       port: 3000,
@@ -466,6 +466,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
     },
   },
   sub1b: createSub1bDefaults("cx23"),
+  "sub1b-cax11": createSub1bDefaults("cax11"),
   "1b": create1bDefaults("cx23"),
   "1b-8gb": create1bDefaults("8gb"),
   vps: {

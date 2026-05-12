@@ -125,6 +125,29 @@ test("sub1b profile defaults to a bounded llama.cpp launch profile", () => {
   assert.equal(config.auth.enabled, false);
 });
 
+test("sub1b-cax11 profile defaults to the ARM single-slot llama.cpp launch profile", () => {
+  const config = createDefaultConfig("sub1b-cax11");
+
+  assert.equal(config.profile, "sub1b-cax11");
+  assert.equal(config.model.adapter.kind, "llama.cpp");
+
+  if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
+    throw new Error("Expected a llama.cpp launch profile");
+  }
+
+  assert.equal(config.model.adapter.launchProfile.preset, "single-vps-sub1b-cax11");
+  assert.equal(config.model.adapter.launchProfile.parallel, 1);
+  assert.equal(config.model.adapter.launchProfile.batchSize, 192);
+  assert.equal(config.model.adapter.launchProfile.ubatchSize, 96);
+  assert.equal(config.scheduler.concurrency, 1);
+  assert.equal(config.scheduler.maxQueue, 48);
+  assert.equal(config.scheduler.requestTimeoutMs, 22_000);
+  assert.equal(config.telemetry.slowRequestThresholdMs, 1500);
+  assert.equal(config.adaptiveTuning.queueLatencyThresholdMs, 450);
+  assert.equal(config.adaptiveTuning.minCompletionTokensPerSecond, 10);
+  assert.equal(config.rateLimit.maxRequests, 90);
+});
+
 test("1b profile defaults to a conservative llama.cpp launch profile", () => {
   const config = createDefaultConfig("1b");
 

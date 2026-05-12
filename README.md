@@ -357,7 +357,7 @@ That runs lint, Prettier `--check`, tests (`bun run test` builds, runs the compi
 - [examples/config/ray.tiny.json](examples/config/ray.tiny.json) — mock provider; boots immediately
 - [examples/config/ray.sub1b.json](examples/config/ray.sub1b.json) — default private/local sub-1B `llama.cpp` profile for CX23-class x86 boxes
 - [examples/config/ray.sub1b.public.json](examples/config/ray.sub1b.public.json) — public-safe CX23-class sub-1B `llama.cpp` profile with auth enabled and bounded cache RAM
-- [examples/config/ray.sub1b.cax11.json](examples/config/ray.sub1b.cax11.json) — private/local CAX11-class ARM variant with tighter queue and single-slot defaults
+- [examples/config/ray.sub1b.cax11.json](examples/config/ray.sub1b.cax11.json) — private/local CAX11-class ARM variant with tighter queue and single-slot defaults; use `RAY_PROFILE=sub1b-cax11` for env-only profile selection
 - [examples/config/ray.sub1b.cax11.public.json](examples/config/ray.sub1b.cax11.public.json) — public-safe CAX11-class ARM variant
 - [examples/config/ray.sub1b.classifier.json](examples/config/ray.sub1b.classifier.json) — below-1B classifier-oriented profile with shorter outputs, JSON-mode warmup, and tighter context
 - [examples/config/ray.sub1b.drafter.json](examples/config/ray.sub1b.drafter.json) — below-1B email drafting profile with warmer prompt-family defaults

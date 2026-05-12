@@ -21,7 +21,15 @@ const llamaCppLaunchPresets = new Set<LlamaCppLaunchProfile["preset"]>([
   "single-vps-1b-8gb",
   "single-vps-balanced",
 ]);
-const rayProfiles = new Set<RayProfile>(["tiny", "sub1b", "1b", "1b-8gb", "vps", "balanced"]);
+const rayProfiles = new Set<RayProfile>([
+  "tiny",
+  "sub1b",
+  "sub1b-cax11",
+  "1b",
+  "1b-8gb",
+  "vps",
+  "balanced",
+]);
 const logLevels = new Set<LogLevel>(["debug", "info", "warn", "error"]);
 const cacheKeyStrategies = new Set<RayConfig["cache"]["keyStrategy"]>(["input", "input+params"]);
 const rateLimitKeyStrategies = new Set<RateLimitKeyStrategy>(["ip", "api-key", "ip+api-key"]);
