@@ -999,6 +999,113 @@ test("llama.cpp provider ignores malformed slot snapshot fields", async (t) => {
   });
 });
 
+test("llama.cpp provider ignores malformed health and capability counters", async (t) => {
+  const server = createServer((request, response) => {
+    if (request.url === "/health?include_slots=1") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          status: 7,
+          slots_idle: -1,
+          slots_processing: 1.5,
+        }),
+      );
+      return;
+    }
+
+    if (request.url === "/slots") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ slots: [] }));
+      return;
+    }
+
+    if (request.url === "/props") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          total_slots: -2,
+          chat_template: "{{ messages }}",
+          default_generation_settings: {
+            n_ctx: -2048,
+            model: "test-model-ref",
+          },
+        }),
+      );
+      return;
+    }
+
+    if (request.url === "/apply-template") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ prompt: "<s>hello" }));
+      return;
+    }
+
+    if (request.url === "/tokenize") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ tokens: [1, 2, 3] }));
+      return;
+    }
+
+    if (request.url === "/completion") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          content: "ok",
+          timings: {
+            prompt_n: 3,
+            predicted_n: 1,
+          },
+        }),
+      );
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const model = createModel(`http://127.0.0.1:${address.port}`, 500, {
+    slotStateTtlMs: 0,
+  });
+  const provider = new LlamaCppProvider(model, model.adapter as LlamaCppProviderConfig);
+  const health = await provider.health();
+
+  assert.equal(health.status, "ready");
+  assert.equal(health.details?.slotsIdle, undefined);
+  assert.equal(health.details?.slotsProcessing, undefined);
+  assert.equal(health.detectedCapabilities?.totalSlots, undefined);
+  assert.equal(health.detectedCapabilities?.contextWindow, model.contextWindow);
+
+  const context = createContext(model, new AbortController().signal);
+  const request = {
+    input: "Hello",
+    maxTokens: 32,
+    temperature: 0.2,
+    topP: 0.95,
+    cache: true,
+    metadata: {},
+  };
+  const preparation = await provider.prepare(request, context);
+  const result = await provider.infer(request, {
+    ...context,
+    preparation,
+  });
+
+  assert.equal(preparation.diagnostics?.totalSlots, undefined);
+  assert.equal(preparation.diagnostics?.contextWindow, model.contextWindow);
+  assert.equal(result.output, "ok");
+  assert.equal(result.diagnostics?.totalSlots, undefined);
+  assert.equal(result.diagnostics?.contextWindow, model.contextWindow);
+});
+
 test("llama.cpp provider bounds preferred slot affinity maps", async (t) => {
   let completionCalls = 0;
   const server = createServer((request, response) => {

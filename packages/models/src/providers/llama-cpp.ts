@@ -494,7 +494,10 @@ export class LlamaCppProvider implements ModelProvider {
       const detectedCapabilities =
         capabilityProbe.status === "fulfilled" ? capabilityProbe.value : undefined;
       const slotSnapshots = slotProbe.status === "fulfilled" ? slotProbe.value : undefined;
-      const healthStatus = healthPayload?.status?.toLowerCase() ?? "unknown";
+      const healthStatus =
+        typeof healthPayload?.status === "string" ? healthPayload.status.toLowerCase() : "unknown";
+      const slotsIdle = firstNonNegativeSafeInteger(healthPayload?.slots_idle);
+      const slotsProcessing = firstNonNegativeSafeInteger(healthPayload?.slots_processing);
       let status: ProviderHealthSnapshot["status"] = "unknown";
 
       if (healthStatus.includes("loading")) {
@@ -521,10 +524,12 @@ export class LlamaCppProvider implements ModelProvider {
         details: {
           probe: "/health + capabilities + /slots",
           modelRef: this.adapter.modelRef,
-          slotsIdle: healthPayload?.slots_idle,
-          slotsProcessing: healthPayload?.slots_processing,
-          slots: slotSnapshots,
-          totalSlots: detectedCapabilities?.totalSlots,
+          ...(slotsIdle !== undefined ? { slotsIdle } : {}),
+          ...(slotsProcessing !== undefined ? { slotsProcessing } : {}),
+          ...(slotSnapshots !== undefined ? { slots: slotSnapshots } : {}),
+          ...(detectedCapabilities?.totalSlots !== undefined
+            ? { totalSlots: detectedCapabilities.totalSlots }
+            : {}),
           contextWindow: detectedCapabilities?.contextWindow ?? this.model.contextWindow,
           backendModel: detectedCapabilities?.backendModel,
           applyTemplate: detectedCapabilities?.applyTemplate,
@@ -594,6 +599,10 @@ export class LlamaCppProvider implements ModelProvider {
         : propsProbe.status === "fulfilled"
           ? "unavailable"
           : "unknown";
+    const contextWindow =
+      firstNonNegativeSafeInteger(propsPayload?.default_generation_settings?.n_ctx) ??
+      this.model.contextWindow;
+    const totalSlots = firstNonNegativeSafeInteger(propsPayload?.total_slots);
     let jsonMode: ProviderDetectedCapabilities["jsonMode"] =
       this.backendCapabilitiesCache?.capabilities.jsonMode ?? "unknown";
 
@@ -625,12 +634,8 @@ export class LlamaCppProvider implements ModelProvider {
       ...(typeof propsPayload?.default_generation_settings?.model === "string"
         ? { backendModel: propsPayload.default_generation_settings.model }
         : {}),
-      ...(typeof propsPayload?.default_generation_settings?.n_ctx === "number"
-        ? { contextWindow: propsPayload.default_generation_settings.n_ctx }
-        : { contextWindow: this.model.contextWindow }),
-      ...(typeof propsPayload?.total_slots === "number"
-        ? { totalSlots: propsPayload.total_slots }
-        : {}),
+      contextWindow,
+      ...(totalSlots !== undefined ? { totalSlots } : {}),
       ...(this.model.operational?.recommendedPromptFormat
         ? { promptFormatPreference: this.model.operational.recommendedPromptFormat }
         : {}),
