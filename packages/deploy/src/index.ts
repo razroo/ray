@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { constants, type Stats } from "node:fs";
-import { access, mkdtemp, readFile, rm, stat, statfs, writeFile } from "node:fs/promises";
+import { access, mkdtemp, open, readFile, rm, stat, statfs, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { availableParallelism, tmpdir, totalmem } from "node:os";
 import path from "node:path";
@@ -69,6 +69,7 @@ export interface DeploymentBundleSummary {
 }
 
 type MemoryBudgetSource = "override" | "preset" | "host";
+type ModelFileFormatStatus = "valid" | "invalid" | "unreadable";
 type AsyncQueueStorageStatus = "directory" | "parent" | "not_directory" | "unreadable";
 type BinaryPreflightStatus = "found" | "missing" | "unreadable";
 type GatewayRuntimeKind = "bun" | "node";
@@ -99,6 +100,8 @@ export interface DeploymentPreflight {
   modelFilePath?: string;
   modelFileStatus?: "found" | "missing" | "unreadable";
   modelFileError?: string;
+  modelFileFormatStatus?: ModelFileFormatStatus;
+  modelFileFormatError?: string;
   modelFileAccessStatus?: ServiceUserAccessStatus;
   modelFileAccessError?: string;
   asyncQueueStoragePath?: string;
@@ -191,6 +194,7 @@ const BYTES_PER_MIB = 1024 * 1024;
 const DEFAULT_CACHE_RAM_MIB = 8_192;
 const RAY_RUNTIME_RESERVE_MIB = 192;
 const LLAMA_CPP_RUNTIME_RESERVE_MIB = 160;
+const GGUF_MAGIC = "GGUF";
 const MIN_SYSTEM_RESERVE_MIB = 768;
 const SYSTEM_RESERVE_RATIO = 0.2;
 const MIN_SMALL_VPS_SWAP_MIB = 1_024;
@@ -2629,6 +2633,38 @@ export function diagnoseConfig(
       } else if (
         strictFilesystem &&
         preflight?.modelFileStatus === "found" &&
+        preflight.modelFileFormatStatus === "invalid"
+      ) {
+        diagnostics.push({
+          level: "error",
+          code: "model_file_format_invalid",
+          message: `The configured GGUF model file at ${preflight.modelFilePath} does not have a valid GGUF header${preflight.modelFileFormatError ? ` (${preflight.modelFileFormatError})` : ""}. Restage the model before restarting ray-llama-cpp.service.${formatModelStageApplyHint(env)}`,
+        });
+      } else if (
+        strictFilesystem &&
+        preflight?.modelFileStatus === "found" &&
+        preflight.modelFileFormatStatus === "unreadable"
+      ) {
+        diagnostics.push({
+          level: "error",
+          code: "model_file_format_unreadable",
+          message: `Doctor could not read the GGUF header from ${preflight.modelFilePath}${preflight.modelFileFormatError ? ` (${preflight.modelFileFormatError})` : ""}. Restage the model or verify it manually before restarting ray-llama-cpp.service.`,
+        });
+      } else if (
+        strictFilesystem &&
+        preflight?.modelFileStatus === "found" &&
+        preflight.modelFileFormatStatus === "valid"
+      ) {
+        diagnostics.push({
+          level: "info",
+          code: "model_file_format_ok",
+          message: `The configured GGUF model file at ${preflight.modelFilePath} has a valid GGUF header.`,
+        });
+      }
+
+      if (
+        strictFilesystem &&
+        preflight?.modelFileStatus === "found" &&
         preflight.modelFileAccessStatus === "blocked"
       ) {
         diagnostics.push({
@@ -3746,6 +3782,46 @@ async function collectLlamaCppBinaryPreflight(
   }
 }
 
+async function collectGgufModelFileFormatPreflight(
+  modelPath: string,
+  strictFilesystem: boolean,
+): Promise<Partial<DeploymentPreflight>> {
+  if (!strictFilesystem) {
+    return {};
+  }
+
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(modelPath, "r");
+    const magic = Buffer.from(GGUF_MAGIC, "ascii");
+    const buffer = Buffer.alloc(magic.length);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+
+    if (bytesRead < magic.length) {
+      return {
+        modelFileFormatStatus: "invalid",
+        modelFileFormatError: `file is smaller than the ${GGUF_MAGIC} header`,
+      };
+    }
+
+    if (!buffer.equals(magic)) {
+      return {
+        modelFileFormatStatus: "invalid",
+        modelFileFormatError: `expected ${GGUF_MAGIC} magic header`,
+      };
+    }
+
+    return { modelFileFormatStatus: "valid" };
+  } catch (error) {
+    return {
+      modelFileFormatStatus: "unreadable",
+      modelFileFormatError: toErrorMessage(error),
+    };
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
 async function collectLlamaCppBinaryProbePreflight(
   binaryPath: string,
 ): Promise<Partial<DeploymentPreflight>> {
@@ -4010,11 +4086,16 @@ async function collectDeploymentPreflight(
     const serviceUserAccess = serviceUserIdentity
       ? await verifyServiceUserPathAccess(launchProfile.modelPath, serviceUserIdentity, 0o4, "read")
       : undefined;
+    const modelFileFormatPreflight = await collectGgufModelFileFormatPreflight(
+      launchProfile.modelPath,
+      options.strictFilesystem === true,
+    );
 
     return {
       ...preflightWithSystemdUnits,
       modelFileBytes: fileStat.size,
       modelFileStatus: "found",
+      ...modelFileFormatPreflight,
       ...(serviceUserAccess
         ? {
             modelFileAccessStatus: serviceUserAccess.status,

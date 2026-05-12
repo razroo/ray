@@ -420,7 +420,7 @@ GGUF staging plan for llama.cpp deploy configs, verifies and stages source
 artifacts when both `RAY_LLAMA_CPP_BINARY_SOURCE_PATH` and
 `RAY_MODEL_SOURCE_PATH` are set in `/etc/ray/ray.env`, then runs
 `ray deploy doctor` on the VPS before restarting services. Missing API keys,
-missing GGUF files,
+missing or corrupt GGUF files,
 memory-fit errors, exhausted async queue storage reserves, unsupported gateway
 runtimes, generated systemd unit verification, and generated Caddyfile
 validation fail before systemd tries to start the generated units. The

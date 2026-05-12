@@ -2153,6 +2153,42 @@ test("diagnoseConfig reports a compatible configured Bun runtime", () => {
   assert.match(diagnostic.message, /Bun version 1\.3\.9/);
 });
 
+test("diagnoseConfig errors when the configured GGUF model header is invalid", () => {
+  const config = createDefaultConfig("1b");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      modelFilePath: "/var/lib/ray/models/local-1b.gguf",
+      modelFileStatus: "found",
+      modelFileFormatStatus: "invalid",
+      modelFileFormatError: "expected GGUF magic header",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "model_file_format_invalid");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /GGUF header/);
+  assert.match(diagnostic.message, /model:stage/);
+});
+
+test("diagnoseConfig reports a valid configured GGUF model header", () => {
+  const config = createDefaultConfig("1b");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      modelFilePath: "/var/lib/ray/models/local-1b.gguf",
+      modelFileStatus: "found",
+      modelFileFormatStatus: "valid",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "model_file_format_ok");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+  assert.match(diagnostic.message, /valid GGUF header/);
+});
+
 test("diagnoseConfig errors when the generated service user cannot access llama.cpp paths", () => {
   const config = createDefaultConfig("1b");
   const diagnostics = diagnoseConfig(config, process.env, undefined, {
@@ -2382,7 +2418,7 @@ test("loadAndDiagnoseDeployment errors when the projected memory fit exceeds a 4
   });
 
   const modelPath = join(tempDir, "oversized.gguf");
-  await writeFile(modelPath, "");
+  await writeFile(modelPath, "GGUF");
   await truncate(modelPath, 2_500 * 1_024 * 1_024);
 
   const config = mergeConfig(createDefaultConfig("vps"), {
@@ -2496,6 +2532,48 @@ test("loadAndDiagnoseDeployment errors when the configured model file is missing
   assert.match(diagnostic.message, /--apply/);
 });
 
+test("loadAndDiagnoseDeployment errors when the configured model file is not GGUF", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-model-format-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const modelPath = join(tempDir, "model.gguf");
+  const binaryPath = join(tempDir, "llama-server");
+  await writeFile(modelPath, "NOPE");
+  await writeFile(binaryPath, "#!/bin/sh\n");
+  await chmod(binaryPath, 0o755);
+
+  const config = createDefaultConfig("1b");
+  if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
+    throw new Error("Expected llama.cpp launch profile");
+  }
+  config.model.adapter.launchProfile.binaryPath = binaryPath;
+  config.model.adapter.launchProfile.modelPath = modelPath;
+
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    env: {
+      RAY_LLAMA_CPP_BINARY_SOURCE_PATH: join(tempDir, "source-llama-server"),
+      RAY_MODEL_SOURCE_PATH: join(tempDir, "model-source.gguf"),
+    },
+    strictFilesystem: true,
+    memoryBudgetMiB: 4_096,
+  });
+
+  assert.equal(inspected.preflight.modelFileFormatStatus, "invalid");
+  const diagnostic = inspected.diagnostics.find(
+    (entry) => entry.code === "model_file_format_invalid",
+  );
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /GGUF header/);
+});
+
 test("loadAndDiagnoseDeployment errors when the configured llama.cpp binary is missing in strict mode", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-llama-binary-missing-"));
   t.after(async () => {
@@ -2503,7 +2581,7 @@ test("loadAndDiagnoseDeployment errors when the configured llama.cpp binary is m
   });
 
   const modelPath = join(tempDir, "model.gguf");
-  await writeFile(modelPath, "");
+  await writeFile(modelPath, "GGUF");
 
   const config = createDefaultConfig("1b");
   if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
@@ -2542,7 +2620,7 @@ test("loadAndDiagnoseDeployment reports an executable llama.cpp binary in strict
 
   const modelPath = join(tempDir, "model.gguf");
   const binaryPath = join(tempDir, "llama-server");
-  await writeFile(modelPath, "");
+  await writeFile(modelPath, "GGUF");
   await writeFile(binaryPath, "#!/bin/sh\n");
   await chmod(binaryPath, 0o755);
 
@@ -2584,7 +2662,7 @@ test("loadAndDiagnoseDeployment errors when the configured llama.cpp binary fail
 
   const modelPath = join(tempDir, "model.gguf");
   const binaryPath = join(tempDir, "llama-server");
-  await writeFile(modelPath, "");
+  await writeFile(modelPath, "GGUF");
   await writeFile(binaryPath, "#!/bin/sh\necho 'missing shared library' >&2\nexit 126\n");
   await chmod(binaryPath, 0o755);
 
