@@ -84,8 +84,8 @@ Add `--sha256 <expected-hex-digest>` when the model publisher provides one, and
 `--binary-sha256 <expected-hex-digest>` when the compiled `llama-server` source
 has a checksum. The helper does not download models or binaries; it keeps the
 operator's chosen sources explicit and prints the install, ownership, checksum,
-and service-user read/execute-test commands needed before doctor or systemd
-restart.
+GGUF header, and service-user read/execute-test commands needed before doctor or
+systemd restart.
 The same values may live in `/etc/ray/ray.env` as
 `RAY_LLAMA_CPP_BINARY_SOURCE_PATH`, `RAY_LLAMA_CPP_BINARY_SHA256`,
 `RAY_MODEL_SOURCE_PATH`, and `RAY_MODEL_SHA256`; source/checksum CLI flags
@@ -93,8 +93,8 @@ override env-file values when both are present.
 Add `--commands-only` when you want reviewed shell commands without the
 explanatory staging summary.
 Add `--check-sources` when the source artifacts are already on the VPS and you
-want the helper to verify file access, binary startup, and any provided
-checksums before printing the staging plan.
+want the helper to verify file access, binary startup, GGUF header, and any
+provided checksums before printing the staging plan.
 Add `--apply` on the VPS after reviewing those source paths to verify and stage
 the configured `llama-server` and GGUF into their resolved target locations,
 then run the staged `llama-server --help` probe as the service identity.

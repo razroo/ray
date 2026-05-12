@@ -24,6 +24,7 @@ const PRINCIPAL_LOOKUP_MAX_BUFFER_BYTES = 16 * 1024;
 const BYTES_PER_MIB = 1024 * 1024;
 const FALLBACK_STATFS_BLOCK_SIZE = 4096;
 const MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB = 256;
+const GGUF_MAGIC = "GGUF";
 const LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS = 5;
 const LLAMA_CPP_BINARY_SMOKE_TIMEOUT_MS = LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS * 1000;
 const LLAMA_CPP_BINARY_SMOKE_MAX_BUFFER_BYTES = 64 * 1024;
@@ -362,6 +363,11 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
   )} | awk 'NR==2 {print $4}')"; test "\${available_mib:-0}" -ge "\${required_mib:-0}" || { printf '%s\\n' ${shellQuote(
     `Not enough free space in ${plan.modelDirectory}: keep at least ${MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB} MiB free after copying the GGUF.`,
   )} >&2; exit 1; }`;
+  const modelFormatPreflight = `test "$(head -c ${GGUF_MAGIC.length} -- ${shellQuote(sourcePath)})" = ${shellQuote(
+    GGUF_MAGIC,
+  )} || { printf '%s\\n' ${shellQuote(
+    `GGUF source does not start with the ${GGUF_MAGIC} header: ${sourcePath}`,
+  )} >&2; exit 1; }`;
   const commands = [
     `sudo install -d -m 0755 ${shellQuote(plan.binaryDirectory)}`,
     `sudo install -D -m 0755 -- ${shellQuote(binarySourcePath)} ${shellQuote(plan.binaryPath)}`,
@@ -369,6 +375,7 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
     `sudo -u ${shellQuote(plan.serviceUser)} timeout ${LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS}s ${shellQuote(plan.binaryPath)} --help >/dev/null`,
     `sudo install -d -m 0755 ${shellQuote(plan.modelDirectory)}`,
     modelStoragePreflight,
+    modelFormatPreflight,
     `sudo install -D -m 0640 -- ${shellQuote(sourcePath)} ${shellQuote(plan.modelPath)}`,
     `sudo chown ${shellQuote(owner)} ${shellQuote(plan.modelPath)}`,
     `sudo -u ${shellQuote(plan.serviceUser)} test -r ${shellQuote(plan.modelPath)}`,
@@ -569,6 +576,33 @@ async function calculateSha256(filePath: string): Promise<string> {
   return hash.digest("hex");
 }
 
+async function assertGgufMagicHeader(filePath: string, label: string): Promise<void> {
+  let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
+
+  try {
+    fileHandle = await open(filePath, "r");
+    const magic = Buffer.from(GGUF_MAGIC, "ascii");
+    const buffer = Buffer.alloc(magic.length);
+    const { bytesRead } = await fileHandle.read(buffer, 0, buffer.length, 0);
+
+    if (bytesRead < magic.length) {
+      throw new Error(`file is smaller than the ${GGUF_MAGIC} header`);
+    }
+
+    if (!buffer.equals(magic)) {
+      throw new Error(`expected ${GGUF_MAGIC} magic header`);
+    }
+  } catch (error) {
+    throw new Error(
+      `${label} is not a valid GGUF artifact at ${filePath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  } finally {
+    await fileHandle?.close().catch(() => undefined);
+  }
+}
+
 async function assertSha256(
   filePath: string,
   expectedSha256: string,
@@ -602,6 +636,7 @@ export async function checkModelStageSources(cwd: string, plan: ModelStagePlan):
   });
   await assertLlamaCppBinaryStarts(binarySourcePath, "llama-server source");
   await assertRegularReadableFile(modelSourcePath, "GGUF source");
+  await assertGgufMagicHeader(modelSourcePath, "GGUF source");
 
   if (plan.binarySha256) {
     await assertSha256(binarySourcePath, plan.binarySha256, "llama-server source");
@@ -804,6 +839,7 @@ export async function applyModelStagePlan(
     await assertModelStageStorageHeadroom(modelSourcePath, path.dirname(modelTargetPath));
   }
   await copyFileUnlessSame(modelSourcePath, modelTargetPath);
+  await assertGgufMagicHeader(modelTargetPath, "installed GGUF model");
   await chmod(modelTargetPath, 0o640);
   await chownIfNeeded(modelTargetPath, uid, gid);
   if (plan.sha256) {

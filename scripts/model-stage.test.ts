@@ -141,6 +141,7 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
     "sudo -u 'rayops' timeout 5s '/usr/local/bin/llama-server' --help >/dev/null",
     "sudo install -d -m 0755 '/var/lib/ray/models'",
     `required_mib="$(du -m './models/portable-1b.gguf' | awk 'NR==1 {print $1 + 256}')"; available_mib="$(df -Pm '/var/lib/ray/models' | awk 'NR==2 {print $4}')"; test "\${available_mib:-0}" -ge "\${required_mib:-0}" || { printf '%s\\n' 'Not enough free space in /var/lib/ray/models: keep at least 256 MiB free after copying the GGUF.' >&2; exit 1; }`,
+    `test "$(head -c 4 -- './models/portable-1b.gguf')" = 'GGUF' || { printf '%s\\n' 'GGUF source does not start with the GGUF header: ./models/portable-1b.gguf' >&2; exit 1; }`,
     "sudo install -D -m 0640 -- './models/portable-1b.gguf' '/var/lib/ray/models/portable-1b.gguf'",
     "sudo chown 'rayops:rayops' '/var/lib/ray/models/portable-1b.gguf'",
     "printf '%s  %s\\n' 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' '/var/lib/ray/models/portable-1b.gguf' | sha256sum -c -",
@@ -192,6 +193,8 @@ test("formatTextPlan prints an operator-ready staging plan", async () => {
   );
   assert.match(text, /target GGUF: \/var\/lib\/ray\/models\/qwen2\.5-0\.5b-instruct-q4_k_m\.gguf/);
   assert.match(text, /keep at least 256 MiB free after copying the GGUF/);
+  assert.match(text, /head -c 4/);
+  assert.match(text, /GGUF source does not start with the GGUF header/);
   assert.match(text, /sudo install -D -m 0640 -- '\/path\/to\/model\.gguf'/);
   assert.match(text, /Then run doctor on the VPS/);
 });
@@ -213,6 +216,7 @@ test("formatCommandPlan prints shell commands only", async () => {
     text,
     /sudo -u 'ray' timeout 5s '\/usr\/local\/bin\/llama-server' --help >\/dev\/null/,
   );
+  assert.match(text, /head -c 4 -- '\.\/model\.gguf'/);
   assert.match(text, /sudo -u 'ray' test -r/);
 });
 
@@ -225,7 +229,7 @@ test("checkModelStageSources verifies concrete artifact inputs", async (t) => {
   const binaryPath = path.join(tempDir, "llama-server");
   const modelPath = path.join(tempDir, "model.gguf");
   const binaryContents = "#!/bin/sh\nexit 0\n";
-  const modelContents = "gguf";
+  const modelContents = "GGUF";
   await writeFile(binaryPath, binaryContents, "utf8");
   await writeFile(modelPath, modelContents, "utf8");
   await chmod(binaryPath, 0o755);
@@ -253,7 +257,7 @@ test("checkModelStageSources rejects source binaries that fail the startup probe
   const binaryPath = path.join(tempDir, "llama-server");
   const modelPath = path.join(tempDir, "model.gguf");
   await writeFile(binaryPath, "#!/bin/sh\necho 'wrong architecture' >&2\nexit 126\n", "utf8");
-  await writeFile(modelPath, "gguf", "utf8");
+  await writeFile(modelPath, "GGUF", "utf8");
   await chmod(binaryPath, 0o755);
   await chmod(modelPath, 0o644);
 
@@ -271,6 +275,33 @@ test("checkModelStageSources rejects source binaries that fail the startup probe
   );
 });
 
+test("checkModelStageSources rejects model sources without a GGUF header", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-bad-gguf-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const binaryPath = path.join(tempDir, "llama-server");
+  const modelPath = path.join(tempDir, "model.gguf");
+  await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
+  await writeFile(modelPath, "NOPE", "utf8");
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o644);
+
+  const plan = await createModelStagePlan({
+    cwd: tempDir,
+    configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
+    env: {},
+    binarySourcePath: "./llama-server",
+    sourcePath: "./model.gguf",
+  });
+
+  await assert.rejects(
+    checkModelStageSources(tempDir, plan),
+    /GGUF source is not a valid GGUF artifact.*expected GGUF magic header/s,
+  );
+});
+
 test("checkModelStageSources rejects checksum mismatches", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-bad-sha-"));
   t.after(async () => {
@@ -280,7 +311,7 @@ test("checkModelStageSources rejects checksum mismatches", async (t) => {
   const binaryPath = path.join(tempDir, "llama-server");
   const modelPath = path.join(tempDir, "model.gguf");
   await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
-  await writeFile(modelPath, "gguf", "utf8");
+  await writeFile(modelPath, "GGUF", "utf8");
   await chmod(binaryPath, 0o755);
   await chmod(modelPath, 0o644);
 
@@ -326,7 +357,7 @@ test("applyModelStagePlan installs verified artifacts into the resolved target p
   const binaryTarget = path.join(tempDir, "target", "bin", "llama-server");
   const modelTarget = path.join(tempDir, "target", "models", "model.gguf");
   const binaryContents = "#!/bin/sh\nexit 0\n";
-  const modelContents = "gguf";
+  const modelContents = "GGUF";
   await mkdir(path.join(tempDir, "sources"), { recursive: true });
   await writeFile(binaryPath, binaryContents, "utf8");
   await writeFile(modelPath, modelContents, "utf8");
@@ -386,7 +417,7 @@ test("applyModelStagePlan rejects source binaries that fail the startup probe", 
   const modelTarget = path.join(tempDir, "target", "models", "model.gguf");
   await mkdir(path.join(tempDir, "sources"), { recursive: true });
   await writeFile(binaryPath, "#!/bin/sh\necho 'missing shared library' >&2\nexit 127\n", "utf8");
-  await writeFile(modelPath, "gguf", "utf8");
+  await writeFile(modelPath, "GGUF", "utf8");
   await chmod(binaryPath, 0o755);
   await chmod(modelPath, 0o644);
 
@@ -515,7 +546,7 @@ test("runModelStageCli can apply verified artifacts", async (t) => {
 
   await mkdir(path.join(tempDir, "sources"), { recursive: true });
   await writeFile(path.join(tempDir, "sources", "llama-server"), "#!/bin/sh\nexit 0\n", "utf8");
-  await writeFile(path.join(tempDir, "sources", "model.gguf"), "gguf", "utf8");
+  await writeFile(path.join(tempDir, "sources", "model.gguf"), "GGUF", "utf8");
   await chmod(path.join(tempDir, "sources", "llama-server"), 0o755);
 
   let stdout = "";
@@ -559,7 +590,7 @@ test("runModelStageCli can apply verified artifacts", async (t) => {
   assert.equal(parsed.plan.binaryPath, path.join(tempDir, "target", "bin", "llama-server"));
   assert.equal(
     await readFile(path.join(tempDir, "target", "models", "model.gguf"), "utf8"),
-    "gguf",
+    "GGUF",
   );
 });
 
@@ -572,7 +603,7 @@ test("runModelStageCli checks source artifacts before printing", async (t) => {
   const binaryPath = path.join(tempDir, "llama-server");
   const modelPath = path.join(tempDir, "model.gguf");
   await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
-  await writeFile(modelPath, "gguf", "utf8");
+  await writeFile(modelPath, "GGUF", "utf8");
   await chmod(binaryPath, 0o755);
   await chmod(modelPath, 0o644);
 
