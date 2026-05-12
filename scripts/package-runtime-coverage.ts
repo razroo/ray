@@ -710,6 +710,17 @@ async function validateWorkflow(
       });
     }
 
+    if (/\bbun\s+install\b/.test(line) && !line.includes("--frozen-lockfile")) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_bun_install_frozen_lockfile_missing",
+        workflowPath,
+        line: index + 1,
+        message:
+          "Workflow bun install commands must pass --frozen-lockfile so CI and deploy jobs use the checked-in Bun dependency graph.",
+      });
+    }
+
     if (isLocalHealthCurl(line) && !line.includes("--max-time")) {
       diagnostics.push({
         level: "error",
