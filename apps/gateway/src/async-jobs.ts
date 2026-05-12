@@ -42,6 +42,8 @@ const MAX_JOB_ERROR_DETAIL_STRING_CHARS = 4_096;
 const MAX_JOB_ERROR_DETAIL_TOTAL_CHARS = 64 * 1024;
 const MAX_JOB_ERROR_DETAIL_NODES = 512;
 const MAX_ASYNC_QUEUE_JOBS = 2_000;
+const MAX_ASYNC_QUEUE_RECOVERY_ENTRIES = 4_096;
+const MAX_ASYNC_QUEUE_RECOVERY_TEMP_REMOVALS = 2_048;
 const MAX_ASYNC_DISPATCH_CONCURRENCY = 8;
 const MAX_ASYNC_COMPLETED_TTL_MS = 604_800_000;
 const MAX_ASYNC_POLL_INTERVAL_MS = 60_000;
@@ -1282,11 +1284,45 @@ export class DurableInferenceQueue {
 
     const recoveredJobs: InferenceJobRecord[] = [];
     const recoveredJobPaths = new Map<string, string>();
+    let visitedEntries = 0;
+    let removedTempFiles = 0;
 
     for await (const entry of await fs.opendir(this.jobsDir)) {
+      visitedEntries += 1;
+      if (visitedEntries > MAX_ASYNC_QUEUE_RECOVERY_ENTRIES) {
+        throw new RayError(
+          `Async job recovery visited more than ${MAX_ASYNC_QUEUE_RECOVERY_ENTRIES} directory entries`,
+          {
+            code: "async_queue_recovery_limit_exceeded",
+            status: 503,
+            details: {
+              jobsDir: this.jobsDir,
+              visitedEntries,
+              maxEntries: MAX_ASYNC_QUEUE_RECOVERY_ENTRIES,
+            },
+          },
+        );
+      }
+
       const filePath = path.join(this.jobsDir, entry.name);
 
       if (entry.isFile() && entry.name.startsWith(ATOMIC_WRITE_TEMP_PREFIX)) {
+        removedTempFiles += 1;
+        if (removedTempFiles > MAX_ASYNC_QUEUE_RECOVERY_TEMP_REMOVALS) {
+          throw new RayError(
+            `Async job recovery found more than ${MAX_ASYNC_QUEUE_RECOVERY_TEMP_REMOVALS} stale temp files`,
+            {
+              code: "async_queue_recovery_limit_exceeded",
+              status: 503,
+              details: {
+                jobsDir: this.jobsDir,
+                removedTempFiles,
+                maxTempRemovals: MAX_ASYNC_QUEUE_RECOVERY_TEMP_REMOVALS,
+              },
+            },
+          );
+        }
+
         await this.removeStaleTempFile(filePath);
         continue;
       }

@@ -11,6 +11,25 @@ import { RayError, type ModelProvider } from "@razroo/ray-core";
 import { DurableInferenceQueue } from "./async-jobs.js";
 
 const PERSISTED_JOB_FILE_LIMIT_BYTES = 2 * 1024 * 1024;
+const ASYNC_QUEUE_RECOVERY_ENTRY_LIMIT = 4_096;
+const ASYNC_QUEUE_RECOVERY_TEMP_REMOVAL_LIMIT = 2_048;
+
+async function writeFilesInBatches(
+  directory: string,
+  count: number,
+  toFileName: (index: number) => string,
+  body: string,
+): Promise<void> {
+  const batchSize = 128;
+
+  for (let offset = 0; offset < count; offset += batchSize) {
+    await Promise.all(
+      Array.from({ length: Math.min(batchSize, count - offset) }, (_value, index) =>
+        writeFile(join(directory, toFileName(offset + index)), body, "utf8"),
+      ),
+    );
+  }
+}
 
 async function waitFor<T>(
   load: () => Promise<T | undefined>,
@@ -1034,6 +1053,89 @@ test("durable inference queue removes stale atomic-write temp files during recov
     );
 
     await queue.stop();
+  } finally {
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});
+
+test("durable inference queue bounds recovery directory scans", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-recovery-scan-"));
+
+  try {
+    const jobsDir = join(storageDir, "jobs");
+    await mkdir(jobsDir, { recursive: true });
+    await writeFilesInBatches(
+      jobsDir,
+      ASYNC_QUEUE_RECOVERY_ENTRY_LIMIT + 1,
+      (index) => `ignored-${index}.txt`,
+      "ignored",
+    );
+
+    const config = mergeConfig(createDefaultConfig("tiny"), {
+      asyncQueue: {
+        enabled: true,
+        storageDir,
+      },
+    });
+    const runtime = createRayRuntime(config);
+    const logger = new Logger("test", "error");
+    const queue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+    });
+
+    await assert.rejects(
+      () => queue.start(),
+      (error: unknown) =>
+        error instanceof RayError &&
+        error.code === "async_queue_recovery_limit_exceeded" &&
+        error.status === 503 &&
+        /visited more than 4096 directory entries/.test(error.message) &&
+        (error.details as { maxEntries?: number }).maxEntries === ASYNC_QUEUE_RECOVERY_ENTRY_LIMIT,
+    );
+  } finally {
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});
+
+test("durable inference queue bounds stale temp cleanup during recovery", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-recovery-temp-"));
+
+  try {
+    const jobsDir = join(storageDir, "jobs");
+    await mkdir(jobsDir, { recursive: true });
+    await writeFilesInBatches(
+      jobsDir,
+      ASYNC_QUEUE_RECOVERY_TEMP_REMOVAL_LIMIT + 1,
+      (index) => `.tmp-job_stale_${index}.json-deadbeef`,
+      "partial",
+    );
+
+    const config = mergeConfig(createDefaultConfig("tiny"), {
+      asyncQueue: {
+        enabled: true,
+        storageDir,
+      },
+    });
+    const runtime = createRayRuntime(config);
+    const logger = new Logger("test", "error");
+    const queue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+    });
+
+    await assert.rejects(
+      () => queue.start(),
+      (error: unknown) =>
+        error instanceof RayError &&
+        error.code === "async_queue_recovery_limit_exceeded" &&
+        error.status === 503 &&
+        /found more than 2048 stale temp files/.test(error.message) &&
+        (error.details as { maxTempRemovals?: number }).maxTempRemovals ===
+          ASYNC_QUEUE_RECOVERY_TEMP_REMOVAL_LIMIT,
+    );
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }
