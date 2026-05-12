@@ -1014,6 +1014,34 @@ test("diagnoseConfig warns when async queue storage is not durable", () => {
   );
 });
 
+test("diagnoseConfig warns when async callbacks bypass network guardrails", () => {
+  const config = mergeConfig(createDefaultConfig("1b"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir: "/var/lib/ray/async-queue",
+      callbackAllowPrivateNetwork: true,
+      callbackAllowedHosts: ["callback.internal", "*.trusted.example"],
+    },
+  });
+
+  const diagnostics = diagnoseConfig(config, process.env);
+  const privateBypass = diagnostics.find(
+    (diagnostic) => diagnostic.code === "async_callback_private_network_allowed",
+  );
+  const trustedHosts = diagnostics.find(
+    (diagnostic) => diagnostic.code === "async_callback_hosts_allowlisted",
+  );
+
+  assert.ok(privateBypass);
+  assert.equal(privateBypass.level, "warn");
+  assert.match(privateBypass.message, /callbackAllowPrivateNetwork/);
+  assert.match(privateBypass.message, /callbackAllowedHosts/);
+  assert.ok(trustedHosts);
+  assert.equal(trustedHosts.level, "warn");
+  assert.match(trustedHosts.message, /2 host pattern/);
+  assert.match(trustedHosts.message, /bypass DNS\/network address blocking/);
+});
+
 test("diagnoseConfig errors when async queue storage is below the reserved headroom", () => {
   const config = mergeConfig(createDefaultConfig("1b"), {
     asyncQueue: {

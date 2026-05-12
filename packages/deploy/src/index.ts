@@ -1632,6 +1632,23 @@ export function diagnoseConfig(
   }
 
   if (config.asyncQueue.enabled) {
+    if (config.asyncQueue.callbackAllowPrivateNetwork) {
+      diagnostics.push({
+        level: "warn",
+        code: "async_callback_private_network_allowed",
+        message:
+          "asyncQueue.callbackAllowPrivateNetwork is enabled. Public VPS async queues should keep private, local, and non-global callback targets blocked; use callbackAllowedHosts for specific trusted callback hosts instead of a global private-network bypass.",
+      });
+    }
+
+    if (config.asyncQueue.callbackAllowedHosts.length > 0) {
+      diagnostics.push({
+        level: "warn",
+        code: "async_callback_hosts_allowlisted",
+        message: `asyncQueue.callbackAllowedHosts trusts ${config.asyncQueue.callbackAllowedHosts.length} host pattern(s). Matching callback hosts bypass DNS/network address blocking, so keep the list limited to operator-owned callback endpoints.`,
+      });
+    }
+
     if (!path.isAbsolute(config.asyncQueue.storageDir)) {
       diagnostics.push({
         level: "warn",
