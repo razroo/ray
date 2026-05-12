@@ -162,6 +162,8 @@ You can also put those staging inputs in `/etc/ray/ray.env` as
 override env-file values.
 Use `--commands-only` when you want reviewed shell commands without the
 explanatory staging summary.
+Use `--check-sources` when the source artifacts are already on the VPS and you
+want the helper to verify them before printing the staging plan.
 
 Set `RAY_AUTH_API_KEY_ENV` when an existing secret manager or deployment workflow
 uses a different environment variable for the Bearer keys.

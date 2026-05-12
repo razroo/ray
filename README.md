@@ -307,6 +307,8 @@ include `RAY_LLAMA_CPP_BINARY_SOURCE_PATH`, `RAY_LLAMA_CPP_BINARY_SHA256`,
 `RAY_MODEL_SOURCE_PATH`, and `RAY_MODEL_SHA256`; explicit CLI flags still win.
 Use `--commands-only` when you want reviewed shell commands without the
 explanatory staging summary.
+Use `--check-sources` to fail early when the local `llama-server` or GGUF source
+path is missing, unreadable, or not executable before reviewing the plan.
 
 Deployment walkthrough: [examples/deploy/vps/README.md](examples/deploy/vps/README.md).
 

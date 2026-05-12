@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  checkModelStageSources,
   createModelStagePlan,
   formatCommandPlan,
   formatTextPlan,
@@ -35,6 +36,7 @@ test("parseArgs accepts strict model staging options", () => {
     "./models/local.gguf",
     "--sha256",
     digest,
+    "--check-sources",
     "--json",
   ]);
 
@@ -47,6 +49,7 @@ test("parseArgs accepts strict model staging options", () => {
   assert.equal(args.binarySha256, binaryDigest);
   assert.equal(args.sourcePath, "./models/local.gguf");
   assert.equal(args.sha256, digest);
+  assert.equal(args.checkSources, true);
   assert.equal(args.json, true);
 });
 
@@ -173,6 +176,40 @@ test("formatCommandPlan prints shell commands only", async () => {
   assert.match(text, /sudo -u 'ray' test -r/);
 });
 
+test("checkModelStageSources verifies concrete artifact inputs", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-sources-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const binaryPath = path.join(tempDir, "llama-server");
+  const modelPath = path.join(tempDir, "model.gguf");
+  await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
+  await writeFile(modelPath, "gguf", "utf8");
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o644);
+
+  const plan = await createModelStagePlan({
+    cwd: tempDir,
+    configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
+    env: {},
+    binarySourcePath: "./llama-server",
+    sourcePath: "./model.gguf",
+  });
+
+  await assert.doesNotReject(checkModelStageSources(tempDir, plan));
+});
+
+test("checkModelStageSources rejects missing concrete artifact inputs", async () => {
+  const plan = await createModelStagePlan({
+    cwd: repoRoot,
+    configPath: "./examples/config/ray.sub1b.public.json",
+    env: {},
+  });
+
+  await assert.rejects(checkModelStageSources(repoRoot, plan), /--binary-source/);
+});
+
 test("runModelStageCli loads ray env file overrides", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-"));
   t.after(async () => {
@@ -246,4 +283,44 @@ test("runModelStageCli can print commands only", async () => {
   assert.doesNotMatch(stdout, /Ray llama\.cpp artifact staging plan/);
   assert.match(stdout, /^sudo install -d -m 0755/);
   assert.match(stdout, /sudo install -D -m 0640 -- '\.\/local-1b-q4\.gguf'/);
+});
+
+test("runModelStageCli checks source artifacts before printing", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-cli-sources-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const binaryPath = path.join(tempDir, "llama-server");
+  const modelPath = path.join(tempDir, "model.gguf");
+  await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
+  await writeFile(modelPath, "gguf", "utf8");
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o644);
+
+  let stdout = "";
+  let stderr = "";
+  const exitCode = await runModelStageCli(
+    [
+      "--cwd",
+      tempDir,
+      "--config",
+      path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
+      "--binary-source",
+      "./llama-server",
+      "--source",
+      "./model.gguf",
+      "--check-sources",
+      "--commands-only",
+    ],
+    {
+      stdout: { write: (chunk: string) => (stdout += chunk) },
+      stderr: { write: (chunk: string) => (stderr += chunk) },
+    },
+    {},
+  );
+
+  assert.equal(exitCode, 0);
+  assert.equal(stderr, "");
+  assert.match(stdout, /sudo install -D -m 0755 -- '\.\/llama-server'/);
 });

@@ -1,4 +1,5 @@
-import { open } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, open, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadRayConfig } from "../packages/config/src/index.ts";
@@ -30,6 +31,7 @@ export interface ModelStageArgs {
   sha256?: string;
   json: boolean;
   commandsOnly: boolean;
+  checkSources: boolean;
   help: boolean;
 }
 
@@ -71,6 +73,7 @@ Options:
   --binary-sha256 <hex>    Expected SHA-256 for the installed llama-server binary.
   --source <path>          Local GGUF path to install into the configured model path.
   --sha256 <hex>           Expected SHA-256 for the installed GGUF.
+  --check-sources          Verify source artifacts exist before printing the plan.
   --commands-only          Print only shell commands, one per line.
   --json                   Print machine-readable staging plan JSON.
   -h, --help               Show this help.
@@ -154,6 +157,7 @@ export function parseArgs(argv: string[]): ModelStageArgs {
     configPath: DEFAULT_CONFIG_PATH,
     json: false,
     commandsOnly: false,
+    checkSources: false,
     help: false,
   };
 
@@ -230,6 +234,11 @@ export function parseArgs(argv: string[]): ModelStageArgs {
 
     if (current === "--commands-only") {
       args.commandsOnly = true;
+      continue;
+    }
+
+    if (current === "--check-sources") {
+      args.checkSources = true;
       continue;
     }
 
@@ -464,6 +473,49 @@ export function formatCommandPlan(plan: ModelStagePlan): string {
   return plan.commands.join("\n");
 }
 
+function resolveSourceCheckPath(cwd: string, sourcePath: string): string {
+  return path.isAbsolute(sourcePath) ? sourcePath : path.resolve(cwd, sourcePath);
+}
+
+async function assertRegularReadableFile(filePath: string, label: string): Promise<void> {
+  const stats = await stat(filePath).catch((error: unknown) => {
+    throw new Error(
+      `${label} was not found at ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+
+  if (!stats.isFile()) {
+    throw new Error(`${label} must be a regular file: ${filePath}`);
+  }
+
+  await access(filePath, constants.R_OK).catch((error: unknown) => {
+    throw new Error(
+      `${label} is not readable at ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+}
+
+export async function checkModelStageSources(cwd: string, plan: ModelStagePlan): Promise<void> {
+  if (!plan.binarySourcePath) {
+    throw new Error(`source checks require --binary-source or ${BINARY_SOURCE_ENV}`);
+  }
+
+  if (!plan.sourcePath) {
+    throw new Error(`source checks require --source or ${MODEL_SOURCE_ENV}`);
+  }
+
+  const binarySourcePath = resolveSourceCheckPath(cwd, plan.binarySourcePath);
+  const modelSourcePath = resolveSourceCheckPath(cwd, plan.sourcePath);
+
+  await assertRegularReadableFile(binarySourcePath, "llama-server source");
+  await access(binarySourcePath, constants.X_OK).catch((error: unknown) => {
+    throw new Error(
+      `llama-server source is not executable at ${binarySourcePath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+  await assertRegularReadableFile(modelSourcePath, "GGUF source");
+}
+
 export async function runModelStageCli(
   argv = process.argv.slice(2),
   io: Pick<NodeJS.Process, "stdout" | "stderr"> = process,
@@ -491,6 +543,10 @@ export async function runModelStageCli(
       ...(args.sourcePath ? { sourcePath: args.sourcePath } : {}),
       ...(args.sha256 ? { sha256: args.sha256 } : {}),
     });
+
+    if (args.checkSources) {
+      await checkModelStageSources(cwd, plan);
+    }
 
     const output = args.json
       ? JSON.stringify(plan, null, 2)
