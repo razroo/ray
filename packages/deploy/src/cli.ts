@@ -402,12 +402,15 @@ export async function runCli(argv: string[]): Promise<void> {
   };
   const env = await loadEnvironment(resolvedOptions);
   const envRuntimeBinary = readNonEmptyEnvValue(env.RAY_GATEWAY_RUNTIME_BINARY);
-  const envServiceUser = parseOptionalServiceUserEnv(env.RAY_DEPLOY_SERVICE_USER);
+  const envServiceUser =
+    resolvedOptions.user === undefined
+      ? parseOptionalServiceUserEnv(env.RAY_DEPLOY_SERVICE_USER)
+      : undefined;
   const envDomain = readNonEmptyEnvValue(env.RAY_DEPLOY_DOMAIN);
-  const envMemoryBudgetMiB = parseOptionalPositiveIntegerEnv(
-    env.RAY_DEPLOY_MEMORY_MIB,
-    "RAY_DEPLOY_MEMORY_MIB",
-  );
+  const envMemoryBudgetMiB =
+    resolvedOptions.memoryBudgetMiB === undefined
+      ? parseOptionalPositiveIntegerEnv(env.RAY_DEPLOY_MEMORY_MIB, "RAY_DEPLOY_MEMORY_MIB")
+      : undefined;
   const deploymentOptions: CliOptions & { domain: string; user: string } = {
     ...resolvedOptions,
     user: resolvedOptions.user ?? envServiceUser ?? "ray",

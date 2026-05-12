@@ -460,6 +460,44 @@ test("runCli explicit service user overrides env-file service user", async (t) =
   assert.doesNotMatch(rendered, /^User=env_ray$/m);
 });
 
+test("runCli explicit service user ignores malformed env-file service user", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-user-flag-invalid-env-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(
+    envFile,
+    ["RAY_API_KEYS=test-key", "RAY_DEPLOY_SERVICE_USER=ray;root", ""].join("\n"),
+    "utf8",
+  );
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli([
+    "render",
+    "--cwd",
+    ".",
+    "--config",
+    "./examples/config/ray.1b.generic.public.json",
+    "--ray-env-file",
+    envFile,
+    "--memory-mib",
+    "4096",
+    "--user",
+    "cli_ray",
+  ]);
+
+  assert.match(output.join("\n"), /^User=cli_ray$/m);
+});
+
 test("runCli rejects malformed env-file service users", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-user-invalid-"));
   t.after(async () => {
@@ -766,6 +804,44 @@ test("runCli explicit memory flag overrides env-file memory budget", async (t) =
   await writeFile(
     envFile,
     ["RAY_API_KEYS=test-key", "RAY_DEPLOY_MEMORY_MIB=8192", ""].join("\n"),
+    "utf8",
+  );
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli([
+    "validate",
+    "--cwd",
+    ".",
+    "--config",
+    "./examples/config/ray.1b.8gb.generic.public.json",
+    "--ray-env-file",
+    envFile,
+    "--memory-mib",
+    "4096",
+  ]);
+
+  const parsed = JSON.parse(output.join("\n"));
+  assert.equal(parsed.preflight.memoryBudgetMiB, 4096);
+  assert.equal(parsed.preflight.memoryBudgetSource, "override");
+});
+
+test("runCli explicit memory flag ignores malformed env-file memory budget", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-memory-flag-invalid-env-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(
+    envFile,
+    ["RAY_API_KEYS=test-key", "RAY_DEPLOY_MEMORY_MIB=8192MiB", ""].join("\n"),
     "utf8",
   );
 
