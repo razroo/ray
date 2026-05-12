@@ -503,7 +503,17 @@ test("renderEnvironmentFileExample documents gateway behavior switches", () => {
   });
   const envFile = renderEnvironmentFileExample(config);
 
+  assert.match(envFile, /RAY_PROFILE=1b/);
+  assert.match(envFile, /RAY_HOST=127\.0\.0\.1/);
+  assert.match(envFile, /RAY_PORT=3000/);
   assert.match(envFile, /RAY_MODEL_WARM_ON_BOOT=true/);
+  assert.match(envFile, /RAY_MODEL_BASE_URL=http:\/\/127\.0\.0\.1:8081/);
+  assert.match(envFile, /RAY_MODEL_REF=qwen2\.5-1\.5b-instruct-q4_k_m/);
+  assert.match(envFile, /RAY_MODEL_CONTEXT_WINDOW=8192/);
+  assert.match(envFile, /RAY_MODEL_MAX_OUTPUT_TOKENS=192/);
+  assert.match(envFile, /RAY_MODEL_TOKENS_PER_SECOND_TARGET=10/);
+  assert.match(envFile, /RAY_MODEL_MEMORY_CLASS_MIB=4096/);
+  assert.match(envFile, /RAY_MODEL_PREFERRED_CTX_SIZE=2048/);
   assert.match(envFile, /RAY_LOG_LEVEL=info/);
   assert.match(envFile, /RAY_TELEMETRY_SERVICE_NAME=ray-gateway/);
   assert.match(envFile, /RAY_TELEMETRY_INCLUDE_DEBUG_METRICS=true/);
@@ -516,6 +526,9 @@ test("renderEnvironmentFileExample documents gateway behavior switches", () => {
   assert.match(envFile, /RAY_CACHE_TTL_MS=120000/);
   assert.match(envFile, /RAY_CACHE_KEY_STRATEGY=input\+params/);
   assert.match(envFile, /RAY_GRACEFUL_DEGRADATION_ENABLED=true/);
+  assert.match(envFile, /RAY_DEGRADATION_QUEUE_DEPTH_THRESHOLD=10/);
+  assert.match(envFile, /RAY_DEGRADATION_MAX_PROMPT_CHARS=5000/);
+  assert.match(envFile, /RAY_DEGRADATION_MAX_TOKENS=128/);
   assert.match(envFile, /RAY_PROMPT_COMPILER_ENABLED=true/);
   assert.match(envFile, /RAY_PROMPT_COMPILER_COLLAPSE_WHITESPACE=true/);
   assert.match(envFile, /RAY_PROMPT_COMPILER_DEDUPE_REPEATED_LINES=true/);
@@ -565,6 +578,8 @@ test("renderEnvironmentFileExample documents configured upstream API key env", (
 
   assert.match(envFile, /RAY_UPSTREAM_API_KEY=replace-with-upstream-api-key/);
   assert.match(envFile, /RAY_MODEL_API_KEY_ENV=RAY_UPSTREAM_API_KEY/);
+  assert.match(envFile, /RAY_MODEL_BASE_URL=http:\/\/127\.0\.0\.1:8081/);
+  assert.match(envFile, /RAY_MODEL_REF=qwen2\.5-3b-instruct-q4_k_m/);
 });
 
 test("renderEnvironmentFileExample documents deploy-time overrides", () => {
@@ -582,8 +597,22 @@ test("renderEnvironmentFileExample documents portable llama.cpp model overrides"
   const envFile = renderEnvironmentFileExample(config);
 
   assert.match(envFile, /RAY_MODEL_ID=/);
+  assert.match(envFile, /RAY_MODEL_REF=/);
   assert.match(envFile, /RAY_MODEL_PATH=/);
+  assert.match(envFile, /RAY_MODEL_FAMILY=/);
+  assert.match(envFile, /RAY_MODEL_QUANTIZATION=/);
+  assert.match(envFile, /RAY_LLAMA_CPP_BASE_URL=/);
+  assert.match(envFile, /RAY_LLAMA_CPP_MODEL_REF=/);
+  assert.match(envFile, /RAY_LLAMA_CPP_MODEL_PATH=/);
+  assert.match(envFile, /RAY_LLAMA_CPP_BINARY_PATH=/);
+  assert.match(envFile, /RAY_LLAMA_CPP_ALIAS=/);
+  assert.match(envFile, /RAY_LLAMA_CPP_HOST=/);
+  assert.match(envFile, /RAY_LLAMA_CPP_PORT=/);
   assert.match(envFile, /RAY_LLAMA_CPP_CTX_SIZE=/);
+  assert.match(envFile, /RAY_LLAMA_CPP_PARALLEL=/);
+  assert.match(envFile, /RAY_LLAMA_CPP_THREADS=/);
+  assert.match(envFile, /RAY_LLAMA_CPP_THREADS_BATCH=/);
+  assert.match(envFile, /RAY_LLAMA_CPP_THREADS_HTTP=/);
   assert.match(envFile, /RAY_LLAMA_CPP_BATCH_SIZE=/);
   assert.match(envFile, /RAY_LLAMA_CPP_UBATCH_SIZE=/);
   assert.match(envFile, /RAY_LLAMA_CPP_CACHE_REUSE=/);
@@ -2283,7 +2312,9 @@ test("loadAndDiagnoseDeployment reports async queue storage headroom from the ne
     configPath,
   });
 
-  const diagnostic = inspected.diagnostics.find((entry) => entry.code === "async_queue_storage_ok");
+  const diagnostic = inspected.diagnostics.find(
+    (entry) => entry.code === "async_queue_storage_ok" || entry.code === "async_queue_storage_low",
+  );
   assert.ok(diagnostic);
   assert.match(diagnostic.message, new RegExp(tempDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(diagnostic.message, /asyncQueue\.minFreeStorageMiB/);

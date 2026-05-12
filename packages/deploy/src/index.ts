@@ -1465,6 +1465,9 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
   lines.push(`# RAY_GATEWAY_RUNTIME_BINARY=${DEFAULT_GATEWAY_RUNTIME_BINARY}`);
 
   lines.push("# Optional gateway behavior switches:");
+  lines.push(`# RAY_PROFILE=${config.profile}`);
+  lines.push(`# RAY_HOST=${config.server.host}`);
+  lines.push(`# RAY_PORT=${config.server.port}`);
   lines.push(`# RAY_LOG_LEVEL=${config.telemetry.logLevel}`);
   lines.push(`# RAY_TELEMETRY_SERVICE_NAME=${config.telemetry.serviceName}`);
   lines.push(`# RAY_TELEMETRY_INCLUDE_DEBUG_METRICS=${config.telemetry.includeDebugMetrics}`);
@@ -1478,7 +1481,23 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
   ) {
     lines.push(`# RAY_MODEL_API_KEY_ENV=${config.model.adapter.apiKeyEnv}`);
   }
+  if (
+    config.model.adapter.kind === "openai-compatible" ||
+    config.model.adapter.kind === "llama.cpp"
+  ) {
+    lines.push(`# RAY_MODEL_BASE_URL=${config.model.adapter.baseUrl}`);
+    lines.push(`# RAY_MODEL_REF=${config.model.adapter.modelRef}`);
+  }
   lines.push(`# RAY_MODEL_WARM_ON_BOOT=${config.model.warmOnBoot}`);
+  lines.push(`# RAY_MODEL_CONTEXT_WINDOW=${config.model.contextWindow}`);
+  lines.push(`# RAY_MODEL_MAX_OUTPUT_TOKENS=${config.model.maxOutputTokens}`);
+  if (config.model.operational) {
+    lines.push(
+      `# RAY_MODEL_TOKENS_PER_SECOND_TARGET=${config.model.operational.tokensPerSecondTarget}`,
+    );
+    lines.push(`# RAY_MODEL_MEMORY_CLASS_MIB=${config.model.operational.memoryClassMiB}`);
+    lines.push(`# RAY_MODEL_PREFERRED_CTX_SIZE=${config.model.operational.preferredCtxSize}`);
+  }
   lines.push(`# RAY_REQUEST_BODY_LIMIT_BYTES=${config.server.requestBodyLimitBytes}`);
   lines.push(`# RAY_ASYNC_QUEUE_ENABLED=${config.asyncQueue.enabled}`);
   lines.push(`# RAY_CACHE_ENABLED=${config.cache.enabled}`);
@@ -1486,6 +1505,11 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
   lines.push(`# RAY_CACHE_TTL_MS=${config.cache.ttlMs}`);
   lines.push(`# RAY_CACHE_KEY_STRATEGY=${config.cache.keyStrategy}`);
   lines.push(`# RAY_GRACEFUL_DEGRADATION_ENABLED=${config.gracefulDegradation.enabled}`);
+  lines.push(
+    `# RAY_DEGRADATION_QUEUE_DEPTH_THRESHOLD=${config.gracefulDegradation.queueDepthThreshold}`,
+  );
+  lines.push(`# RAY_DEGRADATION_MAX_PROMPT_CHARS=${config.gracefulDegradation.maxPromptChars}`);
+  lines.push(`# RAY_DEGRADATION_MAX_TOKENS=${config.gracefulDegradation.degradeToMaxTokens}`);
   lines.push(`# RAY_PROMPT_COMPILER_ENABLED=${config.promptCompiler.enabled}`);
   lines.push(
     `# RAY_PROMPT_COMPILER_COLLAPSE_WHITESPACE=${config.promptCompiler.collapseWhitespace}`,
@@ -1541,10 +1565,19 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
     lines.push(`# RAY_MODEL_PATH=${config.model.adapter.launchProfile.modelPath}`);
     lines.push(`# RAY_MODEL_FAMILY=${config.model.family}`);
     lines.push(`# RAY_MODEL_QUANTIZATION=${config.model.quantization}`);
+    lines.push(`# RAY_LLAMA_CPP_BASE_URL=${config.model.adapter.baseUrl}`);
+    lines.push(`# RAY_LLAMA_CPP_MODEL_REF=${config.model.adapter.modelRef}`);
+    lines.push(`# RAY_LLAMA_CPP_MODEL_PATH=${config.model.adapter.launchProfile.modelPath}`);
     lines.push(`# RAY_LLAMA_CPP_BINARY_PATH=${config.model.adapter.launchProfile.binaryPath}`);
+    lines.push(`# RAY_LLAMA_CPP_ALIAS=${config.model.adapter.launchProfile.alias ?? ""}`);
+    lines.push(`# RAY_LLAMA_CPP_HOST=${config.model.adapter.launchProfile.host}`);
+    lines.push(`# RAY_LLAMA_CPP_PORT=${config.model.adapter.launchProfile.port}`);
     lines.push(`# RAY_LLAMA_CPP_CTX_SIZE=${config.model.adapter.launchProfile.ctxSize}`);
     lines.push(`# RAY_LLAMA_CPP_PARALLEL=${config.model.adapter.launchProfile.parallel}`);
     lines.push(`# RAY_LLAMA_CPP_THREADS=${config.model.adapter.launchProfile.threads}`);
+    lines.push(
+      `# RAY_LLAMA_CPP_THREADS_BATCH=${config.model.adapter.launchProfile.threadsBatch ?? ""}`,
+    );
     lines.push(`# RAY_LLAMA_CPP_THREADS_HTTP=${config.model.adapter.launchProfile.threadsHttp}`);
     lines.push(`# RAY_LLAMA_CPP_BATCH_SIZE=${config.model.adapter.launchProfile.batchSize}`);
     lines.push(`# RAY_LLAMA_CPP_UBATCH_SIZE=${config.model.adapter.launchProfile.ubatchSize}`);
