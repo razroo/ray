@@ -3,14 +3,19 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const DEFAULT_ROOT_PACKAGE_JSON = "package.json";
+const DEFAULT_WORKFLOW_DIR = ".github/workflows";
 const MAX_CLI_ARGS = 8;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_PACKAGE_JSON_BYTES = 512 * 1024;
 const MAX_PACKAGE_JSON_FILES = 128;
+const MAX_WORKFLOW_BYTES = 512 * 1024;
+const MAX_WORKFLOW_FILES = 64;
 const skipDirectoryNames = new Set([".git", ".ray", "dist", "node_modules"]);
 const forbiddenLockfiles = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"] as const;
 const forbiddenPackageManagerPattern =
   /(?:^|[\s;&|()])(?:(?:pnpm|yarn|npx)(?:\s|$)|npm(?:\s+(?:ci|exec|install|publish|run|test)\b|\s*$))/;
+const forbiddenWorkflowPackageManagerPattern =
+  /(?:^|[\s:>"'`&;|()])(?:(?:pnpm|yarn|npx)(?:\s|$)|npm\s+(?:ci|exec|install|run|test)\b)/;
 
 export interface PackageRuntimeCoverageArgs {
   cwd: string;
@@ -23,14 +28,18 @@ export interface PackageRuntimeCoverageDiagnostic {
   code: string;
   message: string;
   packagePath?: string;
+  workflowPath?: string;
   scriptName?: string;
+  line?: number;
 }
 
 export interface PackageRuntimeCoverageResult {
+  kind: "package" | "workflow" | "lockfile";
   packagePath: string;
   packageName?: string;
   packageManager?: string;
   scriptCount: number;
+  workflowLineCount?: number;
   diagnostics: PackageRuntimeCoverageDiagnostic[];
   errorCount: number;
 }
@@ -38,13 +47,14 @@ export interface PackageRuntimeCoverageResult {
 export interface PackageRuntimeCoverageSummary {
   ok: boolean;
   packageCount: number;
+  workflowCount: number;
   scriptCount: number;
   errorCount: number;
   forbiddenLockfiles: string[];
   results: PackageRuntimeCoverageResult[];
 }
 
-const HELP = `Validate Bun-first package runtime coverage.
+const HELP = `Validate Bun-first package and workflow runtime coverage.
 
 Usage:
   bun ./scripts/package-runtime-coverage.ts [options]
@@ -173,6 +183,37 @@ export async function collectPackageJsonPaths(cwd: string): Promise<string[]> {
   return packageJsonPaths;
 }
 
+async function collectWorkflowPaths(cwd: string): Promise<string[]> {
+  const workflowDirectory = path.join(cwd, DEFAULT_WORKFLOW_DIR);
+
+  try {
+    const entries = await readdir(workflowDirectory, { withFileTypes: true });
+    const workflowPaths = entries
+      .filter((entry) => entry.isFile() && /\.ya?ml$/i.test(entry.name))
+      .map((entry) => path.join(workflowDirectory, entry.name))
+      .sort();
+
+    if (workflowPaths.length > MAX_WORKFLOW_FILES) {
+      throw new Error(
+        `Repository must contain at most ${MAX_WORKFLOW_FILES} GitHub workflow files`,
+      );
+    }
+
+    return workflowPaths;
+  } catch (error) {
+    const code =
+      error !== null && typeof error === "object" && "code" in error
+        ? (error as { code?: string }).code
+        : undefined;
+
+    if (code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  }
+}
+
 async function readPackageJson(packageJsonPath: string): Promise<Record<string, unknown>> {
   const contents = await readFile(packageJsonPath, "utf8");
   if (Buffer.byteLength(contents, "utf8") > MAX_PACKAGE_JSON_BYTES) {
@@ -274,12 +315,47 @@ function validateScripts(
   return diagnostics;
 }
 
+async function validateWorkflow(
+  workflowPath: string,
+): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
+  const contents = await readFile(workflowPath, "utf8");
+  if (Buffer.byteLength(contents, "utf8") > MAX_WORKFLOW_BYTES) {
+    throw new Error(`GitHub workflow must be at most ${MAX_WORKFLOW_BYTES} bytes`);
+  }
+
+  const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
+  const lines = contents.split(/\r?\n/);
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith("#")) {
+      continue;
+    }
+
+    if (forbiddenWorkflowPackageManagerPattern.test(line)) {
+      diagnostics.push({
+        level: "error",
+        code: "non_bun_workflow_package_manager",
+        workflowPath,
+        line: index + 1,
+        message:
+          "Workflow command invokes pnpm/yarn/npx or npm install/run/test. Use bun, bunx, or a direct binary instead; npm publish is only allowed in release jobs.",
+      });
+    }
+  }
+
+  return {
+    lineCount: lines.length,
+    diagnostics,
+  };
+}
+
 export async function validatePackageRuntimeCoverage(options: {
   cwd: string;
   packageJsonPaths: string[];
 }): Promise<PackageRuntimeCoverageSummary> {
   const cwd = path.resolve(options.cwd);
   const results: PackageRuntimeCoverageResult[] = [];
+  const workflowPaths = await collectWorkflowPaths(cwd);
 
   for (const packageJsonPath of options.packageJsonPaths.map((filePath) =>
     path.resolve(filePath),
@@ -296,6 +372,7 @@ export async function validatePackageRuntimeCoverage(options: {
       ];
 
       results.push({
+        kind: "package",
         packagePath: packageJsonPath,
         ...(packageName ? { packageName } : {}),
         ...(packageManager ? { packageManager } : {}),
@@ -305,6 +382,7 @@ export async function validatePackageRuntimeCoverage(options: {
       });
     } catch (error) {
       results.push({
+        kind: "package",
         packagePath: packageJsonPath,
         scriptCount: 0,
         diagnostics: [
@@ -312,6 +390,35 @@ export async function validatePackageRuntimeCoverage(options: {
             level: "error",
             code: "package_json_invalid",
             packagePath: packageJsonPath,
+            message: error instanceof Error ? error.message : String(error),
+          },
+        ],
+        errorCount: 1,
+      });
+    }
+  }
+
+  for (const workflowPath of workflowPaths) {
+    try {
+      const { lineCount, diagnostics } = await validateWorkflow(workflowPath);
+      results.push({
+        kind: "workflow",
+        packagePath: workflowPath,
+        workflowLineCount: lineCount,
+        scriptCount: 0,
+        diagnostics,
+        errorCount: diagnostics.length,
+      });
+    } catch (error) {
+      results.push({
+        kind: "workflow",
+        packagePath: workflowPath,
+        scriptCount: 0,
+        diagnostics: [
+          {
+            level: "error",
+            code: "workflow_invalid",
+            workflowPath,
             message: error instanceof Error ? error.message : String(error),
           },
         ],
@@ -337,6 +444,7 @@ export async function validatePackageRuntimeCoverage(options: {
 
   if (lockfileDiagnostics.length > 0) {
     results.push({
+      kind: "lockfile",
       packagePath: cwd,
       scriptCount: 0,
       diagnostics: lockfileDiagnostics,
@@ -350,6 +458,7 @@ export async function validatePackageRuntimeCoverage(options: {
   return {
     ok: errorCount === 0,
     packageCount: options.packageJsonPaths.length,
+    workflowCount: workflowPaths.length,
     scriptCount,
     errorCount,
     forbiddenLockfiles: foundForbiddenLockfiles,
@@ -359,25 +468,34 @@ export async function validatePackageRuntimeCoverage(options: {
 
 export function formatTextSummary(cwd: string, summary: PackageRuntimeCoverageSummary): string {
   const lines = [
-    `Checked ${summary.packageCount} package manifest${summary.packageCount === 1 ? "" : "s"} for Bun-first runtime coverage:`,
+    `Checked ${summary.packageCount} package manifest${summary.packageCount === 1 ? "" : "s"} and ${summary.workflowCount} GitHub workflow${summary.workflowCount === 1 ? "" : "s"} for Bun-first runtime coverage:`,
   ];
 
   for (const result of summary.results) {
     const status = result.errorCount > 0 ? "FAIL" : "OK";
-    const name = result.packageName ? ` name=${result.packageName}` : "";
-    const packageManager = result.packageManager ? ` packageManager=${result.packageManager}` : "";
-    lines.push(
-      `- ${status} ${displayPath(cwd, result.packagePath)}${name}${packageManager} scripts=${result.scriptCount} errors=${result.errorCount}`,
-    );
+    if (result.kind === "workflow") {
+      lines.push(
+        `- ${status} ${displayPath(cwd, result.packagePath)} workflow lines=${result.workflowLineCount ?? 0} errors=${result.errorCount}`,
+      );
+    } else {
+      const name = result.packageName ? ` name=${result.packageName}` : "";
+      const packageManager = result.packageManager
+        ? ` packageManager=${result.packageManager}`
+        : "";
+      lines.push(
+        `- ${status} ${displayPath(cwd, result.packagePath)}${name}${packageManager} scripts=${result.scriptCount} errors=${result.errorCount}`,
+      );
+    }
 
     for (const diagnostic of result.diagnostics) {
       const script = diagnostic.scriptName ? ` script=${diagnostic.scriptName}` : "";
-      lines.push(`  error ${diagnostic.code}${script}: ${diagnostic.message}`);
+      const line = diagnostic.line ? ` line=${diagnostic.line}` : "";
+      lines.push(`  error ${diagnostic.code}${script}${line}: ${diagnostic.message}`);
     }
   }
 
   lines.push(
-    `Summary: packages=${summary.packageCount} scripts=${summary.scriptCount} errors=${summary.errorCount}${summary.ok ? "" : " (failed)"}`,
+    `Summary: packages=${summary.packageCount} workflows=${summary.workflowCount} scripts=${summary.scriptCount} errors=${summary.errorCount}${summary.ok ? "" : " (failed)"}`,
   );
 
   return lines.join("\n");

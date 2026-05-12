@@ -40,6 +40,7 @@ test("validatePackageRuntimeCoverage accepts current Bun-first workspace manifes
 
   assert.equal(summary.ok, true);
   assert.ok(summary.packageCount >= 10);
+  assert.ok(summary.workflowCount >= 1);
   assert.ok(summary.scriptCount > 0);
   assert.equal(summary.forbiddenLockfiles.length, 0);
   assert.ok(
@@ -58,7 +59,9 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   });
 
   const appDir = path.join(tempDir, "apps", "gateway");
+  const workflowDir = path.join(tempDir, ".github", "workflows");
   await mkdir(appDir, { recursive: true });
+  await mkdir(workflowDir, { recursive: true });
   const rootPackageJson = path.join(tempDir, "package.json");
   const appPackageJson = path.join(appDir, "package.json");
   await writeFile(
@@ -93,6 +96,20 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
     ),
   );
   await writeFile(path.join(tempDir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+  await writeFile(
+    path.join(workflowDir, "quality.yml"),
+    [
+      "name: Quality",
+      "jobs:",
+      "  quality:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - run: npm run build",
+      "      - run: yarn test",
+      "      - run: npm publish ./pkg.tgz --access public",
+      "",
+    ].join("\n"),
+  );
 
   const summary = await validatePackageRuntimeCoverage({
     cwd: tempDir,
@@ -106,6 +123,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("root_package_manager_not_bun"));
   assert.ok(codes.includes("root_bun_engine_missing"));
   assert.equal(codes.filter((code) => code === "non_bun_package_manager_script").length, 4);
+  assert.equal(codes.filter((code) => code === "non_bun_workflow_package_manager").length, 2);
   assert.ok(codes.includes("non_bun_lockfile_present"));
 });
 
@@ -117,6 +135,7 @@ test("formatTextSummary prints operator-readable runtime coverage results", asyn
   const text = formatTextSummary(repoRoot, summary);
 
   assert.match(text, /Checked 1 package manifest/);
+  assert.match(text, /GitHub workflow/);
   assert.match(text, /package\.json/);
   assert.match(text, /packageManager=bun@/);
   assert.match(text, /Summary: packages=1/);
@@ -132,7 +151,12 @@ test("runPackageRuntimeCoverageCli prints JSON coverage", async () => {
 
   assert.equal(code, 0);
   assert.equal(errorOutput, "");
-  const parsed = JSON.parse(output) as { ok?: boolean; packageCount?: number };
+  const parsed = JSON.parse(output) as {
+    ok?: boolean;
+    packageCount?: number;
+    workflowCount?: number;
+  };
   assert.equal(parsed.ok, true);
   assert.ok((parsed.packageCount ?? 0) >= 10);
+  assert.ok((parsed.workflowCount ?? 0) >= 1);
 });
