@@ -897,6 +897,9 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
     );
     lines.push(`# RAY_SCHEDULER_CONCURRENCY=${config.scheduler.concurrency}`);
     lines.push(`# RAY_SCHEDULER_MAX_INFLIGHT_TOKENS=${config.scheduler.maxInflightTokens}`);
+    lines.push(
+      `# RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB=${config.gracefulDegradation.memoryRssThresholdMiB}`,
+    );
   }
 
   if (config.asyncQueue.enabled) {

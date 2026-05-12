@@ -86,6 +86,7 @@ function createContext(model: ModelConfig, signal: AbortSignal): ProviderContext
         queueDepthThreshold: 4,
         maxPromptChars: 2_000,
         degradeToMaxTokens: 64,
+        memoryRssThresholdMiB: 512,
       },
       promptCompiler: {
         enabled: true,

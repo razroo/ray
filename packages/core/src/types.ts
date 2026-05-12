@@ -167,6 +167,7 @@ export interface GracefulDegradationConfig {
   queueDepthThreshold: number;
   maxPromptChars: number;
   degradeToMaxTokens: number;
+  memoryRssThresholdMiB: number;
 }
 
 export interface PromptCompilerConfig {
@@ -467,7 +468,19 @@ export interface TaskRoutingDiagnostics {
   matchedActiveRole: boolean;
 }
 
+export interface DegradationDiagnostics {
+  applied: boolean;
+  reasons: Array<"prompt_length" | "queue_depth" | "memory_pressure">;
+  requestedMaxTokens: number;
+  appliedMaxTokens: number;
+  queueDepth: number;
+  queueDepthThreshold: number;
+  processRssMiB?: number;
+  memoryRssThresholdMiB?: number;
+}
+
 export interface InferenceDiagnostics {
+  degradation?: DegradationDiagnostics;
   promptCompiler?: PromptCompilerDiagnostics;
   learnedOutputCap?: LearnedOutputCapDiagnostics;
   adaptiveTuning?: AdaptiveTuningDiagnostics;

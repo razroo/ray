@@ -271,5 +271,6 @@ Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 - Keep `cacheRamMiB` pinned for `llama.cpp`. The upstream default is too large for a 4 GB VPS.
 - Tune `scheduler.concurrency` conservatively. Tiny hardware collapses faster from overcommit than underutilization.
 - Keep `scheduler.requestTimeoutMs` slightly above `model.adapter.timeoutMs` so provider timeouts remain visible.
+- Use `RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB` when the gateway process needs to clamp output before RSS pressure becomes a swap or OOM problem.
 - Keep the cache bounded. Ray is designed to stay predictable under memory pressure.
 - Prefer quantized models that fit comfortably rather than models that technically boot.

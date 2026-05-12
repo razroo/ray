@@ -69,6 +69,7 @@ const MAX_ASYNC_POLL_INTERVAL_MS = 60_000;
 const MAX_CALLBACK_TIMEOUT_MS = 30_000;
 const MAX_CACHE_TTL_MS = 86_400_000;
 const MAX_GRACEFUL_DEGRADATION_PROMPT_CHARS = 65_536;
+const MAX_GRACEFUL_DEGRADATION_MEMORY_RSS_MIB = 65_536;
 const MAX_ADAPTIVE_SAMPLE_SIZE = 512;
 const MAX_ADAPTIVE_FAMILY_HISTORY_SIZE = 1_024;
 const MAX_ADAPTIVE_LATENCY_THRESHOLD_MS = 120_000;
@@ -330,6 +331,10 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
     env.RAY_DEGRADATION_MAX_TOKENS,
     "RAY_DEGRADATION_MAX_TOKENS",
   );
+  const degradationMemoryRssThresholdMiB = parsePositiveInteger(
+    env.RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB,
+    "RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB",
+  );
 
   if (isNonEmptyString(host)) {
     next.server.host = host;
@@ -558,6 +563,10 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
 
   if (degradationMaxTokens !== undefined) {
     next.gracefulDegradation.degradeToMaxTokens = degradationMaxTokens;
+  }
+
+  if (degradationMemoryRssThresholdMiB !== undefined) {
+    next.gracefulDegradation.memoryRssThresholdMiB = degradationMemoryRssThresholdMiB;
   }
 
   return next;
@@ -1239,6 +1248,11 @@ function validateConfig(config: RayConfig): RayConfig {
   assertPositiveInteger(
     config.gracefulDegradation.degradeToMaxTokens,
     "gracefulDegradation.degradeToMaxTokens",
+  );
+  assertPositiveIntegerAtMost(
+    config.gracefulDegradation.memoryRssThresholdMiB,
+    "gracefulDegradation.memoryRssThresholdMiB",
+    MAX_GRACEFUL_DEGRADATION_MEMORY_RSS_MIB,
   );
   if (config.gracefulDegradation.degradeToMaxTokens > config.model.maxOutputTokens) {
     throw new RayError(

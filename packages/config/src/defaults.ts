@@ -136,6 +136,7 @@ function createSub1bDefaults(machineClass: Sub1bMachineClass): RayConfig {
       queueDepthThreshold: machineClass === "cax11" ? 12 : 16,
       maxPromptChars: 6_000,
       degradeToMaxTokens: 128,
+      memoryRssThresholdMiB: 512,
     },
     promptCompiler: {
       enabled: true,
@@ -311,6 +312,7 @@ function create1bDefaults(machineClass: OneBMachineClass): RayConfig {
       queueDepthThreshold: is8gb ? 20 : 10,
       maxPromptChars: is8gb ? 8_000 : 5_000,
       degradeToMaxTokens: is8gb ? 160 : 128,
+      memoryRssThresholdMiB: is8gb ? 768 : 512,
     },
     promptCompiler: {
       enabled: true,
@@ -415,6 +417,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       queueDepthThreshold: 8,
       maxPromptChars: 4_000,
       degradeToMaxTokens: 96,
+      memoryRssThresholdMiB: 256,
     },
     promptCompiler: {
       enabled: true,
@@ -517,6 +520,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       queueDepthThreshold: 24,
       maxPromptChars: 8_000,
       degradeToMaxTokens: 192,
+      memoryRssThresholdMiB: 768,
     },
     promptCompiler: {
       enabled: true,
@@ -617,6 +621,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       queueDepthThreshold: 40,
       maxPromptChars: 12_000,
       degradeToMaxTokens: 256,
+      memoryRssThresholdMiB: 1_024,
     },
     promptCompiler: {
       enabled: true,

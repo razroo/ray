@@ -118,6 +118,7 @@ test("sub1b profile defaults to a bounded llama.cpp launch profile", () => {
   assert.equal(config.model.adapter.slotSnapshotTimeoutMs, 250);
   assert.equal(config.asyncQueue.maxJobs, 1_000);
   assert.equal(config.asyncQueue.completedTtlMs, 86_400_000);
+  assert.equal(config.gracefulDegradation.memoryRssThresholdMiB, 512);
   assert.equal(config.rateLimit.maxKeys, 4096);
   assert.equal(config.auth.enabled, false);
 });
@@ -138,6 +139,7 @@ test("1b profile defaults to a conservative llama.cpp launch profile", () => {
   assert.equal(config.model.adapter.launchProfile.parallel, 1);
   assert.equal(config.model.adapter.launchProfile.cacheRamMiB, 384);
   assert.equal(config.scheduler.concurrency, 1);
+  assert.equal(config.gracefulDegradation.memoryRssThresholdMiB, 512);
 });
 
 test("resolveAuthApiKeys parses comma and newline separated values", () => {

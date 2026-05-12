@@ -49,6 +49,59 @@ test("runtime snapshots config at construction", async () => {
   assert.equal(runtime.config.gracefulDegradation.maxPromptChars, 8);
 });
 
+test("runtime clamps output under configured process RSS pressure", async () => {
+  let observedMaxTokens = 0;
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "memory-pressure-model",
+    capabilities: {
+      streaming: false,
+      quantized: false,
+      localBackend: true,
+    },
+    async infer(request) {
+      observedMaxTokens = request.maxTokens;
+      return {
+        output: "degraded",
+      };
+    },
+  };
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    gracefulDegradation: {
+      enabled: true,
+      degradeToMaxTokens: 32,
+      memoryRssThresholdMiB: 1,
+    },
+  });
+  const runtime = createRayRuntime(config, {
+    provider,
+    memoryUsage: () => ({
+      rss: 2 * 1024 * 1024,
+      heapTotal: 0,
+      heapUsed: 0,
+      external: 0,
+      arrayBuffers: 0,
+    }),
+  });
+
+  const result = await runtime.infer({
+    input: "hello world",
+    maxTokens: 128,
+    cache: false,
+  });
+  const health = await runtime.health();
+  const metrics = runtime.metricsSnapshot();
+
+  assert.equal(observedMaxTokens, 32);
+  assert.equal(result.degraded, true);
+  assert.equal(result.diagnostics?.degradation?.applied, true);
+  assert.deepEqual(result.diagnostics?.degradation?.reasons, ["memory_pressure"]);
+  assert.equal(result.diagnostics?.degradation?.processRssMiB, 2);
+  assert.equal(result.diagnostics?.degradation?.memoryRssThresholdMiB, 1);
+  assert.equal(health.status, "degraded");
+  assert.equal(metrics.gauges["process.memory.pressure"], 1);
+});
+
 test("runtime returns chars and provider token usage explicitly", async () => {
   const provider: ModelProvider = {
     kind: "mock",

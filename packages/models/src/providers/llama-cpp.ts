@@ -1578,6 +1578,7 @@ export class LlamaCppProvider implements ModelProvider {
           queueDepthThreshold: 1,
           maxPromptChars: 1,
           degradeToMaxTokens: 1,
+          memoryRssThresholdMiB: 1,
         },
         promptCompiler: {
           enabled: false,

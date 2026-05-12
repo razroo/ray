@@ -136,6 +136,7 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
       RAY_ASYNC_QUEUE_COMPLETED_TTL_MS: "3600000",
       RAY_CACHE_MAX_ENTRIES: "128",
       RAY_DEGRADATION_MAX_PROMPT_CHARS: "4200",
+      RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB: "448",
     },
   });
 
@@ -165,6 +166,7 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
   assert.equal(loaded.config.asyncQueue.completedTtlMs, 3_600_000);
   assert.equal(loaded.config.cache.maxEntries, 128);
   assert.equal(loaded.config.gracefulDegradation.maxPromptChars, 4200);
+  assert.equal(loaded.config.gracefulDegradation.memoryRssThresholdMiB, 448);
 });
 
 test("loadRayConfig resolves relative llama.cpp launch paths against cwd", async () => {

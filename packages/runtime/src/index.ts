@@ -12,6 +12,7 @@ import {
   isNonEmptyString,
   toErrorMessage,
   type AdaptiveTuningDiagnostics,
+  type DegradationDiagnostics,
   type HealthSnapshot,
   type InferenceDiagnostics,
   type InferenceRequest,
@@ -78,6 +79,7 @@ const MAX_METADATA_KEY_CHARS = 128;
 const MAX_METADATA_VALUE_CHARS = 1_024;
 const MAX_STOP_SEQUENCES = 16;
 const MAX_STOP_SEQUENCE_CHARS = 256;
+const BYTES_PER_MIB = 1024 * 1024;
 const unsafeMetadataKeys = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_LEARNED_FAMILY_HISTORY_KEYS = 512;
 
@@ -87,6 +89,7 @@ export interface CreateRayRuntimeOptions {
   metrics?: RuntimeMetrics;
   scheduler?: RequestScheduler<ProviderResult>;
   cache?: TtlCache<CachedInferencePayload>;
+  memoryUsage?: () => NodeJS.MemoryUsage;
 }
 
 function assertRequestObject(request: InferenceRequest): void {
@@ -579,6 +582,72 @@ function applyQueueDepthDegradation(
   };
 }
 
+function applyMemoryPressureDegradation(
+  config: RayConfig,
+  request: NormalizedInferenceRequest,
+  processRssMiB: number,
+): { request: NormalizedInferenceRequest; degraded: boolean } {
+  if (!config.gracefulDegradation.enabled) {
+    return { request, degraded: false };
+  }
+
+  if (
+    processRssMiB < config.gracefulDegradation.memoryRssThresholdMiB ||
+    request.maxTokens <= config.gracefulDegradation.degradeToMaxTokens
+  ) {
+    return { request, degraded: false };
+  }
+
+  return {
+    request: {
+      ...request,
+      maxTokens: config.gracefulDegradation.degradeToMaxTokens,
+    },
+    degraded: true,
+  };
+}
+
+function buildDegradationDiagnostics(options: {
+  promptLengthDegraded: boolean;
+  queueDepthDegraded: boolean;
+  memoryPressureDegraded: boolean;
+  requestedMaxTokens: number;
+  appliedMaxTokens: number;
+  queueDepth: number;
+  queueDepthThreshold: number;
+  processRssMiB: number;
+  memoryRssThresholdMiB: number;
+}): DegradationDiagnostics {
+  const reasons: DegradationDiagnostics["reasons"] = [];
+
+  if (options.promptLengthDegraded) {
+    reasons.push("prompt_length");
+  }
+
+  if (options.queueDepthDegraded) {
+    reasons.push("queue_depth");
+  }
+
+  if (options.memoryPressureDegraded) {
+    reasons.push("memory_pressure");
+  }
+
+  return {
+    applied: reasons.length > 0,
+    reasons,
+    requestedMaxTokens: options.requestedMaxTokens,
+    appliedMaxTokens: options.appliedMaxTokens,
+    queueDepth: options.queueDepth,
+    queueDepthThreshold: options.queueDepthThreshold,
+    processRssMiB: options.processRssMiB,
+    memoryRssThresholdMiB: options.memoryRssThresholdMiB,
+  };
+}
+
+function bytesToMiB(value: number): number {
+  return Number((value / BYTES_PER_MIB).toFixed(2));
+}
+
 function buildCacheKey(config: RayConfig, request: NormalizedInferenceRequest): string {
   const payload =
     config.cache.keyStrategy === "input"
@@ -893,6 +962,7 @@ export class RayRuntime {
   private providerHealthInFlight: Promise<ProviderHealthSnapshot> | undefined;
   private activePreparations = 0;
   private readonly preparationQueue: PreparationQueueEntry[] = [];
+  private readonly memoryUsage: () => NodeJS.MemoryUsage;
 
   readonly config: RayConfig;
 
@@ -911,6 +981,7 @@ export class RayRuntime {
         maxEntries: this.config.cache.maxEntries,
         ttlMs: this.config.cache.ttlMs,
       });
+    this.memoryUsage = options.memoryUsage ?? process.memoryUsage;
   }
 
   async warm(): Promise<void> {
@@ -976,12 +1047,32 @@ export class RayRuntime {
       learnedCap.request,
       queueSnapshot.queueDepth,
     );
+    const processRssMiB = this.getProcessRssMiB();
+    const memoryPressureDegraded = applyMemoryPressureDegradation(
+      this.config,
+      queueDepthDegraded.request,
+      processRssMiB,
+    );
     const degraded = {
-      request: queueDepthDegraded.request,
-      degraded: promptLengthDegraded.degraded || queueDepthDegraded.degraded,
+      request: memoryPressureDegraded.request,
+      degraded:
+        promptLengthDegraded.degraded ||
+        queueDepthDegraded.degraded ||
+        memoryPressureDegraded.degraded,
     };
     const tuned = applyAdaptiveTuning(this.config, degraded.request, this.recentAdaptiveSamples);
     const runtimeDiagnostics: InferenceDiagnostics = {
+      degradation: buildDegradationDiagnostics({
+        promptLengthDegraded: promptLengthDegraded.degraded,
+        queueDepthDegraded: queueDepthDegraded.degraded,
+        memoryPressureDegraded: memoryPressureDegraded.degraded,
+        requestedMaxTokens: learnedCap.request.maxTokens,
+        appliedMaxTokens: degraded.request.maxTokens,
+        queueDepth: queueSnapshot.queueDepth,
+        queueDepthThreshold: this.config.gracefulDegradation.queueDepthThreshold,
+        processRssMiB,
+        memoryRssThresholdMiB: this.config.gracefulDegradation.memoryRssThresholdMiB,
+      }),
       promptCompiler: compiled.diagnostics,
       learnedOutputCap: learnedCap.diagnostics,
       adaptiveTuning: tuned.diagnostics,
@@ -993,6 +1084,7 @@ export class RayRuntime {
         : undefined;
 
     this.recordSchedulerMetrics(queueSnapshot);
+    this.recordMemoryPressureMetrics(processRssMiB);
     this.metrics.gauge("prompt.compiler.chars_saved", compiled.diagnostics.charsSaved);
     this.metrics.gauge(
       "learned_output_cap.max_tokens_ratio",
@@ -1144,12 +1236,20 @@ export class RayRuntime {
   async health(): Promise<HealthSnapshot> {
     const snapshot = this.scheduler.snapshot();
     const provider = await this.getProviderHealth();
+    const processRssMiB = this.getProcessRssMiB();
     const queueDegraded =
       snapshot.queueDepth >= this.config.gracefulDegradation.queueDepthThreshold;
+    const memoryDegraded =
+      this.config.gracefulDegradation.enabled &&
+      processRssMiB >= this.config.gracefulDegradation.memoryRssThresholdMiB;
+    this.recordMemoryPressureMetrics(processRssMiB);
     const status =
       provider.status === "unavailable"
         ? "unavailable"
-        : provider.status === "degraded" || provider.status === "warming" || queueDegraded
+        : provider.status === "degraded" ||
+            provider.status === "warming" ||
+            queueDegraded ||
+            memoryDegraded
           ? "degraded"
           : "ok";
 
@@ -1475,6 +1575,30 @@ export class RayRuntime {
     this.metrics.gauge("inference.in_flight", snapshot.inFlight);
     this.metrics.gauge("queue.tokens", snapshot.queuedTokens);
     this.metrics.gauge("inference.in_flight_tokens", snapshot.inFlightTokens);
+  }
+
+  private getProcessRssMiB(): number {
+    try {
+      const rss = this.memoryUsage().rss;
+      return Number.isFinite(rss) && rss > 0 ? bytesToMiB(rss) : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  private recordMemoryPressureMetrics(processRssMiB: number): void {
+    this.metrics.gauge("process.memory.rss_mib", processRssMiB);
+    this.metrics.gauge(
+      "process.memory.rss_threshold_mib",
+      this.config.gracefulDegradation.memoryRssThresholdMiB,
+    );
+    this.metrics.gauge(
+      "process.memory.pressure",
+      this.config.gracefulDegradation.enabled &&
+        processRssMiB >= this.config.gracefulDegradation.memoryRssThresholdMiB
+        ? 1
+        : 0,
+    );
   }
 
   private recordProviderMetrics(

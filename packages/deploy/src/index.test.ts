@@ -403,6 +403,7 @@ test("renderEnvironmentFileExample documents portable llama.cpp model overrides"
   assert.match(envFile, /RAY_MODEL_PATH=/);
   assert.match(envFile, /RAY_LLAMA_CPP_CTX_SIZE=/);
   assert.match(envFile, /RAY_SCHEDULER_MAX_INFLIGHT_TOKENS=/);
+  assert.match(envFile, /RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB=/);
 });
 
 test("renderEnvironmentFileExample documents async queue retention overrides", () => {
