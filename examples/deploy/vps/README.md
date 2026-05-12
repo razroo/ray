@@ -226,6 +226,7 @@ Optional repository variables:
 - `RAY_DEPLOY_INSTALL_CADDY` — set to `true` to install and reload the generated Caddyfile; requires `RAY_DEPLOY_DOMAIN`
 - `RAY_CONFIG_PATH` — repo-relative config path to install, defaults to `./examples/config/ray.sub1b.public.json`
 - `RAY_GATEWAY_RUNTIME_BINARY` — absolute JavaScript runtime path rendered into `ray-gateway.service`, defaults to `/usr/local/bin/bun`
+- `RAY_DEPLOY_READY_TIMEOUT_SECONDS` — bounded wait for `/readyz` after service restart before reloading Caddy, defaults to `120`
 - `RAY_AUTO_DEPLOY` — set to `true` if pushes to `main` should auto-deploy
 
 Use `RAY_CONFIG_JSON` when the live deployment needs host-specific or private
@@ -251,7 +252,8 @@ It also verifies the configured gateway runtime binary, which defaults to
 
 When `RAY_DEPLOY_INSTALL_CADDY=true`, the workflow installs Caddy if needed,
 validates the rendered Caddyfile before installing it to `/etc/caddy/Caddyfile`,
-and reloads Caddy after the local Ray health check passes.
+and reloads Caddy after both local Ray liveness and backend-aware readiness
+checks pass.
 
 Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 `workflow_dispatch` for manual deploys.

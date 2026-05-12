@@ -49,6 +49,7 @@ jobs:
       RAY_DEPLOY_INSTALL_CADDY: ${{ vars.RAY_DEPLOY_INSTALL_CADDY }}
       RAY_CONFIG_PATH_VAR: ${{ vars.RAY_CONFIG_PATH }}
       RAY_GATEWAY_RUNTIME_BINARY: ${{ vars.RAY_GATEWAY_RUNTIME_BINARY }}
+      RAY_DEPLOY_READY_TIMEOUT_SECONDS: ${{ vars.RAY_DEPLOY_READY_TIMEOUT_SECONDS }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -89,6 +90,7 @@ jobs:
           CONFIG_PATH="${CONFIG_INPUT:-${RAY_CONFIG_PATH_VAR:-./examples/config/ray.sub1b.public.json}}"
           DEPLOY_DOMAIN="${RAY_DEPLOY_DOMAIN:-ray.local}"
           INSTALL_CADDY="${RAY_DEPLOY_INSTALL_CADDY:-false}"
+          READY_TIMEOUT_SECONDS="${RAY_DEPLOY_READY_TIMEOUT_SECONDS:-120}"
 
           if [ -z "$DEPLOY_DOMAIN" ] || printf '%s' "$DEPLOY_DOMAIN" | grep -q '[[:space:]{}]'; then
             echo "::error::RAY_DEPLOY_DOMAIN must be a non-empty Caddy site address without whitespace or braces."
@@ -105,6 +107,11 @@ jobs:
 
           if [ "$INSTALL_CADDY" = "true" ] && [ -z "${RAY_DEPLOY_DOMAIN:-}" ]; then
             echo "::error::RAY_DEPLOY_DOMAIN is required when RAY_DEPLOY_INSTALL_CADDY=true."
+            exit 1
+          fi
+
+          if ! printf '%s' "$READY_TIMEOUT_SECONDS" | grep -Eq '^[1-9][0-9]{0,2}$'; then
+            echo "::error::RAY_DEPLOY_READY_TIMEOUT_SECONDS must be an integer from 1 to 999."
             exit 1
           fi
 
@@ -153,6 +160,7 @@ jobs:
           echo "health_port=$HEALTH_PORT" >> "$GITHUB_OUTPUT"
           echo "deploy_domain=$DEPLOY_DOMAIN" >> "$GITHUB_OUTPUT"
           echo "install_caddy=$INSTALL_CADDY" >> "$GITHUB_OUTPUT"
+          echo "ready_timeout_seconds=$READY_TIMEOUT_SECONDS" >> "$GITHUB_OUTPUT"
 
       - name: Set up SSH
         run: |
@@ -228,6 +236,7 @@ jobs:
           HEALTH_PORT: ${{ steps.settings.outputs.health_port }}
           DEPLOY_DOMAIN: ${{ steps.settings.outputs.deploy_domain }}
           INSTALL_CADDY: ${{ steps.settings.outputs.install_caddy }}
+          READY_TIMEOUT_SECONDS: ${{ steps.settings.outputs.ready_timeout_seconds }}
         run: |
           set -euo pipefail
           SSH_USER="${SSH_USER:-root}"
@@ -240,7 +249,7 @@ jobs:
           }
 
           ssh -i ~/.ssh/deploy_key "$TARGET" \
-            "CONFIG_SOURCE=$(shell_quote "$CONFIG_SOURCE") CONFIG_REL=$(shell_quote "$CONFIG_REL") CONFIG_B64=$(shell_quote "$CONFIG_B64") HEALTH_PORT=$(shell_quote "$HEALTH_PORT") DEPLOY_DOMAIN=$(shell_quote "$DEPLOY_DOMAIN") INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") GATEWAY_RUNTIME_BINARY=$(shell_quote "$GATEWAY_RUNTIME_BINARY") ENV_B64=$(shell_quote "$ENV_B64") bash -s" <<'ENDSSH'
+            "CONFIG_SOURCE=$(shell_quote "$CONFIG_SOURCE") CONFIG_REL=$(shell_quote "$CONFIG_REL") CONFIG_B64=$(shell_quote "$CONFIG_B64") HEALTH_PORT=$(shell_quote "$HEALTH_PORT") DEPLOY_DOMAIN=$(shell_quote "$DEPLOY_DOMAIN") INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") READY_TIMEOUT_SECONDS=$(shell_quote "$READY_TIMEOUT_SECONDS") GATEWAY_RUNTIME_BINARY=$(shell_quote "$GATEWAY_RUNTIME_BINARY") ENV_B64=$(shell_quote "$ENV_B64") bash -s" <<'ENDSSH'
           set -euo pipefail
 
           SUDO=""
@@ -326,8 +335,42 @@ jobs:
           fi
           $SUDO systemctl enable --now ray-gateway.service
           $SUDO systemctl restart ray-gateway.service
-          sleep 2
-          curl -fsS "http://127.0.0.1:${HEALTH_PORT}/livez"
+
+          live_deadline=$((SECONDS + 30))
+          live_status=1
+          while [ "$SECONDS" -lt "$live_deadline" ]; do
+            if curl -fsS "http://127.0.0.1:${HEALTH_PORT}/livez" >/dev/null; then
+              live_status=0
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$live_status" -ne 0 ]; then
+            echo "Ray gateway did not expose /livez within 30s."
+            $SUDO systemctl --no-pager --full status ray-gateway.service || true
+            exit 1
+          fi
+
+          ready_deadline=$((SECONDS + READY_TIMEOUT_SECONDS))
+          ready_status=1
+          while [ "$SECONDS" -lt "$ready_deadline" ]; do
+            if curl -fsS "http://127.0.0.1:${HEALTH_PORT}/readyz" >/dev/null; then
+              ready_status=0
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$ready_status" -ne 0 ]; then
+            echo "Ray gateway did not become backend-ready within ${READY_TIMEOUT_SECONDS}s."
+            $SUDO systemctl --no-pager --full status ray-gateway.service || true
+            if [ -f /etc/systemd/system/ray-llama-cpp.service ]; then
+              $SUDO systemctl --no-pager --full status ray-llama-cpp.service || true
+            fi
+            exit 1
+          fi
+
           if [ "${INSTALL_CADDY:-false}" = "true" ]; then
             $SUDO systemctl enable --now caddy
             $SUDO systemctl reload caddy
