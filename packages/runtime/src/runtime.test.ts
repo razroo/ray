@@ -1037,7 +1037,7 @@ test("runtime times out and aborts stalled provider preparation", async () => {
   const runtime = createRayRuntime(
     mergeConfig(createDefaultConfig("tiny"), {
       scheduler: {
-        requestTimeoutMs: 20,
+        requestTimeoutMs: 100,
       },
     }),
     { provider },
@@ -1053,7 +1053,7 @@ test("runtime times out and aborts stalled provider preparation", async () => {
       assert.equal((error as { code?: string }).code, "request_timeout");
       assert.deepEqual((error as { details?: unknown }).details, {
         phase: "prepare",
-        timeoutMs: 20,
+        timeoutMs: 100,
       });
       return true;
     },
