@@ -35,6 +35,7 @@ type HttpAdapterConfig = Pick<
 >;
 
 export const BACKEND_ERROR_BODY_LIMIT_BYTES = 4_096;
+export const BACKEND_REQUEST_BODY_LIMIT_BYTES = 1_048_576;
 export const BACKEND_RESPONSE_BODY_LIMIT_BYTES = 1_048_576;
 export const MAX_ADAPTER_TIMEOUT_MS = 120_000;
 export const MAX_ADAPTER_MODEL_REF_CHARS = 256;
@@ -526,6 +527,54 @@ function getDeclaredContentLength(response: Response): number | undefined {
   return /^\d+$/.test(normalized) && Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
+function getRequestBodyLength(body: RequestInit["body"]): number | undefined {
+  if (body === undefined || body === null) {
+    return 0;
+  }
+
+  if (typeof body === "string") {
+    return Buffer.byteLength(body, "utf8");
+  }
+
+  if (body instanceof ArrayBuffer) {
+    return body.byteLength;
+  }
+
+  if (ArrayBuffer.isView(body)) {
+    return body.byteLength;
+  }
+
+  if (body instanceof URLSearchParams) {
+    return Buffer.byteLength(body.toString(), "utf8");
+  }
+
+  if (typeof Blob !== "undefined" && body instanceof Blob) {
+    return body.size;
+  }
+
+  return undefined;
+}
+
+export function assertRequestBodyWithinLimit(
+  init: RequestInit,
+  limitBytes = BACKEND_REQUEST_BODY_LIMIT_BYTES,
+): void {
+  const bodyLength = getRequestBodyLength(init.body);
+
+  if (bodyLength === undefined || bodyLength <= limitBytes) {
+    return;
+  }
+
+  throw new RayError("The backend request body exceeded the configured size limit", {
+    code: "provider_request_too_large",
+    status: 413,
+    details: {
+      bodyBytes: bodyLength,
+      limitBytes,
+    },
+  });
+}
+
 export async function assertDeclaredResponseBodyWithinLimit(
   response: Response,
   limitBytes: number,
@@ -560,6 +609,7 @@ export async function adapterRequest(
 ): Promise<unknown> {
   assertHttpAdapterConfig(adapter);
   assertPositiveSafeIntegerAtMost(timeoutMs, "adapter.timeoutMs", MAX_ADAPTER_TIMEOUT_MS);
+  assertRequestBodyWithinLimit(init);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => {
