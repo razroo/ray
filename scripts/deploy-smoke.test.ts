@@ -80,6 +80,12 @@ test("smokeDeployConfigs renders every checked-in public deploy profile", async 
   assert.equal(summary.errorCount, 0);
   assert.ok(summary.configCount >= 7);
   assert.ok(summary.warningCount > 0);
+  assert.ok(summary.results.every((result) => result.gatewayMemorySwapMaxMiB === 128));
+  assert.ok(
+    summary.results.some(
+      (result) => result.hasLlamaCppService && result.llamaCppMemorySwapMaxMiB !== undefined,
+    ),
+  );
   assert.ok(
     summary.results.some(
       (result) =>
@@ -88,5 +94,7 @@ test("smokeDeployConfigs renders every checked-in public deploy profile", async 
         result.hasLlamaCppService,
     ),
   );
+  assert.match(formatTextSummary(cwd, summary), /gatewaySwapMax=128MiB/);
+  assert.match(formatTextSummary(cwd, summary), /llamaSwapMax=\d+MiB/);
   assert.match(formatTextSummary(cwd, summary), /Summary: warnings=\d+ errors=0/);
 });

@@ -19,6 +19,7 @@ export interface SystemdServiceOptions {
   nodeBinary?: string;
   memoryHighMiB?: number;
   memoryMaxMiB?: number;
+  memorySwapMaxMiB?: number;
   cpuWeight?: number;
 }
 
@@ -35,6 +36,7 @@ export interface LlamaCppServiceOptions {
   launchProfile: LlamaCppLaunchProfile;
   memoryHighMiB?: number;
   memoryMaxMiB?: number;
+  memorySwapMaxMiB?: number;
   cpuWeight?: number;
 }
 
@@ -47,6 +49,7 @@ export interface DeploymentDiagnostic {
 export interface SystemdMemoryControls {
   memoryHighMiB: number;
   memoryMaxMiB: number;
+  memorySwapMaxMiB: number;
 }
 
 export interface SystemdResourceControls extends SystemdMemoryControls {
@@ -194,7 +197,11 @@ const MAX_CADDY_REQUEST_BODY_LIMIT_BYTES = 1_048_576;
 const MAX_CADDY_UPSTREAM_TIMEOUT_MS = 120_000 + CADDY_UPSTREAM_TIMEOUT_GRACE_MS;
 const GATEWAY_MEMORY_HIGH_HEADROOM_MIB = 128;
 const GATEWAY_MEMORY_MAX_HEADROOM_MIB = 384;
+const GATEWAY_MEMORY_SWAP_MAX_MIB = 128;
 const LLAMA_CPP_MEMORY_HIGH_RATIO = 0.9;
+const LLAMA_CPP_SWAP_MAX_RATIO = 0.25;
+const LLAMA_CPP_MIN_SWAP_MAX_MIB = 256;
+const LLAMA_CPP_MAX_SWAP_MAX_MIB = MIN_SMALL_VPS_SWAP_MIB;
 const GATEWAY_CPU_WEIGHT = 200;
 const LLAMA_CPP_CPU_WEIGHT = 80;
 
@@ -457,10 +464,11 @@ function formatSystemdEnvironmentLine(name: string, value: string | number): str
 function formatSystemdMemoryControlLines(options: {
   memoryHighMiB?: number;
   memoryMaxMiB?: number;
+  memorySwapMaxMiB?: number;
 }): string {
-  const { memoryHighMiB, memoryMaxMiB } = options;
+  const { memoryHighMiB, memoryMaxMiB, memorySwapMaxMiB } = options;
 
-  if (memoryHighMiB === undefined && memoryMaxMiB === undefined) {
+  if (memoryHighMiB === undefined && memoryMaxMiB === undefined && memorySwapMaxMiB === undefined) {
     return "";
   }
 
@@ -472,6 +480,10 @@ function formatSystemdMemoryControlLines(options: {
     assertPositiveIntegerAtMost(memoryMaxMiB, "memoryMaxMiB", MAX_SYSTEMD_MEMORY_MIB);
   }
 
+  if (memorySwapMaxMiB !== undefined) {
+    assertPositiveIntegerAtMost(memorySwapMaxMiB, "memorySwapMaxMiB", MAX_SYSTEMD_MEMORY_MIB);
+  }
+
   if (memoryHighMiB !== undefined && memoryMaxMiB !== undefined && memoryHighMiB > memoryMaxMiB) {
     throw new Error("memoryHighMiB must be less than or equal to memoryMaxMiB");
   }
@@ -479,6 +491,7 @@ function formatSystemdMemoryControlLines(options: {
   return [
     ...(memoryHighMiB !== undefined ? [`MemoryHigh=${memoryHighMiB}M`] : []),
     ...(memoryMaxMiB !== undefined ? [`MemoryMax=${memoryMaxMiB}M`] : []),
+    ...(memorySwapMaxMiB !== undefined ? [`MemorySwapMax=${memorySwapMaxMiB}M`] : []),
   ].join("\n");
 }
 
@@ -1149,12 +1162,14 @@ export function estimateLlamaCppMemoryFit(
 function resolveGatewayMemoryControls(config: RayConfig): {
   memoryHighMiB: number;
   memoryMaxMiB: number;
+  memorySwapMaxMiB: number;
 } {
   return {
     memoryHighMiB:
       config.gracefulDegradation.memoryRssThresholdMiB + GATEWAY_MEMORY_HIGH_HEADROOM_MIB,
     memoryMaxMiB:
       config.gracefulDegradation.memoryRssThresholdMiB + GATEWAY_MEMORY_MAX_HEADROOM_MIB,
+    memorySwapMaxMiB: GATEWAY_MEMORY_SWAP_MAX_MIB,
   };
 }
 
@@ -1164,6 +1179,7 @@ function resolveLlamaCppMemoryControls(
 ): {
   memoryHighMiB: number;
   memoryMaxMiB: number;
+  memorySwapMaxMiB: number;
 } {
   const memoryBudgetMiB =
     preflight.memoryBudgetMiB ?? getPresetMemoryBudgetMiB(launchProfile.preset);
@@ -1176,6 +1192,10 @@ function resolveLlamaCppMemoryControls(
   return {
     memoryHighMiB: Math.max(1, Math.floor(memoryMaxMiB * LLAMA_CPP_MEMORY_HIGH_RATIO)),
     memoryMaxMiB,
+    memorySwapMaxMiB: Math.min(
+      LLAMA_CPP_MAX_SWAP_MAX_MIB,
+      Math.max(LLAMA_CPP_MIN_SWAP_MAX_MIB, Math.floor(memoryMaxMiB * LLAMA_CPP_SWAP_MAX_RATIO)),
+    ),
   };
 }
 
@@ -1296,6 +1316,9 @@ export function renderSystemdService(options: SystemdServiceOptions): string {
   const memoryControlLines = formatSystemdMemoryControlLines({
     ...(options.memoryHighMiB !== undefined ? { memoryHighMiB: options.memoryHighMiB } : {}),
     ...(options.memoryMaxMiB !== undefined ? { memoryMaxMiB: options.memoryMaxMiB } : {}),
+    ...(options.memorySwapMaxMiB !== undefined
+      ? { memorySwapMaxMiB: options.memorySwapMaxMiB }
+      : {}),
   });
   const cpuWeightLine = formatSystemdCpuWeightLine(options.cpuWeight);
 
@@ -1412,6 +1435,9 @@ export function renderLlamaCppService(options: LlamaCppServiceOptions): string {
   const memoryControlLines = formatSystemdMemoryControlLines({
     ...(options.memoryHighMiB !== undefined ? { memoryHighMiB: options.memoryHighMiB } : {}),
     ...(options.memoryMaxMiB !== undefined ? { memoryMaxMiB: options.memoryMaxMiB } : {}),
+    ...(options.memorySwapMaxMiB !== undefined
+      ? { memorySwapMaxMiB: options.memorySwapMaxMiB }
+      : {}),
   });
   const cpuWeightLine = formatSystemdCpuWeightLine(options.cpuWeight);
 

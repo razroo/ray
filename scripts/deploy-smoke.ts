@@ -28,7 +28,9 @@ export interface DeploySmokeResult {
   profile?: string;
   hasLlamaCppService: boolean;
   gatewayMemoryMaxMiB?: number;
+  gatewayMemorySwapMaxMiB?: number;
   llamaCppMemoryMaxMiB?: number;
+  llamaCppMemorySwapMaxMiB?: number;
   diagnostics: DeploymentDiagnostic[];
   errorCount: number;
   warningCount: number;
@@ -214,8 +216,12 @@ export async function smokeDeployConfigs(options: {
         profile: bundle.summary.profile,
         hasLlamaCppService: bundle.llamaCppService !== undefined,
         gatewayMemoryMaxMiB: bundle.summary.systemd.gateway.memoryMaxMiB,
+        gatewayMemorySwapMaxMiB: bundle.summary.systemd.gateway.memorySwapMaxMiB,
         ...(bundle.summary.systemd.llamaCpp
-          ? { llamaCppMemoryMaxMiB: bundle.summary.systemd.llamaCpp.memoryMaxMiB }
+          ? {
+              llamaCppMemoryMaxMiB: bundle.summary.systemd.llamaCpp.memoryMaxMiB,
+              llamaCppMemorySwapMaxMiB: bundle.summary.systemd.llamaCpp.memorySwapMaxMiB,
+            }
           : {}),
         diagnostics: bundle.summary.diagnostics,
         errorCount,
@@ -266,10 +272,10 @@ export function formatTextSummary(cwd: string, summary: DeploySmokeSummary): str
     const status = result.errorCount > 0 ? "FAIL" : "OK";
     const profile = result.profile ? ` profile=${result.profile}` : "";
     const llama = result.hasLlamaCppService
-      ? ` llamaMemoryMax=${result.llamaCppMemoryMaxMiB ?? "unknown"}MiB`
+      ? ` llamaMemoryMax=${result.llamaCppMemoryMaxMiB ?? "unknown"}MiB llamaSwapMax=${result.llamaCppMemorySwapMaxMiB ?? "unknown"}MiB`
       : " llamaService=none";
     lines.push(
-      `- ${status} ${displayPath(cwd, result.configPath)}${profile} gatewayMemoryMax=${result.gatewayMemoryMaxMiB ?? "unknown"}MiB${llama} warnings=${result.warningCount} errors=${result.errorCount}`,
+      `- ${status} ${displayPath(cwd, result.configPath)}${profile} gatewayMemoryMax=${result.gatewayMemoryMaxMiB ?? "unknown"}MiB gatewaySwapMax=${result.gatewayMemorySwapMaxMiB ?? "unknown"}MiB${llama} warnings=${result.warningCount} errors=${result.errorCount}`,
     );
 
     for (const diagnostic of result.diagnostics) {

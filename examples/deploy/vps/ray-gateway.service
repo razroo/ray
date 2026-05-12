@@ -25,6 +25,7 @@ MemoryAccounting=true
 IOAccounting=true
 MemoryHigh=640M
 MemoryMax=896M
+MemorySwapMax=128M
 StateDirectory=ray
 NoNewPrivileges=true
 CapabilityBoundingSet=

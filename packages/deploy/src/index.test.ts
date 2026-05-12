@@ -60,11 +60,13 @@ test("renderSystemdService renders optional memory controls", () => {
     user: "ray",
     memoryHighMiB: 640,
     memoryMaxMiB: 896,
+    memorySwapMaxMiB: 128,
     cpuWeight: 200,
   });
 
   assert.match(service, /MemoryHigh=640M/);
   assert.match(service, /MemoryMax=896M/);
+  assert.match(service, /MemorySwapMax=128M/);
   assert.match(service, /CPUWeight=200/);
 });
 
@@ -291,6 +293,15 @@ test("renderSystemdService rejects unsafe systemd execution directives", () => {
         memoryHighMiB: 0,
       }),
     /memoryHighMiB must be a positive integer/,
+  );
+
+  assert.throws(
+    () =>
+      renderSystemdService({
+        ...baseOptions,
+        memorySwapMaxMiB: 0,
+      }),
+    /memorySwapMaxMiB must be a positive integer/,
   );
 
   assert.throws(
@@ -698,6 +709,7 @@ test("renderDeploymentBundle includes llama.cpp service for generic 1b profiles"
   assert.match(bundle.service, /After=network\.target ray-llama-cpp\.service/);
   assert.match(bundle.service, /MemoryHigh=640M/);
   assert.match(bundle.service, /MemoryMax=896M/);
+  assert.match(bundle.service, /MemorySwapMax=128M/);
   assert.match(bundle.service, /CPUWeight=200/);
   assert.equal(bundle.summary.preflight.memoryBudgetMiB, 4096);
   assert.equal(bundle.summary.preflight.memoryBudgetSource, "override");
@@ -706,11 +718,13 @@ test("renderDeploymentBundle includes llama.cpp service for generic 1b profiles"
   assert.deepEqual(bundle.summary.systemd.gateway, {
     memoryHighMiB: 640,
     memoryMaxMiB: 896,
+    memorySwapMaxMiB: 128,
     cpuWeight: 200,
   });
   assert.deepEqual(bundle.summary.systemd.llamaCpp, {
     memoryHighMiB: 2775,
     memoryMaxMiB: 3084,
+    memorySwapMaxMiB: 771,
     cpuWeight: 80,
   });
   assert.match(bundle.caddyfile, /response_header_timeout 37s/);
@@ -719,6 +733,7 @@ test("renderDeploymentBundle includes llama.cpp service for generic 1b profiles"
   assert.doesNotMatch(bundle.llamaCppService ?? "", /EnvironmentFile=\/etc\/ray\/ray.env/);
   assert.match(bundle.llamaCppService ?? "", /MemoryHigh=2775M/);
   assert.match(bundle.llamaCppService ?? "", /MemoryMax=3084M/);
+  assert.match(bundle.llamaCppService ?? "", /MemorySwapMax=771M/);
   assert.match(bundle.llamaCppService ?? "", /CPUWeight=80/);
   assert.match(
     bundle.llamaCppService ?? "",
@@ -840,6 +855,7 @@ test("renderLlamaCppService emits a single-vps launch profile", () => {
     launchProfile: config.model.adapter.launchProfile,
     memoryHighMiB: 1024,
     memoryMaxMiB: 2048,
+    memorySwapMaxMiB: 512,
     cpuWeight: 80,
   });
   assert.match(service, /LLAMA_ARG_CTX_SIZE=3072/);
@@ -864,6 +880,7 @@ test("renderLlamaCppService emits a single-vps launch profile", () => {
   assert.match(service, /IOAccounting=true/);
   assert.match(service, /MemoryHigh=1024M/);
   assert.match(service, /MemoryMax=2048M/);
+  assert.match(service, /MemorySwapMax=512M/);
   assert.match(service, /CPUWeight=80/);
   assert.match(service, /CapabilityBoundingSet=\n/);
   assert.match(service, /SystemCallArchitectures=native/);
