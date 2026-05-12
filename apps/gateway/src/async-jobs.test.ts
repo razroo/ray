@@ -1309,6 +1309,24 @@ test("durable inference queue rejects malformed callbackUrl values", async () =>
         }),
       /callbackUrl must be at most 2048 characters/,
     );
+
+    await assert.rejects(
+      () =>
+        queue.enqueue({
+          input: "Credentialed callback",
+          callbackUrl: "https://user:secret@93.184.216.34/ray-callback",
+        }),
+      /callbackUrl must not include credentials/,
+    );
+
+    await assert.rejects(
+      () =>
+        queue.enqueue({
+          input: "Fragmented callback",
+          callbackUrl: "https://93.184.216.34/ray-callback#secret",
+        }),
+      /callbackUrl must not include a fragment/,
+    );
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }

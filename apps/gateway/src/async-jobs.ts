@@ -915,6 +915,20 @@ async function normalizeCallbackUrl(
     });
   }
 
+  if (parsed.username || parsed.password) {
+    throw new RayError("callbackUrl must not include credentials", {
+      code: "invalid_request",
+      status: 400,
+    });
+  }
+
+  if (parsed.hash) {
+    throw new RayError("callbackUrl must not include a fragment", {
+      code: "invalid_request",
+      status: 400,
+    });
+  }
+
   await assertCallbackNetworkAllowed(parsed, config, lookupImpl);
 
   return parsed.toString();
