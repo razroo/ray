@@ -145,6 +145,17 @@ test("renderSystemdService rejects unsafe systemd execution directives", () => {
   assert.throws(
     () =>
       renderSystemdService({
+        workingDirectory: "/srv/ray",
+        configPath: "/etc/ray/ray.json",
+        user: "ray",
+        runtimeBinary: "/home/ray/.bun/bin/bun",
+      }),
+    /runtimeBinary is under \/home, \/root, or \/run\/user/,
+  );
+
+  assert.throws(
+    () =>
+      renderSystemdService({
         workingDirectory: ".",
         configPath: "/etc/ray/ray.json",
         user: "ray",
@@ -1271,6 +1282,10 @@ test("diagnoseConfig errors when the generated service user cannot access gatewa
     strictFilesystem: true,
     preflight: {
       serviceUser: "ray",
+      gatewayRuntimeBinaryPath: "/usr/local/bin/bun",
+      gatewayRuntimeBinaryStatus: "found",
+      gatewayRuntimeBinaryAccessStatus: "blocked",
+      gatewayRuntimeBinaryAccessError: "execute permission is not granted on bun",
       workingDirectoryPath: "/srv/ray",
       workingDirectoryStatus: "found",
       workingDirectoryAccessStatus: "blocked",
@@ -1281,6 +1296,14 @@ test("diagnoseConfig errors when the generated service user cannot access gatewa
       gatewayEntrypointAccessError: "read permission is not granted on index.js",
     },
   });
+
+  const runtimeDiagnostic = diagnostics.find(
+    (entry) => entry.code === "gateway_runtime_service_user_inaccessible",
+  );
+  assert.ok(runtimeDiagnostic);
+  assert.equal(runtimeDiagnostic.level, "error");
+  assert.match(runtimeDiagnostic.message, /ray/);
+  assert.match(runtimeDiagnostic.message, /execute permission/);
 
   const workingDirectoryDiagnostic = diagnostics.find(
     (entry) => entry.code === "working_directory_service_user_inaccessible",
@@ -1297,6 +1320,23 @@ test("diagnoseConfig errors when the generated service user cannot access gatewa
   assert.equal(entrypointDiagnostic.level, "error");
   assert.match(entrypointDiagnostic.message, /ray/);
   assert.match(entrypointDiagnostic.message, /read permission/);
+});
+
+test("diagnoseConfig errors when the configured gateway runtime is hidden by ProtectHome", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      gatewayRuntimeBinaryPath: "/home/ray/.bun/bin/bun",
+      gatewayRuntimeBinaryStatus: "found",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "gateway_runtime_home_protected");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /ProtectHome=true/);
+  assert.match(diagnostic.message, /\/usr\/local\/bin\/bun/);
 });
 
 test("diagnoseConfig errors when the generated service user cannot access llama.cpp paths", () => {
@@ -1683,12 +1723,14 @@ test("loadAndDiagnoseDeployment reports an executable gateway runtime in strict 
     cwd: tempDir,
     configPath,
     runtimeBinary: runtimePath,
+    user: "root",
     strictFilesystem: true,
   });
 
   const diagnostic = inspected.diagnostics.find((entry) => entry.code === "gateway_runtime_ok");
   assert.ok(diagnostic);
   assert.equal(diagnostic.level, "info");
+  assert.match(diagnostic.message, /by "root"/);
 });
 
 test("loadAndDiagnoseDeployment reports async queue storage headroom from the nearest existing parent", async (t) => {

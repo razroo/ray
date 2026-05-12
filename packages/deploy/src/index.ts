@@ -69,6 +69,8 @@ export interface DeploymentPreflight {
   gatewayRuntimeBinaryPath?: string;
   gatewayRuntimeBinaryStatus?: GatewayRuntimeBinaryStatus;
   gatewayRuntimeBinaryError?: string;
+  gatewayRuntimeBinaryAccessStatus?: ServiceUserAccessStatus;
+  gatewayRuntimeBinaryAccessError?: string;
   gatewayEntrypointPath?: string;
   gatewayEntrypointStatus?: GatewayEntrypointStatus;
   gatewayEntrypointError?: string;
@@ -129,6 +131,7 @@ const SCHEDULER_BYTES_PER_TOKEN = 768;
 const TIGHT_MEMORY_RATIO = 0.9;
 const LLAMA_CPP_SYSTEMD_SERVICE = "ray-llama-cpp.service";
 const GATEWAY_ENTRYPOINT_RELATIVE_PATH = "apps/gateway/dist/index.js";
+const DEFAULT_GATEWAY_RUNTIME_BINARY = "/usr/local/bin/bun";
 const MAX_SYSTEMD_DEPENDENCY_UNITS = 32;
 const MAX_SYSTEMD_DEPENDENCY_UNIT_CHARS = 256;
 const MAX_LLAMA_CPP_EXTRA_ARGS = 64;
@@ -955,11 +958,17 @@ export function renderSystemdService(options: SystemdServiceOptions): string {
   assertOptionalSystemdDependencyArray(after, "after");
   assertOptionalSystemdDependencyArray(wants, "wants");
 
-  const runtimeBinary = options.runtimeBinary ?? options.nodeBinary ?? "/usr/local/bin/bun";
+  const runtimeBinary =
+    options.runtimeBinary ?? options.nodeBinary ?? DEFAULT_GATEWAY_RUNTIME_BINARY;
   assertSystemdScalar(runtimeBinary, "runtimeBinary");
   assertSystemdScalar(options.workingDirectory, "workingDirectory");
   assertAbsolutePath(runtimeBinary, "runtimeBinary");
   assertAbsolutePath(options.workingDirectory, "workingDirectory");
+  if (isSystemdProtectHomePath(runtimeBinary)) {
+    throw new Error(
+      "runtimeBinary is under /home, /root, or /run/user, but the generated gateway service uses ProtectHome=true",
+    );
+  }
   if (isSystemdProtectHomePath(options.workingDirectory)) {
     throw new Error(
       "workingDirectory is under /home, /root, or /run/user, but the generated gateway service uses ProtectHome=true",
@@ -1369,7 +1378,13 @@ export function diagnoseConfig(
   if (strictFilesystem && preflight?.gatewayRuntimeBinaryStatus !== undefined) {
     const runtimePath = preflight.gatewayRuntimeBinaryPath ?? "the configured gateway runtime";
 
-    if (preflight.gatewayRuntimeBinaryStatus === "missing") {
+    if (isSystemdProtectHomePath(runtimePath)) {
+      diagnostics.push({
+        level: "error",
+        code: "gateway_runtime_home_protected",
+        message: `The configured gateway runtime binary is under /home, /root, or /run/user at ${runtimePath}, but ray-gateway.service uses ProtectHome=true. Install Bun somewhere service-readable such as ${DEFAULT_GATEWAY_RUNTIME_BINARY} or pass --gateway-runtime-binary with that path.`,
+      });
+    } else if (preflight.gatewayRuntimeBinaryStatus === "missing") {
       diagnostics.push({
         level: "error",
         code: "gateway_runtime_missing",
@@ -1381,11 +1396,20 @@ export function diagnoseConfig(
         code: "gateway_runtime_unreadable",
         message: `The configured gateway runtime binary at ${runtimePath} could not be used${preflight.gatewayRuntimeBinaryError ? ` (${preflight.gatewayRuntimeBinaryError})` : ""}. Doctor cannot verify that ray-gateway.service will start.`,
       });
+    } else if (preflight.gatewayRuntimeBinaryAccessStatus === "blocked") {
+      diagnostics.push({
+        level: "error",
+        code: "gateway_runtime_service_user_inaccessible",
+        message: `The generated systemd service user "${preflight.serviceUser ?? "the configured service user"}" cannot execute the configured gateway runtime binary at ${runtimePath}${preflight.gatewayRuntimeBinaryAccessError ? ` (${preflight.gatewayRuntimeBinaryAccessError})` : ""}. Install Bun in a service-readable path such as ${DEFAULT_GATEWAY_RUNTIME_BINARY} or adjust ownership and mode bits before restarting ray-gateway.service.`,
+      });
     } else {
       diagnostics.push({
         level: "info",
         code: "gateway_runtime_ok",
-        message: `Gateway runtime binary is executable at ${runtimePath}.`,
+        message:
+          preflight.gatewayRuntimeBinaryAccessStatus === "ok"
+            ? `Gateway runtime binary is executable by "${preflight.serviceUser ?? "the configured service user"}" at ${runtimePath}.`
+            : `Gateway runtime binary is executable at ${runtimePath}.`,
       });
     }
   }
@@ -2245,6 +2269,7 @@ async function collectWorkingDirectoryPreflight(
 
 async function collectGatewayRuntimePreflight(
   runtimeBinary: string | undefined,
+  serviceUserIdentity: ServiceUserIdentity | undefined,
 ): Promise<Partial<DeploymentPreflight>> {
   if (runtimeBinary === undefined) {
     return {};
@@ -2270,10 +2295,21 @@ async function collectGatewayRuntimePreflight(
     }
 
     await access(runtimeBinary, constants.X_OK);
+    const serviceUserAccess = serviceUserIdentity
+      ? await verifyServiceUserPathAccess(runtimeBinary, serviceUserIdentity, 0o1, "execute")
+      : undefined;
 
     return {
       gatewayRuntimeBinaryPath: runtimeBinary,
       gatewayRuntimeBinaryStatus: "found",
+      ...(serviceUserAccess
+        ? {
+            gatewayRuntimeBinaryAccessStatus: serviceUserAccess.status,
+            ...(serviceUserAccess.error
+              ? { gatewayRuntimeBinaryAccessError: serviceUserAccess.error }
+              : {}),
+          }
+        : {}),
     };
   } catch (error) {
     const code =
@@ -2465,9 +2501,11 @@ async function collectDeploymentPreflight(
     options.strictFilesystem === true,
     serviceUserIdentity,
   );
-  const runtimePreflight = await collectGatewayRuntimePreflight(
-    options.runtimeBinary ?? options.nodeBinary,
-  );
+  const runtimeBinary =
+    options.runtimeBinary ??
+    options.nodeBinary ??
+    (options.strictFilesystem === true ? DEFAULT_GATEWAY_RUNTIME_BINARY : undefined);
+  const runtimePreflight = await collectGatewayRuntimePreflight(runtimeBinary, serviceUserIdentity);
   const swapPreflight = await collectSwapPreflight();
 
   if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
