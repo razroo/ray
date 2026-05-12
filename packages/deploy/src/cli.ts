@@ -21,6 +21,11 @@ export interface CliOptions {
   strictFilesystem?: boolean;
 }
 
+export interface RepoConfigPath {
+  configPath: string;
+  configRel: string;
+}
+
 interface RenderedDeploymentFiles {
   service: string;
   caddyfile: string;
@@ -38,6 +43,8 @@ const MAX_DEPLOY_CLI_ARGS = 64;
 const MAX_DEPLOY_CLI_ARG_BYTES = 4_096;
 const SYSTEMD_USER_PATTERN = /^(?:[A-Za-z_][A-Za-z0-9_-]{0,30}|[0-9]{1,10})$/;
 const DEFAULT_CONFIG_PATH = "./examples/config/ray.sub1b.public.json";
+const RESERVED_DEPLOY_STAGING_PREFIX = ".ray-deploy-";
+const VPS_WORKFLOW_EXCLUDED_CONFIG_SEGMENTS = new Set([".git", ".github", ".ray", "node_modules"]);
 
 const DEPLOY_CLI_HELP = `Ray deploy CLI
 
@@ -126,6 +133,57 @@ function parseServiceUserValue(value: string, label: string): string {
   }
 
   return value;
+}
+
+export function normalizeRepoConfigPath(value: string, label = "config path"): RepoConfigPath {
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be a string`);
+  }
+
+  if (value.length === 0 || value.trim() !== value) {
+    throw new Error(
+      `${label} must be a non-empty repo-relative path without leading or trailing whitespace`,
+    );
+  }
+
+  if (value.includes("\0")) {
+    throw new Error(`${label} must not contain NUL bytes`);
+  }
+
+  if (value.includes("\\")) {
+    throw new Error(`${label} must use forward slashes`);
+  }
+
+  if (path.posix.isAbsolute(value)) {
+    throw new Error(`${label} must be repo-relative, not absolute`);
+  }
+
+  const normalized = path.posix.normalize(value);
+  const configRel = normalized.startsWith("./") ? normalized.slice(2) : normalized;
+
+  if (
+    configRel.length === 0 ||
+    configRel === "." ||
+    configRel === ".." ||
+    configRel.startsWith("../")
+  ) {
+    throw new Error(`${label} must stay inside the repository checkout`);
+  }
+
+  const segments = configRel.split("/");
+  const firstSegment = segments[0] ?? "";
+  if (firstSegment.startsWith(RESERVED_DEPLOY_STAGING_PREFIX)) {
+    throw new Error(`${label} cannot use reserved .ray-deploy-* staging paths`);
+  }
+
+  if (segments.some((segment) => VPS_WORKFLOW_EXCLUDED_CONFIG_SEGMENTS.has(segment))) {
+    throw new Error(`${label} must not point inside paths excluded from VPS repository sync`);
+  }
+
+  return {
+    configPath: `./${configRel}`,
+    configRel,
+  };
 }
 
 function parseOptionalPositiveIntegerEnv(

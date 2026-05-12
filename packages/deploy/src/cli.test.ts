@@ -4,7 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
-import { parseCliArgs, parseEnvironmentFile, runCli } from "./cli.js";
+import { normalizeRepoConfigPath, parseCliArgs, parseEnvironmentFile, runCli } from "./cli.js";
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -31,6 +31,49 @@ test("parseCliArgs accepts deploy help", () => {
   assert.equal(parseCliArgs(["--help"]).help, true);
   assert.equal(parseCliArgs(["render", "-h"]).help, true);
   assert.equal(parseCliArgs(["help"]).help, true);
+});
+
+test("normalizeRepoConfigPath resolves repo-relative deploy config paths", () => {
+  assert.deepEqual(normalizeRepoConfigPath("./examples/config/ray.sub1b.public.json"), {
+    configPath: "./examples/config/ray.sub1b.public.json",
+    configRel: "examples/config/ray.sub1b.public.json",
+  });
+
+  assert.deepEqual(normalizeRepoConfigPath("examples/config/../config/ray.1b.public.json"), {
+    configPath: "./examples/config/ray.1b.public.json",
+    configRel: "examples/config/ray.1b.public.json",
+  });
+});
+
+test("normalizeRepoConfigPath rejects paths that cannot be synced to the VPS", () => {
+  assert.throws(
+    () => normalizeRepoConfigPath("/etc/ray/ray.json", "RAY_CONFIG_PATH"),
+    /repo-relative, not absolute/,
+  );
+  assert.throws(
+    () => normalizeRepoConfigPath("../ray.json", "RAY_CONFIG_PATH"),
+    /inside the repository/,
+  );
+  assert.throws(
+    () => normalizeRepoConfigPath("examples/../../ray.json", "RAY_CONFIG_PATH"),
+    /inside the repository/,
+  );
+  assert.throws(
+    () => normalizeRepoConfigPath(".ray-deploy-config.json", "RAY_CONFIG_PATH"),
+    /reserved \.ray-deploy-\*/,
+  );
+  assert.throws(
+    () => normalizeRepoConfigPath(".github/workflows/deploy-vps.yml", "RAY_CONFIG_PATH"),
+    /excluded from VPS repository sync/,
+  );
+  assert.throws(
+    () => normalizeRepoConfigPath("examples\\config\\ray.json", "RAY_CONFIG_PATH"),
+    /forward slashes/,
+  );
+  assert.throws(
+    () => normalizeRepoConfigPath(" examples/config/ray.json", "RAY_CONFIG_PATH"),
+    /without leading or trailing whitespace/,
+  );
 });
 
 test("parseCliArgs rejects malformed memory budget overrides", () => {

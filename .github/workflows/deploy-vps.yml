@@ -121,14 +121,29 @@ jobs:
             printf '%s\n' "$RAY_CONFIG_JSON" > .ray-deploy-config.json
             CONFIG_PATH=".ray-deploy-config.json"
             CONFIG_SOURCE="secret"
-          elif [ ! -f "$CONFIG_PATH" ]; then
-            echo "::error::Config file not found: $CONFIG_PATH"
-            exit 1
-          fi
+            CONFIG_REL=""
+          else
+            CONFIG_PATH_SETTINGS=$(CONFIG_PATH="$CONFIG_PATH" bun --eval '
+            import { normalizeRepoConfigPath } from "./packages/deploy/dist/cli.js";
 
-          CONFIG_REL=""
-          if [ "$CONFIG_SOURCE" = "repo" ]; then
-            CONFIG_REL="${CONFIG_PATH#./}"
+            try {
+              process.stdout.write(
+                JSON.stringify(normalizeRepoConfigPath(process.env.CONFIG_PATH ?? "", "RAY_CONFIG_PATH")),
+              );
+            } catch (error) {
+              process.stderr.write(
+                `::error::${error instanceof Error ? error.message : String(error)}\n`,
+              );
+              process.exit(1);
+            }
+            ')
+            CONFIG_PATH=$(CONFIG_PATH_SETTINGS="$CONFIG_PATH_SETTINGS" bun --print 'JSON.parse(process.env.CONFIG_PATH_SETTINGS).configPath')
+            CONFIG_REL=$(CONFIG_PATH_SETTINGS="$CONFIG_PATH_SETTINGS" bun --print 'JSON.parse(process.env.CONFIG_PATH_SETTINGS).configRel')
+
+            if [ ! -f "$CONFIG_PATH" ]; then
+              echo "::error::Config file not found: $CONFIG_PATH"
+              exit 1
+            fi
           fi
 
           DEPLOY_SETTINGS=$(CONFIG_PATH="$CONFIG_PATH" bun --eval '
