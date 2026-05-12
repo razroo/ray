@@ -1360,6 +1360,48 @@ test("diagnoseConfig reports adequate swap for a small VPS llama.cpp profile", (
   assert.match(diagnostic.message, /2,048 MiB/);
 });
 
+test("diagnoseConfig warns when small-VPS swappiness is high", () => {
+  const config = createDefaultConfig("1b");
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      memoryBudgetMiB: 4_096,
+      memoryBudgetSource: "preset",
+      swapStatus: "available",
+      swapTotalMiB: 2_048,
+      swappinessStatus: "available",
+      swappiness: 60,
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "swap_swappiness_high");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /--swappiness 10/);
+});
+
+test("diagnoseConfig reports conservative small-VPS swappiness", () => {
+  const config = createDefaultConfig("1b");
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      memoryBudgetMiB: 4_096,
+      memoryBudgetSource: "preset",
+      swapStatus: "available",
+      swapTotalMiB: 2_048,
+      swappinessStatus: "available",
+      swappiness: 10,
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "swap_swappiness_ok");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+  assert.match(diagnostic.message, /vm\.swappiness is 10/);
+});
+
 test("diagnoseConfig skips swap warnings for roomier llama.cpp profiles", () => {
   const config = createDefaultConfig("1b");
   assert.equal(config.model.adapter.kind, "llama.cpp");

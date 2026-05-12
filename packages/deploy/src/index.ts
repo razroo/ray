@@ -82,6 +82,7 @@ type EnvFileStatus = "found" | "missing" | "unreadable";
 type ServiceUserStatus = "found" | "missing" | "unreadable";
 type ServiceUserAccessStatus = "ok" | "blocked";
 type SwapStatus = "available" | "missing" | "unreadable";
+type SwappinessStatus = "available" | "unreadable";
 
 export interface DeploymentPreflight {
   hostMemoryMiB?: number;
@@ -144,6 +145,9 @@ export interface DeploymentPreflight {
   swapStatus?: SwapStatus;
   swapTotalMiB?: number;
   swapError?: string;
+  swappinessStatus?: SwappinessStatus;
+  swappiness?: number;
+  swappinessError?: string;
 }
 
 export interface LlamaCppMemoryEstimate {
@@ -172,6 +176,8 @@ const LLAMA_CPP_RUNTIME_RESERVE_MIB = 160;
 const MIN_SYSTEM_RESERVE_MIB = 768;
 const SYSTEM_RESERVE_RATIO = 0.2;
 const MIN_SMALL_VPS_SWAP_MIB = 1_024;
+const RECOMMENDED_SMALL_VPS_SWAPPINESS = 10;
+const MAX_SMALL_VPS_SWAPPINESS = 20;
 const SECRET_ENV_FILE_OPEN_MODE_MASK = 0o077;
 const SCHEDULER_BYTES_PER_TOKEN = 768;
 const TIGHT_MEMORY_RATIO = 0.9;
@@ -2531,6 +2537,36 @@ export function diagnoseConfig(
             }. Verify swap manually before sustained inference on a 4 GB VPS.`,
           });
         }
+
+        if (
+          preflight?.swapStatus === "available" &&
+          preflight.swapTotalMiB !== undefined &&
+          preflight.swapTotalMiB > 0
+        ) {
+          if (preflight.swappiness !== undefined) {
+            if (preflight.swappiness > MAX_SMALL_VPS_SWAPPINESS) {
+              diagnostics.push({
+                level: "warn",
+                code: "swap_swappiness_high",
+                message: `vm.swappiness is ${preflight.swappiness}. Small 4 GB llama.cpp VPS deployments should avoid eager swapping; bun run swap:plan -- --swappiness ${RECOMMENDED_SMALL_VPS_SWAPPINESS} prints guarded sysctl commands.`,
+              });
+            } else {
+              diagnostics.push({
+                level: "info",
+                code: "swap_swappiness_ok",
+                message: `vm.swappiness is ${preflight.swappiness}, which is conservative enough for this small-VPS llama.cpp profile.`,
+              });
+            }
+          } else if (preflight.swappinessStatus === "unreadable") {
+            diagnostics.push({
+              level: "warn",
+              code: "swap_swappiness_unreadable",
+              message: `Doctor could not inspect vm.swappiness from /proc/sys/vm/swappiness${
+                preflight.swappinessError ? ` (${preflight.swappinessError})` : ""
+              }. Verify it manually or run bun run swap:plan -- --swappiness ${RECOMMENDED_SMALL_VPS_SWAPPINESS} before sustained inference on a 4 GB VPS.`,
+            });
+          }
+        }
       }
     }
   }
@@ -3207,25 +3243,54 @@ async function collectLlamaCppBinaryPreflight(
 }
 
 async function collectSwapPreflight(): Promise<Partial<DeploymentPreflight>> {
+  const swappinessPreflight = await collectSwappinessPreflight();
+
   try {
     const meminfo = await readFile("/proc/meminfo", "utf8");
     const swapTotalMiB = parseSwapTotalMiB(meminfo);
 
     if (swapTotalMiB === undefined) {
       return {
+        ...swappinessPreflight,
         swapStatus: "unreadable",
         swapError: "SwapTotal was not present in /proc/meminfo",
       };
     }
 
     return {
+      ...swappinessPreflight,
       swapStatus: swapTotalMiB > 0 ? "available" : "missing",
       swapTotalMiB,
     };
   } catch (error) {
     return {
+      ...swappinessPreflight,
       swapStatus: "unreadable",
       swapError: toErrorMessage(error),
+    };
+  }
+}
+
+async function collectSwappinessPreflight(): Promise<Partial<DeploymentPreflight>> {
+  try {
+    const contents = await readFile("/proc/sys/vm/swappiness", "utf8");
+    const swappiness = parseNonNegativeInteger(contents.trim());
+
+    if (swappiness === undefined) {
+      return {
+        swappinessStatus: "unreadable",
+        swappinessError: "vm.swappiness did not contain a non-negative integer",
+      };
+    }
+
+    return {
+      swappinessStatus: "available",
+      swappiness,
+    };
+  } catch (error) {
+    return {
+      swappinessStatus: "unreadable",
+      swappinessError: toErrorMessage(error),
     };
   }
 }
