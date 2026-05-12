@@ -135,6 +135,14 @@ RAY_SCHEDULER_DEDUPE_INFLIGHT=true
 RAY_SCHEDULER_BATCH_WINDOW_MS=5
 RAY_SCHEDULER_AFFINITY_LOOKAHEAD=12
 RAY_SCHEDULER_SHORT_JOB_MAX_TOKENS=96
+RAY_CACHE_ENABLED=true
+RAY_CACHE_MAX_ENTRIES=256
+RAY_CACHE_TTL_MS=120000
+RAY_CACHE_KEY_STRATEGY=input+params
+RAY_PROMPT_COMPILER_ENABLED=true
+RAY_PROMPT_COMPILER_COLLAPSE_WHITESPACE=true
+RAY_PROMPT_COMPILER_DEDUPE_REPEATED_LINES=true
+RAY_PROMPT_COMPILER_FAMILY_METADATA_KEYS=promptFamily,taskTemplate,template,useCase
 RAY_ASYNC_QUEUE_ENABLED=true
 RAY_ADAPTIVE_TUNING_ENABLED=true
 RAY_ADAPTIVE_QUEUE_LATENCY_THRESHOLD_MS=600
@@ -329,7 +337,7 @@ Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 - Keep `scheduler.requestTimeoutMs` slightly above `model.adapter.timeoutMs` so provider timeouts remain visible.
 - Use `RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB` when the gateway process needs to clamp output before RSS pressure becomes a swap or OOM problem.
 - Use `RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD` when a VPS provider's CPU quota needs a more or less aggressive output clamp under cgroup throttling.
-- Use explicit env switches such as `RAY_MODEL_WARM_ON_BOOT`, `RAY_ASYNC_QUEUE_ENABLED`, `RAY_CACHE_ENABLED`, `RAY_GRACEFUL_DEGRADATION_ENABLED`, `RAY_PROMPT_COMPILER_ENABLED`, `RAY_ADAPTIVE_TUNING_ENABLED`, `RAY_AUTH_ENABLED`, `RAY_RATE_LIMIT_ENABLED`, and `RAY_RATE_LIMIT_TRUST_PROXY_HEADERS` when a VPS needs operational behavior changed without forking JSON. Use `RAY_SCHEDULER_BATCH_WINDOW_MS`, `RAY_SCHEDULER_AFFINITY_LOOKAHEAD`, and `RAY_SCHEDULER_SHORT_JOB_MAX_TOKENS` to tune batching, prompt-affinity reuse, and short-job priority from `/etc/ray/ray.env`. Use `RAY_RATE_LIMIT_WINDOW_MS`, `RAY_RATE_LIMIT_MAX_REQUESTS`, `RAY_RATE_LIMIT_MAX_KEYS`, and `RAY_RATE_LIMIT_KEY_STRATEGY` to tune public request budgets from `/etc/ray/ray.env`. Use `RAY_ADAPTIVE_QUEUE_LATENCY_THRESHOLD_MS`, `RAY_ADAPTIVE_MIN_COMPLETION_TOKENS_PER_SECOND`, and `RAY_ADAPTIVE_MAX_OUTPUT_REDUCTION_RATIO` when a model or VPS class needs more or less aggressive learned output clamps. Keep public deployments authenticated.
+- Use explicit env switches such as `RAY_MODEL_WARM_ON_BOOT`, `RAY_ASYNC_QUEUE_ENABLED`, `RAY_CACHE_ENABLED`, `RAY_GRACEFUL_DEGRADATION_ENABLED`, `RAY_PROMPT_COMPILER_ENABLED`, `RAY_ADAPTIVE_TUNING_ENABLED`, `RAY_AUTH_ENABLED`, `RAY_RATE_LIMIT_ENABLED`, and `RAY_RATE_LIMIT_TRUST_PROXY_HEADERS` when a VPS needs operational behavior changed without forking JSON. Use `RAY_SCHEDULER_BATCH_WINDOW_MS`, `RAY_SCHEDULER_AFFINITY_LOOKAHEAD`, and `RAY_SCHEDULER_SHORT_JOB_MAX_TOKENS` to tune batching, prompt-affinity reuse, and short-job priority from `/etc/ray/ray.env`. Use `RAY_CACHE_KEY_STRATEGY`, `RAY_CACHE_MAX_ENTRIES`, and `RAY_PROMPT_COMPILER_FAMILY_METADATA_KEYS` to trade cache reuse, memory use, and learned prompt-family grouping for the actual workload. Use `RAY_RATE_LIMIT_WINDOW_MS`, `RAY_RATE_LIMIT_MAX_REQUESTS`, `RAY_RATE_LIMIT_MAX_KEYS`, and `RAY_RATE_LIMIT_KEY_STRATEGY` to tune public request budgets from `/etc/ray/ray.env`. Use `RAY_ADAPTIVE_QUEUE_LATENCY_THRESHOLD_MS`, `RAY_ADAPTIVE_MIN_COMPLETION_TOKENS_PER_SECOND`, and `RAY_ADAPTIVE_MAX_OUTPUT_REDUCTION_RATIO` when a model or VPS class needs more or less aggressive learned output clamps. Keep public deployments authenticated.
 - Keep a modest swap file on 4 GB llama.cpp VPS targets. Doctor reads `/proc/meminfo` and warns when the small-VPS profile has no swap cushion.
 - Ray samples cgroup CPU quota and throttling counters when available, exposes effective quota cores, throttled periods, throttled time, and throttled ratio in health and metrics, and clamps output under sustained throttling when graceful degradation is enabled.
 - Ray also samples Linux cgroup memory files when available, marks memory pressure when the service or container reaches 90% of its configured cgroup memory limit, and exposes process RSS pressure ratio plus cgroup v2 `memory.events` counters in health and metrics so operators can see when `MemoryHigh` or OOM boundaries were crossed.

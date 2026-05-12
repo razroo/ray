@@ -151,11 +151,16 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
       RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS: "callback.example,*.trusted.example",
       RAY_CACHE_ENABLED: "0",
       RAY_CACHE_MAX_ENTRIES: "128",
+      RAY_CACHE_TTL_MS: "45000",
+      RAY_CACHE_KEY_STRATEGY: "input",
       RAY_GRACEFUL_DEGRADATION_ENABLED: "1",
       RAY_DEGRADATION_MAX_PROMPT_CHARS: "4200",
       RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB: "448",
       RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD: "0.35",
       RAY_PROMPT_COMPILER_ENABLED: "false",
+      RAY_PROMPT_COMPILER_COLLAPSE_WHITESPACE: "false",
+      RAY_PROMPT_COMPILER_DEDUPE_REPEATED_LINES: "false",
+      RAY_PROMPT_COMPILER_FAMILY_METADATA_KEYS: "tenant,workflow",
       RAY_ADAPTIVE_TUNING_ENABLED: "off",
       RAY_ADAPTIVE_SAMPLE_SIZE: "16",
       RAY_ADAPTIVE_QUEUE_LATENCY_THRESHOLD_MS: "700",
@@ -222,11 +227,16 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
   ]);
   assert.equal(loaded.config.cache.enabled, false);
   assert.equal(loaded.config.cache.maxEntries, 128);
+  assert.equal(loaded.config.cache.ttlMs, 45_000);
+  assert.equal(loaded.config.cache.keyStrategy, "input");
   assert.equal(loaded.config.gracefulDegradation.enabled, true);
   assert.equal(loaded.config.gracefulDegradation.maxPromptChars, 4200);
   assert.equal(loaded.config.gracefulDegradation.memoryRssThresholdMiB, 448);
   assert.equal(loaded.config.gracefulDegradation.cpuThrottledRatioThreshold, 0.35);
   assert.equal(loaded.config.promptCompiler.enabled, false);
+  assert.equal(loaded.config.promptCompiler.collapseWhitespace, false);
+  assert.equal(loaded.config.promptCompiler.dedupeRepeatedLines, false);
+  assert.deepEqual(loaded.config.promptCompiler.familyMetadataKeys, ["tenant", "workflow"]);
   assert.equal(loaded.config.adaptiveTuning.enabled, false);
   assert.equal(loaded.config.adaptiveTuning.sampleSize, 16);
   assert.equal(loaded.config.adaptiveTuning.queueLatencyThresholdMs, 700);
@@ -413,6 +423,28 @@ test("loadRayConfig rejects malformed environment overrides", async () => {
       },
     }),
     /Expected RAY_SCHEDULER_BATCH_WINDOW_MS to be an integer greater than or equal to 0/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_CACHE_KEY_STRATEGY: "params",
+      },
+    }),
+    /Expected RAY_CACHE_KEY_STRATEGY to be a supported cache key strategy/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_PROMPT_COMPILER_FAMILY_METADATA_KEYS: "promptFamily,",
+      },
+    }),
+    /Expected RAY_PROMPT_COMPILER_FAMILY_METADATA_KEYS to be comma-separated non-empty values/,
   );
 
   await assert.rejects(

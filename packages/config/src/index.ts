@@ -23,6 +23,7 @@ const llamaCppLaunchPresets = new Set<LlamaCppLaunchProfile["preset"]>([
 ]);
 const rayProfiles = new Set<RayProfile>(["tiny", "sub1b", "1b", "vps", "balanced"]);
 const logLevels = new Set<LogLevel>(["debug", "info", "warn", "error"]);
+const cacheKeyStrategies = new Set<RayConfig["cache"]["keyStrategy"]>(["input", "input+params"]);
 const rateLimitKeyStrategies = new Set<RateLimitKeyStrategy>(["ip", "api-key", "ip+api-key"]);
 const quantizations = new Set<Quantization>([
   "q4_0",
@@ -329,6 +330,29 @@ function parseRateLimitKeyStrategy(
   });
 }
 
+function parseCacheKeyStrategy(
+  value: string | undefined,
+  label: string,
+): RayConfig["cache"]["keyStrategy"] | undefined {
+  if (!isNonEmptyString(value)) {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  if (cacheKeyStrategies.has(normalized as RayConfig["cache"]["keyStrategy"])) {
+    return normalized as RayConfig["cache"]["keyStrategy"];
+  }
+
+  throw new RayError(`Expected ${label} to be a supported cache key strategy`, {
+    code: "config_validation_error",
+    status: 500,
+    details: {
+      value,
+      supported: [...cacheKeyStrategies],
+    },
+  });
+}
+
 function parseQuantization(value: string | undefined): Quantization | undefined {
   if (typeof value === "string" && quantizations.has(value as Quantization)) {
     return value as Quantization;
@@ -487,6 +511,10 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
   const cacheEnabled = parseBoolean(env.RAY_CACHE_ENABLED, "RAY_CACHE_ENABLED");
   const cacheMaxEntries = parsePositiveInteger(env.RAY_CACHE_MAX_ENTRIES, "RAY_CACHE_MAX_ENTRIES");
   const cacheTtlMs = parsePositiveInteger(env.RAY_CACHE_TTL_MS, "RAY_CACHE_TTL_MS");
+  const cacheKeyStrategy = parseCacheKeyStrategy(
+    env.RAY_CACHE_KEY_STRATEGY,
+    "RAY_CACHE_KEY_STRATEGY",
+  );
   const degradationEnabled = parseBoolean(
     env.RAY_GRACEFUL_DEGRADATION_ENABLED,
     "RAY_GRACEFUL_DEGRADATION_ENABLED",
@@ -514,6 +542,18 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
   const promptCompilerEnabled = parseBoolean(
     env.RAY_PROMPT_COMPILER_ENABLED,
     "RAY_PROMPT_COMPILER_ENABLED",
+  );
+  const promptCompilerCollapseWhitespace = parseBoolean(
+    env.RAY_PROMPT_COMPILER_COLLAPSE_WHITESPACE,
+    "RAY_PROMPT_COMPILER_COLLAPSE_WHITESPACE",
+  );
+  const promptCompilerDedupeRepeatedLines = parseBoolean(
+    env.RAY_PROMPT_COMPILER_DEDUPE_REPEATED_LINES,
+    "RAY_PROMPT_COMPILER_DEDUPE_REPEATED_LINES",
+  );
+  const promptCompilerFamilyMetadataKeys = parseCommaSeparatedStrings(
+    env.RAY_PROMPT_COMPILER_FAMILY_METADATA_KEYS,
+    "RAY_PROMPT_COMPILER_FAMILY_METADATA_KEYS",
   );
   const adaptiveTuningEnabled = parseBoolean(
     env.RAY_ADAPTIVE_TUNING_ENABLED,
@@ -867,6 +907,10 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
     next.cache.ttlMs = cacheTtlMs;
   }
 
+  if (cacheKeyStrategy !== undefined) {
+    next.cache.keyStrategy = cacheKeyStrategy;
+  }
+
   if (degradationEnabled !== undefined) {
     next.gracefulDegradation.enabled = degradationEnabled;
   }
@@ -893,6 +937,18 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
 
   if (promptCompilerEnabled !== undefined) {
     next.promptCompiler.enabled = promptCompilerEnabled;
+  }
+
+  if (promptCompilerCollapseWhitespace !== undefined) {
+    next.promptCompiler.collapseWhitespace = promptCompilerCollapseWhitespace;
+  }
+
+  if (promptCompilerDedupeRepeatedLines !== undefined) {
+    next.promptCompiler.dedupeRepeatedLines = promptCompilerDedupeRepeatedLines;
+  }
+
+  if (promptCompilerFamilyMetadataKeys !== undefined) {
+    next.promptCompiler.familyMetadataKeys = promptCompilerFamilyMetadataKeys;
   }
 
   if (adaptiveTuningEnabled !== undefined) {
@@ -1820,11 +1876,7 @@ function validateConfig(config: RayConfig): RayConfig {
   assertBoolean(config.auth.enabled, "auth.enabled");
   assertBoolean(config.rateLimit.enabled, "rateLimit.enabled");
   assertBoolean(config.rateLimit.trustProxyHeaders, "rateLimit.trustProxyHeaders");
-  assertEnumValue(
-    config.cache.keyStrategy,
-    new Set(["input", "input+params"]),
-    "cache.keyStrategy",
-  );
+  assertEnumValue(config.cache.keyStrategy, cacheKeyStrategies, "cache.keyStrategy");
   assertEnumValue(config.rateLimit.keyStrategy, rateLimitKeyStrategies, "rateLimit.keyStrategy");
   assertStringRecord(config.tags, "tags");
 

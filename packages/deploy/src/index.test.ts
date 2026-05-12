@@ -490,8 +490,17 @@ test("renderEnvironmentFileExample documents gateway behavior switches", () => {
   assert.match(envFile, /RAY_REQUEST_BODY_LIMIT_BYTES=48000/);
   assert.match(envFile, /RAY_ASYNC_QUEUE_ENABLED=true/);
   assert.match(envFile, /RAY_CACHE_ENABLED=true/);
+  assert.match(envFile, /RAY_CACHE_MAX_ENTRIES=256/);
+  assert.match(envFile, /RAY_CACHE_TTL_MS=120000/);
+  assert.match(envFile, /RAY_CACHE_KEY_STRATEGY=input\+params/);
   assert.match(envFile, /RAY_GRACEFUL_DEGRADATION_ENABLED=true/);
   assert.match(envFile, /RAY_PROMPT_COMPILER_ENABLED=true/);
+  assert.match(envFile, /RAY_PROMPT_COMPILER_COLLAPSE_WHITESPACE=true/);
+  assert.match(envFile, /RAY_PROMPT_COMPILER_DEDUPE_REPEATED_LINES=true/);
+  assert.match(
+    envFile,
+    /RAY_PROMPT_COMPILER_FAMILY_METADATA_KEYS=promptFamily,taskTemplate,template,useCase/,
+  );
   assert.match(envFile, /RAY_ADAPTIVE_TUNING_ENABLED=true/);
   assert.match(envFile, /RAY_ADAPTIVE_SAMPLE_SIZE=32/);
   assert.match(envFile, /RAY_ADAPTIVE_QUEUE_LATENCY_THRESHOLD_MS=600/);

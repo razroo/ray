@@ -1434,8 +1434,22 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
   lines.push(`# RAY_REQUEST_BODY_LIMIT_BYTES=${config.server.requestBodyLimitBytes}`);
   lines.push(`# RAY_ASYNC_QUEUE_ENABLED=${config.asyncQueue.enabled}`);
   lines.push(`# RAY_CACHE_ENABLED=${config.cache.enabled}`);
+  lines.push(`# RAY_CACHE_MAX_ENTRIES=${config.cache.maxEntries}`);
+  lines.push(`# RAY_CACHE_TTL_MS=${config.cache.ttlMs}`);
+  lines.push(`# RAY_CACHE_KEY_STRATEGY=${config.cache.keyStrategy}`);
   lines.push(`# RAY_GRACEFUL_DEGRADATION_ENABLED=${config.gracefulDegradation.enabled}`);
   lines.push(`# RAY_PROMPT_COMPILER_ENABLED=${config.promptCompiler.enabled}`);
+  lines.push(
+    `# RAY_PROMPT_COMPILER_COLLAPSE_WHITESPACE=${config.promptCompiler.collapseWhitespace}`,
+  );
+  lines.push(
+    `# RAY_PROMPT_COMPILER_DEDUPE_REPEATED_LINES=${config.promptCompiler.dedupeRepeatedLines}`,
+  );
+  lines.push(
+    `# RAY_PROMPT_COMPILER_FAMILY_METADATA_KEYS=${config.promptCompiler.familyMetadataKeys.join(
+      ",",
+    )}`,
+  );
   lines.push(`# RAY_ADAPTIVE_TUNING_ENABLED=${config.adaptiveTuning.enabled}`);
   lines.push(`# RAY_ADAPTIVE_SAMPLE_SIZE=${config.adaptiveTuning.sampleSize}`);
   lines.push(
