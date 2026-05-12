@@ -334,7 +334,9 @@ bun run validate:config:all
 bun run deploy:smoke
 bun run model:stage:smoke
 bun run model:stage
+bun run model:stage:1b
 bun run model:stage:1b:generic
+bun run model:stage:1b:8gb
 bun run swap:plan
 bun run doctor
 bun run doctor:cax11

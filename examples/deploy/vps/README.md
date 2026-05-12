@@ -341,6 +341,8 @@ test "$caddy_status" -eq 0
 RAY_API_KEYS=replace-with-real-key bun run validate:config:all
 bun run deploy:smoke
 bun run model:stage:smoke
+bun run model:stage:1b
+bun run model:stage:1b:8gb
 RAY_API_KEYS=replace-with-real-key bun run validate:config:public
 RAY_API_KEYS=replace-with-real-key bun run validate:config:cax11:public
 RAY_API_KEYS=replace-with-real-key bun run validate:config:1b:generic:public
