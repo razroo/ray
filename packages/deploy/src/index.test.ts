@@ -50,6 +50,7 @@ test("renderSystemdService includes hardening directives", () => {
   assert.match(service, /ProtectKernelModules=true/);
   assert.match(service, /RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6/);
   assert.match(service, /RestrictRealtime=true/);
+  assert.doesNotMatch(service, /MemoryDenyWriteExecute=true/);
 });
 
 test("renderSystemdService can order the gateway after local backend units", () => {
@@ -551,6 +552,7 @@ test("renderLlamaCppService emits a single-vps launch profile", () => {
   assert.match(service, /PrivateDevices=true/);
   assert.match(service, /ProtectClock=true/);
   assert.match(service, /ProtectKernelModules=true/);
+  assert.match(service, /MemoryDenyWriteExecute=true/);
   assert.match(service, /RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6/);
   assert.match(service, /RestrictRealtime=true/);
 });

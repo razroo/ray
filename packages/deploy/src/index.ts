@@ -1041,7 +1041,6 @@ ProtectControlGroups=true
 ProtectKernelModules=true
 ProtectKernelTunables=true
 LockPersonality=true
-MemoryDenyWriteExecute=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictRealtime=true
 RestrictSUIDSGID=true
