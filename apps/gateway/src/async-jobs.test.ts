@@ -766,6 +766,52 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
       }),
     );
     await writeFile(
+      join(jobsDir, "job_callback_credentials.json"),
+      JSON.stringify({
+        id: "job_callback_credentials",
+        status: "succeeded",
+        request: {
+          input: "credentialed persisted callback",
+        },
+        result: {
+          output: "done",
+        },
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        attempts: 1,
+        maxAttempts: 2,
+        callback: {
+          url: "https://user:secret@93.184.216.34/ray-callback",
+          status: "pending",
+          attempts: 0,
+        },
+      }),
+    );
+    await writeFile(
+      join(jobsDir, "job_callback_fragment.json"),
+      JSON.stringify({
+        id: "job_callback_fragment",
+        status: "succeeded",
+        request: {
+          input: "fragmented persisted callback",
+        },
+        result: {
+          output: "done",
+        },
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        attempts: 1,
+        maxAttempts: 2,
+        callback: {
+          url: "https://93.184.216.34/ray-callback#secret",
+          status: "pending",
+          attempts: 0,
+        },
+      }),
+    );
+    await writeFile(
       join(jobsDir, "job_bad_request.json"),
       JSON.stringify({
         id: "job_bad_request",
@@ -797,6 +843,8 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.equal(await queue.get("job_other"), undefined);
     assert.equal(await queue.get("job_id_too_long"), undefined);
     assert.equal(await queue.get("job_callback_too_long"), undefined);
+    assert.equal(await queue.get("job_callback_credentials"), undefined);
+    assert.equal(await queue.get("job_callback_fragment"), undefined);
     assert.equal(await queue.get("job_bad_request"), undefined);
 
     const completedJob = await waitFor(
@@ -812,6 +860,8 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.equal(entries.includes("job_mismatch.json"), false);
     assert.equal(entries.includes("job_id_too_long.json"), false);
     assert.equal(entries.includes("job_callback_too_long.json"), false);
+    assert.equal(entries.includes("job_callback_credentials.json"), false);
+    assert.equal(entries.includes("job_callback_fragment.json"), false);
     assert.equal(entries.includes("job_bad_request.json"), false);
     assert.equal(entries.includes("job_good.json"), true);
   } finally {

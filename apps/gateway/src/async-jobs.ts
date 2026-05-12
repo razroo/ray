@@ -407,6 +407,25 @@ function assertPersistedCallbackState(value: unknown): void {
     );
   }
 
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(value.url);
+  } catch {
+    throw new PersistedJobValidationError("callback.url must be a valid absolute URL");
+  }
+
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+    throw new PersistedJobValidationError("callback.url must use http or https");
+  }
+
+  if (parsedUrl.username || parsedUrl.password) {
+    throw new PersistedJobValidationError("callback.url must not include credentials");
+  }
+
+  if (parsedUrl.hash) {
+    throw new PersistedJobValidationError("callback.url must not include a fragment");
+  }
+
   if (!isCallbackStatus(value.status)) {
     throw new PersistedJobValidationError("callback.status is invalid");
   }
