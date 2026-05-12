@@ -324,7 +324,11 @@ jobs:
               echo "Deploy user must be root or have sudo available."
               exit 1
             fi
-            SUDO="sudo"
+            SUDO="sudo -n"
+            if ! $SUDO true; then
+              echo "Deploy user must be root or have passwordless sudo available."
+              exit 1
+            fi
           fi
           DEPLOY_USER="$(id -un)"
           DEPLOY_GROUP="$(id -gn)"
@@ -421,7 +425,15 @@ jobs:
 
           SUDO=""
           if [ "$(id -u)" -ne 0 ]; then
-            SUDO="sudo"
+            if ! command -v sudo >/dev/null 2>&1; then
+              echo "Deploy user must be root or have sudo available."
+              exit 1
+            fi
+            SUDO="sudo -n"
+            if ! $SUDO true; then
+              echo "Deploy user must be root or have passwordless sudo available."
+              exit 1
+            fi
           fi
           SERVICE_USER="${SERVICE_USER:-ray}"
           SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
