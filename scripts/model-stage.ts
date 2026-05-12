@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { constants, createReadStream, type Dirent } from "node:fs";
+import { constants, createReadStream } from "node:fs";
 import {
   access,
   chmod,
@@ -8,7 +8,7 @@ import {
   copyFile,
   mkdir,
   open,
-  readdir,
+  opendir,
   rename,
   rm,
   stat,
@@ -54,6 +54,9 @@ const SHA256_PATTERN = /^[a-fA-F0-9]{64}$/;
 const NUMERIC_PRINCIPAL_PATTERN = /^[0-9]{1,10}$/;
 const ATOMIC_STAGE_TEMP_PREFIX = ".ray-stage-";
 const STALE_ATOMIC_STAGE_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const MAX_ATOMIC_STAGE_TEMP_DISCOVERY_ENTRIES = 2_048;
+const MAX_ATOMIC_STAGE_TEMP_REMOVALS = 256;
+const MAX_ATOMIC_STAGE_TEMP_PATH_BYTES = 4_096;
 
 const execFileAsync = promisify(execFile);
 
@@ -731,49 +734,80 @@ function createAtomicStageTempPath(targetPath: string): string {
   );
 }
 
+function isErrnoCode(error: unknown, code: string): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code?: string }).code === code
+  );
+}
+
+function assertAtomicStageTempPathWithinLimit(targetDirectory: string, entryPath: string): void {
+  const displayPath = path.relative(targetDirectory, entryPath) || entryPath;
+  if (Buffer.byteLength(displayPath, "utf8") > MAX_ATOMIC_STAGE_TEMP_PATH_BYTES) {
+    throw new Error(
+      `Atomic stage temp cleanup path must be at most ${MAX_ATOMIC_STAGE_TEMP_PATH_BYTES} bytes: ${displayPath}`,
+    );
+  }
+}
+
 async function removeStaleAtomicStageTempFiles(targetPath: string): Promise<void> {
   const targetDirectory = path.dirname(targetPath);
   const tempPrefix = `${ATOMIC_STAGE_TEMP_PREFIX}${path.basename(targetPath)}-`;
   const staleBeforeMs = Date.now() - STALE_ATOMIC_STAGE_TEMP_MAX_AGE_MS;
+  let directory: Awaited<ReturnType<typeof opendir>> | undefined;
+  let entryCount = 0;
+  let removalCount = 0;
 
-  let entries: Dirent[];
   try {
-    entries = await readdir(targetDirectory, { withFileTypes: true });
+    directory = await opendir(targetDirectory);
+    for await (const entry of directory) {
+      entryCount += 1;
+      if (entryCount > MAX_ATOMIC_STAGE_TEMP_DISCOVERY_ENTRIES) {
+        throw new Error(
+          `Atomic stage temp cleanup visited more than ${MAX_ATOMIC_STAGE_TEMP_DISCOVERY_ENTRIES} entries in ${targetDirectory}`,
+        );
+      }
+
+      if (!entry.isFile() || !entry.name.startsWith(tempPrefix)) {
+        continue;
+      }
+
+      const entryPath = path.join(targetDirectory, entry.name);
+      assertAtomicStageTempPathWithinLimit(targetDirectory, entryPath);
+      let entryStats;
+      try {
+        entryStats = await stat(entryPath);
+      } catch (error) {
+        if (isErrnoCode(error, "ENOENT")) {
+          continue;
+        }
+        throw error;
+      }
+
+      if (entryStats.mtimeMs <= staleBeforeMs) {
+        removalCount += 1;
+        if (removalCount > MAX_ATOMIC_STAGE_TEMP_REMOVALS) {
+          throw new Error(
+            `Atomic stage temp cleanup would remove more than ${MAX_ATOMIC_STAGE_TEMP_REMOVALS} files in ${targetDirectory}`,
+          );
+        }
+        await rm(entryPath, { force: true });
+      }
+    }
   } catch (error) {
-    if (
-      error !== null &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as { code?: string }).code === "ENOENT"
-    ) {
+    if (isErrnoCode(error, "ENOENT")) {
       return;
     }
     throw error;
-  }
-
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.startsWith(tempPrefix)) {
-      continue;
-    }
-
-    const entryPath = path.join(targetDirectory, entry.name);
-    let entryStats;
-    try {
-      entryStats = await stat(entryPath);
-    } catch (error) {
-      if (
-        error !== null &&
-        typeof error === "object" &&
-        "code" in error &&
-        (error as { code?: string }).code === "ENOENT"
-      ) {
-        continue;
+  } finally {
+    if (directory) {
+      try {
+        await directory.close();
+      } catch {
+        // The async iterator closes the directory after normal completion.
       }
-      throw error;
-    }
-
-    if (entryStats.mtimeMs <= staleBeforeMs) {
-      await rm(entryPath, { force: true });
     }
   }
 }

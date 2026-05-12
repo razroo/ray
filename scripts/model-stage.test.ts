@@ -522,6 +522,61 @@ test("applyModelStagePlan removes stale atomic stage temp files before copying",
   assert.equal(await readFile(modelTarget, "utf8"), "GGUFnew-model");
 });
 
+test("applyModelStagePlan rejects bloated model target directories before temp cleanup", async (t) => {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) {
+    return;
+  }
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-temp-cap-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const binaryPath = path.join(tempDir, "sources", "llama-server");
+  const modelPath = path.join(tempDir, "sources", "model.gguf");
+  const modelTarget = path.join(tempDir, "target", "models", "model.gguf");
+  const modelTargetDir = path.dirname(modelTarget);
+
+  await mkdir(path.join(tempDir, "sources"), { recursive: true });
+  await mkdir(modelTargetDir, { recursive: true });
+  await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
+  await writeFile(modelPath, "GGUFnew-model", "utf8");
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o644);
+
+  for (let index = 0; index < 2_049; index += 64) {
+    await Promise.all(
+      Array.from({ length: Math.min(64, 2_049 - index) }, (_, offset) =>
+        writeFile(
+          path.join(modelTargetDir, `existing-${String(index + offset).padStart(4, "0")}`),
+          "x",
+        ),
+      ),
+    );
+  }
+
+  const plan = await createModelStagePlan({
+    cwd: tempDir,
+    configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
+    env: {
+      RAY_LLAMA_CPP_BINARY_PATH: binaryPath,
+      RAY_MODEL_PATH: modelTarget,
+    },
+    serviceUser: String(uid),
+    serviceGroup: String(gid),
+    binarySourcePath: "./sources/llama-server",
+    sourcePath: "./sources/model.gguf",
+  });
+
+  await assert.rejects(
+    () => applyModelStagePlan(tempDir, plan),
+    /Atomic stage temp cleanup visited more than 2048 entries/,
+  );
+  await assert.rejects(stat(modelTarget), /ENOENT/);
+});
+
 test("applyModelStagePlan rejects source binaries that fail the startup probe", async (t) => {
   const uid = process.getuid?.();
   const gid = process.getgid?.();
