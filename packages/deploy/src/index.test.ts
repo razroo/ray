@@ -605,6 +605,13 @@ test("renderEnvironmentFileExample documents portable llama.cpp model overrides"
   assert.match(envFile, /RAY_LLAMA_CPP_MODEL_REF=/);
   assert.match(envFile, /RAY_LLAMA_CPP_MODEL_PATH=/);
   assert.match(envFile, /RAY_LLAMA_CPP_BINARY_PATH=/);
+  assert.match(envFile, /RAY_LLAMA_CPP_BINARY_SOURCE_PATH=\/tmp\/ray-artifacts\/llama-server/);
+  assert.match(envFile, /RAY_LLAMA_CPP_BINARY_SHA256=replace-with-64-character-sha256/);
+  assert.match(
+    envFile,
+    /RAY_MODEL_SOURCE_PATH=\/tmp\/ray-artifacts\/qwen2\.5-1\.5b-instruct-q4_k_m\.gguf/,
+  );
+  assert.match(envFile, /RAY_MODEL_SHA256=replace-with-64-character-sha256/);
   assert.match(envFile, /RAY_LLAMA_CPP_ALIAS=/);
   assert.match(envFile, /RAY_LLAMA_CPP_HOST=/);
   assert.match(envFile, /RAY_LLAMA_CPP_PORT=/);

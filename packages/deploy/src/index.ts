@@ -1556,6 +1556,9 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
   lines.push(`# RAY_RATE_LIMIT_TRUST_PROXY_HEADERS=${config.rateLimit.trustProxyHeaders}`);
 
   if (config.model.adapter.kind === "llama.cpp" && config.model.adapter.launchProfile) {
+    const modelArtifactFilename =
+      path.basename(config.model.adapter.launchProfile.modelPath) || "model.gguf";
+
     lines.push(
       "# llama.cpp launch profile is rendered directly into the generated systemd service.",
     );
@@ -1569,6 +1572,11 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
     lines.push(`# RAY_LLAMA_CPP_MODEL_REF=${config.model.adapter.modelRef}`);
     lines.push(`# RAY_LLAMA_CPP_MODEL_PATH=${config.model.adapter.launchProfile.modelPath}`);
     lines.push(`# RAY_LLAMA_CPP_BINARY_PATH=${config.model.adapter.launchProfile.binaryPath}`);
+    lines.push("# Optional artifact staging inputs for bun run model:stage*:");
+    lines.push("# RAY_LLAMA_CPP_BINARY_SOURCE_PATH=/tmp/ray-artifacts/llama-server");
+    lines.push("# RAY_LLAMA_CPP_BINARY_SHA256=replace-with-64-character-sha256");
+    lines.push(`# RAY_MODEL_SOURCE_PATH=/tmp/ray-artifacts/${modelArtifactFilename}`);
+    lines.push("# RAY_MODEL_SHA256=replace-with-64-character-sha256");
     lines.push(`# RAY_LLAMA_CPP_ALIAS=${config.model.adapter.launchProfile.alias ?? ""}`);
     lines.push(`# RAY_LLAMA_CPP_HOST=${config.model.adapter.launchProfile.host}`);
     lines.push(`# RAY_LLAMA_CPP_PORT=${config.model.adapter.launchProfile.port}`);

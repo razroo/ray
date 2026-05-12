@@ -156,6 +156,10 @@ Add `--binary-sha256 <expected-hex-digest>` when the compiled `llama-server`
 source publishes or produces a checksum. The output includes the resolved binary
 and model paths, install commands, checksum commands, ownership, and service-user
 execute/read tests.
+You can also put those staging inputs in `/etc/ray/ray.env` as
+`RAY_LLAMA_CPP_BINARY_SOURCE_PATH`, `RAY_LLAMA_CPP_BINARY_SHA256`,
+`RAY_MODEL_SOURCE_PATH`, and `RAY_MODEL_SHA256`; explicit source/checksum flags
+override env-file values.
 
 Set `RAY_AUTH_API_KEY_ENV` when an existing secret manager or deployment workflow
 uses a different environment variable for the Bearer keys.
@@ -163,9 +167,9 @@ Set `RAY_MODEL_API_KEY_ENV` only when the local or OpenAI-compatible model
 backend expects an upstream Bearer token.
 
 The generated `ray.env.example` from `bun run render:service:1b:generic` includes
-the same categories of overrides as comments. Keep `RAY_LLAMA_CPP_THREADS` and
-`RAY_LLAMA_CPP_THREADS_BATCH` within the VPS vCPU count when retuning the launch
-profile.
+the same categories of runtime, deploy, and artifact-staging overrides as
+comments. Keep `RAY_LLAMA_CPP_THREADS` and `RAY_LLAMA_CPP_THREADS_BATCH` within
+the VPS vCPU count when retuning the launch profile.
 
 For 8 GB nodes, start by raising context, slots, batch threads, cache RAM, async
 queue storage headroom, gateway RSS headroom, and adaptive latency/throughput
