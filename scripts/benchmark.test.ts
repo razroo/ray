@@ -404,6 +404,131 @@ test("runBenchmark accepts bounded gateway inference responses", async () => {
   );
 });
 
+test("runBenchmark rejects malformed direct options before dispatch", async () => {
+  await assert.rejects(() => runBenchmark(null as never), /Benchmark options must be an object/);
+  await assert.rejects(
+    () =>
+      runBenchmark({
+        baseUrl: "http://127.0.0.1:3000",
+        workload: [],
+        concurrency: 1,
+        requests: 1,
+        label: "empty-workload",
+      }),
+    /Benchmark workload has no usable entries/,
+  );
+  await assert.rejects(
+    () =>
+      runBenchmark({
+        baseUrl: "http://127.0.0.1:3000",
+        workload: [{ input: "ping" }],
+        concurrency: 65,
+        requests: 1,
+        label: "bad-concurrency",
+      }),
+    /Benchmark concurrency must be less than or equal to 64/,
+  );
+  await assert.rejects(
+    () =>
+      runBenchmark({
+        baseUrl: "http://127.0.0.1:3000",
+        workload: [{ input: "ping" }],
+        concurrency: 1,
+        requests: 10_001,
+        label: "bad-requests",
+      }),
+    /Benchmark requests must be less than or equal to 10000/,
+  );
+});
+
+test("runBenchmark strips non-inference fields before dispatch", async () => {
+  let received: Record<string, unknown> | undefined;
+
+  await withTestServer(
+    (request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk) => {
+        chunks.push(Buffer.from(chunk));
+      });
+      request.on("end", () => {
+        received = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            id: "inf_stripped",
+            output: "ok",
+            cached: false,
+            deduplicated: false,
+            queueTimeMs: 1,
+            latencyMs: 2,
+            degraded: false,
+            usage: {
+              tokens: {
+                prompt: 1,
+                completion: 1,
+                total: 2,
+              },
+            },
+          }),
+        );
+      });
+    },
+    async (baseUrl) => {
+      await runBenchmark({
+        baseUrl,
+        workload: [
+          {
+            input: "ping",
+            benchmark: { noPromptEcho: true },
+            extra: "not-forwarded",
+          } as never,
+        ],
+        concurrency: 1,
+        requests: 1,
+        label: "strip-fields",
+      });
+    },
+  );
+
+  assert.deepEqual(received, { input: "ping" });
+});
+
+test("runBenchmark rejects oversized request bodies before dispatch", async () => {
+  let requests = 0;
+
+  await withTestServer(
+    (_request, response) => {
+      requests += 1;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    },
+    async (baseUrl) => {
+      const templateVariables = Object.fromEntries(
+        Array.from({ length: 64 }, (_value, index) => [`v${index}`, "x".repeat(16_384)]),
+      );
+
+      await assert.rejects(
+        () =>
+          runBenchmark({
+            baseUrl,
+            workload: [
+              {
+                templateId: "email.cold_outreach.v1",
+                templateVariables,
+              },
+            ],
+            concurrency: 1,
+            requests: 1,
+            label: "oversized-request",
+          }),
+        /Benchmark request body must be at most 1048576 bytes/,
+      );
+    },
+  );
+
+  assert.equal(requests, 0);
+});
+
 test("runBenchmark streams summary metrics without retaining sample payloads", async () => {
   await withTestServer(
     (request, response) => {

@@ -36,6 +36,7 @@ const MAX_BENCHMARK_QUALITY_STRINGS = 32;
 const MAX_BENCHMARK_QUALITY_STRING_CHARS = 1_024;
 const MAX_BENCHMARK_BASELINE_NOTES = 16;
 const MAX_BENCHMARK_BASELINE_NOTE_CHARS = 1_024;
+const MAX_BENCHMARK_REQUEST_BODY_BYTES = 1_048_576;
 const MAX_BENCHMARK_ERROR_RESPONSE_BYTES = 64 * 1024;
 const MAX_BENCHMARK_SUCCESS_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_BENCHMARK_HISTORY_FILE_BYTES = 8 * 1024 * 1024;
@@ -110,6 +111,15 @@ interface BenchmarkQualityAssertions {
 
 interface BenchmarkWorkloadItem extends InferenceRequest {
   benchmark?: BenchmarkQualityAssertions;
+}
+
+interface RunBenchmarkOptions {
+  baseUrl: string;
+  workload: BenchmarkWorkloadItem[];
+  concurrency: number;
+  requests: number;
+  label: string;
+  apiKey?: string;
 }
 
 interface InferenceResponse {
@@ -678,14 +688,20 @@ async function readTextFileBounded(
   }
 }
 
-function assertWorkloadSize(workload: BenchmarkWorkloadItem[], resolvedPath: string): void {
+function workloadSourceName(source: string): string {
+  return source === "Benchmark workload" ? "Benchmark workload" : "Workload file";
+}
+
+function assertWorkloadSize(workload: BenchmarkWorkloadItem[], source: string): void {
+  const sourceName = workloadSourceName(source);
+
   if (workload.length === 0) {
-    throw new Error(`Workload file has no usable entries: ${resolvedPath}`);
+    throw new Error(`${sourceName} has no usable entries: ${source}`);
   }
 
   if (workload.length > MAX_BENCHMARK_WORKLOAD_ITEMS) {
     throw new Error(
-      `Workload file must contain at most ${MAX_BENCHMARK_WORKLOAD_ITEMS} entries: ${resolvedPath}`,
+      `${sourceName} must contain at most ${MAX_BENCHMARK_WORKLOAD_ITEMS} entries: ${source}`,
     );
   }
 }
@@ -720,6 +736,20 @@ function assertOptionalStringValue(
   }
 }
 
+function assertStringValue(
+  value: unknown,
+  label: string,
+  maxChars: number,
+): asserts value is string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+
+  if (value.length > maxChars) {
+    throw new Error(`${label} must be at most ${maxChars} characters`);
+  }
+}
+
 function assertOptionalBooleanValue(
   value: unknown,
   label: string,
@@ -742,6 +772,20 @@ function assertOptionalPositiveIntegerValue(
     return;
   }
 
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+
+  if (value > maximum) {
+    throw new Error(`${label} must be less than or equal to ${maximum}`);
+  }
+}
+
+function assertPositiveIntegerValue(
+  value: unknown,
+  label: string,
+  maximum: number,
+): asserts value is number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${label} must be a positive integer`);
   }
@@ -1016,7 +1060,11 @@ function assertBenchmarkWorkloadItem(
   assertOptionalBenchmarkAssertions(value.benchmark, `${label}.benchmark`);
 }
 
-function validateWorkload(workload: unknown[], resolvedPath: string): BenchmarkWorkloadItem[] {
+function validateWorkload(workload: unknown, resolvedPath: string): BenchmarkWorkloadItem[] {
+  if (!Array.isArray(workload)) {
+    throw new Error(`${resolvedPath} must be an array of workload entries`);
+  }
+
   assertWorkloadSize(workload as BenchmarkWorkloadItem[], resolvedPath);
 
   for (const [index, item] of workload.entries()) {
@@ -1024,6 +1072,19 @@ function validateWorkload(workload: unknown[], resolvedPath: string): BenchmarkW
   }
 
   return workload as BenchmarkWorkloadItem[];
+}
+
+function assertRunBenchmarkOptions(value: unknown): asserts value is RunBenchmarkOptions {
+  assertRecord(value, "Benchmark options");
+  assertStringValue(value.baseUrl, "Benchmark baseUrl", MAX_BENCHMARK_CLI_ARG_BYTES);
+  normalizeBaseUrlFlag(value.baseUrl);
+  validateWorkload(value.workload, "Benchmark workload");
+  assertPositiveIntegerValue(value.concurrency, "Benchmark concurrency", MAX_BENCHMARK_CONCURRENCY);
+  assertPositiveIntegerValue(value.requests, "Benchmark requests", MAX_BENCHMARK_REQUESTS);
+  assertStringValue(value.label, "Benchmark label", MAX_BENCHMARK_LABEL_CHARS);
+  if (value.apiKey !== undefined) {
+    assertOptionalStringValue(value.apiKey, "Benchmark apiKey", MAX_BENCHMARK_API_KEY_CHARS);
+  }
 }
 
 function assertBaselineAssertions(
@@ -1200,9 +1261,48 @@ function scoreSummary(summary: BenchmarkSummary): number {
 }
 
 function stripBenchmarkFields(request: BenchmarkWorkloadItem): InferenceRequest {
-  const inferenceRequest = { ...request };
-  delete inferenceRequest.benchmark;
-  return inferenceRequest;
+  return {
+    ...(request.input !== undefined ? { input: request.input } : {}),
+    ...(request.system !== undefined ? { system: request.system } : {}),
+    ...(request.maxTokens !== undefined ? { maxTokens: request.maxTokens } : {}),
+    ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+    ...(request.topP !== undefined ? { topP: request.topP } : {}),
+    ...(request.seed !== undefined ? { seed: request.seed } : {}),
+    ...(request.stop !== undefined ? { stop: [...request.stop] } : {}),
+    ...(request.responseFormat !== undefined
+      ? { responseFormat: { ...request.responseFormat } }
+      : {}),
+    ...(request.cache !== undefined ? { cache: request.cache } : {}),
+    ...(request.dedupeKey !== undefined ? { dedupeKey: request.dedupeKey } : {}),
+    ...(request.metadata !== undefined ? { metadata: { ...request.metadata } } : {}),
+    ...(request.templateId !== undefined ? { templateId: request.templateId } : {}),
+    ...(request.templateVariables !== undefined
+      ? { templateVariables: { ...request.templateVariables } }
+      : {}),
+  };
+}
+
+function stringifyBenchmarkRequestBody(request: InferenceRequest): string {
+  let body: string;
+
+  try {
+    body = JSON.stringify(request);
+  } catch (error) {
+    throw new Error(
+      `Benchmark request must be JSON serializable: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
+  const bodyBytes = Buffer.byteLength(body, "utf8");
+  if (bodyBytes > MAX_BENCHMARK_REQUEST_BODY_BYTES) {
+    throw new Error(
+      `Benchmark request body must be at most ${MAX_BENCHMARK_REQUEST_BODY_BYTES} bytes`,
+    );
+  }
+
+  return body;
 }
 
 function normalizeForQuality(value: string): string {
@@ -1535,6 +1635,7 @@ async function invoke(
   apiKey?: string,
 ): Promise<BenchmarkSample> {
   const inferenceRequest = stripBenchmarkFields(request);
+  const body = stringifyBenchmarkRequestBody(inferenceRequest);
   const startedAt = Date.now();
   let response: Response;
 
@@ -1546,7 +1647,7 @@ async function invoke(
         "content-type": "application/json",
         ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
       },
-      body: JSON.stringify(inferenceRequest),
+      body,
     });
   } catch (error) {
     throw new Error(
@@ -1719,21 +1820,15 @@ function summarizeBenchmarkProviderDiagnostics(
   };
 }
 
-export async function runBenchmark(options: {
-  baseUrl: string;
-  workload: BenchmarkWorkloadItem[];
-  concurrency: number;
-  requests: number;
-  label: string;
-  apiKey?: string;
-}): Promise<BenchmarkSummary> {
-  if (options.workload.length === 0) {
-    throw new Error("Benchmark workload must contain at least one request");
-  }
+export async function runBenchmark(options: RunBenchmarkOptions): Promise<BenchmarkSummary> {
+  assertRunBenchmarkOptions(options);
+
+  const baseUrl = normalizeBaseUrlFlag(options.baseUrl);
+  const workload = validateWorkload(options.workload, "Benchmark workload");
 
   const queue = Array.from(
     { length: options.requests },
-    (_, index) => options.workload[index % options.workload.length],
+    (_, index) => workload[index % workload.length],
   );
   const accumulator = createBenchmarkAccumulator();
   const startedAt = Date.now();
@@ -1748,7 +1843,7 @@ export async function runBenchmark(options: {
         break;
       }
 
-      const sample = await invoke(options.baseUrl, request, options.apiKey);
+      const sample = await invoke(baseUrl, request, options.apiKey);
       recordBenchmarkSample(accumulator, sample);
     }
   });
@@ -1762,7 +1857,7 @@ export async function runBenchmark(options: {
 
   const summary: BenchmarkSummary = {
     label: options.label,
-    baseUrl: options.baseUrl,
+    baseUrl,
     concurrency: options.concurrency,
     requests: accumulator.requests,
     responseCacheHitRate:
