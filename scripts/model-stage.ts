@@ -751,7 +751,9 @@ export async function applyModelStagePlan(
   await access(binaryTargetPath, constants.X_OK);
 
   await mkdir(path.dirname(modelTargetPath), { recursive: true, mode: 0o755 });
-  await assertModelStageStorageHeadroom(modelSourcePath, path.dirname(modelTargetPath));
+  if (path.resolve(modelSourcePath) !== path.resolve(modelTargetPath)) {
+    await assertModelStageStorageHeadroom(modelSourcePath, path.dirname(modelTargetPath));
+  }
   await copyFileUnlessSame(modelSourcePath, modelTargetPath);
   await chmod(modelTargetPath, 0o640);
   await chownIfNeeded(modelTargetPath, uid, gid);
