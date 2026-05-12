@@ -28,6 +28,8 @@ interface CliOptions {
 const MAX_GATEWAY_CLI_ARGS = 16;
 const MAX_GATEWAY_CLI_ARG_BYTES = 8_192;
 const MAX_GATEWAY_CONFIG_PATH_CHARS = 4_096;
+const MAX_GATEWAY_REQUEST_TARGET_CHARS = 8_192;
+const MAX_GATEWAY_HOST_HEADER_CHARS = 512;
 const GATEWAY_HEADERS_TIMEOUT_MS = 15_000;
 const GATEWAY_REQUEST_TIMEOUT_MS = 30_000;
 const GATEWAY_KEEP_ALIVE_TIMEOUT_MS = 5_000;
@@ -371,6 +373,63 @@ function getDeclaredContentLength(request: IncomingMessage): number | undefined 
   return /^\d+$/.test(normalized) && Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
+function parseGatewayRequestUrl(request: IncomingMessage): URL {
+  const requestTarget = request.url ?? "/";
+
+  if (requestTarget.length === 0) {
+    throw new RayError("Request URL must be non-empty", {
+      code: "invalid_request",
+      status: 400,
+    });
+  }
+
+  if (requestTarget.length > MAX_GATEWAY_REQUEST_TARGET_CHARS) {
+    throw new RayError(
+      `Request URL must be at most ${MAX_GATEWAY_REQUEST_TARGET_CHARS} characters`,
+      {
+        code: "request_target_too_large",
+        status: 414,
+        details: {
+          maxChars: MAX_GATEWAY_REQUEST_TARGET_CHARS,
+          actualChars: requestTarget.length,
+        },
+      },
+    );
+  }
+
+  const hostHeader = request.headers.host;
+
+  if (hostHeader !== undefined && hostHeader.length === 0) {
+    throw new RayError("Host header must be non-empty when provided", {
+      code: "invalid_request",
+      status: 400,
+    });
+  }
+
+  if (hostHeader !== undefined && hostHeader.length > MAX_GATEWAY_HOST_HEADER_CHARS) {
+    throw new RayError(`Host header must be at most ${MAX_GATEWAY_HOST_HEADER_CHARS} characters`, {
+      code: "invalid_request",
+      status: 400,
+      details: {
+        maxChars: MAX_GATEWAY_HOST_HEADER_CHARS,
+        actualChars: hostHeader.length,
+      },
+    });
+  }
+
+  try {
+    return new URL(requestTarget, `http://${hostHeader ?? "127.0.0.1"}`);
+  } catch (error) {
+    throw new RayError("Request URL is invalid", {
+      code: "invalid_request",
+      status: 400,
+      details: {
+        message: toErrorMessage(error),
+      },
+    });
+  }
+}
+
 async function readJsonBody(request: IncomingMessage, limitBytes: number): Promise<unknown> {
   const declaredContentLength = getDeclaredContentLength(request);
 
@@ -532,7 +591,12 @@ function serializeRequestError(error: RayError): Record<string, unknown> {
 }
 
 function shouldCloseRequestAfterReject(request: IncomingMessage, error: RayError): boolean {
-  return error.code === "body_too_large" && !request.complete;
+  return (
+    !request.complete &&
+    (error.code === "body_too_large" ||
+      error.code === "invalid_request" ||
+      error.code === "request_target_too_large")
+  );
 }
 
 export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions) {
@@ -558,9 +622,11 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
     (config.rateLimit.enabled ? new FixedWindowRateLimiter(config.rateLimit) : undefined);
 
   return async (request: IncomingMessage, response: ServerResponse) => {
-    const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
+    let url: URL | undefined;
 
     try {
+      url = parseGatewayRequestUrl(request);
+
       if (request.method === "GET" && url.pathname === "/") {
         writeJsonWithoutReadingBody(request, response, 200, {
           name: "ray",
@@ -819,7 +885,7 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
 
       const logFields = {
         method: request.method,
-        path: url.pathname,
+        path: url?.pathname ?? "[invalid-url]",
         error: serializeRequestError(normalized),
       };
 

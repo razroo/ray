@@ -162,6 +162,58 @@ test("gateway closes unfinished request bodies on not-found routes", async (t) =
   assert.match(response, /"code": "not_found"/);
 });
 
+test("gateway rejects malformed request targets without leaking sockets", async (t) => {
+  const gateway = createGatewayServer({
+    config: createDefaultConfig("tiny"),
+  });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await readRawUnfinishedRequestResponse(gateway.server, [
+    "GET http://[::1 HTTP/1.1",
+    `Host: 127.0.0.1:${address.port}`,
+    "Content-Length: 32",
+    "",
+    "",
+  ]);
+
+  assert.match(response, /^HTTP\/1\.1 400 /);
+  assert.match(response, /\r\nconnection: close\r\n/i);
+  assert.match(response, /"code": "invalid_request"/);
+});
+
+test("gateway rejects oversized request targets before route matching", async (t) => {
+  const gateway = createGatewayServer({
+    config: createDefaultConfig("tiny"),
+  });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await readRawUnfinishedRequestResponse(gateway.server, [
+    `GET /${"x".repeat(8_193)} HTTP/1.1`,
+    `Host: 127.0.0.1:${address.port}`,
+    "Content-Length: 32",
+    "",
+    "",
+  ]);
+
+  assert.match(response, /^HTTP\/1\.1 414 /);
+  assert.match(response, /\r\nconnection: close\r\n/i);
+  assert.match(response, /"code": "request_target_too_large"/);
+});
+
 test("gateway rejects oversized declared request bodies before reading bytes", async (t) => {
   const config = mergeConfig(createDefaultConfig("tiny"), {
     server: {
