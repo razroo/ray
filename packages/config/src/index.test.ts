@@ -122,6 +122,7 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
       RAY_MODEL_ID: "local-any-1b-q4",
       RAY_MODEL_FAMILY: "generic-llama",
       RAY_MODEL_QUANTIZATION: "q4_0",
+      RAY_MODEL_WARM_ON_BOOT: "off",
       RAY_MODEL_PATH: "/models/local-any-1b-q4.gguf",
       RAY_LLAMA_CPP_BINARY_PATH: "/opt/llama.cpp/llama-server",
       RAY_LLAMA_CPP_HOST: "127.0.0.1",
@@ -130,21 +131,32 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
       RAY_LLAMA_CPP_PARALLEL: "1",
       RAY_LLAMA_CPP_THREADS: "2",
       RAY_LLAMA_CPP_CACHE_RAM_MIB: "256",
+      RAY_REQUEST_BODY_LIMIT_BYTES: "36000",
       RAY_SCHEDULER_MAX_INFLIGHT_TOKENS: "2048",
+      RAY_ASYNC_QUEUE_ENABLED: "yes",
       RAY_ASYNC_QUEUE_STORAGE_DIR: ".ray/test-async-queue",
       RAY_ASYNC_QUEUE_MAX_JOBS: "250",
       RAY_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB: "192",
       RAY_ASYNC_QUEUE_COMPLETED_TTL_MS: "3600000",
+      RAY_CACHE_ENABLED: "0",
       RAY_CACHE_MAX_ENTRIES: "128",
+      RAY_GRACEFUL_DEGRADATION_ENABLED: "1",
       RAY_DEGRADATION_MAX_PROMPT_CHARS: "4200",
       RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB: "448",
       RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD: "0.35",
+      RAY_PROMPT_COMPILER_ENABLED: "false",
+      RAY_ADAPTIVE_TUNING_ENABLED: "off",
+      RAY_AUTH_ENABLED: "on",
+      RAY_RATE_LIMIT_ENABLED: "no",
+      RAY_RATE_LIMIT_TRUST_PROXY_HEADERS: "false",
     },
   });
 
   assert.equal(loaded.config.model.id, "local-any-1b-q4");
   assert.equal(loaded.config.model.family, "generic-llama");
   assert.equal(loaded.config.model.quantization, "q4_0");
+  assert.equal(loaded.config.model.warmOnBoot, false);
+  assert.equal(loaded.config.server.requestBodyLimitBytes, 36_000);
   assert.equal(loaded.config.model.adapter.kind, "llama.cpp");
 
   if (
@@ -163,14 +175,22 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
   assert.equal(loaded.config.model.adapter.launchProfile.cacheRamMiB, 256);
   assert.equal(loaded.config.model.operational?.preferredCtxSize, 1536);
   assert.equal(loaded.config.scheduler.maxInflightTokens, 2048);
+  assert.equal(loaded.config.asyncQueue.enabled, true);
   assert.equal(loaded.config.asyncQueue.storageDir, join(process.cwd(), ".ray/test-async-queue"));
   assert.equal(loaded.config.asyncQueue.maxJobs, 250);
   assert.equal(loaded.config.asyncQueue.minFreeStorageMiB, 192);
   assert.equal(loaded.config.asyncQueue.completedTtlMs, 3_600_000);
+  assert.equal(loaded.config.cache.enabled, false);
   assert.equal(loaded.config.cache.maxEntries, 128);
+  assert.equal(loaded.config.gracefulDegradation.enabled, true);
   assert.equal(loaded.config.gracefulDegradation.maxPromptChars, 4200);
   assert.equal(loaded.config.gracefulDegradation.memoryRssThresholdMiB, 448);
   assert.equal(loaded.config.gracefulDegradation.cpuThrottledRatioThreshold, 0.35);
+  assert.equal(loaded.config.promptCompiler.enabled, false);
+  assert.equal(loaded.config.adaptiveTuning.enabled, false);
+  assert.equal(loaded.config.auth.enabled, true);
+  assert.equal(loaded.config.rateLimit.enabled, false);
+  assert.equal(loaded.config.rateLimit.trustProxyHeaders, false);
 });
 
 test("loadRayConfig resolves relative llama.cpp launch paths against cwd", async () => {
@@ -294,6 +314,17 @@ test("loadRayConfig rejects malformed environment overrides", async () => {
       },
     }),
     /Expected RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD to be greater than 0 and less than or equal to 1/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_AUTH_ENABLED: "sometimes",
+      },
+    }),
+    /Expected RAY_AUTH_ENABLED to be a boolean/,
   );
 });
 

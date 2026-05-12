@@ -119,16 +119,22 @@ RAY_MODEL_ID=local-1b-q4
 RAY_MODEL_REF=local-1b-q4
 RAY_MODEL_FAMILY=llama-compatible
 RAY_MODEL_QUANTIZATION=q4_k_m
+RAY_MODEL_WARM_ON_BOOT=true
 RAY_MODEL_PATH=/var/lib/ray/models/local-1b-q4.gguf
 RAY_LLAMA_CPP_BINARY_PATH=/usr/local/bin/llama-server
 RAY_LLAMA_CPP_CTX_SIZE=2048
 RAY_LLAMA_CPP_PARALLEL=1
 RAY_LLAMA_CPP_THREADS=2
 RAY_LLAMA_CPP_CACHE_RAM_MIB=384
+RAY_REQUEST_BODY_LIMIT_BYTES=48000
 RAY_SCHEDULER_CONCURRENCY=1
 RAY_SCHEDULER_MAX_INFLIGHT_TOKENS=2560
+RAY_ASYNC_QUEUE_ENABLED=true
 RAY_ASYNC_QUEUE_MAX_JOBS=1000
+RAY_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB=256
 RAY_ASYNC_QUEUE_COMPLETED_TTL_MS=86400000
+RAY_AUTH_ENABLED=true
+RAY_RATE_LIMIT_ENABLED=true
 ```
 
 ### 5. Add the environment file
@@ -254,6 +260,9 @@ check port. For example:
 ```dotenv
 RAY_API_KEYS=replace-with-comma-separated-client-keys
 RAY_LOG_LEVEL=info
+RAY_MODEL_WARM_ON_BOOT=false
+RAY_ASYNC_QUEUE_ENABLED=true
+RAY_AUTH_ENABLED=true
 ```
 
 The workflow refreshes `/usr/local/bin/bun` when it is missing or older than the
@@ -302,6 +311,7 @@ Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 - Keep `scheduler.requestTimeoutMs` slightly above `model.adapter.timeoutMs` so provider timeouts remain visible.
 - Use `RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB` when the gateway process needs to clamp output before RSS pressure becomes a swap or OOM problem.
 - Use `RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD` when a VPS provider's CPU quota needs a more or less aggressive output clamp under cgroup throttling.
+- Use explicit env switches such as `RAY_MODEL_WARM_ON_BOOT`, `RAY_ASYNC_QUEUE_ENABLED`, `RAY_CACHE_ENABLED`, `RAY_GRACEFUL_DEGRADATION_ENABLED`, `RAY_PROMPT_COMPILER_ENABLED`, `RAY_ADAPTIVE_TUNING_ENABLED`, `RAY_AUTH_ENABLED`, `RAY_RATE_LIMIT_ENABLED`, and `RAY_RATE_LIMIT_TRUST_PROXY_HEADERS` when a VPS needs operational behavior changed without forking JSON. Keep public deployments authenticated.
 - Keep a modest swap file on 4 GB llama.cpp VPS targets. Doctor reads `/proc/meminfo` and warns when the small-VPS profile has no swap cushion.
 - Ray samples cgroup CPU quota and throttling counters when available, exposes effective quota cores, throttled periods, throttled time, and throttled ratio in health and metrics, and clamps output under sustained throttling when graceful degradation is enabled.
 - Ray also samples Linux cgroup memory files when available, marks memory pressure when the service or container reaches 90% of its configured cgroup memory limit, and exposes process RSS pressure ratio plus cgroup v2 `memory.events` counters in health and metrics so operators can see when `MemoryHigh` or OOM boundaries were crossed.

@@ -475,6 +475,29 @@ test("renderEnvironmentFileExample includes auth env placeholders", () => {
   assert.match(envFile, /RAY_API_KEYS=/);
 });
 
+test("renderEnvironmentFileExample documents gateway behavior switches", () => {
+  const config = mergeConfig(createDefaultConfig("1b"), {
+    auth: {
+      enabled: true,
+    },
+    asyncQueue: {
+      enabled: true,
+    },
+  });
+  const envFile = renderEnvironmentFileExample(config);
+
+  assert.match(envFile, /RAY_MODEL_WARM_ON_BOOT=true/);
+  assert.match(envFile, /RAY_REQUEST_BODY_LIMIT_BYTES=48000/);
+  assert.match(envFile, /RAY_ASYNC_QUEUE_ENABLED=true/);
+  assert.match(envFile, /RAY_CACHE_ENABLED=true/);
+  assert.match(envFile, /RAY_GRACEFUL_DEGRADATION_ENABLED=true/);
+  assert.match(envFile, /RAY_PROMPT_COMPILER_ENABLED=true/);
+  assert.match(envFile, /RAY_ADAPTIVE_TUNING_ENABLED=true/);
+  assert.match(envFile, /RAY_AUTH_ENABLED=true/);
+  assert.match(envFile, /RAY_RATE_LIMIT_ENABLED=true/);
+  assert.match(envFile, /RAY_RATE_LIMIT_TRUST_PROXY_HEADERS=true/);
+});
+
 test("renderEnvironmentFileExample documents portable llama.cpp model overrides", () => {
   const config = createDefaultConfig("1b");
   const envFile = renderEnvironmentFileExample(config);

@@ -1429,6 +1429,18 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
     lines.push(`${config.model.adapter.apiKeyEnv}=replace-with-upstream-api-key`);
   }
 
+  lines.push("# Optional gateway behavior switches:");
+  lines.push(`# RAY_MODEL_WARM_ON_BOOT=${config.model.warmOnBoot}`);
+  lines.push(`# RAY_REQUEST_BODY_LIMIT_BYTES=${config.server.requestBodyLimitBytes}`);
+  lines.push(`# RAY_ASYNC_QUEUE_ENABLED=${config.asyncQueue.enabled}`);
+  lines.push(`# RAY_CACHE_ENABLED=${config.cache.enabled}`);
+  lines.push(`# RAY_GRACEFUL_DEGRADATION_ENABLED=${config.gracefulDegradation.enabled}`);
+  lines.push(`# RAY_PROMPT_COMPILER_ENABLED=${config.promptCompiler.enabled}`);
+  lines.push(`# RAY_ADAPTIVE_TUNING_ENABLED=${config.adaptiveTuning.enabled}`);
+  lines.push(`# RAY_AUTH_ENABLED=${config.auth.enabled}`);
+  lines.push(`# RAY_RATE_LIMIT_ENABLED=${config.rateLimit.enabled}`);
+  lines.push(`# RAY_RATE_LIMIT_TRUST_PROXY_HEADERS=${config.rateLimit.trustProxyHeaders}`);
+
   if (config.model.adapter.kind === "llama.cpp" && config.model.adapter.launchProfile) {
     lines.push(
       "# llama.cpp launch profile is rendered directly into the generated systemd service.",

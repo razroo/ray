@@ -167,6 +167,34 @@ function parseProfile(value: unknown, label: string): RayProfile | undefined {
   });
 }
 
+function parseBoolean(value: string | undefined, label: string): boolean | undefined {
+  if (!isNonEmptyString(value)) {
+    return undefined;
+  }
+
+  switch (value.trim().toLowerCase()) {
+    case "1":
+    case "true":
+    case "yes":
+    case "on":
+      return true;
+    case "0":
+    case "false":
+    case "no":
+    case "off":
+      return false;
+    default:
+      throw new RayError(`Expected ${label} to be a boolean`, {
+        code: "config_validation_error",
+        status: 500,
+        details: {
+          value,
+          supported: ["true", "false", "1", "0", "yes", "no", "on", "off"],
+        },
+      });
+  }
+}
+
 function parsePositiveInteger(value: string | undefined, label: string): number | undefined {
   if (!isNonEmptyString(value)) {
     return undefined;
@@ -285,10 +313,15 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
   const next = structuredClone(config);
   const host = env.RAY_HOST;
   const port = parseTcpPort(env.RAY_PORT, "RAY_PORT");
+  const requestBodyLimitBytes = parsePositiveInteger(
+    env.RAY_REQUEST_BODY_LIMIT_BYTES,
+    "RAY_REQUEST_BODY_LIMIT_BYTES",
+  );
   const logLevel = parseLogLevel(env.RAY_LOG_LEVEL, "RAY_LOG_LEVEL");
   const modelId = env.RAY_MODEL_ID;
   const modelFamily = env.RAY_MODEL_FAMILY;
   const quantization = parseQuantization(env.RAY_MODEL_QUANTIZATION);
+  const modelWarmOnBoot = parseBoolean(env.RAY_MODEL_WARM_ON_BOOT, "RAY_MODEL_WARM_ON_BOOT");
   const modelContextWindow = parsePositiveInteger(
     env.RAY_MODEL_CONTEXT_WINDOW,
     "RAY_MODEL_CONTEXT_WINDOW",
@@ -342,8 +375,14 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
     env.RAY_ASYNC_QUEUE_COMPLETED_TTL_MS,
     "RAY_ASYNC_QUEUE_COMPLETED_TTL_MS",
   );
+  const asyncQueueEnabled = parseBoolean(env.RAY_ASYNC_QUEUE_ENABLED, "RAY_ASYNC_QUEUE_ENABLED");
+  const cacheEnabled = parseBoolean(env.RAY_CACHE_ENABLED, "RAY_CACHE_ENABLED");
   const cacheMaxEntries = parsePositiveInteger(env.RAY_CACHE_MAX_ENTRIES, "RAY_CACHE_MAX_ENTRIES");
   const cacheTtlMs = parsePositiveInteger(env.RAY_CACHE_TTL_MS, "RAY_CACHE_TTL_MS");
+  const degradationEnabled = parseBoolean(
+    env.RAY_GRACEFUL_DEGRADATION_ENABLED,
+    "RAY_GRACEFUL_DEGRADATION_ENABLED",
+  );
   const degradationQueueDepthThreshold = parsePositiveInteger(
     env.RAY_DEGRADATION_QUEUE_DEPTH_THRESHOLD,
     "RAY_DEGRADATION_QUEUE_DEPTH_THRESHOLD",
@@ -364,6 +403,20 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
     env.RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD,
     "RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD",
   );
+  const promptCompilerEnabled = parseBoolean(
+    env.RAY_PROMPT_COMPILER_ENABLED,
+    "RAY_PROMPT_COMPILER_ENABLED",
+  );
+  const adaptiveTuningEnabled = parseBoolean(
+    env.RAY_ADAPTIVE_TUNING_ENABLED,
+    "RAY_ADAPTIVE_TUNING_ENABLED",
+  );
+  const authEnabled = parseBoolean(env.RAY_AUTH_ENABLED, "RAY_AUTH_ENABLED");
+  const rateLimitEnabled = parseBoolean(env.RAY_RATE_LIMIT_ENABLED, "RAY_RATE_LIMIT_ENABLED");
+  const rateLimitTrustProxyHeaders = parseBoolean(
+    env.RAY_RATE_LIMIT_TRUST_PROXY_HEADERS,
+    "RAY_RATE_LIMIT_TRUST_PROXY_HEADERS",
+  );
 
   if (isNonEmptyString(host)) {
     next.server.host = host;
@@ -371,6 +424,10 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
 
   if (port !== undefined) {
     next.server.port = port;
+  }
+
+  if (requestBodyLimitBytes !== undefined) {
+    next.server.requestBodyLimitBytes = requestBodyLimitBytes;
   }
 
   if (logLevel !== undefined) {
@@ -387,6 +444,10 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
 
   if (quantization !== undefined) {
     next.model.quantization = quantization;
+  }
+
+  if (modelWarmOnBoot !== undefined) {
+    next.model.warmOnBoot = modelWarmOnBoot;
   }
 
   if (modelContextWindow !== undefined) {
@@ -578,12 +639,24 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
     next.asyncQueue.completedTtlMs = asyncQueueCompletedTtlMs;
   }
 
+  if (asyncQueueEnabled !== undefined) {
+    next.asyncQueue.enabled = asyncQueueEnabled;
+  }
+
+  if (cacheEnabled !== undefined) {
+    next.cache.enabled = cacheEnabled;
+  }
+
   if (cacheMaxEntries !== undefined) {
     next.cache.maxEntries = cacheMaxEntries;
   }
 
   if (cacheTtlMs !== undefined) {
     next.cache.ttlMs = cacheTtlMs;
+  }
+
+  if (degradationEnabled !== undefined) {
+    next.gracefulDegradation.enabled = degradationEnabled;
   }
 
   if (degradationQueueDepthThreshold !== undefined) {
@@ -604,6 +677,26 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
 
   if (degradationCpuThrottledRatioThreshold !== undefined) {
     next.gracefulDegradation.cpuThrottledRatioThreshold = degradationCpuThrottledRatioThreshold;
+  }
+
+  if (promptCompilerEnabled !== undefined) {
+    next.promptCompiler.enabled = promptCompilerEnabled;
+  }
+
+  if (adaptiveTuningEnabled !== undefined) {
+    next.adaptiveTuning.enabled = adaptiveTuningEnabled;
+  }
+
+  if (authEnabled !== undefined) {
+    next.auth.enabled = authEnabled;
+  }
+
+  if (rateLimitEnabled !== undefined) {
+    next.rateLimit.enabled = rateLimitEnabled;
+  }
+
+  if (rateLimitTrustProxyHeaders !== undefined) {
+    next.rateLimit.trustProxyHeaders = rateLimitTrustProxyHeaders;
   }
 
   return next;
