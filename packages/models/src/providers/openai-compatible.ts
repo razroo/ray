@@ -41,6 +41,18 @@ interface OpenAICompatibleModelsResponse {
   }>;
 }
 
+const MAX_DISCOVERED_MODEL_ENTRIES = 4_096;
+const MAX_DISCOVERED_MODEL_IDS = 64;
+const MAX_DISCOVERED_MODEL_ID_CHARS = MAX_ADAPTER_MODEL_REF_CHARS;
+const MAX_HEALTH_DETAIL_MODEL_IDS = 10;
+
+interface OpenAICompatibleModelIdsSnapshot {
+  ids: string[];
+  foundModelRef: boolean;
+  scannedAllEntries: boolean;
+  validModelCount: number;
+}
+
 function buildChatCompletionPayload(options: {
   modelRef: string;
   input: string;
@@ -70,20 +82,70 @@ function buildChatCompletionPayload(options: {
   };
 }
 
-function extractModelIds(payload: unknown): string[] | undefined {
+function readModelId(entry: unknown): string | undefined {
+  if (entry === null || typeof entry !== "object") {
+    return undefined;
+  }
+
+  try {
+    const id = (entry as { id?: unknown }).id;
+    return typeof id === "string" && id.length > 0 && id.length <= MAX_DISCOVERED_MODEL_ID_CHARS
+      ? id
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function extractModelIds(
+  payload: unknown,
+  modelRef: string,
+): OpenAICompatibleModelIdsSnapshot | undefined {
   if (payload === null || typeof payload !== "object") {
     return undefined;
   }
 
-  const data = (payload as OpenAICompatibleModelsResponse).data;
+  let data: unknown;
+
+  try {
+    data = (payload as OpenAICompatibleModelsResponse).data;
+  } catch {
+    return undefined;
+  }
 
   if (!Array.isArray(data)) {
     return undefined;
   }
 
-  return data
-    .map((entry) => (typeof entry?.id === "string" ? entry.id : undefined))
-    .filter((id): id is string => typeof id === "string" && id.length > 0);
+  const ids: string[] = [];
+  let foundModelRef = false;
+  let validModelCount = 0;
+  const entriesToScan = Math.min(data.length, MAX_DISCOVERED_MODEL_ENTRIES);
+
+  for (let index = 0; index < entriesToScan; index += 1) {
+    const id = readModelId(data[index]);
+
+    if (id === undefined) {
+      continue;
+    }
+
+    if (id === modelRef) {
+      foundModelRef = true;
+    }
+
+    validModelCount += 1;
+
+    if (ids.length < MAX_DISCOVERED_MODEL_IDS) {
+      ids.push(id);
+    }
+  }
+
+  return {
+    ids,
+    foundModelRef,
+    scannedAllEntries: entriesToScan === data.length,
+    validModelCount,
+  };
 }
 
 function snapshotOpenAIAdapter(
@@ -155,11 +217,13 @@ export class OpenAICompatibleProvider implements ModelProvider {
         { method: "GET" },
         Math.min(this.adapter.timeoutMs, 5_000),
       );
-      const modelIds = extractModelIds(response);
+      const modelIds = extractModelIds(response, this.adapter.modelRef);
       const latencyMs = Date.now() - startedAt;
 
-      if (modelIds && modelIds.length > 0) {
-        if (!modelIds.includes(this.adapter.modelRef)) {
+      if (modelIds && modelIds.validModelCount > 0) {
+        if (!modelIds.foundModelRef && modelIds.scannedAllEntries) {
+          const availableModels = modelIds.ids.slice(0, MAX_HEALTH_DETAIL_MODEL_IDS);
+
           return {
             status: "unavailable",
             checkedAt: new Date().toISOString(),
@@ -167,20 +231,25 @@ export class OpenAICompatibleProvider implements ModelProvider {
             details: {
               probe: "/v1/models",
               message: `Configured modelRef "${this.adapter.modelRef}" is not exposed by the backend`,
-              availableModels: modelIds.slice(0, 10),
+              availableModels,
+              ...(modelIds.validModelCount > availableModels.length
+                ? { availableModelsTruncated: true }
+                : {}),
             },
           };
         }
 
-        return {
-          status: "ready",
-          checkedAt: new Date().toISOString(),
-          latencyMs,
-          details: {
-            probe: "/v1/models",
-            modelRef: this.adapter.modelRef,
-          },
-        };
+        if (modelIds.foundModelRef) {
+          return {
+            status: "ready",
+            checkedAt: new Date().toISOString(),
+            latencyMs,
+            details: {
+              probe: "/v1/models",
+              modelRef: this.adapter.modelRef,
+            },
+          };
+        }
       }
     } catch (error) {
       lastFailure = error;

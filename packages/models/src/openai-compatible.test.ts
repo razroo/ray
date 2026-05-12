@@ -808,3 +808,93 @@ test("openai-compatible provider reports modelRef mismatch as unavailable", asyn
     availableModels: ["different-model-ref"],
   });
 });
+
+test("openai-compatible provider bounds model mismatch diagnostics", async (t) => {
+  const longModelId = "x".repeat(257);
+  const modelIds = Array.from({ length: 12 }, (_entry, index) => ({
+    id: `different-model-ref-${index}`,
+  }));
+
+  const server = createServer((request, response) => {
+    if (request.url === "/v1/models") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ data: [{ id: longModelId }, ...modelIds] }));
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const provider = new OpenAICompatibleProvider(
+    createModel(`http://127.0.0.1:${address.port}`, 500),
+    {
+      kind: "openai-compatible",
+      baseUrl: `http://127.0.0.1:${address.port}`,
+      modelRef: "test-model-ref",
+      timeoutMs: 500,
+    },
+  );
+
+  const health = await provider.health();
+  assert.equal(health.status, "unavailable");
+  assert.deepEqual(health.details, {
+    probe: "/v1/models",
+    message: 'Configured modelRef "test-model-ref" is not exposed by the backend',
+    availableModels: modelIds.slice(0, 10).map((entry) => entry.id),
+    availableModelsTruncated: true,
+  });
+});
+
+test("openai-compatible provider finds modelRef beyond mismatch detail cap", async (t) => {
+  const modelIds = [
+    ...Array.from({ length: 12 }, (_entry, index) => ({
+      id: `different-model-ref-${index}`,
+    })),
+    { id: "test-model-ref" },
+  ];
+
+  const server = createServer((request, response) => {
+    if (request.url === "/v1/models") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ data: modelIds }));
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const provider = new OpenAICompatibleProvider(
+    createModel(`http://127.0.0.1:${address.port}`, 500),
+    {
+      kind: "openai-compatible",
+      baseUrl: `http://127.0.0.1:${address.port}`,
+      modelRef: "test-model-ref",
+      timeoutMs: 500,
+    },
+  );
+
+  const health = await provider.health();
+  assert.equal(health.status, "ready");
+  assert.deepEqual(health.details, {
+    probe: "/v1/models",
+    modelRef: "test-model-ref",
+  });
+});
