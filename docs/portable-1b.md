@@ -154,7 +154,9 @@ the same categories of overrides as comments. Keep `RAY_LLAMA_CPP_THREADS` and
 `RAY_LLAMA_CPP_THREADS_BATCH` within the VPS vCPU count when retuning the launch
 profile.
 
-For 8 GB nodes, start by raising context, slots, batch threads, and cache RAM through the 8 GB generic profile before adding more overrides.
+For 8 GB nodes, start by raising context, slots, batch threads, cache RAM, async
+queue storage headroom, gateway RSS headroom, and adaptive latency/throughput
+thresholds through the 8 GB generic profile before adding more overrides.
 
 ## Validate On The VPS
 

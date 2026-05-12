@@ -54,10 +54,21 @@
     "maxEntries": 512,
     "ttlMs": 120000
   },
+  "telemetry": {
+    "slowRequestThresholdMs": 1800
+  },
+  "asyncQueue": {
+    "minFreeStorageMiB": 512
+  },
   "gracefulDegradation": {
     "queueDepthThreshold": 20,
     "maxPromptChars": 8000,
-    "degradeToMaxTokens": 160
+    "degradeToMaxTokens": 160,
+    "memoryRssThresholdMiB": 768
+  },
+  "adaptiveTuning": {
+    "queueLatencyThresholdMs": 450,
+    "minCompletionTokensPerSecond": 14
   },
   "rateLimit": {
     "maxRequests": 150,

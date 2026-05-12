@@ -92,6 +92,39 @@ test("loadRayConfig accepts the 1b 8gb launch preset", async () => {
   assert.equal(loaded.config.model.operational?.memoryClassMiB, 8192);
 });
 
+test("loadRayConfig keeps checked-in 8gb profiles on 8gb operational defaults", async () => {
+  const configPaths = [
+    "./examples/config/ray.1b.8gb.json",
+    "./examples/config/ray.1b.8gb.public.json",
+    "./examples/config/ray.1b.8gb.generic.json",
+    "./examples/config/ray.1b.8gb.generic.public.json",
+  ];
+
+  for (const configPath of configPaths) {
+    const loaded = await loadRayConfig({
+      cwd: process.cwd(),
+      configPath,
+      env: {},
+    });
+
+    assert.equal(loaded.config.model.operational?.memoryClassMiB, 8192, configPath);
+    assert.equal(loaded.config.asyncQueue.minFreeStorageMiB, 512, configPath);
+    assert.equal(loaded.config.telemetry.slowRequestThresholdMs, 1800, configPath);
+    assert.equal(loaded.config.gracefulDegradation.memoryRssThresholdMiB, 768, configPath);
+    assert.equal(loaded.config.adaptiveTuning.queueLatencyThresholdMs, 450, configPath);
+    assert.equal(loaded.config.adaptiveTuning.minCompletionTokensPerSecond, 14, configPath);
+
+    if (
+      loaded.config.model.adapter.kind !== "llama.cpp" ||
+      !loaded.config.model.adapter.launchProfile
+    ) {
+      throw new Error(`Expected a llama.cpp launch profile for ${configPath}`);
+    }
+
+    assert.equal(loaded.config.model.adapter.launchProfile.threadsBatch, 4, configPath);
+  }
+});
+
 test("loadRayConfig accepts generic 1b model profiles", async () => {
   const generic4gb = await loadRayConfig({
     cwd: process.cwd(),
