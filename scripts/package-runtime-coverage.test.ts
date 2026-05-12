@@ -41,6 +41,7 @@ test("validatePackageRuntimeCoverage accepts current Bun-first workspace manifes
   assert.equal(summary.ok, true);
   assert.ok(summary.packageCount >= 10);
   assert.ok(summary.workflowCount >= 1);
+  assert.ok(summary.docCount >= 1);
   assert.ok(summary.scriptCount > 0);
   assert.equal(summary.forbiddenLockfiles.length, 0);
   assert.ok(
@@ -60,8 +61,10 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
 
   const appDir = path.join(tempDir, "apps", "gateway");
   const workflowDir = path.join(tempDir, ".github", "workflows");
+  const vpsDocDir = path.join(tempDir, "examples", "deploy", "vps");
   await mkdir(appDir, { recursive: true });
   await mkdir(workflowDir, { recursive: true });
+  await mkdir(vpsDocDir, { recursive: true });
   const rootPackageJson = path.join(tempDir, "package.json");
   const appPackageJson = path.join(appDir, "package.json");
   await writeFile(
@@ -134,6 +137,23 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
       "",
     ].join("\n"),
   );
+  await writeFile(
+    path.join(vpsDocDir, "README.md"),
+    [
+      "# VPS deploy",
+      "",
+      "```bash",
+      "curl -fsSL https://bun.sh/install | bash -s bun-v1.3.9",
+      "sudo apt-get install -y curl",
+      "git clone https://github.com/razroo/ray.git /srv/ray",
+      "bun install",
+      "npm run build",
+      "sudo install -m 0644 Caddyfile /etc/caddy/Caddyfile",
+      "sudo systemctl reload caddy",
+      "```",
+      "",
+    ].join("\n"),
+  );
 
   const summary = await validatePackageRuntimeCoverage({
     cwd: tempDir,
@@ -161,6 +181,11 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("workflow_journalctl_timeout_missing"));
   assert.ok(codes.includes("workflow_remote_bun_install_unbounded"));
   assert.ok(codes.includes("workflow_remote_bun_command_unbounded"));
+  assert.ok(codes.includes("vps_readme_curl_install_unbounded"));
+  assert.ok(codes.includes("vps_readme_apt_get_unbounded"));
+  assert.ok(codes.includes("vps_readme_command_timeout_missing"));
+  assert.ok(codes.includes("vps_readme_bun_install_unbounded"));
+  assert.ok(codes.includes("non_bun_vps_readme_command"));
   assert.ok(codes.includes("non_bun_lockfile_present"));
 });
 
@@ -173,6 +198,7 @@ test("formatTextSummary prints operator-readable runtime coverage results", asyn
 
   assert.match(text, /Checked 1 package manifest/);
   assert.match(text, /GitHub workflow/);
+  assert.match(text, /deployment doc/);
   assert.match(text, /package\.json/);
   assert.match(text, /packageManager=bun@/);
   assert.match(text, /Summary: packages=1/);
@@ -192,8 +218,10 @@ test("runPackageRuntimeCoverageCli prints JSON coverage", async () => {
     ok?: boolean;
     packageCount?: number;
     workflowCount?: number;
+    docCount?: number;
   };
   assert.equal(parsed.ok, true);
   assert.ok((parsed.packageCount ?? 0) >= 10);
   assert.ok((parsed.workflowCount ?? 0) >= 1);
+  assert.ok((parsed.docCount ?? 0) >= 1);
 });
