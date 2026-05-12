@@ -28,7 +28,7 @@ That keeps the gateway process small while still making self-hosted inference op
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y curl git build-essential caddy
+sudo apt-get install -y ca-certificates curl unzip git build-essential caddy
 curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.9"
 sudo install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
 SERVICE_USER="${RAY_DEPLOY_SERVICE_USER:-ray}"
@@ -332,8 +332,8 @@ The workflow validates the deploy SSH user and configured gateway runtime path
 before opening SSH, checks that `RAY_DEPLOY_KNOWN_HOSTS` contains an entry for
 the configured host and SSH port,
 installs missing remote deploy prerequisites such as `curl`, `ca-certificates`,
-and `rsync`, refreshes `/usr/local/bin/bun` when it is missing or older than the
-repo's supported Bun runtime, then runs `ray deploy doctor` on the VPS before
+`unzip`, and `rsync`, refreshes `/usr/local/bin/bun` when it is missing or older
+than the repo's supported Bun runtime, then runs `ray deploy doctor` on the VPS before
 restarting services. Missing API keys, missing GGUF files, memory-fit errors,
 exhausted async queue storage reserves, and unsupported gateway runtimes fail
 before systemd tries to start the generated units. The configured gateway

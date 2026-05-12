@@ -320,6 +320,9 @@ jobs:
           if ! command -v curl >/dev/null 2>&1; then
             missing_packages="$missing_packages curl ca-certificates"
           fi
+          if ! command -v unzip >/dev/null 2>&1; then
+            missing_packages="$missing_packages unzip"
+          fi
           if ! command -v rsync >/dev/null 2>&1; then
             missing_packages="$missing_packages rsync"
           fi
