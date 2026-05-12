@@ -79,6 +79,7 @@ interface PreparationQueueEntry {
 
 export interface CgroupMemorySnapshot {
   currentMiB: number;
+  highMiB?: number;
   limitMiB?: number;
   pressureRatio?: number;
 }
@@ -92,12 +93,14 @@ export interface CgroupMemoryReaderOptions {
 
 interface CgroupMemoryCandidate {
   currentPath: string;
+  highPath?: string;
   limitPath: string;
 }
 
 interface MemoryPressureSnapshot {
   processRssMiB: number;
   cgroupMemoryCurrentMiB?: number;
+  cgroupMemoryHighMiB?: number;
   cgroupMemoryLimitMiB?: number;
   cgroupMemoryPressureRatio?: number;
 }
@@ -689,6 +692,9 @@ function buildDegradationDiagnostics(options: {
     ...(options.memoryPressure.cgroupMemoryCurrentMiB !== undefined
       ? { cgroupMemoryCurrentMiB: options.memoryPressure.cgroupMemoryCurrentMiB }
       : {}),
+    ...(options.memoryPressure.cgroupMemoryHighMiB !== undefined
+      ? { cgroupMemoryHighMiB: options.memoryPressure.cgroupMemoryHighMiB }
+      : {}),
     ...(options.memoryPressure.cgroupMemoryLimitMiB !== undefined
       ? { cgroupMemoryLimitMiB: options.memoryPressure.cgroupMemoryLimitMiB }
       : {}),
@@ -719,6 +725,9 @@ function buildRuntimeHealthDiagnostics(options: {
       memoryRssThresholdMiB: options.memoryRssThresholdMiB,
       ...(options.memoryPressure.cgroupMemoryCurrentMiB !== undefined
         ? { cgroupMemoryCurrentMiB: options.memoryPressure.cgroupMemoryCurrentMiB }
+        : {}),
+      ...(options.memoryPressure.cgroupMemoryHighMiB !== undefined
+        ? { cgroupMemoryHighMiB: options.memoryPressure.cgroupMemoryHighMiB }
         : {}),
       ...(options.memoryPressure.cgroupMemoryLimitMiB !== undefined
         ? { cgroupMemoryLimitMiB: options.memoryPressure.cgroupMemoryLimitMiB }
@@ -817,19 +826,26 @@ function resolveCgroupMemoryCandidates(
       cgroupPath,
       isUnifiedCgroup ? "memory.max" : "memory.limit_in_bytes",
     );
+    const highPath = isUnifiedCgroup
+      ? resolveCgroupFile(root, cgroupPath, "memory.high")
+      : undefined;
 
     if (!currentPath || !limitPath) {
       continue;
     }
 
-    const key = `${currentPath}\n${limitPath}`;
+    const key = `${currentPath}\n${highPath ?? ""}\n${limitPath}`;
 
     if (seen.has(key)) {
       continue;
     }
 
     seen.add(key);
-    candidates.push({ currentPath, limitPath });
+    candidates.push({
+      currentPath,
+      ...(highPath ? { highPath } : {}),
+      limitPath,
+    });
   }
 
   return candidates;
@@ -864,13 +880,26 @@ export async function readCgroupMemorySnapshot(
       const limitRaw = await readTextFile(candidate.limitPath).catch(() => undefined);
       const limitBytes =
         limitRaw === undefined ? undefined : parseCgroupByteValue(limitRaw, { allowMax: true });
+      const highRaw = candidate.highPath
+        ? await readTextFile(candidate.highPath).catch(() => undefined)
+        : undefined;
+      const highBytes =
+        highRaw === undefined ? undefined : parseCgroupByteValue(highRaw, { allowMax: true });
       const snapshot: CgroupMemorySnapshot = {
         currentMiB: bytesToMiB(currentBytes),
       };
 
+      if (highBytes !== undefined && highBytes > 0) {
+        snapshot.highMiB = bytesToMiB(highBytes);
+      }
+
       if (limitBytes !== undefined && limitBytes > 0) {
         snapshot.limitMiB = bytesToMiB(limitBytes);
-        snapshot.pressureRatio = Number((currentBytes / limitBytes).toFixed(4));
+      }
+
+      const pressureLimitBytes = highBytes !== undefined && highBytes > 0 ? highBytes : limitBytes;
+      if (pressureLimitBytes !== undefined && pressureLimitBytes > 0) {
+        snapshot.pressureRatio = Number((currentBytes / pressureLimitBytes).toFixed(4));
       }
 
       return snapshot;
@@ -1874,6 +1903,9 @@ export class RayRuntime {
       ...(cgroupMemory
         ? {
             cgroupMemoryCurrentMiB: cgroupMemory.currentMiB,
+            ...(cgroupMemory.highMiB !== undefined
+              ? { cgroupMemoryHighMiB: cgroupMemory.highMiB }
+              : {}),
             ...(cgroupMemory.limitMiB !== undefined
               ? { cgroupMemoryLimitMiB: cgroupMemory.limitMiB }
               : {}),
@@ -1929,6 +1961,9 @@ export class RayRuntime {
         "process.memory.cgroup_current_mib",
         memoryPressure.cgroupMemoryCurrentMiB,
       );
+    }
+    if (memoryPressure.cgroupMemoryHighMiB !== undefined) {
+      this.metrics.gauge("process.memory.cgroup_high_mib", memoryPressure.cgroupMemoryHighMiB);
     }
     if (memoryPressure.cgroupMemoryLimitMiB !== undefined) {
       this.metrics.gauge("process.memory.cgroup_limit_mib", memoryPressure.cgroupMemoryLimitMiB);

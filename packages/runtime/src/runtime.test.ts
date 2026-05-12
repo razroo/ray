@@ -144,6 +144,7 @@ test("runtime clamps output under cgroup memory pressure", async () => {
     }),
     cgroupMemory: () => ({
       currentMiB: 950,
+      highMiB: 900,
       limitMiB: 1_000,
       pressureRatio: 0.95,
     }),
@@ -164,6 +165,7 @@ test("runtime clamps output under cgroup memory pressure", async () => {
   assert.deepEqual(result.diagnostics?.degradation?.memoryPressureSources, ["cgroup"]);
   assert.equal(result.diagnostics?.degradation?.processRssMiB, 32);
   assert.equal(result.diagnostics?.degradation?.cgroupMemoryCurrentMiB, 950);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemoryHighMiB, 900);
   assert.equal(result.diagnostics?.degradation?.cgroupMemoryLimitMiB, 1_000);
   assert.equal(result.diagnostics?.degradation?.cgroupMemoryPressureRatio, 0.95);
   assert.equal(health.status, "degraded");
@@ -173,9 +175,11 @@ test("runtime clamps output under cgroup memory pressure", async () => {
   assert.deepEqual(health.runtime?.memory.sources, ["cgroup"]);
   assert.equal(health.runtime?.memory.processRssMiB, 32);
   assert.equal(health.runtime?.memory.cgroupMemoryCurrentMiB, 950);
+  assert.equal(health.runtime?.memory.cgroupMemoryHighMiB, 900);
   assert.equal(health.runtime?.memory.cgroupMemoryLimitMiB, 1_000);
   assert.equal(health.runtime?.memory.cgroupMemoryPressureRatio, 0.95);
   assert.equal(metrics.gauges["process.memory.cgroup_current_mib"], 950);
+  assert.equal(metrics.gauges["process.memory.cgroup_high_mib"], 900);
   assert.equal(metrics.gauges["process.memory.cgroup_limit_mib"], 1_000);
   assert.equal(metrics.gauges["process.memory.cgroup_pressure_ratio"], 0.95);
   assert.equal(metrics.gauges["process.memory.cgroup_pressure"], 1);
@@ -192,7 +196,33 @@ test("readCgroupMemorySnapshot reads unified cgroup memory files", async (t) => 
 
   await mkdir(cgroupDir, { recursive: true });
   await writeFile(procCgroupPath, "0::/ray.slice/ray-gateway.service\n", "utf8");
+  await writeFile(join(cgroupDir, "memory.current"), String(760 * 1024 * 1024), "utf8");
+  await writeFile(join(cgroupDir, "memory.high"), String(800 * 1024 * 1024), "utf8");
+  await writeFile(join(cgroupDir, "memory.max"), String(1_000 * 1024 * 1024), "utf8");
+
+  const snapshot = await readCgroupMemorySnapshot({
+    procSelfCgroupPath: procCgroupPath,
+    cgroupV2Root: tempDir,
+  });
+
+  assert.equal(snapshot?.currentMiB, 760);
+  assert.equal(snapshot?.highMiB, 800);
+  assert.equal(snapshot?.limitMiB, 1_000);
+  assert.equal(snapshot?.pressureRatio, 0.95);
+});
+
+test("readCgroupMemorySnapshot falls back to memory.max when memory.high is unlimited", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-cgroup-memory-max-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const cgroupDir = join(tempDir, "ray.slice", "ray-gateway.service");
+  const procCgroupPath = join(tempDir, "self-cgroup");
+
+  await mkdir(cgroupDir, { recursive: true });
+  await writeFile(procCgroupPath, "0::/ray.slice/ray-gateway.service\n", "utf8");
   await writeFile(join(cgroupDir, "memory.current"), String(900 * 1024 * 1024), "utf8");
+  await writeFile(join(cgroupDir, "memory.high"), "max\n", "utf8");
   await writeFile(join(cgroupDir, "memory.max"), String(1_000 * 1024 * 1024), "utf8");
 
   const snapshot = await readCgroupMemorySnapshot({
@@ -201,6 +231,7 @@ test("readCgroupMemorySnapshot reads unified cgroup memory files", async (t) => 
   });
 
   assert.equal(snapshot?.currentMiB, 900);
+  assert.equal(snapshot?.highMiB, undefined);
   assert.equal(snapshot?.limitMiB, 1_000);
   assert.equal(snapshot?.pressureRatio, 0.9);
 });
