@@ -417,6 +417,9 @@ the workflow prints bounded `systemctl status`, `systemctl show`, and recent
 
 Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 `workflow_dispatch` for manual deploys.
+Auto-deploy runs only for changes covered by the workflow path filter,
+including gateway/packages code, public configs, VPS deploy docs, the workflow
+file, package metadata, and the llama.cpp staging helper used during deploy.
 
 ## Operational Notes
 
