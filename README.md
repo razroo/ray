@@ -309,6 +309,7 @@ the operator.
 ### Render / validate / doctor
 
 ```bash
+bun packages/deploy/dist/cli.js --help
 bun run render:service
 bun run render:service:1b:generic
 bun run render:service:1b:8gb:generic

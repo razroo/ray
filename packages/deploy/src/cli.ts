@@ -9,6 +9,7 @@ export interface CliOptions {
   command: Command;
   cwd: string;
   configPath: string;
+  help?: boolean;
   user?: string;
   domain?: string;
   envFile?: string;
@@ -36,6 +37,39 @@ const unsafeDeployEnvKeys = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_DEPLOY_CLI_ARGS = 64;
 const MAX_DEPLOY_CLI_ARG_BYTES = 4_096;
 const SYSTEMD_USER_PATTERN = /^(?:[A-Za-z_][A-Za-z0-9_-]{0,30}|[0-9]{1,10})$/;
+const DEFAULT_CONFIG_PATH = "./examples/config/ray.sub1b.public.json";
+
+const DEPLOY_CLI_HELP = `Ray deploy CLI
+
+Usage:
+  bun packages/deploy/dist/cli.js render [options]
+  bun packages/deploy/dist/cli.js validate [options]
+  bun packages/deploy/dist/cli.js doctor [options]
+
+Commands:
+  render    Print or write systemd, Caddy, env example, and summary output.
+  validate  Print config diagnostics and non-strict host preflight details.
+  doctor    Run strict VPS diagnostics and exit non-zero on error diagnostics.
+
+Options:
+  --cwd <path>                    Repo or deploy working directory. Default: current directory.
+  --config <path>                 Ray config path. Default: ${DEFAULT_CONFIG_PATH}
+  --env-file <path>               Load deploy env values from a real env file.
+  --ray-env-file <path>           Alias for --env-file.
+  --systemd-env-file <path>       Render a systemd EnvironmentFile path without loading it. Render only.
+  --output-dir <path>             Write rendered files instead of printing them. Render only.
+  --domain <host>                 Caddy site address. Default: ray.local or RAY_DEPLOY_DOMAIN.
+  --user <name|uid>               systemd service user. Default: ray or RAY_DEPLOY_SERVICE_USER.
+  --gateway-runtime-binary <path> Gateway runtime path. Default: /usr/local/bin/bun.
+  --node-binary <path>            Compatibility alias for the gateway runtime path.
+  --memory-mib <number>           VPS memory budget for llama.cpp sizing.
+  --strict-filesystem             Check service-user, binary, config, model, and storage paths.
+  -h, --help                      Show this help.
+
+Deploy env values loaded by --env-file include RAY_API_KEYS, RAY_DEPLOY_SERVICE_USER,
+RAY_DEPLOY_DOMAIN, RAY_DEPLOY_MEMORY_MIB, RAY_GATEWAY_RUNTIME_BINARY, and portable
+RAY_MODEL_* / RAY_LLAMA_CPP_* model overrides.
+`;
 
 function assertCliArgv(argv: unknown): asserts argv is string[] {
   if (!Array.isArray(argv)) {
@@ -303,6 +337,15 @@ export function parseCliArgs(argv: string[]): CliOptions {
   let command: Command = "render";
   let index = 0;
 
+  if (argv[0] === "help") {
+    return {
+      command,
+      cwd: process.cwd(),
+      configPath: DEFAULT_CONFIG_PATH,
+      help: true,
+    };
+  }
+
   if (argv[0] === "render" || argv[0] === "validate" || argv[0] === "doctor") {
     command = argv[0];
     index = 1;
@@ -313,7 +356,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
     command,
     cwd: process.cwd(),
-    configPath: "./examples/config/ray.sub1b.public.json",
+    configPath: DEFAULT_CONFIG_PATH,
   };
 
   for (; index < argv.length; index += 1) {
@@ -321,6 +364,11 @@ export function parseCliArgs(argv: string[]): CliOptions {
     const next = argv[index + 1];
 
     if (current === "--") {
+      continue;
+    }
+
+    if (current === "--help" || current === "-h") {
+      options.help = true;
       continue;
     }
 
@@ -400,6 +448,11 @@ export function parseCliArgs(argv: string[]): CliOptions {
 
 export async function runCli(argv: string[]): Promise<void> {
   const options = parseCliArgs(argv);
+  if (options.help) {
+    console.log(DEPLOY_CLI_HELP.trimEnd());
+    return;
+  }
+
   const cwd = path.resolve(options.cwd);
   const resolvedOptions: CliOptions = {
     ...options,

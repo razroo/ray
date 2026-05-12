@@ -27,6 +27,12 @@ test("parseCliArgs accepts strict memory budget overrides", () => {
   assert.equal(options.memoryBudgetMiB, 4096);
 });
 
+test("parseCliArgs accepts deploy help", () => {
+  assert.equal(parseCliArgs(["--help"]).help, true);
+  assert.equal(parseCliArgs(["render", "-h"]).help, true);
+  assert.equal(parseCliArgs(["help"]).help, true);
+});
+
 test("parseCliArgs rejects malformed memory budget overrides", () => {
   assert.throws(
     () => parseCliArgs(["doctor", "--memory-mib", "4096MiB"]),
@@ -204,6 +210,26 @@ test("runCli rejects systemd env-file paths outside render", async () => {
     () => runCli(["doctor", "--systemd-env-file", "/etc/ray/ray.env"]),
     /--systemd-env-file is only supported by render/,
   );
+});
+
+test("runCli prints deploy help without loading config or env files", async (t) => {
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli(["render", "--help", "--ray-env-file", "missing.ray.env"]);
+
+  const help = output.join("\n");
+  assert.match(help, /Usage:/);
+  assert.match(help, /render \[options\]/);
+  assert.match(help, /--ray-env-file <path>/);
+  assert.match(help, /--systemd-env-file <path>/);
+  assert.match(help, /RAY_DEPLOY_MEMORY_MIB/);
 });
 
 test("runCli rejects oversized explicit env files before parsing", async (t) => {
