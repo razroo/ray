@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadRayConfig, resolveAuthApiKeys } from "./index.js";
@@ -31,6 +31,23 @@ test("loadRayConfig rejects oversized config files before parsing", async (t) =>
     }),
     /Config file must be at most 262144 bytes/,
   );
+});
+
+test("loadRayConfig accepts every checked-in example config", async () => {
+  const configDir = join(process.cwd(), "examples/config");
+  const configFiles = (await readdir(configDir)).filter((entry) => entry.endsWith(".json")).sort();
+
+  assert.ok(configFiles.length > 0);
+
+  for (const configFile of configFiles) {
+    const loaded = await loadRayConfig({
+      cwd: process.cwd(),
+      configPath: `./examples/config/${configFile}`,
+      env: {},
+    });
+
+    assert.ok(loaded.config.profile, `${configFile} should resolve a profile`);
+  }
 });
 
 test("loadRayConfig accepts the cax11 sub1b launch preset", async () => {
