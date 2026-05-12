@@ -92,6 +92,30 @@ function truncateLogString(value: string, maxChars = MAX_LOG_STRING_CHARS): stri
   return `${value.slice(0, maxChars)}...[truncated ${value.length - maxChars} chars]`;
 }
 
+function truncateLogKey(value: string): string {
+  if (value.length <= MAX_LOG_KEY_CHARS) {
+    return value;
+  }
+
+  let headChars = MAX_LOG_KEY_CHARS;
+
+  for (;;) {
+    const omittedChars = value.length - headChars;
+    const suffix = `...[truncated ${omittedChars} chars]`;
+
+    if (suffix.length >= MAX_LOG_KEY_CHARS) {
+      return suffix.slice(0, MAX_LOG_KEY_CHARS);
+    }
+
+    const nextHeadChars = MAX_LOG_KEY_CHARS - suffix.length;
+    if (nextHeadChars === headChars) {
+      return `${value.slice(0, headChars)}${suffix}`;
+    }
+
+    headChars = nextHeadChars;
+  }
+}
+
 function sanitizeLogValue(value: unknown, seen: WeakSet<object>, depth = 0): unknown {
   if (value === null || value === undefined) {
     return value;
@@ -171,7 +195,7 @@ function sanitizeLogValue(value: unknown, seen: WeakSet<object>, depth = 0): unk
     }
 
     for (const key of keys.slice(0, MAX_LOG_OBJECT_KEYS)) {
-      const safeKey = truncateLogString(key, MAX_LOG_KEY_CHARS);
+      const safeKey = truncateLogKey(key);
 
       try {
         output[safeKey] = sanitizeLogValue(
@@ -224,11 +248,12 @@ function copyLogFields(line: LogLine, fields?: LogFields): void {
 
   for (const key of keys.slice(0, MAX_LOG_OBJECT_KEYS)) {
     const targetKey = reservedLogFields.has(key) ? `field.${key}` : key;
+    const safeTargetKey = truncateLogKey(targetKey);
 
     try {
-      line[targetKey] = fields[key];
+      line[safeTargetKey] = fields[key];
     } catch (error) {
-      line[targetKey] = `[Thrown: ${truncateLogString(toErrorMessage(error))}]`;
+      line[safeTargetKey] = `[Thrown: ${truncateLogString(toErrorMessage(error))}]`;
     }
   }
 

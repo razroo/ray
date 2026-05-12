@@ -42,7 +42,7 @@ test("logger emits JSON for circular and non-JSON-native fields", () => {
   assert.equal(parsed.service, "ray-test");
   assert.equal(parsed.count, "2");
   assert.equal(parsed.circular.self, "[Circular]");
-  assert.equal(parsed.circular[`k${"x".repeat(127)}...[truncated 13 chars]`], "bounded-key");
+  assert.equal(parsed.circular[`k${"x".repeat(104)}...[truncated 36 chars]`], "bounded-key");
   assert.match(parsed.huge, /\[truncated 1 chars\]$/);
 });
 
@@ -60,6 +60,8 @@ test("logger protects core fields and throwing top-level accessors", () => {
       service: "spoofed",
       ts: "spoofed",
     };
+    const longKey = `k${"x".repeat(140)}`;
+    fields[longKey] = "bounded-key";
     Object.defineProperty(fields, "explode", {
       enumerable: true,
       get() {
@@ -83,6 +85,7 @@ test("logger protects core fields and throwing top-level accessors", () => {
     "field.message": string;
     "field.ts": string;
     explode: string;
+    [key: string]: unknown;
   };
   assert.equal(parsed.service, "ray-test");
   assert.equal(parsed.level, "info");
@@ -92,6 +95,7 @@ test("logger protects core fields and throwing top-level accessors", () => {
   assert.equal(parsed["field.message"], "spoofed");
   assert.equal(parsed["field.ts"], "spoofed");
   assert.equal(parsed.explode, "[Thrown: boom]");
+  assert.equal(parsed[`k${"x".repeat(104)}...[truncated 36 chars]`], "bounded-key");
 });
 
 test("logger does not throw when field accessors fail", () => {
