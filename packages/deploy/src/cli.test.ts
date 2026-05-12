@@ -393,6 +393,52 @@ test("runCli render strict-filesystem refuses to write when host checks fail", a
   assert.deepEqual(output, []);
 });
 
+test("runCli render allows non-strict host storage warnings", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-render-storage-warning-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = join(tempDir, "ray.json");
+  const outputDir = join(tempDir, "rendered");
+  const config = mergeConfig(createDefaultConfig("vps"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir: join(tempDir, "async-queue"),
+      minFreeStorageMiB: 1_048_576,
+    },
+  });
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli([
+    "render",
+    "--cwd",
+    tempDir,
+    "--config",
+    configPath,
+    "--gateway-runtime-binary",
+    process.execPath,
+    "--output-dir",
+    outputDir,
+  ]);
+
+  const summary = JSON.parse(await readFile(join(outputDir, "summary.json"), "utf8"));
+  const storageDiagnostic = summary.diagnostics.find(
+    (diagnostic: { code?: unknown }) => diagnostic.code === "async_queue_storage_low",
+  );
+  assert.ok(storageDiagnostic);
+  assert.equal(storageDiagnostic.level, "warn");
+  assert.match(output.join("\n"), /ray-gateway\.service/);
+});
+
 test("runCli validate prints deployment preflight details", async (t) => {
   const output: string[] = [];
   const originalLog = console.log;

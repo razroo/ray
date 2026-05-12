@@ -1155,7 +1155,7 @@ test("diagnoseConfig warns when async callbacks bypass network guardrails", () =
   assert.match(trustedHosts.message, /bypass DNS\/network address blocking/);
 });
 
-test("diagnoseConfig errors when async queue storage is below the reserved headroom", () => {
+test("diagnoseConfig warns when non-strict async queue storage is below reserved headroom", () => {
   const config = mergeConfig(createDefaultConfig("1b"), {
     asyncQueue: {
       enabled: true,
@@ -1175,12 +1175,38 @@ test("diagnoseConfig errors when async queue storage is below the reserved headr
 
   const diagnostic = diagnostics.find((entry) => entry.code === "async_queue_storage_low");
   assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /127 MiB free/);
+  assert.match(diagnostic.message, /256 MiB/);
+});
+
+test("diagnoseConfig errors when strict async queue storage is below reserved headroom", () => {
+  const config = mergeConfig(createDefaultConfig("1b"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir: "/var/lib/ray/async-queue",
+      minFreeStorageMiB: 256,
+    },
+  });
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      asyncQueueStoragePath: "/var/lib/ray/async-queue",
+      asyncQueueStorageCheckPath: "/var/lib/ray",
+      asyncQueueStorageStatus: "parent",
+      asyncQueueStorageAvailableMiB: 127,
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "async_queue_storage_low");
+  assert.ok(diagnostic);
   assert.equal(diagnostic.level, "error");
   assert.match(diagnostic.message, /127 MiB free/);
   assert.match(diagnostic.message, /256 MiB/);
 });
 
-test("diagnoseConfig errors when async queue storage is blocked by a file", () => {
+test("diagnoseConfig warns when non-strict async queue storage is blocked by a file", () => {
   const config = mergeConfig(createDefaultConfig("1b"), {
     asyncQueue: {
       enabled: true,
@@ -1189,6 +1215,31 @@ test("diagnoseConfig errors when async queue storage is blocked by a file", () =
   });
 
   const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    preflight: {
+      asyncQueueStoragePath: "/var/lib/ray/async-queue",
+      asyncQueueStorageCheckPath: "/var/lib/ray",
+      asyncQueueStorageStatus: "not_directory",
+      asyncQueueStorageError: "not a directory",
+    },
+  });
+
+  const diagnostic = diagnostics.find(
+    (entry) => entry.code === "async_queue_storage_not_directory",
+  );
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+});
+
+test("diagnoseConfig errors when strict async queue storage is blocked by a file", () => {
+  const config = mergeConfig(createDefaultConfig("1b"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir: "/var/lib/ray/async-queue",
+    },
+  });
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
     preflight: {
       asyncQueueStoragePath: "/var/lib/ray/async-queue",
       asyncQueueStorageCheckPath: "/var/lib/ray",
@@ -2035,7 +2086,7 @@ test("loadAndDiagnoseDeployment reports async queue storage headroom from the ne
   assert.match(diagnostic.message, /asyncQueue\.minFreeStorageMiB/);
 });
 
-test("loadAndDiagnoseDeployment errors when async queue storage is blocked by an existing file", async (t) => {
+test("loadAndDiagnoseDeployment warns when non-strict async queue storage is blocked by an existing file", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-storage-file-"));
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
@@ -2063,5 +2114,6 @@ test("loadAndDiagnoseDeployment errors when async queue storage is blocked by an
     (entry) => entry.code === "async_queue_storage_not_directory",
   );
   assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
   assert.match(diagnostic.message, new RegExp(blockedPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });

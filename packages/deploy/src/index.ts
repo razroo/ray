@@ -1828,7 +1828,7 @@ export function diagnoseConfig(
 
     if (preflight?.asyncQueueStorageStatus === "not_directory") {
       diagnostics.push({
-        level: "error",
+        level: strictFilesystem ? "error" : "warn",
         code: "async_queue_storage_not_directory",
         message: `asyncQueue.storageDir cannot be created because ${preflight.asyncQueueStorageCheckPath ?? preflight.asyncQueueStoragePath ?? config.asyncQueue.storageDir} is not a directory.`,
       });
@@ -1868,7 +1868,7 @@ export function diagnoseConfig(
 
       if (preflight.asyncQueueStorageAvailableMiB < config.asyncQueue.minFreeStorageMiB) {
         diagnostics.push({
-          level: "error",
+          level: strictFilesystem ? "error" : "warn",
           code: "async_queue_storage_low",
           message: `Async queue storage has ${formatMiB(preflight.asyncQueueStorageAvailableMiB)} free at ${checkedPath}, below asyncQueue.minFreeStorageMiB (${formatMiB(config.asyncQueue.minFreeStorageMiB)}) for ${storagePath}. Move the queue to a larger persistent volume or lower the reserve only after sizing the VPS disk.`,
         });
