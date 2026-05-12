@@ -1235,6 +1235,40 @@ test("diagnoseConfig errors when the generated service user is missing in strict
   assert.equal(diagnostic.level, "error");
 });
 
+test("diagnoseConfig errors when the generated service user cannot access gateway paths", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      serviceUser: "ray",
+      workingDirectoryPath: "/srv/ray",
+      workingDirectoryStatus: "found",
+      workingDirectoryAccessStatus: "blocked",
+      workingDirectoryAccessError: "execute permission is not granted on /srv",
+      gatewayEntrypointPath: "/srv/ray/apps/gateway/dist/index.js",
+      gatewayEntrypointStatus: "found",
+      gatewayEntrypointAccessStatus: "blocked",
+      gatewayEntrypointAccessError: "read permission is not granted on index.js",
+    },
+  });
+
+  const workingDirectoryDiagnostic = diagnostics.find(
+    (entry) => entry.code === "working_directory_service_user_inaccessible",
+  );
+  assert.ok(workingDirectoryDiagnostic);
+  assert.equal(workingDirectoryDiagnostic.level, "error");
+  assert.match(workingDirectoryDiagnostic.message, /ray/);
+  assert.match(workingDirectoryDiagnostic.message, /execute permission/);
+
+  const entrypointDiagnostic = diagnostics.find(
+    (entry) => entry.code === "gateway_entrypoint_service_user_inaccessible",
+  );
+  assert.ok(entrypointDiagnostic);
+  assert.equal(entrypointDiagnostic.level, "error");
+  assert.match(entrypointDiagnostic.message, /ray/);
+  assert.match(entrypointDiagnostic.message, /read permission/);
+});
+
 test("loadAndDiagnoseDeployment reports an existing generated service user in strict mode", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-service-user-"));
   t.after(async () => {

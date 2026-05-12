@@ -1,4 +1,4 @@
-import { constants } from "node:fs";
+import { constants, type Stats } from "node:fs";
 import { access, readFile, stat, statfs } from "node:fs/promises";
 import { isIP } from "node:net";
 import { tmpdir, totalmem } from "node:os";
@@ -46,6 +46,7 @@ type GatewayEntrypointStatus = BinaryPreflightStatus;
 type WorkingDirectoryStatus = "found" | "missing" | "not_directory" | "unreadable";
 type EnvFileStatus = "found" | "missing" | "unreadable";
 type ServiceUserStatus = "found" | "missing" | "unreadable";
+type ServiceUserAccessStatus = "ok" | "blocked";
 type SwapStatus = "available" | "missing" | "unreadable";
 
 export interface DeploymentPreflight {
@@ -67,9 +68,13 @@ export interface DeploymentPreflight {
   gatewayEntrypointPath?: string;
   gatewayEntrypointStatus?: GatewayEntrypointStatus;
   gatewayEntrypointError?: string;
+  gatewayEntrypointAccessStatus?: ServiceUserAccessStatus;
+  gatewayEntrypointAccessError?: string;
   workingDirectoryPath?: string;
   workingDirectoryStatus?: WorkingDirectoryStatus;
   workingDirectoryError?: string;
+  workingDirectoryAccessStatus?: ServiceUserAccessStatus;
+  workingDirectoryAccessError?: string;
   llamaCppBinaryPath?: string;
   llamaCppBinaryStatus?: LlamaCppBinaryStatus;
   llamaCppBinaryError?: string;
@@ -79,6 +84,9 @@ export interface DeploymentPreflight {
   envFileError?: string;
   serviceUser?: string;
   serviceUserStatus?: ServiceUserStatus;
+  serviceUserUid?: number;
+  serviceUserGid?: number;
+  serviceUserGroupIds?: number[];
   serviceUserError?: string;
   swapStatus?: SwapStatus;
   swapTotalMiB?: number;
@@ -128,6 +136,13 @@ const MAX_CADDY_UPSTREAM_TIMEOUT_MS = 120_000 + CADDY_UPSTREAM_TIMEOUT_GRACE_MS;
 interface StorageStats {
   bavail: number | bigint;
   bsize: number | bigint;
+}
+
+interface ServiceUserIdentity {
+  name: string;
+  uid: number;
+  gid: number;
+  groupIds: number[];
 }
 
 const llamaCppLaunchPresets = new Set<LlamaCppLaunchProfile["preset"]>([
@@ -589,7 +604,16 @@ function parseSwapTotalMiB(meminfo: string): number | undefined {
   return Number.isSafeInteger(swapKiB) && swapKiB >= 0 ? Math.floor(swapKiB / 1024) : undefined;
 }
 
-function passwdContainsUser(passwd: string, user: string): boolean {
+function parseNonNegativeInteger(value: string): number | undefined {
+  if (!/^\d+$/.test(value)) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function resolvePasswdUser(passwd: string, user: string): ServiceUserIdentity | undefined {
   const numericUid = /^\d+$/.test(user) ? user : undefined;
 
   for (const rawLine of passwd.split("\n")) {
@@ -599,16 +623,152 @@ function passwdContainsUser(passwd: string, user: string): boolean {
     }
 
     const fields = line.split(":");
-    if (fields.length < 3) {
+    if (fields.length < 4) {
       continue;
     }
 
-    if (fields[0] === user || (numericUid !== undefined && fields[2] === numericUid)) {
-      return true;
+    const name = fields[0];
+    const uidField = fields[2];
+    const gidField = fields[3];
+    if (name === undefined || uidField === undefined || gidField === undefined) {
+      continue;
+    }
+
+    if (name === user || (numericUid !== undefined && uidField === numericUid)) {
+      const uid = parseNonNegativeInteger(uidField);
+      const gid = parseNonNegativeInteger(gidField);
+
+      if (uid === undefined || gid === undefined) {
+        return undefined;
+      }
+
+      return {
+        name,
+        uid,
+        gid,
+        groupIds: [gid],
+      };
     }
   }
 
-  return false;
+  return undefined;
+}
+
+function parseSupplementaryGroupIds(
+  groupFile: string,
+  userName: string,
+  primaryGid: number,
+): number[] {
+  const groupIds = new Set<number>([primaryGid]);
+
+  for (const rawLine of groupFile.split("\n")) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith("#")) {
+      continue;
+    }
+
+    const fields = line.split(":");
+    if (fields.length < 4) {
+      continue;
+    }
+
+    const gidField = fields[2];
+    const membersField = fields[3];
+    if (gidField === undefined || membersField === undefined) {
+      continue;
+    }
+
+    const gid = parseNonNegativeInteger(gidField);
+    if (gid === undefined) {
+      continue;
+    }
+
+    const members = membersField
+      .split(",")
+      .map((member) => member.trim())
+      .filter((member) => member.length > 0);
+    if (members.includes(userName)) {
+      groupIds.add(gid);
+    }
+  }
+
+  return [...groupIds];
+}
+
+function resolveModeBitsForIdentity(fileStat: Stats, identity: ServiceUserIdentity): number {
+  if (fileStat.uid === identity.uid) {
+    return (fileStat.mode >> 6) & 0b111;
+  }
+
+  if (identity.groupIds.includes(fileStat.gid)) {
+    return (fileStat.mode >> 3) & 0b111;
+  }
+
+  return fileStat.mode & 0b111;
+}
+
+function canAccessPathWithModeBits(
+  fileStat: Stats,
+  identity: ServiceUserIdentity,
+  requiredBits: number,
+): boolean {
+  if (identity.uid === 0) {
+    return true;
+  }
+
+  return (resolveModeBitsForIdentity(fileStat, identity) & requiredBits) === requiredBits;
+}
+
+function formatServiceUserAccessError(
+  identity: ServiceUserIdentity,
+  operation: string,
+  targetPath: string,
+  fileStat: Stats,
+): string {
+  return `${operation} permission is not granted to ${identity.name} by POSIX mode bits on ${targetPath} (${formatFileMode(
+    fileStat.mode,
+  )})`;
+}
+
+async function verifyServiceUserPathAccess(
+  targetPath: string,
+  identity: ServiceUserIdentity,
+  targetBits: number,
+  targetOperation: string,
+): Promise<{ status: ServiceUserAccessStatus; error?: string }> {
+  const resolved = path.resolve(targetPath);
+  const root = path.parse(resolved).root;
+  const relativeParts = path.relative(root, resolved).split(path.sep).filter(Boolean);
+  let currentPath = root;
+
+  for (const part of relativeParts.slice(0, -1)) {
+    currentPath = path.join(currentPath, part);
+    const directoryStat = await stat(currentPath);
+
+    if (!directoryStat.isDirectory()) {
+      return {
+        status: "blocked",
+        error: `ancestor path is not a directory at ${currentPath}`,
+      };
+    }
+
+    if (!canAccessPathWithModeBits(directoryStat, identity, 0o1)) {
+      return {
+        status: "blocked",
+        error: formatServiceUserAccessError(identity, "execute", currentPath, directoryStat),
+      };
+    }
+  }
+
+  const targetStat = await stat(resolved);
+  if (!canAccessPathWithModeBits(targetStat, identity, targetBits)) {
+    return {
+      status: "blocked",
+      error: formatServiceUserAccessError(identity, targetOperation, resolved, targetStat),
+    };
+  }
+
+  return { status: "ok" };
 }
 
 function shouldRequireSwapCushion(
@@ -1129,11 +1289,20 @@ export function diagnoseConfig(
         code: "working_directory_home_protected",
         message: `The generated systemd WorkingDirectory is under /home, /root, or /run/user at ${workingDirectoryPath}, but ray-gateway.service uses ProtectHome=true. Sync Ray to a service-readable path such as /srv/ray.`,
       });
+    } else if (preflight.workingDirectoryAccessStatus === "blocked") {
+      diagnostics.push({
+        level: "error",
+        code: "working_directory_service_user_inaccessible",
+        message: `The generated systemd service user "${preflight.serviceUser ?? "the configured service user"}" cannot access the WorkingDirectory at ${workingDirectoryPath}${preflight.workingDirectoryAccessError ? ` (${preflight.workingDirectoryAccessError})` : ""}. Grant read/execute access or sync Ray to a service-readable path such as /srv/ray.`,
+      });
     } else {
       diagnostics.push({
         level: "info",
         code: "working_directory_ok",
-        message: `Generated systemd WorkingDirectory exists at ${workingDirectoryPath}.`,
+        message:
+          preflight.workingDirectoryAccessStatus === "ok"
+            ? `Generated systemd WorkingDirectory exists and is accessible to "${preflight.serviceUser ?? "the configured service user"}" at ${workingDirectoryPath}.`
+            : `Generated systemd WorkingDirectory exists at ${workingDirectoryPath}.`,
       });
     }
   }
@@ -1230,11 +1399,20 @@ export function diagnoseConfig(
         code: "gateway_entrypoint_unreadable",
         message: `The built Ray gateway entrypoint at ${entrypointPath} could not be inspected${preflight.gatewayEntrypointError ? ` (${preflight.gatewayEntrypointError})` : ""}. Doctor cannot verify that ray-gateway.service will start.`,
       });
+    } else if (preflight.gatewayEntrypointAccessStatus === "blocked") {
+      diagnostics.push({
+        level: "error",
+        code: "gateway_entrypoint_service_user_inaccessible",
+        message: `The generated systemd service user "${preflight.serviceUser ?? "the configured service user"}" cannot read the built Ray gateway entrypoint at ${entrypointPath}${preflight.gatewayEntrypointAccessError ? ` (${preflight.gatewayEntrypointAccessError})` : ""}. Run chmod -R a+rX on the Ray checkout or adjust ownership before restarting ray-gateway.service.`,
+      });
     } else {
       diagnostics.push({
         level: "info",
         code: "gateway_entrypoint_ok",
-        message: `Built Ray gateway entrypoint exists at ${entrypointPath}.`,
+        message:
+          preflight.gatewayEntrypointAccessStatus === "ok"
+            ? `Built Ray gateway entrypoint exists and is readable by "${preflight.serviceUser ?? "the configured service user"}" at ${entrypointPath}.`
+            : `Built Ray gateway entrypoint exists at ${entrypointPath}.`,
       });
     }
   }
@@ -1915,9 +2093,28 @@ async function collectServiceUserPreflight(
 
   try {
     const passwd = await readFile("/etc/passwd", "utf8");
+    const identity = resolvePasswdUser(passwd, user);
+
+    if (!identity) {
+      return {
+        serviceUser: user,
+        serviceUserStatus: "missing",
+      };
+    }
+
+    try {
+      const groupFile = await readFile("/etc/group", "utf8");
+      identity.groupIds = parseSupplementaryGroupIds(groupFile, identity.name, identity.gid);
+    } catch {
+      // The primary gid from /etc/passwd is enough for conservative mode-bit checks.
+    }
+
     return {
       serviceUser: user,
-      serviceUserStatus: passwdContainsUser(passwd, user) ? "found" : "missing",
+      serviceUserStatus: "found",
+      serviceUserUid: identity.uid,
+      serviceUserGid: identity.gid,
+      serviceUserGroupIds: identity.groupIds,
     };
   } catch (error) {
     return {
@@ -1931,6 +2128,7 @@ async function collectServiceUserPreflight(
 async function collectWorkingDirectoryPreflight(
   cwd: string,
   strictFilesystem: boolean,
+  serviceUserIdentity: ServiceUserIdentity | undefined,
 ): Promise<Partial<DeploymentPreflight>> {
   if (!strictFilesystem) {
     return {};
@@ -1949,9 +2147,26 @@ async function collectWorkingDirectoryPreflight(
       };
     }
 
+    const serviceUserAccess = serviceUserIdentity
+      ? await verifyServiceUserPathAccess(
+          workingDirectoryPath,
+          serviceUserIdentity,
+          0o5,
+          "read/execute",
+        )
+      : undefined;
+
     return {
       workingDirectoryPath,
       workingDirectoryStatus: "found",
+      ...(serviceUserAccess
+        ? {
+            workingDirectoryAccessStatus: serviceUserAccess.status,
+            ...(serviceUserAccess.error
+              ? { workingDirectoryAccessError: serviceUserAccess.error }
+              : {}),
+          }
+        : {}),
     };
   } catch (error) {
     const code =
@@ -2016,6 +2231,7 @@ async function collectGatewayRuntimePreflight(
 async function collectGatewayEntrypointPreflight(
   cwd: string,
   strictFilesystem: boolean,
+  serviceUserIdentity: ServiceUserIdentity | undefined,
 ): Promise<Partial<DeploymentPreflight>> {
   if (!strictFilesystem) {
     return {};
@@ -2034,9 +2250,21 @@ async function collectGatewayEntrypointPreflight(
       };
     }
 
+    const serviceUserAccess = serviceUserIdentity
+      ? await verifyServiceUserPathAccess(entrypointPath, serviceUserIdentity, 0o4, "read")
+      : undefined;
+
     return {
       gatewayEntrypointPath: entrypointPath,
       gatewayEntrypointStatus: "found",
+      ...(serviceUserAccess
+        ? {
+            gatewayEntrypointAccessStatus: serviceUserAccess.status,
+            ...(serviceUserAccess.error
+              ? { gatewayEntrypointAccessError: serviceUserAccess.error }
+              : {}),
+          }
+        : {}),
     };
   } catch (error) {
     const code =
@@ -2139,13 +2367,29 @@ async function collectDeploymentPreflight(
     options.user,
     options.strictFilesystem === true,
   );
+  const serviceUserIdentity =
+    serviceUserPreflight.serviceUserStatus === "found" &&
+    serviceUserPreflight.serviceUser !== undefined &&
+    serviceUserPreflight.serviceUserUid !== undefined &&
+    serviceUserPreflight.serviceUserGid !== undefined
+      ? {
+          name: serviceUserPreflight.serviceUser,
+          uid: serviceUserPreflight.serviceUserUid,
+          gid: serviceUserPreflight.serviceUserGid,
+          groupIds: serviceUserPreflight.serviceUserGroupIds ?? [
+            serviceUserPreflight.serviceUserGid,
+          ],
+        }
+      : undefined;
   const workingDirectoryPreflight = await collectWorkingDirectoryPreflight(
     options.cwd,
     options.strictFilesystem === true,
+    serviceUserIdentity,
   );
   const gatewayEntrypointPreflight = await collectGatewayEntrypointPreflight(
     options.cwd,
     options.strictFilesystem === true,
+    serviceUserIdentity,
   );
   const runtimePreflight = await collectGatewayRuntimePreflight(
     options.runtimeBinary ?? options.nodeBinary,
