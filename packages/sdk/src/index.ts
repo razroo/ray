@@ -13,13 +13,16 @@ export interface RayClientOptions {
   apiKey?: string;
   headers?: Record<string, string>;
   timeoutMs?: number;
+  requestBodyLimitBytes?: number;
   responseBodyLimitBytes?: number;
 }
 
 export const DEFAULT_RAY_CLIENT_TIMEOUT_MS = 60_000;
+export const DEFAULT_RAY_CLIENT_REQUEST_BODY_LIMIT_BYTES = 1_048_576;
 export const DEFAULT_RAY_CLIENT_RESPONSE_BODY_LIMIT_BYTES = 2 * 1024 * 1024;
 const MAX_RAY_CLIENT_BASE_URL_CHARS = 2_048;
 const MAX_RAY_CLIENT_TIMEOUT_MS = 600_000;
+const MAX_RAY_CLIENT_REQUEST_BODY_LIMIT_BYTES = 1_048_576;
 const MAX_RAY_CLIENT_RESPONSE_BODY_LIMIT_BYTES = 64 * 1024 * 1024;
 const MAX_RAY_CLIENT_HEADERS = 64;
 const MAX_RAY_CLIENT_HEADER_NAME_CHARS = 128;
@@ -196,6 +199,32 @@ function getDeclaredContentLength(response: Response): number | undefined {
   return /^\d+$/.test(normalized) && Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
+function stringifyRequestBody(value: unknown, limitBytes: number): string {
+  let body: string;
+
+  try {
+    body = JSON.stringify(value);
+  } catch (error) {
+    throw new TypeError(
+      `Ray request body must be JSON serializable: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
+  if (body === undefined) {
+    throw new TypeError("Ray request body must be JSON serializable");
+  }
+
+  const bodyBytes = encodeText(body).byteLength;
+
+  if (bodyBytes > limitBytes) {
+    throw new RangeError(`Ray request body exceeded ${limitBytes} bytes`);
+  }
+
+  return body;
+}
+
 async function readResponseTextLimited(
   response: Response,
   limitBytes: number,
@@ -276,6 +305,7 @@ export class RayClient {
   private readonly baseUrl: string;
   private readonly headers: Record<string, string>;
   private readonly timeoutMs: number;
+  private readonly requestBodyLimitBytes: number;
   private readonly responseBodyLimitBytes: number;
 
   constructor(options: RayClientOptions) {
@@ -283,9 +313,16 @@ export class RayClient {
 
     this.baseUrl = normalizeBaseUrl(options.baseUrl);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_RAY_CLIENT_TIMEOUT_MS;
+    this.requestBodyLimitBytes =
+      options.requestBodyLimitBytes ?? DEFAULT_RAY_CLIENT_REQUEST_BODY_LIMIT_BYTES;
     this.responseBodyLimitBytes =
       options.responseBodyLimitBytes ?? DEFAULT_RAY_CLIENT_RESPONSE_BODY_LIMIT_BYTES;
     assertPositiveSafeIntegerAtMost(this.timeoutMs, "timeoutMs", MAX_RAY_CLIENT_TIMEOUT_MS);
+    assertPositiveSafeIntegerAtMost(
+      this.requestBodyLimitBytes,
+      "requestBodyLimitBytes",
+      MAX_RAY_CLIENT_REQUEST_BODY_LIMIT_BYTES,
+    );
     assertPositiveSafeIntegerAtMost(
       this.responseBodyLimitBytes,
       "responseBodyLimitBytes",
@@ -302,14 +339,14 @@ export class RayClient {
   infer(request: InferenceRequest): Promise<InferenceResponse> {
     return this.request<InferenceResponse>("/v1/infer", {
       method: "POST",
-      body: JSON.stringify(request),
+      body: stringifyRequestBody(request, this.requestBodyLimitBytes),
     });
   }
 
   createJob(request: CreateInferenceJobRequest): Promise<InferenceJobAcceptedResponse> {
     return this.request<InferenceJobAcceptedResponse>("/v1/jobs", {
       method: "POST",
-      body: JSON.stringify(request),
+      body: stringifyRequestBody(request, this.requestBodyLimitBytes),
     });
   }
 

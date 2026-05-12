@@ -13,6 +13,18 @@ test("RayClient rejects invalid direct options", () => {
     /timeoutMs/,
   );
   assert.throws(
+    () => new RayClient({ baseUrl: "http://127.0.0.1", requestBodyLimitBytes: 0 }),
+    /requestBodyLimitBytes/,
+  );
+  assert.throws(
+    () =>
+      new RayClient({
+        baseUrl: "http://127.0.0.1",
+        requestBodyLimitBytes: 1_048_577,
+      }),
+    /requestBodyLimitBytes/,
+  );
+  assert.throws(
     () => new RayClient({ baseUrl: "http://127.0.0.1", responseBodyLimitBytes: Infinity }),
     /responseBodyLimitBytes/,
   );
@@ -123,10 +135,69 @@ test("RayClient times out stalled requests", async (t) => {
   await assert.rejects(() => client.health(), /timed out after 10ms/);
 });
 
+test("RayClient rejects oversized request bodies before dispatch", async (t) => {
+  let requests = 0;
+  const server = createServer((_request, response) => {
+    requests += 1;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ output: "ok" }));
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const client = new RayClient({
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    requestBodyLimitBytes: 16,
+  });
+
+  assert.throws(
+    () => client.infer({ input: "x".repeat(64) }),
+    /Ray request body exceeded 16 bytes/,
+  );
+  assert.throws(
+    () => client.createJob({ input: "x".repeat(64) }),
+    /Ray request body exceeded 16 bytes/,
+  );
+  assert.equal(requests, 0);
+});
+
+test("RayClient rejects non-serializable request bodies before dispatch", async (t) => {
+  let requests = 0;
+  const server = createServer((_request, response) => {
+    requests += 1;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ output: "ok" }));
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const client = new RayClient({
+    baseUrl: `http://127.0.0.1:${address.port}`,
+  });
+  const request: Record<string, unknown> = { input: "hello" };
+  request.self = request;
+
+  assert.throws(() => client.infer(request as never), /Ray request body must be JSON serializable/);
+  assert.equal(requests, 0);
+});
+
 test("RayClient caps error response bodies", async (t) => {
   const server = createServer((_request, response) => {
     response.writeHead(500, { "content-type": "text/plain" });
-    response.end("x".repeat(128));
+    response.write("x".repeat(64));
+    response.end("x".repeat(64));
   });
 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
