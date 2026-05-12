@@ -716,6 +716,68 @@ test("runtime returns chars and provider token usage explicitly", async () => {
   });
 });
 
+test("runtime rejects malformed provider usage counts before caching", async () => {
+  let inferCalls = 0;
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "bad-usage-counts-model",
+    capabilities: {
+      streaming: false,
+      quantized: false,
+      localBackend: true,
+    },
+    async infer() {
+      inferCalls += 1;
+      return {
+        output: "done",
+        usage:
+          inferCalls === 1
+            ? {
+                tokens: {
+                  prompt: 1.5,
+                },
+              }
+            : {
+                chars: {
+                  total: 1_000_000_001,
+                },
+              },
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_result_invalid");
+      assert.equal(
+        (error as { details?: { field?: string } }).details?.field,
+        "usage.tokens.prompt",
+      );
+      return true;
+    },
+  );
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_result_invalid");
+      assert.equal((error as { details?: { field?: string } }).details?.field, "usage.chars.total");
+      return true;
+    },
+  );
+
+  assert.equal(inferCalls, 2);
+});
+
 test("runtime bounds retained provider model identifiers", async () => {
   let inferCalls = 0;
   const oversizedModelId = `model-${"x".repeat(700)}`;

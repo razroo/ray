@@ -182,6 +182,7 @@ const MIN_PROVIDER_RESULT_OUTPUT_CHARS = 8_192;
 const MAX_PROVIDER_RESULT_OUTPUT_CHARS = 262_144;
 const MAX_PROVIDER_RESULT_CHARS_PER_TOKEN = 64;
 const MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS = 512;
+const MAX_PROVIDER_RESULT_USAGE_COUNT = 1_000_000_000;
 const MAX_PROVIDER_MODEL_ID_CHARS = 512;
 const MAX_PROVIDER_HEALTH_CHECKED_AT_CHARS = 128;
 const MAX_PROVIDER_HEALTH_STRING_CHARS = 512;
@@ -2584,6 +2585,27 @@ function assertOptionalProviderResultNumber(value: unknown, field: string): void
   }
 }
 
+function assertOptionalProviderResultCount(value: unknown, field: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > MAX_PROVIDER_RESULT_USAGE_COUNT
+  ) {
+    throw createProviderResultError(
+      `${field} must be a non-negative safe integer no greater than ${MAX_PROVIDER_RESULT_USAGE_COUNT}`,
+      {
+        field,
+        maxValue: MAX_PROVIDER_RESULT_USAGE_COUNT,
+      },
+    );
+  }
+}
+
 function assertOptionalProviderResultBoolean(value: unknown, field: string): void {
   if (value === undefined) {
     return;
@@ -2634,9 +2656,9 @@ function assertProviderUsageBreakdown(value: unknown, field: string): void {
   }
 
   const breakdown = value as Partial<UsageBreakdown>;
-  assertOptionalProviderResultNumber(breakdown.prompt, `${field}.prompt`);
-  assertOptionalProviderResultNumber(breakdown.completion, `${field}.completion`);
-  assertOptionalProviderResultNumber(breakdown.total, `${field}.total`);
+  assertOptionalProviderResultCount(breakdown.prompt, `${field}.prompt`);
+  assertOptionalProviderResultCount(breakdown.completion, `${field}.completion`);
+  assertOptionalProviderResultCount(breakdown.total, `${field}.total`);
 }
 
 function assertProviderUsage(value: unknown): void {
