@@ -54,12 +54,12 @@ Stable primitives:
 - cache interfaces
 - runtime composition boundaries
 - HTTP gateway surface
+- systemd/Caddy deployment rendering and diagnostics
 
 Experimental areas:
 
-- model adapters beyond the initial mock and OpenAI-compatible paths
+- model adapters beyond the initial mock, OpenAI-compatible, and llama.cpp paths
 - backend-specific quantization strategies
-- first-class `llama.cpp` or GGUF-specific operational adapters
 - batching policy
 - cross-model routing
 - distributed placement or edge-aware scheduling
@@ -80,7 +80,7 @@ The current MVP needs:
 - strong type boundaries across many packages
 - minimal operational complexity
 
-A TypeScript workspace on Node 20 gets there quickly while keeping the actual runtime dependency graph extremely small. The gateway currently uses the bare `http` module rather than a framework to avoid adding memory and abstraction overhead where it is not buying much.
+A Bun-first TypeScript workspace gets there quickly while keeping the actual runtime dependency graph extremely small. Node 20.11+ remains a compatibility target for the compiled public packages and CI test matrix, but day-to-day repository scripts, local development, deployment helpers, and remote VPS installs use Bun. The gateway currently uses the bare `http` module rather than a framework to avoid adding memory and abstraction overhead where it is not buying much.
 
 This architecture keeps the migration path open:
 
@@ -129,11 +129,11 @@ Current design choices that reflect this:
 - bounded request queue with explicit backpressure
 - process RSS, Linux cgroup memory, and cgroup CPU throttling signals for overload decisions
 
-The next layer of work should make this more concrete:
+The current repo makes this concrete through:
 
-- concurrency and queue defaults that reflect small-box CPU inference
-- backend-aware health and warmup behavior
-- stronger GGUF and quantization-aware operator defaults
+- profile-specific concurrency, queue, token, cache, and timeout budgets for 4 GB and 8 GB VPS classes
+- backend-aware health, warmup, llama.cpp launch presets, and GGUF path diagnostics
+- deploy preflight checks for memory fit, service-user access, Bun runtime compatibility, model files, async queue storage, and swap cushion
 
 ### Degradation is a feature, not an afterthought
 
