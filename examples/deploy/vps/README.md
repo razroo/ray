@@ -437,8 +437,9 @@ When `RAY_DEPLOY_INSTALL_CADDY=true`, the workflow installs Caddy if needed,
 validates the rendered Caddyfile before installing it to `/etc/caddy/Caddyfile`,
 and reloads Caddy after both local Ray liveness and backend-aware readiness
 checks pass. If service enablement, restart, health checks, or Caddy reload fail,
-the workflow prints bounded `systemctl status`, `systemctl show`, and recent
-`journalctl` output for the affected unit before exiting.
+the service-management commands fail under explicit timeouts, and the workflow
+prints bounded `systemctl status`, `systemctl show`, and recent `journalctl`
+output for the affected unit before exiting.
 
 Without `RAY_AUTO_DEPLOY=true`, the workflow is still available through
 `workflow_dispatch` for manual deploys.

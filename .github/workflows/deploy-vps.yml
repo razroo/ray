@@ -455,8 +455,8 @@ jobs:
           dump_service_debug() {
             unit="$1"
             echo "::group::${unit} diagnostics"
-            $SUDO systemctl --no-pager --full status "$unit" || true
-            $SUDO systemctl --no-pager show "$unit" \
+            timeout 30s $SUDO systemctl --no-pager --full status "$unit" || true
+            timeout 30s $SUDO systemctl --no-pager show "$unit" \
               -p ActiveState \
               -p SubState \
               -p Result \
@@ -465,7 +465,7 @@ jobs:
               -p NRestarts \
               -p MemoryCurrent \
               -p CPUUsageNSec || true
-            $SUDO journalctl --no-pager --output=short-iso -n 120 -u "$unit" || true
+            timeout 30s $SUDO journalctl --no-pager --output=short-iso -n 120 -u "$unit" || true
             echo "::endgroup::"
           }
 
@@ -666,39 +666,39 @@ jobs:
           if [ "${INSTALL_CADDY:-false}" = "true" ]; then
             CADDY_TMP="$(mktemp)"
             cp "$RENDER_DIR/Caddyfile" "$CADDY_TMP"
-            $SUDO caddy validate --config "$CADDY_TMP"
+            timeout 30s $SUDO caddy validate --config "$CADDY_TMP"
             $SUDO install -m 0644 "$CADDY_TMP" /etc/caddy/Caddyfile
           fi
           if [ -f "$RENDER_DIR/ray-llama-cpp.service" ]; then
             $SUDO cp "$RENDER_DIR/ray-llama-cpp.service" /etc/systemd/system/ray-llama-cpp.service
           else
             if [ -f /etc/systemd/system/ray-llama-cpp.service ]; then
-              $SUDO systemctl disable --now ray-llama-cpp.service || true
+              timeout 60s $SUDO systemctl disable --now ray-llama-cpp.service || true
             fi
             $SUDO rm -f /etc/systemd/system/ray-llama-cpp.service
           fi
 
           $SUDO chmod -R a+rX /srv/ray
           $SUDO chown -R "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray
-          $SUDO systemctl daemon-reload
+          timeout 60s $SUDO systemctl daemon-reload
           if [ -f /etc/systemd/system/ray-llama-cpp.service ]; then
-            if ! $SUDO systemctl enable ray-llama-cpp.service; then
+            if ! timeout 60s $SUDO systemctl enable ray-llama-cpp.service; then
               echo "Failed to enable ray-llama-cpp.service."
               dump_service_debug ray-llama-cpp.service
               exit 1
             fi
-            if ! $SUDO systemctl restart ray-llama-cpp.service; then
+            if ! timeout 60s $SUDO systemctl restart ray-llama-cpp.service; then
               echo "Failed to restart ray-llama-cpp.service."
               dump_service_debug ray-llama-cpp.service
               exit 1
             fi
           fi
-          if ! $SUDO systemctl enable ray-gateway.service; then
+          if ! timeout 60s $SUDO systemctl enable ray-gateway.service; then
             echo "Failed to enable ray-gateway.service."
             dump_service_debug ray-gateway.service
             exit 1
           fi
-          if ! $SUDO systemctl restart ray-gateway.service; then
+          if ! timeout 60s $SUDO systemctl restart ray-gateway.service; then
             echo "Failed to restart ray-gateway.service."
             dump_ray_debug
             exit 1
@@ -743,12 +743,12 @@ jobs:
           fi
 
           if [ "${INSTALL_CADDY:-false}" = "true" ]; then
-            if ! $SUDO systemctl enable --now caddy; then
+            if ! timeout 60s $SUDO systemctl enable --now caddy; then
               echo "Failed to enable or start caddy.service."
               dump_service_debug caddy.service
               exit 1
             fi
-            if ! $SUDO systemctl reload caddy; then
+            if ! timeout 60s $SUDO systemctl reload caddy; then
               echo "Failed to reload caddy.service."
               dump_service_debug caddy.service
               exit 1

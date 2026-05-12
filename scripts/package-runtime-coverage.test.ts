@@ -127,6 +127,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
       "      - run: rsync -az --delete ./ ray@example:/srv/ray/",
       "      - run: /usr/local/bin/bun install --production --frozen-lockfile --ignore-scripts",
       "      - run: sudo systemctl reload caddy",
+      "      - run: sudo journalctl -n 120 -u ray-gateway.service",
       "",
     ].join("\n"),
   );
@@ -151,6 +152,8 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("workflow_secret_file_install_mode_missing"));
   assert.ok(codes.includes("workflow_apt_get_unbounded"));
   assert.ok(codes.includes("workflow_rsync_timeout_missing"));
+  assert.ok(codes.includes("workflow_systemctl_timeout_missing"));
+  assert.ok(codes.includes("workflow_journalctl_timeout_missing"));
   assert.ok(codes.includes("workflow_remote_bun_install_unbounded"));
   assert.ok(codes.includes("non_bun_lockfile_present"));
 });

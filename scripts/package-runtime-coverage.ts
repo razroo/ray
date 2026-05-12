@@ -491,6 +491,47 @@ function validateDeployWorkflowRsyncGuards(
   return diagnostics;
 }
 
+function validateDeployWorkflowServiceCommandGuards(
+  workflowPath: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith("#")) {
+      continue;
+    }
+
+    if (/\bsystemctl\b/.test(line) && !line.includes("timeout ")) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_systemctl_timeout_missing",
+        workflowPath,
+        line: index + 1,
+        message:
+          "VPS deploy workflow systemctl calls must run under timeout so systemd or D-Bus stalls cannot hang a deploy indefinitely.",
+      });
+    }
+
+    if (/\bjournalctl\b/.test(line) && !line.includes("timeout ")) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_journalctl_timeout_missing",
+        workflowPath,
+        line: index + 1,
+        message:
+          "VPS deploy workflow journalctl calls must run under timeout so diagnostic collection cannot hang a failed deploy indefinitely.",
+      });
+    }
+  }
+
+  return diagnostics;
+}
+
 function validateDeployWorkflowRemoteBunInstallGuards(
   workflowPath: string,
   lines: string[],
@@ -591,6 +632,7 @@ async function validateWorkflow(
   diagnostics.push(...validateDeployWorkflowSecretFileInstalls(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowAptGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRsyncGuards(workflowPath, lines));
+  diagnostics.push(...validateDeployWorkflowServiceCommandGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRemoteBunInstallGuards(workflowPath, lines));
 
   return {
