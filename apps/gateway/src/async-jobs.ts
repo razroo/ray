@@ -628,7 +628,7 @@ function matchesAllowedHost(hostname: string, allowedHosts: string[]): boolean {
   });
 }
 
-function isPrivateIpv4(address: string): boolean {
+function isNonGlobalIpv4(address: string): boolean {
   const parts = address.split(".").map((part) => Number.parseInt(part, 10));
 
   if (
@@ -638,7 +638,7 @@ function isPrivateIpv4(address: string): boolean {
     return false;
   }
 
-  const [first = 0, second = 0] = parts;
+  const [first = 0, second = 0, third = 0] = parts;
 
   return (
     first === 0 ||
@@ -647,39 +647,59 @@ function isPrivateIpv4(address: string): boolean {
     (first === 100 && second >= 64 && second <= 127) ||
     (first === 169 && second === 254) ||
     (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 0 && third === 0) ||
+    (first === 192 && second === 0 && third === 2) ||
     (first === 192 && second === 168) ||
+    (first === 198 && (second === 18 || second === 19)) ||
+    (first === 198 && second === 51 && third === 100) ||
+    (first === 203 && second === 0 && third === 113) ||
     first >= 224
   );
 }
 
-function isPrivateIpv6(address: string): boolean {
+function isNonGlobalIpv6(address: string): boolean {
   const normalized = normalizeHostname(address);
   const mappedIpv4 = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
 
   if (mappedIpv4?.[1]) {
-    return isPrivateIpv4(mappedIpv4[1]);
+    return isNonGlobalIpv4(mappedIpv4[1]);
   }
 
-  const firstSegment = normalized.split(":")[0] ?? "";
+  const segments = normalized.split(":");
+  const firstSegment = segments[0] ?? "";
+  const secondSegment = segments[1] ?? "";
+  const firstHextet = /^[0-9a-f]{1,4}$/.test(firstSegment)
+    ? Number.parseInt(firstSegment, 16)
+    : undefined;
+  const secondHextet = /^[0-9a-f]{1,4}$/.test(secondSegment)
+    ? Number.parseInt(secondSegment, 16)
+    : undefined;
 
   return (
     normalized === "::" ||
     normalized === "::1" ||
-    normalized.startsWith("fc") ||
-    normalized.startsWith("fd") ||
-    /^fe[89ab]/.test(firstSegment)
+    normalized.startsWith("64:ff9b:") ||
+    normalized === "100::" ||
+    normalized.startsWith("100::") ||
+    (firstHextet === 0x2001 &&
+      secondHextet !== undefined &&
+      (secondHextet <= 0x01ff || secondHextet === 0x0db8)) ||
+    firstHextet === 0x2002 ||
+    (firstHextet !== undefined && firstHextet >= 0xfc00 && firstHextet <= 0xfdff) ||
+    (firstHextet !== undefined && firstHextet >= 0xfe80 && firstHextet <= 0xfebf) ||
+    (firstHextet !== undefined && firstHextet >= 0xff00 && firstHextet <= 0xffff)
   );
 }
 
-function isPrivateNetworkAddress(address: string): boolean {
+function isNonGlobalNetworkAddress(address: string): boolean {
   const version = isIP(address);
 
   if (version === 4) {
-    return isPrivateIpv4(address);
+    return isNonGlobalIpv4(address);
   }
 
   if (version === 6) {
-    return isPrivateIpv6(address);
+    return isNonGlobalIpv6(address);
   }
 
   return false;
@@ -755,10 +775,10 @@ async function assertCallbackNetworkAllowed(
     lookupImpl,
     Math.min(config.callbackTimeoutMs, CALLBACK_DNS_LOOKUP_TIMEOUT_MS),
   );
-  const blockedAddress = addresses.find((address) => isPrivateNetworkAddress(address));
+  const blockedAddress = addresses.find((address) => isNonGlobalNetworkAddress(address));
 
   if (blockedAddress) {
-    throw new RayError("callbackUrl resolves to a private or local network address", {
+    throw new RayError("callbackUrl resolves to a private, local, or non-global address", {
       code: "invalid_request",
       status: 400,
       details: {

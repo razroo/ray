@@ -834,7 +834,7 @@ test("durable inference queue removes stale atomic-write temp files during recov
   }
 });
 
-test("durable inference queue rejects private-network callbacks by default", async () => {
+test("durable inference queue rejects private and non-global callbacks by default", async () => {
   const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-"));
 
   try {
@@ -873,6 +873,40 @@ test("durable inference queue rejects private-network callbacks by default", asy
         error instanceof Error &&
         "code" in error &&
         (error as { code?: string }).code === "invalid_request",
+    );
+
+    await assert.rejects(
+      () =>
+        queue.enqueue({
+          input: "Do not call documentation-only callback",
+          callbackUrl: "http://203.0.113.10/ray-callback",
+        }),
+      /private, local, or non-global/,
+    );
+
+    await assert.rejects(
+      () =>
+        queue.enqueue({
+          input: "Do not call documentation-only IPv6 callback",
+          callbackUrl: "http://[2001:db8::1]/ray-callback",
+        }),
+      /private, local, or non-global/,
+    );
+
+    const dnsQueue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+      lookupImpl: async () => [{ address: "198.51.100.7" }],
+    });
+
+    await assert.rejects(
+      () =>
+        dnsQueue.enqueue({
+          input: "Do not call non-global DNS callback",
+          callbackUrl: "https://callback.example/ray-callback",
+        }),
+      /private, local, or non-global/,
     );
   } finally {
     await rm(storageDir, { recursive: true, force: true });
@@ -1344,7 +1378,7 @@ test("durable inference queue does not prune expired jobs while callbacks are pe
 
     const job = await queue.enqueue({
       input: "Callback should stay pending",
-      callbackUrl: "http://203.0.113.10/ray-callback",
+      callbackUrl: "http://93.184.216.34/ray-callback",
     });
 
     await queue.start();
@@ -1422,7 +1456,7 @@ test("durable inference queue delivers callbacks without following redirects", a
     });
     const job = await queue.enqueue({
       input: "Deliver callback",
-      callbackUrl: "http://203.0.113.10/ray-callback",
+      callbackUrl: "http://93.184.216.34/ray-callback",
     });
 
     await queue.start();

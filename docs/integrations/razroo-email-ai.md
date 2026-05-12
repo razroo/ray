@@ -73,7 +73,7 @@ The workload in [email-1b-workload.jsonl](../../examples/workloads/email-1b-work
 
 [email-prompt-families-1b.json](../../examples/evals/email-prompt-families-1b.json) is the smaller golden eval set for prompt wording changes. Run it with `bun run eval:prompt-families:1b` against a live Ray gateway. The output includes provider diagnostics for `promptFormat`, `promptFormatReason`, `modelRef`, `launchPreset`, cached tokens, slot reuse, and context window.
 
-For longer-running or high-volume work, prefer `POST /v1/jobs` over holding an HTTP connection open. Ray persists the job to disk, processes it in the background, and can `POST` the terminal payload to `callbackUrl` when the work completes. Completed jobs stay queryable until `asyncQueue.completedTtlMs` expires, while pending callbacks are preserved until delivery succeeds or callback attempts are exhausted. Callback URLs resolve to public network addresses by default; use the async queue allowlist only for explicitly trusted private callbacks.
+For longer-running or high-volume work, prefer `POST /v1/jobs` over holding an HTTP connection open. Ray persists the job to disk, processes it in the background, and can `POST` the terminal payload to `callbackUrl` when the work completes. Completed jobs stay queryable until `asyncQueue.completedTtlMs` expires, while pending callbacks are preserved until delivery succeeds or callback attempts are exhausted. Callback URLs must resolve to global public network addresses by default; private, local, benchmark, documentation, multicast, and other special-use ranges are rejected unless the async queue allowlist explicitly trusts the callback host.
 
 ## llama.cpp on the same VPS
 
