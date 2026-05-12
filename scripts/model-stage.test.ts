@@ -9,6 +9,7 @@ import {
   rm,
   stat,
   symlink,
+  truncate,
   utimes,
   writeFile,
 } from "node:fs/promises";
@@ -159,6 +160,7 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
   assert.equal(plan.modelPath, "/var/lib/ray/models/portable-1b.gguf");
   assert.deepEqual(plan.commands, [
     "timeout 60s sudo install -d -m 0755 '/usr/local/bin'",
+    `binary_source_bytes="$(timeout 30s stat -c %s -- './bin/llama-server')" || exit "$?"; test "\${binary_source_bytes:-0}" -le 536870912 || { printf '%s\\n' 'llama-server source must be at most 512 MiB before copying to /usr/local/bin/llama-server.' >&2; exit 1; }`,
     "timeout 120s sudo install -D -m 0755 -- './bin/llama-server' '/usr/local/bin/llama-server'",
     "printf '%s  %s\\n' 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' '/usr/local/bin/llama-server' | timeout 120s sha256sum -c -",
     "timeout 30s sudo -u 'rayops' test -x '/usr/local/bin/llama-server'",
@@ -192,6 +194,10 @@ test("createModelStagePlan reads staging sources and checksums from env", async 
   assert.match(
     plan.commands.join("\n"),
     /timeout 120s sudo install -D -m 0755 -- '\/tmp\/ray-artifacts\/llama-server' '\/usr\/local\/bin\/llama-server'/,
+  );
+  assert.match(
+    plan.commands.join("\n"),
+    /timeout 30s stat -c %s -- '\/tmp\/ray-artifacts\/llama-server'/,
   );
   assert.match(
     plan.commands.join("\n"),
@@ -296,6 +302,62 @@ test("checkModelStageSources rejects source binaries that fail the startup probe
   await assert.rejects(
     checkModelStageSources(tempDir, plan),
     /llama-server source failed startup probe.*wrong architecture/s,
+  );
+});
+
+test("checkModelStageSources verifies binary checksums before startup probes", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-source-sha-before-probe-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const binaryPath = path.join(tempDir, "llama-server");
+  const modelPath = path.join(tempDir, "model.gguf");
+  await writeFile(binaryPath, "#!/bin/sh\necho 'wrong architecture' >&2\nexit 126\n", "utf8");
+  await writeFile(modelPath, "GGUF", "utf8");
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o644);
+
+  const plan = await createModelStagePlan({
+    cwd: tempDir,
+    configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
+    env: {},
+    binarySourcePath: "./llama-server",
+    binarySha256: "c".repeat(64),
+    sourcePath: "./model.gguf",
+  });
+
+  await assert.rejects(
+    checkModelStageSources(tempDir, plan),
+    /llama-server source SHA-256 mismatch/,
+  );
+});
+
+test("checkModelStageSources rejects oversized source binaries before startup probes", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-source-size-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const binaryPath = path.join(tempDir, "llama-server");
+  const modelPath = path.join(tempDir, "model.gguf");
+  await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
+  await truncate(binaryPath, 512 * MiB + 1);
+  await writeFile(modelPath, "GGUF", "utf8");
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o644);
+
+  const plan = await createModelStagePlan({
+    cwd: tempDir,
+    configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
+    env: {},
+    binarySourcePath: "./llama-server",
+    sourcePath: "./model.gguf",
+  });
+
+  await assert.rejects(
+    checkModelStageSources(tempDir, plan),
+    /llama-server source must be at most 512 MiB/,
   );
 });
 

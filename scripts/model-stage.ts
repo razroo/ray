@@ -36,6 +36,8 @@ const PRINCIPAL_LOOKUP_MAX_BUFFER_BYTES = 16 * 1024;
 const MODEL_READ_CHECK_TIMEOUT_MS = 3_000;
 const MODEL_READ_CHECK_MAX_BUFFER_BYTES = 16 * 1024;
 const BYTES_PER_MIB = 1024 * 1024;
+const MAX_LLAMA_CPP_BINARY_SOURCE_BYTES = 512 * BYTES_PER_MIB;
+const MAX_LLAMA_CPP_BINARY_SOURCE_MIB = MAX_LLAMA_CPP_BINARY_SOURCE_BYTES / BYTES_PER_MIB;
 const MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB = 256;
 const GGUF_MAGIC = "GGUF";
 const LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS = 5;
@@ -390,6 +392,11 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
   const binarySourcePath = plan.binarySourcePath ?? PLACEHOLDER_BINARY_SOURCE_PATH;
   const sourcePath = plan.sourcePath ?? PLACEHOLDER_SOURCE_PATH;
   const owner = `${plan.serviceUser}:${plan.serviceGroup}`;
+  const binarySourcePreflight = `binary_source_bytes="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s stat -c %s -- ${shellQuote(
+    binarySourcePath,
+  )})" || exit "$?"; test "\${binary_source_bytes:-0}" -le ${MAX_LLAMA_CPP_BINARY_SOURCE_BYTES} || { printf '%s\\n' ${shellQuote(
+    `llama-server source must be at most ${MAX_LLAMA_CPP_BINARY_SOURCE_MIB} MiB before copying to ${plan.binaryPath}.`,
+  )} >&2; exit 1; }`;
   const modelStoragePreflight = `du_output="$(timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s du -m ${shellQuote(
     sourcePath,
   )})" || exit "$?"; df_output="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s df -Pm ${shellQuote(
@@ -404,6 +411,7 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
   )} >&2; exit 1; }`;
   const commands = [
     `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo install -d -m 0755 ${shellQuote(plan.binaryDirectory)}`,
+    binarySourcePreflight,
     `timeout ${STAGE_BINARY_COPY_TIMEOUT_SECONDS}s sudo install -D -m 0755 -- ${shellQuote(binarySourcePath)} ${shellQuote(plan.binaryPath)}`,
     `timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s sudo -u ${shellQuote(plan.serviceUser)} test -x ${shellQuote(plan.binaryPath)}`,
     `timeout ${STAGE_SERVICE_PROBE_TIMEOUT_SECONDS}s sudo -u ${shellQuote(plan.serviceUser)} timeout ${LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS}s ${shellQuote(plan.binaryPath)} --help >/dev/null`,
@@ -417,7 +425,7 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
 
   if (plan.binarySha256) {
     commands.splice(
-      2,
+      3,
       0,
       `printf '%s  %s\\n' ${shellQuote(plan.binarySha256)} ${shellQuote(plan.binaryPath)} | timeout ${STAGE_BINARY_CHECKSUM_TIMEOUT_SECONDS}s sha256sum -c -`,
     );
@@ -581,7 +589,24 @@ function resolveStageTargetPath(cwd: string, targetPath: string): string {
   return path.isAbsolute(targetPath) ? targetPath : path.resolve(cwd, targetPath);
 }
 
-async function assertRegularReadableFile(filePath: string, label: string): Promise<void> {
+function assertFileSizeAtMost(
+  actualBytes: number,
+  maxBytes: number,
+  label: string,
+  filePath: string,
+): void {
+  if (!Number.isSafeInteger(actualBytes) || actualBytes < 0) {
+    throw new Error(`${label} size could not be inspected at ${filePath}`);
+  }
+
+  if (actualBytes > maxBytes) {
+    throw new Error(
+      `${label} must be at most ${MAX_LLAMA_CPP_BINARY_SOURCE_MIB} MiB at ${filePath}`,
+    );
+  }
+}
+
+async function assertRegularReadableFile(filePath: string, label: string) {
   const stats = await stat(filePath).catch((error: unknown) => {
     throw new Error(
       `${label} was not found at ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
@@ -597,6 +622,8 @@ async function assertRegularReadableFile(filePath: string, label: string): Promi
       `${label} is not readable at ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
     );
   });
+
+  return stats;
 }
 
 async function calculateSha256(filePath: string): Promise<string> {
@@ -662,7 +689,16 @@ export async function checkModelStageSources(cwd: string, plan: ModelStagePlan):
   const binarySourcePath = resolveSourceCheckPath(cwd, plan.binarySourcePath);
   const modelSourcePath = resolveSourceCheckPath(cwd, plan.sourcePath);
 
-  await assertRegularReadableFile(binarySourcePath, "llama-server source");
+  const binaryStats = await assertRegularReadableFile(binarySourcePath, "llama-server source");
+  assertFileSizeAtMost(
+    binaryStats.size,
+    MAX_LLAMA_CPP_BINARY_SOURCE_BYTES,
+    "llama-server source",
+    binarySourcePath,
+  );
+  if (plan.binarySha256) {
+    await assertSha256(binarySourcePath, plan.binarySha256, "llama-server source");
+  }
   await access(binarySourcePath, constants.X_OK).catch((error: unknown) => {
     throw new Error(
       `llama-server source is not executable at ${binarySourcePath}: ${error instanceof Error ? error.message : String(error)}`,
@@ -671,10 +707,6 @@ export async function checkModelStageSources(cwd: string, plan: ModelStagePlan):
   await assertLlamaCppBinaryStarts(binarySourcePath, "llama-server source");
   await assertRegularReadableFile(modelSourcePath, "GGUF source");
   await assertGgufMagicHeader(modelSourcePath, "GGUF source");
-
-  if (plan.binarySha256) {
-    await assertSha256(binarySourcePath, plan.binarySha256, "llama-server source");
-  }
 
   if (plan.sha256) {
     await assertSha256(modelSourcePath, plan.sha256, "GGUF source");
