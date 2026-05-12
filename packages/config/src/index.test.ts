@@ -131,6 +131,18 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
       RAY_LLAMA_CPP_PARALLEL: "1",
       RAY_LLAMA_CPP_THREADS: "2",
       RAY_LLAMA_CPP_CACHE_RAM_MIB: "256",
+      RAY_LLAMA_CPP_CACHE_PROMPT: "false",
+      RAY_LLAMA_CPP_SLOT_ID: "0",
+      RAY_LLAMA_CPP_SLOT_STATE_TTL_MS: "500",
+      RAY_LLAMA_CPP_SLOT_SNAPSHOT_TIMEOUT_MS: "250",
+      RAY_LLAMA_CPP_PROMPT_SCAFFOLD_CACHE_ENTRIES: "96",
+      RAY_LLAMA_CPP_CONTINUOUS_BATCHING: "false",
+      RAY_LLAMA_CPP_ENABLE_METRICS: "false",
+      RAY_LLAMA_CPP_EXPOSE_SLOTS: "false",
+      RAY_LLAMA_CPP_WARMUP: "false",
+      RAY_LLAMA_CPP_ENABLE_UNIFIED_KV: "false",
+      RAY_LLAMA_CPP_CACHE_IDLE_SLOTS: "false",
+      RAY_LLAMA_CPP_CONTEXT_SHIFT: "false",
       RAY_REQUEST_BODY_LIMIT_BYTES: "36000",
       RAY_SCHEDULER_DEDUPE_INFLIGHT: "false",
       RAY_SCHEDULER_BATCH_WINDOW_MS: "12",
@@ -204,6 +216,19 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
   assert.equal(loaded.config.model.adapter.launchProfile.alias, "local-any-1b-q4");
   assert.equal(loaded.config.model.adapter.launchProfile.ctxSize, 1536);
   assert.equal(loaded.config.model.adapter.launchProfile.cacheRamMiB, 256);
+  assert.equal(loaded.config.model.adapter.cachePrompt, false);
+  assert.equal(loaded.config.model.adapter.slotId, 0);
+  assert.equal(loaded.config.model.adapter.slotStateTtlMs, 500);
+  assert.equal(loaded.config.model.adapter.slotSnapshotTimeoutMs, 250);
+  assert.equal(loaded.config.model.adapter.promptScaffoldCacheEntries, 96);
+  assert.equal(loaded.config.model.adapter.launchProfile.cachePrompt, false);
+  assert.equal(loaded.config.model.adapter.launchProfile.continuousBatching, false);
+  assert.equal(loaded.config.model.adapter.launchProfile.enableMetrics, false);
+  assert.equal(loaded.config.model.adapter.launchProfile.exposeSlots, false);
+  assert.equal(loaded.config.model.adapter.launchProfile.warmup, false);
+  assert.equal(loaded.config.model.adapter.launchProfile.enableUnifiedKv, false);
+  assert.equal(loaded.config.model.adapter.launchProfile.cacheIdleSlots, false);
+  assert.equal(loaded.config.model.adapter.launchProfile.contextShift, false);
   assert.equal(loaded.config.model.operational?.preferredCtxSize, 1536);
   assert.equal(loaded.config.scheduler.maxInflightTokens, 2048);
   assert.equal(loaded.config.scheduler.dedupeInflight, false);
@@ -445,6 +470,17 @@ test("loadRayConfig rejects malformed environment overrides", async () => {
       },
     }),
     /Expected RAY_PROMPT_COMPILER_FAMILY_METADATA_KEYS to be comma-separated non-empty values/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_LLAMA_CPP_SLOT_ID: "-1",
+      },
+    }),
+    /Expected RAY_LLAMA_CPP_SLOT_ID to be an integer greater than or equal to 0/,
   );
 
   await assert.rejects(

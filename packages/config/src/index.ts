@@ -704,6 +704,43 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
     }
   }
 
+  if (next.model.adapter.kind === "llama.cpp") {
+    const cachePrompt = parseBoolean(env.RAY_LLAMA_CPP_CACHE_PROMPT, "RAY_LLAMA_CPP_CACHE_PROMPT");
+    const slotId = parseIntegerAtLeast(env.RAY_LLAMA_CPP_SLOT_ID, 0, "RAY_LLAMA_CPP_SLOT_ID");
+    const slotStateTtlMs = parsePositiveInteger(
+      env.RAY_LLAMA_CPP_SLOT_STATE_TTL_MS,
+      "RAY_LLAMA_CPP_SLOT_STATE_TTL_MS",
+    );
+    const slotSnapshotTimeoutMs = parsePositiveInteger(
+      env.RAY_LLAMA_CPP_SLOT_SNAPSHOT_TIMEOUT_MS,
+      "RAY_LLAMA_CPP_SLOT_SNAPSHOT_TIMEOUT_MS",
+    );
+    const promptScaffoldCacheEntries = parsePositiveInteger(
+      env.RAY_LLAMA_CPP_PROMPT_SCAFFOLD_CACHE_ENTRIES,
+      "RAY_LLAMA_CPP_PROMPT_SCAFFOLD_CACHE_ENTRIES",
+    );
+
+    if (cachePrompt !== undefined) {
+      next.model.adapter.cachePrompt = cachePrompt;
+    }
+
+    if (slotId !== undefined) {
+      next.model.adapter.slotId = slotId;
+    }
+
+    if (slotStateTtlMs !== undefined) {
+      next.model.adapter.slotStateTtlMs = slotStateTtlMs;
+    }
+
+    if (slotSnapshotTimeoutMs !== undefined) {
+      next.model.adapter.slotSnapshotTimeoutMs = slotSnapshotTimeoutMs;
+    }
+
+    if (promptScaffoldCacheEntries !== undefined) {
+      next.model.adapter.promptScaffoldCacheEntries = promptScaffoldCacheEntries;
+    }
+  }
+
   if (next.model.adapter.kind === "llama.cpp" && next.model.adapter.launchProfile) {
     const profile = next.model.adapter.launchProfile;
     const binaryPath = env.RAY_LLAMA_CPP_BINARY_PATH;
@@ -739,6 +776,29 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
       env.RAY_LLAMA_CPP_CACHE_RAM_MIB,
       -1,
       "RAY_LLAMA_CPP_CACHE_RAM_MIB",
+    );
+    const cachePrompt = parseBoolean(env.RAY_LLAMA_CPP_CACHE_PROMPT, "RAY_LLAMA_CPP_CACHE_PROMPT");
+    const continuousBatching = parseBoolean(
+      env.RAY_LLAMA_CPP_CONTINUOUS_BATCHING,
+      "RAY_LLAMA_CPP_CONTINUOUS_BATCHING",
+    );
+    const enableMetrics = parseBoolean(
+      env.RAY_LLAMA_CPP_ENABLE_METRICS,
+      "RAY_LLAMA_CPP_ENABLE_METRICS",
+    );
+    const exposeSlots = parseBoolean(env.RAY_LLAMA_CPP_EXPOSE_SLOTS, "RAY_LLAMA_CPP_EXPOSE_SLOTS");
+    const warmup = parseBoolean(env.RAY_LLAMA_CPP_WARMUP, "RAY_LLAMA_CPP_WARMUP");
+    const enableUnifiedKv = parseBoolean(
+      env.RAY_LLAMA_CPP_ENABLE_UNIFIED_KV,
+      "RAY_LLAMA_CPP_ENABLE_UNIFIED_KV",
+    );
+    const cacheIdleSlots = parseBoolean(
+      env.RAY_LLAMA_CPP_CACHE_IDLE_SLOTS,
+      "RAY_LLAMA_CPP_CACHE_IDLE_SLOTS",
+    );
+    const contextShift = parseBoolean(
+      env.RAY_LLAMA_CPP_CONTEXT_SHIFT,
+      "RAY_LLAMA_CPP_CONTEXT_SHIFT",
     );
 
     if (isNonEmptyString(binaryPath)) {
@@ -800,6 +860,38 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
 
     if (cacheRamMiB !== undefined) {
       profile.cacheRamMiB = cacheRamMiB;
+    }
+
+    if (cachePrompt !== undefined) {
+      profile.cachePrompt = cachePrompt;
+    }
+
+    if (continuousBatching !== undefined) {
+      profile.continuousBatching = continuousBatching;
+    }
+
+    if (enableMetrics !== undefined) {
+      profile.enableMetrics = enableMetrics;
+    }
+
+    if (exposeSlots !== undefined) {
+      profile.exposeSlots = exposeSlots;
+    }
+
+    if (warmup !== undefined) {
+      profile.warmup = warmup;
+    }
+
+    if (enableUnifiedKv !== undefined) {
+      profile.enableUnifiedKv = enableUnifiedKv;
+    }
+
+    if (cacheIdleSlots !== undefined) {
+      profile.cacheIdleSlots = cacheIdleSlots;
+    }
+
+    if (contextShift !== undefined) {
+      profile.contextShift = contextShift;
     }
 
     if (

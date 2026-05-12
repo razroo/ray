@@ -1496,9 +1496,37 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
     lines.push(`# RAY_LLAMA_CPP_CTX_SIZE=${config.model.adapter.launchProfile.ctxSize}`);
     lines.push(`# RAY_LLAMA_CPP_PARALLEL=${config.model.adapter.launchProfile.parallel}`);
     lines.push(`# RAY_LLAMA_CPP_THREADS=${config.model.adapter.launchProfile.threads}`);
+    lines.push(`# RAY_LLAMA_CPP_THREADS_HTTP=${config.model.adapter.launchProfile.threadsHttp}`);
+    lines.push(`# RAY_LLAMA_CPP_BATCH_SIZE=${config.model.adapter.launchProfile.batchSize}`);
+    lines.push(`# RAY_LLAMA_CPP_UBATCH_SIZE=${config.model.adapter.launchProfile.ubatchSize}`);
+    lines.push(`# RAY_LLAMA_CPP_CACHE_REUSE=${config.model.adapter.launchProfile.cacheReuse}`);
     lines.push(
       `# RAY_LLAMA_CPP_CACHE_RAM_MIB=${config.model.adapter.launchProfile.cacheRamMiB ?? ""}`,
     );
+    lines.push(`# RAY_LLAMA_CPP_CACHE_PROMPT=${config.model.adapter.launchProfile.cachePrompt}`);
+    lines.push(`# RAY_LLAMA_CPP_SLOT_ID=${config.model.adapter.slotId ?? ""}`);
+    lines.push(`# RAY_LLAMA_CPP_SLOT_STATE_TTL_MS=${config.model.adapter.slotStateTtlMs ?? ""}`);
+    lines.push(
+      `# RAY_LLAMA_CPP_SLOT_SNAPSHOT_TIMEOUT_MS=${config.model.adapter.slotSnapshotTimeoutMs ?? ""}`,
+    );
+    lines.push(
+      `# RAY_LLAMA_CPP_PROMPT_SCAFFOLD_CACHE_ENTRIES=${config.model.adapter.promptScaffoldCacheEntries ?? ""}`,
+    );
+    lines.push(
+      `# RAY_LLAMA_CPP_CONTINUOUS_BATCHING=${config.model.adapter.launchProfile.continuousBatching}`,
+    );
+    lines.push(
+      `# RAY_LLAMA_CPP_ENABLE_METRICS=${config.model.adapter.launchProfile.enableMetrics}`,
+    );
+    lines.push(`# RAY_LLAMA_CPP_EXPOSE_SLOTS=${config.model.adapter.launchProfile.exposeSlots}`);
+    lines.push(`# RAY_LLAMA_CPP_WARMUP=${config.model.adapter.launchProfile.warmup}`);
+    lines.push(
+      `# RAY_LLAMA_CPP_ENABLE_UNIFIED_KV=${config.model.adapter.launchProfile.enableUnifiedKv}`,
+    );
+    lines.push(
+      `# RAY_LLAMA_CPP_CACHE_IDLE_SLOTS=${config.model.adapter.launchProfile.cacheIdleSlots}`,
+    );
+    lines.push(`# RAY_LLAMA_CPP_CONTEXT_SHIFT=${config.model.adapter.launchProfile.contextShift}`);
     lines.push(`# RAY_SCHEDULER_CONCURRENCY=${config.scheduler.concurrency}`);
     lines.push(`# RAY_SCHEDULER_MAX_QUEUE=${config.scheduler.maxQueue}`);
     lines.push(`# RAY_SCHEDULER_MAX_QUEUED_TOKENS=${config.scheduler.maxQueuedTokens}`);
