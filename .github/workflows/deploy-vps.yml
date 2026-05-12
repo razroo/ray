@@ -372,9 +372,10 @@ jobs:
           fi
           SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
 
-          $SUDO install -d -m 0755 /srv/ray /etc/ray /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
+          $SUDO install -d -m 0755 /srv/ray /etc/ray
+          $SUDO install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
           $SUDO chown -R "$DEPLOY_USER:$DEPLOY_GROUP" /srv/ray
-          $SUDO chown -R "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray
+          $SUDO chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
           ENDSSH
 
       - name: Sync repository to VPS
@@ -687,7 +688,7 @@ jobs:
           fi
 
           $SUDO chmod -R a+rX /srv/ray
-          $SUDO chown -R "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray
+          $SUDO chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
           timeout 60s $SUDO systemctl daemon-reload
           if [ -f /etc/systemd/system/ray-llama-cpp.service ]; then
             if ! timeout 60s $SUDO systemctl enable ray-llama-cpp.service; then

@@ -431,6 +431,32 @@ function validateDeployWorkflowSecretFileInstalls(
   return diagnostics;
 }
 
+function validateDeployWorkflowStateOwnershipGuards(
+  workflowPath: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+    if (/\bchown\s+-R\b/.test(line) && line.includes("/var/lib/ray")) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_recursive_state_chown",
+        workflowPath,
+        line: index + 1,
+        message:
+          "VPS deploy workflow must not recursively chown /var/lib/ray because model files can be multi-GB; chown the state directories directly and let staging own staged artifacts.",
+      });
+    }
+  }
+
+  return diagnostics;
+}
+
 function validateDeployWorkflowAptGuards(
   workflowPath: string,
   lines: string[],
@@ -656,6 +682,7 @@ async function validateWorkflow(
 
   diagnostics.push(...validateDeployWorkflowPublicCaddyAuthGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowSecretFileInstalls(workflowPath, lines));
+  diagnostics.push(...validateDeployWorkflowStateOwnershipGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowAptGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRsyncGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowServiceCommandGuards(workflowPath, lines));

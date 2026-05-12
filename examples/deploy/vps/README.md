@@ -34,9 +34,10 @@ sudo install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
 SERVICE_USER="${RAY_DEPLOY_SERVICE_USER:-ray}"
 id -u "$SERVICE_USER" >/dev/null 2>&1 || sudo useradd --system --home /srv/ray --shell /usr/sbin/nologin "$SERVICE_USER"
 SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
-sudo install -d -m 0755 /srv/ray /etc/ray /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
+sudo install -d -m 0755 /srv/ray /etc/ray
+sudo install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
 sudo chown "$(id -un):$(id -gn)" /srv/ray
-sudo chown -R "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray
+sudo chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
 ```
 
 ### 2. Prepare a local model backend
@@ -112,7 +113,7 @@ bun run build
 SERVICE_USER="${RAY_DEPLOY_SERVICE_USER:-ray}"
 SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
 sudo chmod -R a+rX /srv/ray
-sudo chown -R "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray
+sudo chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
 ```
 
 ### 4. Place the config
@@ -433,8 +434,10 @@ with `StrictHostKeyChecking=yes`,
 `IdentitiesOnly=yes`, the validated `RAY_DEPLOY_KNOWN_HOSTS` file, a short
 connect timeout, OpenSSH keepalives, and an rsync I/O timeout so stalled
 sessions or repository transfers fail instead of holding the deploy job
-indefinitely. Remote sudo calls use `sudo -n` so a deploy user without
-passwordless sudo fails immediately instead of hanging in CI.
+indefinitely. State ownership is repaired on the service directories without
+recursively walking staged GGUF files on every deploy. Remote sudo calls use
+`sudo -n` so a deploy user without passwordless sudo fails immediately instead
+of hanging in CI.
 
 When `RAY_DEPLOY_INSTALL_CADDY=true`, the workflow installs Caddy if needed,
 validates the rendered Caddyfile before installing it to `/etc/caddy/Caddyfile`,
