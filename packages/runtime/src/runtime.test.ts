@@ -1307,6 +1307,52 @@ test("runtime rejects malformed provider result output before caching", async ()
   assert.equal(inferCalls, 2);
 });
 
+test("runtime rejects oversized provider result output before caching", async () => {
+  let inferCalls = 0;
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "oversized-result-output-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async infer() {
+      inferCalls += 1;
+      return {
+        output: "x".repeat(8_193),
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      maxTokens: 1,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_result_invalid");
+      assert.equal((error as { status?: number }).status, 502);
+      assert.equal((error as { details?: { field?: string } }).details?.field, "output");
+      assert.equal((error as { details?: { maxChars?: number } }).details?.maxChars, 8_192);
+      assert.equal((error as { details?: { actualChars?: number } }).details?.actualChars, 8_193);
+      return true;
+    },
+  );
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      maxTokens: 1,
+    }),
+    /provider result: output must be at most 8192 characters/,
+  );
+  assert.equal(inferCalls, 2);
+});
+
 test("runtime rejects malformed provider result diagnostics before metrics", async () => {
   const provider: ModelProvider = {
     kind: "llama.cpp",

@@ -176,6 +176,9 @@ const unsafeMetadataKeys = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_LEARNED_FAMILY_HISTORY_KEYS = 512;
 const MAX_PROVIDER_PREPARATION_SLOT_SNAPSHOTS = 256;
 const MAX_PROVIDER_SLOT_UPDATED_AT_CHARS = 128;
+const MIN_PROVIDER_RESULT_OUTPUT_CHARS = 8_192;
+const MAX_PROVIDER_RESULT_OUTPUT_CHARS = 262_144;
+const MAX_PROVIDER_RESULT_CHARS_PER_TOKEN = 64;
 const MAX_PROVIDER_HEALTH_CHECKED_AT_CHARS = 128;
 const MAX_PROVIDER_HEALTH_STRING_CHARS = 512;
 const MAX_PROVIDER_HEALTH_DETAIL_DEPTH = 6;
@@ -2050,13 +2053,36 @@ function assertProviderDiagnostics(value: unknown): void {
   }
 }
 
-function normalizeProviderResult(value: ProviderResult): ProviderResult {
+function resolveProviderResultOutputLimit(request: NormalizedInferenceRequest): number {
+  return Math.min(
+    MAX_PROVIDER_RESULT_OUTPUT_CHARS,
+    Math.max(
+      MIN_PROVIDER_RESULT_OUTPUT_CHARS,
+      request.maxTokens * MAX_PROVIDER_RESULT_CHARS_PER_TOKEN,
+    ),
+  );
+}
+
+function normalizeProviderResult(
+  value: ProviderResult,
+  request: NormalizedInferenceRequest,
+): ProviderResult {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw createProviderResultError("provider infer() must return an object");
   }
 
   if (typeof value.output !== "string") {
     throw createProviderResultError("output must be a string", { field: "output" });
+  }
+
+  const outputLimit = resolveProviderResultOutputLimit(request);
+  if (value.output.length > outputLimit) {
+    throw createProviderResultError(`output must be at most ${outputLimit} characters`, {
+      field: "output",
+      maxChars: outputLimit,
+      actualChars: value.output.length,
+      maxTokens: request.maxTokens,
+    });
   }
 
   assertProviderUsage(value.usage);
@@ -2687,7 +2713,7 @@ export class RayRuntime {
                 : {}),
             },
       );
-      const providerResult = normalizeProviderResult(scheduled.value);
+      const providerResult = normalizeProviderResult(scheduled.value, requestForProvider);
       const normalizedScheduled = {
         ...scheduled,
         value: providerResult,

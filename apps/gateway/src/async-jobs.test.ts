@@ -530,7 +530,10 @@ test("durable inference queue fails oversized persisted results without writing 
         localBackend: true,
       },
       infer: async () => ({
-        output: "x".repeat(PERSISTED_JOB_FILE_LIMIT_BYTES),
+        output: "done",
+        diagnostics: {
+          modelRef: "x".repeat(PERSISTED_JOB_FILE_LIMIT_BYTES),
+        },
       }),
     };
     const runtime = createRayRuntime(config, { provider });
