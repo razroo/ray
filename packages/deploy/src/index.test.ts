@@ -931,6 +931,55 @@ test("diagnoseConfig warns when async queue storage is not durable", () => {
   );
 });
 
+test("diagnoseConfig errors when async queue storage is below the reserved headroom", () => {
+  const config = mergeConfig(createDefaultConfig("1b"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir: "/var/lib/ray/async-queue",
+      minFreeStorageMiB: 256,
+    },
+  });
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    preflight: {
+      asyncQueueStoragePath: "/var/lib/ray/async-queue",
+      asyncQueueStorageCheckPath: "/var/lib/ray",
+      asyncQueueStorageStatus: "parent",
+      asyncQueueStorageAvailableMiB: 127,
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "async_queue_storage_low");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /127 MiB free/);
+  assert.match(diagnostic.message, /256 MiB/);
+});
+
+test("diagnoseConfig errors when async queue storage is blocked by a file", () => {
+  const config = mergeConfig(createDefaultConfig("1b"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir: "/var/lib/ray/async-queue",
+    },
+  });
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    preflight: {
+      asyncQueueStoragePath: "/var/lib/ray/async-queue",
+      asyncQueueStorageCheckPath: "/var/lib/ray",
+      asyncQueueStorageStatus: "not_directory",
+      asyncQueueStorageError: "not a directory",
+    },
+  });
+
+  const diagnostic = diagnostics.find(
+    (entry) => entry.code === "async_queue_storage_not_directory",
+  );
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+});
+
 test("diagnoseConfig errors when generated llama.cpp service paths are relative", () => {
   const config = createDefaultConfig("1b");
 
@@ -1173,4 +1222,63 @@ test("loadAndDiagnoseDeployment errors when the configured model file is missing
   const diagnostic = inspected.diagnostics.find((entry) => entry.code === "model_file_missing");
   assert.ok(diagnostic);
   assert.match(diagnostic.message, /was not found/);
+});
+
+test("loadAndDiagnoseDeployment reports async queue storage headroom from the nearest existing parent", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-storage-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const storageDir = join(tempDir, "state", "async-queue");
+  const config = mergeConfig(createDefaultConfig("vps"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir,
+      minFreeStorageMiB: 1,
+    },
+  });
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+  });
+
+  const diagnostic = inspected.diagnostics.find((entry) => entry.code === "async_queue_storage_ok");
+  assert.ok(diagnostic);
+  assert.match(diagnostic.message, new RegExp(tempDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(diagnostic.message, /asyncQueue\.minFreeStorageMiB/);
+});
+
+test("loadAndDiagnoseDeployment errors when async queue storage is blocked by an existing file", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-storage-file-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const blockedPath = join(tempDir, "blocked");
+  await writeFile(blockedPath, "");
+
+  const config = mergeConfig(createDefaultConfig("vps"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir: join(blockedPath, "async-queue"),
+      minFreeStorageMiB: 1,
+    },
+  });
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+  });
+
+  const diagnostic = inspected.diagnostics.find(
+    (entry) => entry.code === "async_queue_storage_not_directory",
+  );
+  assert.ok(diagnostic);
+  assert.match(diagnostic.message, new RegExp(blockedPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });

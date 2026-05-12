@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { stat, statfs } from "node:fs/promises";
 import { isIP } from "node:net";
 import { tmpdir, totalmem } from "node:os";
 import path from "node:path";
@@ -36,6 +36,7 @@ export interface DeploymentDiagnostic {
 }
 
 type MemoryBudgetSource = "override" | "preset" | "host";
+type AsyncQueueStorageStatus = "directory" | "parent" | "not_directory" | "unreadable";
 
 export interface DeploymentPreflight {
   hostMemoryMiB?: number;
@@ -45,6 +46,11 @@ export interface DeploymentPreflight {
   modelFilePath?: string;
   modelFileStatus?: "found" | "missing" | "unreadable";
   modelFileError?: string;
+  asyncQueueStoragePath?: string;
+  asyncQueueStorageCheckPath?: string;
+  asyncQueueStorageStatus?: AsyncQueueStorageStatus;
+  asyncQueueStorageAvailableMiB?: number;
+  asyncQueueStorageError?: string;
 }
 
 export interface LlamaCppMemoryEstimate {
@@ -83,6 +89,11 @@ const CADDY_DIAL_TIMEOUT_MS = 5_000;
 const CADDY_WRITE_TIMEOUT_MS = 10_000;
 const MAX_CADDY_REQUEST_BODY_LIMIT_BYTES = 1_048_576;
 const MAX_CADDY_UPSTREAM_TIMEOUT_MS = 120_000 + CADDY_UPSTREAM_TIMEOUT_GRACE_MS;
+
+interface StorageStats {
+  bavail: number | bigint;
+  bsize: number | bigint;
+}
 
 const llamaCppLaunchPresets = new Set<LlamaCppLaunchProfile["preset"]>([
   "single-vps-sub1b",
@@ -527,6 +538,22 @@ function bytesToMiBRoundedUp(value: number): number {
 
 function formatMiB(value: number): string {
   return `${value.toLocaleString("en-US")} MiB`;
+}
+
+function statValueToNumber(value: number | bigint): number | undefined {
+  const numberValue = typeof value === "bigint" ? Number(value) : value;
+  return Number.isFinite(numberValue) && numberValue >= 0 ? numberValue : undefined;
+}
+
+function resolveAvailableStorageMiB(stats: StorageStats): number | undefined {
+  const availableBlocks = statValueToNumber(stats.bavail);
+  const blockSize = statValueToNumber(stats.bsize);
+
+  if (availableBlocks === undefined || blockSize === undefined) {
+    return undefined;
+  }
+
+  return Math.floor((availableBlocks * blockSize) / BYTES_PER_MIB);
 }
 
 function getPresetMemoryBudgetMiB(preset: LlamaCppLaunchProfile["preset"]): number {
@@ -1023,6 +1050,47 @@ export function diagnoseConfig(
           "asyncQueue.storageDir is under /home, /root, or /run/user, but the generated gateway service uses ProtectHome=true. Use a service-readable path such as /var/lib/ray/async-queue.",
       });
     }
+
+    if (preflight?.asyncQueueStorageStatus === "not_directory") {
+      diagnostics.push({
+        level: "error",
+        code: "async_queue_storage_not_directory",
+        message: `asyncQueue.storageDir cannot be created because ${preflight.asyncQueueStorageCheckPath ?? preflight.asyncQueueStoragePath ?? config.asyncQueue.storageDir} is not a directory.`,
+      });
+    } else if (strictFilesystem && preflight?.asyncQueueStorageStatus === "unreadable") {
+      diagnostics.push({
+        level: "error",
+        code: "async_queue_storage_unreadable",
+        message: `asyncQueue.storageDir free space could not be inspected at ${preflight.asyncQueueStorageCheckPath ?? preflight.asyncQueueStoragePath ?? config.asyncQueue.storageDir}${preflight.asyncQueueStorageError ? ` (${preflight.asyncQueueStorageError})` : ""}. Doctor cannot verify the async queue storage reserve.`,
+      });
+    } else if (
+      strictFilesystem &&
+      preflight?.asyncQueueStorageStatus !== undefined &&
+      preflight.asyncQueueStorageAvailableMiB === undefined
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "async_queue_storage_unreadable",
+        message: `asyncQueue.storageDir free space could not be resolved at ${preflight.asyncQueueStorageCheckPath ?? preflight.asyncQueueStoragePath ?? config.asyncQueue.storageDir}. Doctor cannot verify the async queue storage reserve.`,
+      });
+    } else if (preflight?.asyncQueueStorageAvailableMiB !== undefined) {
+      const storagePath = preflight.asyncQueueStoragePath ?? config.asyncQueue.storageDir;
+      const checkedPath = preflight.asyncQueueStorageCheckPath ?? storagePath;
+
+      if (preflight.asyncQueueStorageAvailableMiB < config.asyncQueue.minFreeStorageMiB) {
+        diagnostics.push({
+          level: "error",
+          code: "async_queue_storage_low",
+          message: `Async queue storage has ${formatMiB(preflight.asyncQueueStorageAvailableMiB)} free at ${checkedPath}, below asyncQueue.minFreeStorageMiB (${formatMiB(config.asyncQueue.minFreeStorageMiB)}) for ${storagePath}. Move the queue to a larger persistent volume or lower the reserve only after sizing the VPS disk.`,
+        });
+      } else {
+        diagnostics.push({
+          level: "info",
+          code: "async_queue_storage_ok",
+          message: `Async queue storage has ${formatMiB(preflight.asyncQueueStorageAvailableMiB)} free at ${checkedPath}, satisfying asyncQueue.minFreeStorageMiB (${formatMiB(config.asyncQueue.minFreeStorageMiB)}) for ${storagePath}.`,
+        });
+      }
+    }
   }
 
   if (
@@ -1431,6 +1499,68 @@ export async function renderDeploymentBundle(options: {
   };
 }
 
+async function collectAsyncQueueStoragePreflight(
+  config: RayConfig,
+): Promise<Partial<DeploymentPreflight>> {
+  if (!config.asyncQueue.enabled) {
+    return {};
+  }
+
+  const storagePath = path.resolve(config.asyncQueue.storageDir);
+  let checkPath = storagePath;
+
+  while (true) {
+    try {
+      const pathStat = await stat(checkPath);
+
+      if (!pathStat.isDirectory()) {
+        return {
+          asyncQueueStoragePath: storagePath,
+          asyncQueueStorageCheckPath: checkPath,
+          asyncQueueStorageStatus: "not_directory",
+          asyncQueueStorageError: "not a directory",
+        };
+      }
+
+      const storageStats = await statfs(checkPath);
+      const availableMiB = resolveAvailableStorageMiB(storageStats);
+
+      return {
+        asyncQueueStoragePath: storagePath,
+        asyncQueueStorageCheckPath: checkPath,
+        asyncQueueStorageStatus: checkPath === storagePath ? "directory" : "parent",
+        ...(availableMiB !== undefined ? { asyncQueueStorageAvailableMiB: availableMiB } : {}),
+      };
+    } catch (error) {
+      const code =
+        error !== null && typeof error === "object" && "code" in error
+          ? (error as { code?: string }).code
+          : undefined;
+
+      if (code !== "ENOENT" && code !== "ENOTDIR") {
+        return {
+          asyncQueueStoragePath: storagePath,
+          asyncQueueStorageCheckPath: checkPath,
+          asyncQueueStorageStatus: "unreadable",
+          asyncQueueStorageError: toErrorMessage(error),
+        };
+      }
+
+      const parent = path.dirname(checkPath);
+      if (parent === checkPath) {
+        return {
+          asyncQueueStoragePath: storagePath,
+          asyncQueueStorageCheckPath: checkPath,
+          asyncQueueStorageStatus: "unreadable",
+          asyncQueueStorageError: toErrorMessage(error),
+        };
+      }
+
+      checkPath = parent;
+    }
+  }
+}
+
 async function collectDeploymentPreflight(
   config: RayConfig,
   options: {
@@ -1439,10 +1569,12 @@ async function collectDeploymentPreflight(
   },
 ): Promise<DeploymentPreflight> {
   const hostMemoryMiB = Math.max(1, Math.floor(totalmem() / BYTES_PER_MIB));
+  const storagePreflight = await collectAsyncQueueStoragePreflight(config);
 
   if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
     return {
       hostMemoryMiB,
+      ...storagePreflight,
     };
   }
 
@@ -1456,6 +1588,7 @@ async function collectDeploymentPreflight(
   });
   const preflight: DeploymentPreflight = {
     hostMemoryMiB,
+    ...storagePreflight,
     memoryBudgetMiB: budget.memoryBudgetMiB,
     memoryBudgetSource: budget.memoryBudgetSource,
     modelFilePath: launchProfile.modelPath,
