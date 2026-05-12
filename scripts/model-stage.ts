@@ -1,4 +1,5 @@
-import { constants } from "node:fs";
+import { createHash } from "node:crypto";
+import { constants, createReadStream } from "node:fs";
 import { access, open, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -73,7 +74,7 @@ Options:
   --binary-sha256 <hex>    Expected SHA-256 for the installed llama-server binary.
   --source <path>          Local GGUF path to install into the configured model path.
   --sha256 <hex>           Expected SHA-256 for the installed GGUF.
-  --check-sources          Verify source artifacts exist before printing the plan.
+  --check-sources          Verify source artifacts and provided checksums before printing the plan.
   --commands-only          Print only shell commands, one per line.
   --json                   Print machine-readable staging plan JSON.
   -h, --help               Show this help.
@@ -495,6 +496,30 @@ async function assertRegularReadableFile(filePath: string, label: string): Promi
   });
 }
 
+async function calculateSha256(filePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  const stream = createReadStream(filePath);
+
+  for await (const chunk of stream) {
+    hash.update(chunk);
+  }
+
+  return hash.digest("hex");
+}
+
+async function assertSha256(
+  filePath: string,
+  expectedSha256: string,
+  label: string,
+): Promise<void> {
+  const actualSha256 = await calculateSha256(filePath);
+  if (actualSha256 !== expectedSha256) {
+    throw new Error(
+      `${label} SHA-256 mismatch at ${filePath}: expected ${expectedSha256}, got ${actualSha256}`,
+    );
+  }
+}
+
 export async function checkModelStageSources(cwd: string, plan: ModelStagePlan): Promise<void> {
   if (!plan.binarySourcePath) {
     throw new Error(`source checks require --binary-source or ${BINARY_SOURCE_ENV}`);
@@ -514,6 +539,14 @@ export async function checkModelStageSources(cwd: string, plan: ModelStagePlan):
     );
   });
   await assertRegularReadableFile(modelSourcePath, "GGUF source");
+
+  if (plan.binarySha256) {
+    await assertSha256(binarySourcePath, plan.binarySha256, "llama-server source");
+  }
+
+  if (plan.sha256) {
+    await assertSha256(modelSourcePath, plan.sha256, "GGUF source");
+  }
 }
 
 export async function runModelStageCli(

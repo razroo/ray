@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -13,6 +14,10 @@ import {
 } from "./model-stage.ts";
 
 const repoRoot = process.cwd();
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
 
 test("parseArgs accepts strict model staging options", () => {
   const digest = "a".repeat(64);
@@ -184,6 +189,34 @@ test("checkModelStageSources verifies concrete artifact inputs", async (t) => {
 
   const binaryPath = path.join(tempDir, "llama-server");
   const modelPath = path.join(tempDir, "model.gguf");
+  const binaryContents = "#!/bin/sh\nexit 0\n";
+  const modelContents = "gguf";
+  await writeFile(binaryPath, binaryContents, "utf8");
+  await writeFile(modelPath, modelContents, "utf8");
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o644);
+
+  const plan = await createModelStagePlan({
+    cwd: tempDir,
+    configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
+    env: {},
+    binarySourcePath: "./llama-server",
+    binarySha256: sha256(binaryContents),
+    sourcePath: "./model.gguf",
+    sha256: sha256(modelContents),
+  });
+
+  await assert.doesNotReject(checkModelStageSources(tempDir, plan));
+});
+
+test("checkModelStageSources rejects checksum mismatches", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-bad-sha-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const binaryPath = path.join(tempDir, "llama-server");
+  const modelPath = path.join(tempDir, "model.gguf");
   await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
   await writeFile(modelPath, "gguf", "utf8");
   await chmod(binaryPath, 0o755);
@@ -194,10 +227,14 @@ test("checkModelStageSources verifies concrete artifact inputs", async (t) => {
     configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
     env: {},
     binarySourcePath: "./llama-server",
+    binarySha256: "c".repeat(64),
     sourcePath: "./model.gguf",
   });
 
-  await assert.doesNotReject(checkModelStageSources(tempDir, plan));
+  await assert.rejects(
+    checkModelStageSources(tempDir, plan),
+    /llama-server source SHA-256 mismatch/,
+  );
 });
 
 test("checkModelStageSources rejects missing concrete artifact inputs", async () => {
