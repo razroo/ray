@@ -8,7 +8,8 @@ import assert from "node:assert/strict";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
 import { createRayRuntime, type RayRuntime } from "@ray/runtime";
 import { RayError, type HealthSnapshot, type RuntimeMetricsSnapshot } from "@razroo/ray-core";
-import type { LogFields, Logger } from "@ray/telemetry";
+import { Logger, type LogFields } from "@ray/telemetry";
+import { DurableInferenceQueue } from "./async-jobs.js";
 import { createGatewayServer, parseCliArgs, startGateway } from "./index.js";
 
 async function closeServer(server: Server): Promise<void> {
@@ -518,7 +519,18 @@ test("gateway metrics endpoint exposes async queue saturation", async (t) => {
       minFreeStorageMiB: 64,
     },
   });
-  const gateway = createGatewayServer({ config });
+  const runtime = createRayRuntime(config);
+  const logger = new Logger("test", "error");
+  const jobQueue = new DurableInferenceQueue({
+    config: config.asyncQueue,
+    runtime,
+    logger,
+    statfsImpl: async () => ({
+      bavail: 256,
+      bsize: 1024 * 1024,
+    }),
+  });
+  const gateway = createGatewayServer({ config, runtime, jobQueue, logger });
 
   await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
   t.after(async () => {
@@ -542,9 +554,17 @@ test("gateway metrics endpoint exposes async queue saturation", async (t) => {
   assert.equal(body.gauges["async_queue.total_jobs"], 0);
   assert.equal(body.gauges["async_queue.max_jobs"], 3);
   assert.equal(body.gauges["async_queue.jobs_ratio"], 0);
+  assert.equal(body.gauges["async_queue.available_storage_mib"], 256);
   assert.equal(body.gauges["async_queue.min_free_storage_mib"], 64);
+  assert.equal(body.gauges["async_queue.storage_reserve_ratio"], 4);
   assert.equal(body.gauges["async_queue.completed_ttl_ms"], config.asyncQueue.completedTtlMs);
   assert.equal(body.gauges["async_queue.dispatch_concurrency"], 2);
+
+  const healthResponse = await fetch(`http://127.0.0.1:${address.port}/health`);
+  assert.equal(healthResponse.status, 200);
+  const health = (await healthResponse.json()) as HealthSnapshot;
+  assert.equal(health.asyncQueue?.availableStorageMiB, 256);
+  assert.equal(health.asyncQueue?.storageReserveRatio, 4);
 });
 
 test("gateway returns service unavailable when detailed health is unavailable", async (t) => {

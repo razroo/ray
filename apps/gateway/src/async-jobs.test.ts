@@ -202,8 +202,11 @@ test("durable inference queue rejects new jobs when storage reserve is exhausted
         (error.details as { availableMiB?: number }).availableMiB === 127 &&
         (error.details as { minFreeStorageMiB?: number }).minFreeStorageMiB === 128,
     );
-    assert.equal(queue.snapshot().totalJobs, 0);
-    assert.equal(queue.snapshot().minFreeStorageMiB, 128);
+    const snapshot = await queue.snapshotWithStorage();
+    assert.equal(snapshot.totalJobs, 0);
+    assert.equal(snapshot.minFreeStorageMiB, 128);
+    assert.equal(snapshot.availableStorageMiB, 127);
+    assert.equal(snapshot.storageReserveRatio, 0.9922);
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }

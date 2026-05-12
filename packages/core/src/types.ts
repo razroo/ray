@@ -305,7 +305,9 @@ export interface AsyncQueueSnapshot {
   callbackPending: number;
   totalJobs: number;
   maxJobs: number;
+  availableStorageMiB?: number;
   minFreeStorageMiB: number;
+  storageReserveRatio?: number;
   completedTtlMs: number;
   dispatchConcurrency: number;
 }

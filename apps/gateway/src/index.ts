@@ -91,7 +91,13 @@ function attachAsyncQueueMetrics(
   metrics.gauges["async_queue.total_jobs"] = snapshot.totalJobs;
   metrics.gauges["async_queue.max_jobs"] = snapshot.maxJobs;
   metrics.gauges["async_queue.jobs_ratio"] = snapshot.totalJobs / Math.max(1, snapshot.maxJobs);
+  if (snapshot.availableStorageMiB !== undefined) {
+    metrics.gauges["async_queue.available_storage_mib"] = snapshot.availableStorageMiB;
+  }
   metrics.gauges["async_queue.min_free_storage_mib"] = snapshot.minFreeStorageMiB;
+  if (snapshot.storageReserveRatio !== undefined) {
+    metrics.gauges["async_queue.storage_reserve_ratio"] = snapshot.storageReserveRatio;
+  }
   metrics.gauges["async_queue.completed_ttl_ms"] = snapshot.completedTtlMs;
   metrics.gauges["async_queue.dispatch_concurrency"] = snapshot.dispatchConcurrency;
 
@@ -562,7 +568,7 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
 
         const health = await runtime.health();
         if (jobQueue) {
-          health.asyncQueue = jobQueue.snapshot();
+          health.asyncQueue = await jobQueue.snapshotWithStorage();
         }
         writeJsonWithoutReadingBody(
           request,
@@ -590,7 +596,9 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
           request,
           response,
           200,
-          jobQueue ? attachAsyncQueueMetrics(metrics, jobQueue.snapshot()) : metrics,
+          jobQueue
+            ? attachAsyncQueueMetrics(metrics, await jobQueue.snapshotWithStorage())
+            : metrics,
         );
         return;
       }

@@ -1059,6 +1059,20 @@ export class DurableInferenceQueue {
     };
   }
 
+  async snapshotWithStorage(): Promise<AsyncQueueSnapshot> {
+    const snapshot = this.snapshot();
+    const availableStorageMiB = await this.readAvailableStorageMiB();
+
+    if (availableStorageMiB !== undefined) {
+      snapshot.availableStorageMiB = availableStorageMiB;
+      snapshot.storageReserveRatio = Number(
+        (availableStorageMiB / Math.max(1, snapshot.minFreeStorageMiB)).toFixed(4),
+      );
+    }
+
+    return snapshot;
+  }
+
   async enqueue(request: CreateInferenceJobRequest): Promise<InferenceJobRecord> {
     await this.ensureReady();
     normalizeInferenceRequest(this.options.runtime.config, cloneRequest(request));
@@ -1175,24 +1189,8 @@ export class DurableInferenceQueue {
   }
 
   private async ensureStorageReserve(): Promise<void> {
-    let stats: StorageStats;
-
-    try {
-      stats = await this.statfsImpl(this.options.config.storageDir);
-    } catch (error) {
-      this.options.logger.warn("failed to inspect async queue storage capacity", {
-        storageDir: this.options.config.storageDir,
-        error: toErrorMessage(error),
-      });
-      return;
-    }
-
-    const availableMiB = resolveAvailableStorageMiB(stats);
-
+    const availableMiB = await this.readAvailableStorageMiB();
     if (availableMiB === undefined) {
-      this.options.logger.warn("failed to resolve async queue free storage", {
-        storageDir: this.options.config.storageDir,
-      });
       return;
     }
 
@@ -1207,6 +1205,30 @@ export class DurableInferenceQueue {
         },
       });
     }
+  }
+
+  private async readAvailableStorageMiB(): Promise<number | undefined> {
+    let stats: StorageStats;
+
+    try {
+      stats = await this.statfsImpl(this.options.config.storageDir);
+    } catch (error) {
+      this.options.logger.warn("failed to inspect async queue storage capacity", {
+        storageDir: this.options.config.storageDir,
+        error: toErrorMessage(error),
+      });
+      return undefined;
+    }
+
+    const availableMiB = resolveAvailableStorageMiB(stats);
+
+    if (availableMiB === undefined) {
+      this.options.logger.warn("failed to resolve async queue free storage", {
+        storageDir: this.options.config.storageDir,
+      });
+    }
+
+    return availableMiB;
   }
 
   private reserveJobAdmission(): void {
