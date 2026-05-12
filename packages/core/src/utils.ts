@@ -7,6 +7,7 @@ const MAX_STABLE_ARRAY_ITEMS = 4_096;
 const MAX_STABLE_DEPTH = 32;
 const MAX_STABLE_BINARY_BYTES = 16 * 1024 * 1024;
 const MAX_REQUEST_ID_PREFIX_CHARS = 32;
+const MAX_ERROR_MESSAGE_CHARS = 8_000;
 const MAX_SLEEP_MS = 120_000;
 
 function assertStableStringLength(value: string, label: string, maximum: number): void {
@@ -214,13 +215,23 @@ export function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function truncateErrorMessage(value: string): string {
+  if (value.length <= MAX_ERROR_MESSAGE_CHARS) {
+    return value;
+  }
+
+  return `${value.slice(0, MAX_ERROR_MESSAGE_CHARS)}...[truncated ${
+    value.length - MAX_ERROR_MESSAGE_CHARS
+  } chars]`;
+}
+
 export function toErrorMessage(error: unknown): string {
   if (error instanceof Error) {
-    return error.message;
+    return truncateErrorMessage(error.message);
   }
 
   if (typeof error === "string") {
-    return error;
+    return truncateErrorMessage(error);
   }
 
   return "Unknown error";

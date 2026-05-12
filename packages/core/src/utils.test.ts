@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clamp, createRequestId, hashValue, sleep, stableStringify } from "./utils.js";
+import {
+  clamp,
+  createRequestId,
+  hashValue,
+  sleep,
+  stableStringify,
+  toErrorMessage,
+} from "./utils.js";
 
 test("stableStringify preserves deterministic object ordering", () => {
   const left = {
@@ -92,6 +99,14 @@ test("clamp rejects invalid numeric bounds", () => {
   assert.throws(() => clamp(Number.NaN, 0, 10), /clamp value/);
   assert.throws(() => clamp(1, Number.NEGATIVE_INFINITY, 10), /clamp minimum/);
   assert.throws(() => clamp(1, 10, 0), /clamp minimum/);
+});
+
+test("toErrorMessage bounds direct error text", () => {
+  assert.equal(toErrorMessage(new Error("boom")), "boom");
+  assert.equal(toErrorMessage("plain failure"), "plain failure");
+  assert.match(toErrorMessage(new Error("x".repeat(8_001))), /\[truncated 1 chars\]$/);
+  assert.match(toErrorMessage("x".repeat(8_001)), /\[truncated 1 chars\]$/);
+  assert.equal(toErrorMessage({}), "Unknown error");
 });
 
 test("sleep rejects invalid direct durations", async () => {
