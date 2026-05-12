@@ -361,9 +361,9 @@ jobs:
             missing_packages="$missing_packages caddy"
           fi
           if [ -n "$missing_packages" ]; then
-            $SUDO env DEBIAN_FRONTEND=noninteractive apt-get update
+            $SUDO env DEBIAN_FRONTEND=noninteractive timeout 300s apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=60 update
             # shellcheck disable=SC2086
-            $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $missing_packages
+            $SUDO env DEBIAN_FRONTEND=noninteractive timeout 300s apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=60 install -y --no-install-recommends $missing_packages
           fi
 
           SERVICE_USER="${SERVICE_USER:-ray}"

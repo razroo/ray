@@ -409,6 +409,37 @@ function validateDeployWorkflowSecretFileInstalls(
   return diagnostics;
 }
 
+function validateDeployWorkflowAptGuards(
+  workflowPath: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+    if (
+      /\bapt-get\s+(?:update|install)\b/.test(line) &&
+      (!line.includes("timeout ") ||
+        !line.includes("Acquire::Retries=") ||
+        !line.includes("Dpkg::Lock::Timeout="))
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_apt_get_unbounded",
+        workflowPath,
+        line: index + 1,
+        message:
+          "VPS deploy workflow apt-get update/install calls must set an overall timeout, Acquire::Retries, and Dpkg::Lock::Timeout so package bootstrap cannot hang indefinitely.",
+      });
+    }
+  }
+
+  return diagnostics;
+}
+
 async function validateWorkflow(
   workflowPath: string,
 ): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
@@ -481,6 +512,7 @@ async function validateWorkflow(
 
   diagnostics.push(...validateDeployWorkflowPublicCaddyAuthGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowSecretFileInstalls(workflowPath, lines));
+  diagnostics.push(...validateDeployWorkflowAptGuards(workflowPath, lines));
 
   return {
     lineCount: lines.length,

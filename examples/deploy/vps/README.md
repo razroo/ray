@@ -27,8 +27,8 @@ That keeps the gateway process small while still making self-hosted inference op
 ### 1. Install base tools
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y --no-install-recommends ca-certificates curl unzip git build-essential caddy
+sudo env DEBIAN_FRONTEND=noninteractive timeout 300s apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=60 update
+sudo env DEBIAN_FRONTEND=noninteractive timeout 300s apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=60 install -y --no-install-recommends ca-certificates curl unzip git build-essential caddy
 curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 https://bun.sh/install | bash -s "bun-v1.3.9"
 sudo install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
 SERVICE_USER="${RAY_DEPLOY_SERVICE_USER:-ray}"
