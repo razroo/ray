@@ -123,6 +123,7 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
       RAY_MODEL_FAMILY: "generic-llama",
       RAY_MODEL_QUANTIZATION: "q4_0",
       RAY_MODEL_WARM_ON_BOOT: "off",
+      RAY_MODEL_API_KEY_ENV: "RAY_UPSTREAM_API_KEY",
       RAY_MODEL_PATH: "/models/local-any-1b-q4.gguf",
       RAY_LLAMA_CPP_BINARY_PATH: "/opt/llama.cpp/llama-server",
       RAY_LLAMA_CPP_HOST: "127.0.0.1",
@@ -220,6 +221,7 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
 
   assert.equal(loaded.config.model.adapter.baseUrl, "http://127.0.0.1:8090");
   assert.equal(loaded.config.model.adapter.modelRef, "local-any-1b-q4");
+  assert.equal(loaded.config.model.adapter.apiKeyEnv, "RAY_UPSTREAM_API_KEY");
   assert.equal(loaded.config.model.adapter.launchProfile.binaryPath, "/opt/llama.cpp/llama-server");
   assert.equal(loaded.config.model.adapter.launchProfile.modelPath, "/models/local-any-1b-q4.gguf");
   assert.equal(loaded.config.model.adapter.launchProfile.alias, "local-any-1b-q4");

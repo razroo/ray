@@ -709,6 +709,7 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
     const adapterModelRef =
       env.RAY_MODEL_REF ??
       (next.model.adapter.kind === "llama.cpp" ? env.RAY_LLAMA_CPP_MODEL_REF : undefined);
+    const adapterApiKeyEnv = env.RAY_MODEL_API_KEY_ENV;
     const adapterTimeoutMs = parsePositiveInteger(env.RAY_MODEL_TIMEOUT_MS, "RAY_MODEL_TIMEOUT_MS");
 
     if (isNonEmptyString(adapterBaseUrl)) {
@@ -723,6 +724,10 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
 
     if (adapterTimeoutMs !== undefined) {
       next.model.adapter.timeoutMs = adapterTimeoutMs;
+    }
+
+    if (isNonEmptyString(adapterApiKeyEnv)) {
+      next.model.adapter.apiKeyEnv = adapterApiKeyEnv;
     }
   }
 

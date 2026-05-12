@@ -1436,6 +1436,14 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
   lines.push(
     `# RAY_TELEMETRY_SLOW_REQUEST_THRESHOLD_MS=${config.telemetry.slowRequestThresholdMs}`,
   );
+  if (
+    config.model.adapter.kind === "openai-compatible" ||
+    config.model.adapter.kind === "llama.cpp"
+  ) {
+    lines.push(
+      `# RAY_MODEL_API_KEY_ENV=${config.model.adapter.apiKeyEnv ?? "RAY_UPSTREAM_API_KEY"}`,
+    );
+  }
   lines.push(`# RAY_MODEL_WARM_ON_BOOT=${config.model.warmOnBoot}`);
   lines.push(`# RAY_REQUEST_BODY_LIMIT_BYTES=${config.server.requestBodyLimitBytes}`);
   lines.push(`# RAY_ASYNC_QUEUE_ENABLED=${config.asyncQueue.enabled}`);
