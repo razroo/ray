@@ -444,11 +444,11 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
   const binaryChecksumPreflight = plan.binarySha256
     ? `printf '%s  %s\\n' ${shellQuote(plan.binarySha256)} ${shellQuote(binarySourcePath)} | timeout ${STAGE_BINARY_CHECKSUM_TIMEOUT_SECONDS}s sha256sum -c -`
     : undefined;
-  const modelStoragePreflight = `du_output="$(timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s du -m ${shellQuote(
+  const modelStoragePreflight = `source_bytes="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s stat -c %s -- ${shellQuote(
     sourcePath,
   )})" || exit "$?"; df_output="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s df -Pm ${shellQuote(
     plan.modelDirectory,
-  )})" || exit "$?"; required_mib="$(printf '%s\\n' "$du_output" | awk 'NR==1 {print $1 + ${MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB}}')"; available_mib="$(printf '%s\\n' "$df_output" | awk 'NR==2 {print $4}')"; test "\${available_mib:-0}" -ge "\${required_mib:-0}" || { printf '%s\\n' ${shellQuote(
+  )})" || exit "$?"; source_mib="$(((\${source_bytes:-0} + ${BYTES_PER_MIB - 1}) / ${BYTES_PER_MIB}))"; test "$source_mib" -ge 1 || source_mib=1; required_mib="$((source_mib + ${MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB}))"; available_mib="$(printf '%s\\n' "$df_output" | awk 'NR==2 {print $4}')"; test "\${available_mib:-0}" -ge "\${required_mib:-0}" || { printf '%s\\n' ${shellQuote(
     `Not enough free space in ${plan.modelDirectory}: keep at least ${MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB} MiB free after copying the GGUF.`,
   )} >&2; exit 1; }`;
   const modelFormatPreflight = `magic="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s head -c ${GGUF_MAGIC.length} -- ${shellQuote(
