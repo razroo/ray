@@ -26,6 +26,7 @@ import {
   type PartialUsageStats,
   type PromptCompilerDiagnostics,
   type ProviderDiagnostics,
+  type ProviderDetectedCapabilities,
   type ProviderHealthSnapshot,
   type ProviderRequestPreparation,
   type ProviderResult,
@@ -175,6 +176,14 @@ const unsafeMetadataKeys = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_LEARNED_FAMILY_HISTORY_KEYS = 512;
 const MAX_PROVIDER_PREPARATION_SLOT_SNAPSHOTS = 256;
 const MAX_PROVIDER_SLOT_UPDATED_AT_CHARS = 128;
+const MAX_PROVIDER_HEALTH_CHECKED_AT_CHARS = 128;
+const MAX_PROVIDER_HEALTH_STRING_CHARS = 512;
+const MAX_PROVIDER_HEALTH_DETAIL_DEPTH = 6;
+const MAX_PROVIDER_HEALTH_DETAIL_OBJECT_KEYS = 64;
+const MAX_PROVIDER_HEALTH_DETAIL_ARRAY_ITEMS = 64;
+const MAX_PROVIDER_HEALTH_DETAIL_KEY_CHARS = 128;
+const MAX_PROVIDER_HEALTH_DETAIL_STRING_CHARS = 8_192;
+const MAX_PROVIDER_CAPABILITY_ERRORS = 8;
 const providerDiagnosticIntegerFields = [
   "totalSlots",
   "slotId",
@@ -191,6 +200,13 @@ const providerTimingFields = [
   "promptTokensPerSecond",
   "completionTokensPerSecond",
 ] as const;
+const providerHealthStatuses = new Set<ProviderHealthSnapshot["status"]>([
+  "unknown",
+  "ready",
+  "warming",
+  "degraded",
+  "unavailable",
+]);
 
 export interface CreateRayRuntimeOptions {
   provider?: ModelProvider;
@@ -2028,6 +2044,345 @@ function normalizeProviderResult(value: ProviderResult): ProviderResult {
   return value;
 }
 
+function createProviderHealthError(message: string, details?: Record<string, unknown>): RayError {
+  return new RayError(`Invalid provider health: ${message}`, {
+    code: "provider_health_invalid",
+    status: 502,
+    ...(details ? { details } : {}),
+  });
+}
+
+function truncateProviderHealthString(
+  value: string,
+  maxChars = MAX_PROVIDER_HEALTH_DETAIL_STRING_CHARS,
+): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+
+  return `${value.slice(0, maxChars)}...[truncated ${value.length - maxChars} chars]`;
+}
+
+function assertProviderHealthString(
+  value: unknown,
+  field: string,
+  maxChars: number,
+): asserts value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > maxChars) {
+    throw createProviderHealthError(`${field} must be a bounded non-empty string`, {
+      field,
+      maxChars,
+    });
+  }
+}
+
+function normalizeProviderHealthStatus(value: unknown): ProviderHealthSnapshot["status"] {
+  if (
+    typeof value === "string" &&
+    providerHealthStatuses.has(value as ProviderHealthSnapshot["status"])
+  ) {
+    return value as ProviderHealthSnapshot["status"];
+  }
+
+  throw createProviderHealthError("status must be a valid provider health status", {
+    field: "status",
+  });
+}
+
+function normalizeProviderHealthLatency(value: unknown): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw createProviderHealthError("latencyMs must be a non-negative finite number", {
+      field: "latencyMs",
+    });
+  }
+
+  return value;
+}
+
+function normalizeProviderHealthInteger(value: unknown, field: string): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw createProviderHealthError(`${field} must be a non-negative safe integer`, { field });
+  }
+
+  return value;
+}
+
+function normalizeProviderCapabilityStatus(
+  value: unknown,
+  field: string,
+): ProviderDetectedCapabilities["applyTemplate"] {
+  if (value === "available" || value === "unavailable" || value === "unknown") {
+    return value;
+  }
+
+  throw createProviderHealthError(`${field} must be available, unavailable, or unknown`, {
+    field,
+  });
+}
+
+function normalizeOptionalProviderHealthString(value: unknown, field: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" || value.length === 0) {
+    throw createProviderHealthError(`${field} must be a bounded non-empty string`, {
+      field,
+      maxChars: MAX_PROVIDER_HEALTH_STRING_CHARS,
+    });
+  }
+
+  return truncateProviderHealthString(value, MAX_PROVIDER_HEALTH_STRING_CHARS);
+}
+
+function snapshotProviderHealthDetail(value: unknown, seen: WeakSet<object>, depth = 0): unknown {
+  if (value === null || value === undefined) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return truncateProviderHealthString(value);
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : String(value);
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+
+  if (typeof value === "symbol" || typeof value === "function") {
+    return `[${typeof value}]`;
+  }
+
+  if (seen.has(value)) {
+    return "[Circular]";
+  }
+
+  if (depth >= MAX_PROVIDER_HEALTH_DETAIL_DEPTH) {
+    return "[Truncated]";
+  }
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? String(value) : value.toISOString();
+  }
+
+  if (value instanceof Error) {
+    const snapshot: Record<string, unknown> = {
+      name: truncateProviderHealthString(value.name),
+      message: truncateProviderHealthString(value.message),
+    };
+
+    if (value.stack) {
+      snapshot.stack = truncateProviderHealthString(value.stack);
+    }
+
+    return snapshot;
+  }
+
+  if (ArrayBuffer.isView(value)) {
+    return `[${value.constructor.name} ${value.byteLength} bytes]`;
+  }
+
+  seen.add(value);
+
+  try {
+    if (Array.isArray(value)) {
+      const items = value
+        .slice(0, MAX_PROVIDER_HEALTH_DETAIL_ARRAY_ITEMS)
+        .map((entry) => snapshotProviderHealthDetail(entry, seen, depth + 1));
+
+      if (value.length > MAX_PROVIDER_HEALTH_DETAIL_ARRAY_ITEMS) {
+        items.push(`[Truncated ${value.length - MAX_PROVIDER_HEALTH_DETAIL_ARRAY_ITEMS} items]`);
+      }
+
+      return items;
+    }
+
+    const output: Record<string, unknown> = {};
+    let keys: string[];
+
+    try {
+      keys = Object.keys(value);
+    } catch (error) {
+      return `[Unserializable object: ${truncateProviderHealthString(toErrorMessage(error))}]`;
+    }
+
+    for (const key of keys.slice(0, MAX_PROVIDER_HEALTH_DETAIL_OBJECT_KEYS)) {
+      const safeKey = truncateProviderHealthString(key, MAX_PROVIDER_HEALTH_DETAIL_KEY_CHARS);
+
+      try {
+        output[safeKey] = snapshotProviderHealthDetail(
+          (value as Record<string, unknown>)[key],
+          seen,
+          depth + 1,
+        );
+      } catch (error) {
+        output[safeKey] = `[Thrown: ${truncateProviderHealthString(toErrorMessage(error))}]`;
+      }
+    }
+
+    if (keys.length > MAX_PROVIDER_HEALTH_DETAIL_OBJECT_KEYS) {
+      output.__truncatedKeys = keys.length - MAX_PROVIDER_HEALTH_DETAIL_OBJECT_KEYS;
+    }
+
+    return output;
+  } finally {
+    seen.delete(value);
+  }
+}
+
+function snapshotProviderHealthDetails(value: unknown): Record<string, unknown> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const snapshot = snapshotProviderHealthDetail(value, new WeakSet());
+
+  if (snapshot !== null && typeof snapshot === "object" && !Array.isArray(snapshot)) {
+    return snapshot as Record<string, unknown>;
+  }
+
+  return { value: snapshot };
+}
+
+function normalizeProviderCapabilityErrors(value: unknown): Record<string, string> | undefined {
+  if (value === undefined || value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  let entries: Array<[string, unknown]>;
+  try {
+    entries = Object.entries(value).slice(0, MAX_PROVIDER_CAPABILITY_ERRORS);
+  } catch {
+    return undefined;
+  }
+
+  if (entries.length === 0) {
+    return undefined;
+  }
+
+  const errors: Record<string, string> = {};
+
+  for (const [key, entry] of entries) {
+    if (typeof entry !== "string") {
+      continue;
+    }
+
+    errors[truncateProviderHealthString(key, MAX_PROVIDER_HEALTH_DETAIL_KEY_CHARS)] =
+      truncateProviderHealthString(entry);
+  }
+
+  return Object.keys(errors).length > 0 ? errors : undefined;
+}
+
+function normalizeProviderDetectedCapabilities(
+  value: unknown,
+): ProviderDetectedCapabilities | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw createProviderHealthError("detectedCapabilities must be an object", {
+      field: "detectedCapabilities",
+    });
+  }
+
+  const capabilities = value as Partial<ProviderDetectedCapabilities>;
+  const promptFormatPreference = capabilities.promptFormatPreference;
+
+  if (
+    promptFormatPreference !== undefined &&
+    promptFormatPreference !== "native-template" &&
+    promptFormatPreference !== "openai-chat" &&
+    promptFormatPreference !== "plain-completion"
+  ) {
+    throw createProviderHealthError(
+      "detectedCapabilities.promptFormatPreference must be a supported prompt format",
+      { field: "detectedCapabilities.promptFormatPreference" },
+    );
+  }
+
+  const errors = normalizeProviderCapabilityErrors(capabilities.errors);
+  const modelRef = normalizeOptionalProviderHealthString(
+    capabilities.modelRef,
+    "detectedCapabilities.modelRef",
+  );
+  const backendModel = normalizeOptionalProviderHealthString(
+    capabilities.backendModel,
+    "detectedCapabilities.backendModel",
+  );
+  const launchPreset = normalizeOptionalProviderHealthString(
+    capabilities.launchPreset,
+    "detectedCapabilities.launchPreset",
+  );
+  const contextWindow = normalizeProviderHealthInteger(
+    capabilities.contextWindow,
+    "detectedCapabilities.contextWindow",
+  );
+  const totalSlots = normalizeProviderHealthInteger(
+    capabilities.totalSlots,
+    "detectedCapabilities.totalSlots",
+  );
+
+  return {
+    applyTemplate: normalizeProviderCapabilityStatus(
+      capabilities.applyTemplate,
+      "detectedCapabilities.applyTemplate",
+    ),
+    chatTemplate: normalizeProviderCapabilityStatus(
+      capabilities.chatTemplate,
+      "detectedCapabilities.chatTemplate",
+    ),
+    jsonMode: normalizeProviderCapabilityStatus(
+      capabilities.jsonMode,
+      "detectedCapabilities.jsonMode",
+    ),
+    ...(modelRef !== undefined ? { modelRef } : {}),
+    ...(backendModel !== undefined ? { backendModel } : {}),
+    ...(launchPreset !== undefined ? { launchPreset } : {}),
+    ...(contextWindow !== undefined ? { contextWindow } : {}),
+    ...(totalSlots !== undefined ? { totalSlots } : {}),
+    ...(promptFormatPreference !== undefined ? { promptFormatPreference } : {}),
+    ...(errors ? { errors } : {}),
+  };
+}
+
+function normalizeProviderHealthSnapshot(value: unknown): ProviderHealthSnapshot {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw createProviderHealthError("provider health() must return an object");
+  }
+
+  const snapshot = value as Partial<ProviderHealthSnapshot>;
+  assertProviderHealthString(snapshot.checkedAt, "checkedAt", MAX_PROVIDER_HEALTH_CHECKED_AT_CHARS);
+
+  const latencyMs = normalizeProviderHealthLatency(snapshot.latencyMs);
+  const detectedCapabilities = normalizeProviderDetectedCapabilities(snapshot.detectedCapabilities);
+  const details = snapshotProviderHealthDetails(snapshot.details);
+
+  return {
+    status: normalizeProviderHealthStatus(snapshot.status),
+    checkedAt: snapshot.checkedAt,
+    ...(latencyMs !== undefined ? { latencyMs } : {}),
+    ...(detectedCapabilities ? { detectedCapabilities } : {}),
+    ...(details ? { details } : {}),
+  };
+}
+
 export class RayRuntime {
   readonly logger: Logger;
   readonly metrics: RuntimeMetrics;
@@ -2513,9 +2868,10 @@ export class RayRuntime {
 
   private async refreshProviderHealth(): Promise<ProviderHealthSnapshot> {
     try {
-      const snapshot = await this.provider.health?.();
+      const rawSnapshot = await this.provider.health?.();
 
-      if (snapshot) {
+      if (rawSnapshot) {
+        const snapshot = normalizeProviderHealthSnapshot(rawSnapshot);
         this.providerHealthCache = {
           checkedAtMs: Date.now(),
           snapshot,

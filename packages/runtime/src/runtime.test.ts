@@ -745,6 +745,113 @@ test("runtime health reports upstream unavailability", async () => {
   assert.equal(health.provider.status, "unavailable");
 });
 
+test("runtime bounds provider health snapshots before caching", async () => {
+  let calls = 0;
+  const details: Record<string, unknown> = {
+    message: "x".repeat(9_000),
+    list: Array.from({ length: 70 }, (_entry, index) => index),
+  };
+  details.self = details;
+  Object.defineProperty(details, "explode", {
+    enumerable: true,
+    get() {
+      throw new Error("getter boom");
+    },
+  });
+
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "test-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async health() {
+      calls += 1;
+      return {
+        status: "ready",
+        checkedAt: new Date().toISOString(),
+        latencyMs: 12,
+        detectedCapabilities: {
+          applyTemplate: "available",
+          chatTemplate: "unknown",
+          jsonMode: "available",
+          backendModel: "m".repeat(700),
+          contextWindow: 4096,
+          totalSlots: 2,
+          errors: {
+            props: "p".repeat(9_000),
+          },
+        },
+        details,
+      };
+    },
+    async infer() {
+      return {
+        output: "unused",
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("vps"), { provider });
+  const health = await runtime.health();
+
+  assert.equal(health.status, "ok");
+  assert.equal(health.provider.status, "ready");
+  assert.match(String(health.provider.details?.message), /\[truncated 808 chars\]$/);
+  assert.equal(health.provider.details?.self, "[Circular]");
+  assert.match(String(health.provider.details?.explode), /^\[Thrown:/);
+  assert.equal((health.provider.details?.list as unknown[]).length, 65);
+  assert.match(
+    String(health.provider.detectedCapabilities?.backendModel),
+    /\[truncated 188 chars\]$/,
+  );
+  assert.match(
+    String(health.provider.detectedCapabilities?.errors?.props),
+    /\[truncated 808 chars\]$/,
+  );
+
+  details.message = "mutated";
+  const cached = await runtime.health();
+  assert.equal(calls, 1);
+  assert.notEqual(cached.provider.details?.message, "mutated");
+});
+
+test("runtime treats malformed provider health as unavailable", async () => {
+  const provider: ModelProvider = {
+    kind: "openai-compatible",
+    modelId: "test-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async health() {
+      return {
+        status: "ready",
+        checkedAt: new Date().toISOString(),
+        latencyMs: Number.NaN,
+      } as never;
+    },
+    async infer() {
+      return {
+        output: "unused",
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("vps"), { provider });
+  const health = await runtime.health();
+
+  assert.equal(health.status, "unavailable");
+  assert.equal(health.provider.status, "unavailable");
+  assert.match(
+    String(health.provider.details?.message),
+    /Invalid provider health: latencyMs must be a non-negative finite number/,
+  );
+});
+
 test("runtime deduplicates concurrent provider health checks", async () => {
   let calls = 0;
   let releaseHealth!: () => void;
