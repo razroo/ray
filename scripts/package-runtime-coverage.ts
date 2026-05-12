@@ -327,6 +327,19 @@ function isPipedShellCurl(line: string): boolean {
   return /\bcurl\b/.test(line) && /\|\s*(?:bash|sh)\b/.test(line);
 }
 
+function workflowWindowIncludes(lines: string[], index: number, pattern: string): boolean {
+  const start = Math.max(0, index - 2);
+  const end = Math.min(lines.length, index + 3);
+
+  for (let windowIndex = start; windowIndex < end; windowIndex += 1) {
+    if (lines[windowIndex]?.includes(pattern)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 async function validateWorkflow(
   workflowPath: string,
 ): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
@@ -378,6 +391,21 @@ async function validateWorkflow(
         line: index + 1,
         message:
           "Workflow curl-to-shell installers must pass curl --retry, --connect-timeout, and --max-time so VPS bootstrap cannot hang on a stalled external download.",
+      });
+    }
+
+    if (
+      line.includes("ConnectTimeout=") &&
+      (!workflowWindowIncludes(lines, index, "ServerAliveInterval=") ||
+        !workflowWindowIncludes(lines, index, "ServerAliveCountMax="))
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_ssh_missing_keepalive",
+        workflowPath,
+        line: index + 1,
+        message:
+          "Workflow SSH deploy commands with ConnectTimeout must also set ServerAliveInterval and ServerAliveCountMax so connected VPS sessions cannot hang indefinitely.",
       });
     }
   }

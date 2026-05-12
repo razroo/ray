@@ -109,6 +109,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
       "      - run: npm publish ./pkg.tgz --access public",
       "      - run: curl -fsS http://127.0.0.1:${HEALTH_PORT}/readyz",
       "      - run: curl -fsSL https://bun.sh/install | bash -s bun-v1.3.9",
+      "      - run: ssh -o ConnectTimeout=15 ray.example.com uptime",
       "",
     ].join("\n"),
   );
@@ -128,6 +129,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.equal(codes.filter((code) => code === "non_bun_workflow_package_manager").length, 2);
   assert.ok(codes.includes("unbounded_workflow_health_probe"));
   assert.ok(codes.includes("unbounded_workflow_curl_install"));
+  assert.ok(codes.includes("workflow_ssh_missing_keepalive"));
   assert.ok(codes.includes("non_bun_lockfile_present"));
 });
 
