@@ -440,6 +440,32 @@ function validateDeployWorkflowAptGuards(
   return diagnostics;
 }
 
+function validateDeployWorkflowRemoteBunInstallGuards(
+  workflowPath: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+    if (line.includes("/usr/local/bin/bun install") && !line.includes("timeout ")) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_remote_bun_install_unbounded",
+        workflowPath,
+        line: index + 1,
+        message:
+          "VPS deploy workflow remote bun install calls must run under an overall timeout so dependency installation cannot hang indefinitely on a small host.",
+      });
+    }
+  }
+
+  return diagnostics;
+}
+
 async function validateWorkflow(
   workflowPath: string,
 ): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
@@ -513,6 +539,7 @@ async function validateWorkflow(
   diagnostics.push(...validateDeployWorkflowPublicCaddyAuthGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowSecretFileInstalls(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowAptGuards(workflowPath, lines));
+  diagnostics.push(...validateDeployWorkflowRemoteBunInstallGuards(workflowPath, lines));
 
   return {
     lineCount: lines.length,

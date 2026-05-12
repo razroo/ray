@@ -551,7 +551,7 @@ jobs:
           ensure_bun_runtime
 
           cd /srv/ray
-          /usr/local/bin/bun install --production --frozen-lockfile --ignore-scripts
+          timeout 300s /usr/local/bin/bun install --production --frozen-lockfile --ignore-scripts
 
           if [ "${CONFIG_SOURCE:-repo}" = "secret" ] && [ -n "${CONFIG_B64:-}" ]; then
             printf '%s' "$CONFIG_B64" | base64 -d | $SUDO install -m 0640 -o root -g "$SERVICE_GROUP" /dev/stdin /etc/ray/ray.json
