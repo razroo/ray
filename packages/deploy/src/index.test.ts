@@ -910,6 +910,62 @@ test("diagnoseConfig warns when the cax11 preset is overcommitted", () => {
   assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "cax11_parallel_high"));
 });
 
+test("diagnoseConfig warns when a small VPS llama.cpp profile has no swap cushion", () => {
+  const config = createDefaultConfig("1b");
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      memoryBudgetMiB: 4_096,
+      memoryBudgetSource: "preset",
+      swapStatus: "missing",
+      swapTotalMiB: 0,
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "swap_missing");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+});
+
+test("diagnoseConfig reports adequate swap for a small VPS llama.cpp profile", () => {
+  const config = createDefaultConfig("1b");
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      memoryBudgetMiB: 4_096,
+      memoryBudgetSource: "preset",
+      swapStatus: "available",
+      swapTotalMiB: 2_048,
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "swap_ok");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+  assert.match(diagnostic.message, /2,048 MiB/);
+});
+
+test("diagnoseConfig skips swap warnings for roomier llama.cpp profiles", () => {
+  const config = createDefaultConfig("1b");
+  assert.equal(config.model.adapter.kind, "llama.cpp");
+  assert.ok(config.model.adapter.launchProfile);
+  config.model.adapter.launchProfile.preset = "single-vps-1b-8gb";
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      memoryBudgetMiB: 8_192,
+      memoryBudgetSource: "preset",
+      swapStatus: "missing",
+      swapTotalMiB: 0,
+    },
+  });
+
+  assert.ok(!diagnostics.some((diagnostic) => diagnostic.code === "swap_missing"));
+});
+
 test("diagnoseConfig warns when async queue storage is not durable", () => {
   const relativeConfig = mergeConfig(createDefaultConfig("1b"), {
     asyncQueue: {

@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, stat, statfs } from "node:fs/promises";
+import { access, readFile, stat, statfs } from "node:fs/promises";
 import { isIP } from "node:net";
 import { tmpdir, totalmem } from "node:os";
 import path from "node:path";
@@ -40,6 +40,7 @@ export interface DeploymentDiagnostic {
 type MemoryBudgetSource = "override" | "preset" | "host";
 type AsyncQueueStorageStatus = "directory" | "parent" | "not_directory" | "unreadable";
 type GatewayRuntimeBinaryStatus = "found" | "missing" | "unreadable";
+type SwapStatus = "available" | "missing" | "unreadable";
 
 export interface DeploymentPreflight {
   hostMemoryMiB?: number;
@@ -57,6 +58,9 @@ export interface DeploymentPreflight {
   gatewayRuntimeBinaryPath?: string;
   gatewayRuntimeBinaryStatus?: GatewayRuntimeBinaryStatus;
   gatewayRuntimeBinaryError?: string;
+  swapStatus?: SwapStatus;
+  swapTotalMiB?: number;
+  swapError?: string;
 }
 
 export interface LlamaCppMemoryEstimate {
@@ -83,6 +87,7 @@ const RAY_RUNTIME_RESERVE_MIB = 192;
 const LLAMA_CPP_RUNTIME_RESERVE_MIB = 160;
 const MIN_SYSTEM_RESERVE_MIB = 768;
 const SYSTEM_RESERVE_RATIO = 0.2;
+const MIN_SMALL_VPS_SWAP_MIB = 1_024;
 const SCHEDULER_BYTES_PER_TOKEN = 768;
 const TIGHT_MEMORY_RATIO = 0.9;
 const LLAMA_CPP_SYSTEMD_SERVICE = "ray-llama-cpp.service";
@@ -544,6 +549,27 @@ function bytesToMiBRoundedUp(value: number): number {
 
 function formatMiB(value: number): string {
   return `${value.toLocaleString("en-US")} MiB`;
+}
+
+function parseSwapTotalMiB(meminfo: string): number | undefined {
+  const match = /^SwapTotal:\s+(\d+)\s+kB$/m.exec(meminfo);
+  if (!match) {
+    return undefined;
+  }
+
+  const swapKiB = Number(match[1]);
+  return Number.isSafeInteger(swapKiB) && swapKiB >= 0 ? Math.floor(swapKiB / 1024) : undefined;
+}
+
+function shouldRequireSwapCushion(
+  launchProfile: LlamaCppLaunchProfile,
+  preflight: DeploymentPreflight | undefined,
+): boolean {
+  if (!isSmallVpsPreset(launchProfile.preset)) {
+    return false;
+  }
+
+  return preflight?.memoryBudgetMiB === undefined || preflight.memoryBudgetMiB <= 4_096;
 }
 
 function statValueToNumber(value: number | bigint): number | undefined {
@@ -1410,6 +1436,46 @@ export function diagnoseConfig(
           });
         }
       }
+
+      if (strictFilesystem && shouldRequireSwapCushion(launchProfile, preflight)) {
+        if (preflight?.swapStatus === "missing" || preflight?.swapTotalMiB === 0) {
+          diagnostics.push({
+            level: "warn",
+            code: "swap_missing",
+            message:
+              "No swap is configured on this small-VPS llama.cpp target. Add a modest swap file before sustained inference so the backend has an OOM cushion when memory spikes.",
+          });
+        } else if (
+          preflight?.swapTotalMiB !== undefined &&
+          preflight.swapTotalMiB < MIN_SMALL_VPS_SWAP_MIB
+        ) {
+          diagnostics.push({
+            level: "warn",
+            code: "swap_low",
+            message: `Only ${formatMiB(
+              preflight.swapTotalMiB,
+            )} of swap is configured. Small 4 GB llama.cpp VPS deployments should keep at least ${formatMiB(
+              MIN_SMALL_VPS_SWAP_MIB,
+            )} of swap as a last-resort OOM cushion.`,
+          });
+        } else if (preflight?.swapTotalMiB !== undefined) {
+          diagnostics.push({
+            level: "info",
+            code: "swap_ok",
+            message: `Swap is configured with ${formatMiB(
+              preflight.swapTotalMiB,
+            )} available as a last-resort cushion for this small-VPS llama.cpp profile.`,
+          });
+        } else if (preflight?.swapStatus === "unreadable") {
+          diagnostics.push({
+            level: "warn",
+            code: "swap_unreadable",
+            message: `Doctor could not inspect host swap from /proc/meminfo${
+              preflight.swapError ? ` (${preflight.swapError})` : ""
+            }. Verify swap manually before sustained inference on a 4 GB VPS.`,
+          });
+        }
+      }
     }
   }
 
@@ -1643,6 +1709,30 @@ async function collectGatewayRuntimePreflight(
   }
 }
 
+async function collectSwapPreflight(): Promise<Partial<DeploymentPreflight>> {
+  try {
+    const meminfo = await readFile("/proc/meminfo", "utf8");
+    const swapTotalMiB = parseSwapTotalMiB(meminfo);
+
+    if (swapTotalMiB === undefined) {
+      return {
+        swapStatus: "unreadable",
+        swapError: "SwapTotal was not present in /proc/meminfo",
+      };
+    }
+
+    return {
+      swapStatus: swapTotalMiB > 0 ? "available" : "missing",
+      swapTotalMiB,
+    };
+  } catch (error) {
+    return {
+      swapStatus: "unreadable",
+      swapError: toErrorMessage(error),
+    };
+  }
+}
+
 async function collectDeploymentPreflight(
   config: RayConfig,
   options: {
@@ -1657,12 +1747,14 @@ async function collectDeploymentPreflight(
   const runtimePreflight = await collectGatewayRuntimePreflight(
     options.runtimeBinary ?? options.nodeBinary,
   );
+  const swapPreflight = await collectSwapPreflight();
 
   if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
     return {
       hostMemoryMiB,
       ...storagePreflight,
       ...runtimePreflight,
+      ...swapPreflight,
     };
   }
 
@@ -1678,6 +1770,7 @@ async function collectDeploymentPreflight(
     hostMemoryMiB,
     ...storagePreflight,
     ...runtimePreflight,
+    ...swapPreflight,
     memoryBudgetMiB: budget.memoryBudgetMiB,
     memoryBudgetSource: budget.memoryBudgetSource,
     modelFilePath: launchProfile.modelPath,

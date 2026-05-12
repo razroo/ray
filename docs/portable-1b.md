@@ -72,7 +72,7 @@ bun run doctor:1b:generic
 bun run doctor:1b:8gb:generic
 ```
 
-Doctor checks auth/env readiness, model file presence, launch profile consistency, projected memory fit against the selected memory budget, and async queue storage headroom before the service starts.
+Doctor checks auth/env readiness, model file presence, launch profile consistency, projected memory fit against the selected memory budget, async queue storage headroom, and swap cushion for the 4 GB llama.cpp profile before the service starts.
 
 ## Benchmark The Actual Workload
 
