@@ -507,6 +507,46 @@ test("gateway metrics endpoint refreshes live runtime gauges", async (t) => {
   assert.equal(body.gauges["process.cpu.cgroup_throttled_ratio"], 0.05);
 });
 
+test("gateway metrics endpoint exposes async queue saturation", async (t) => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-gateway-metrics-queue-"));
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir,
+      maxJobs: 3,
+      dispatchConcurrency: 2,
+      minFreeStorageMiB: 64,
+    },
+  });
+  const gateway = createGatewayServer({ config });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    await closeServer(gateway.server);
+    await rm(storageDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/metrics`);
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as RuntimeMetricsSnapshot;
+
+  assert.equal(body.gauges["async_queue.enabled"], 1);
+  assert.equal(body.gauges["async_queue.queued"], 0);
+  assert.equal(body.gauges["async_queue.running"], 0);
+  assert.equal(body.gauges["async_queue.callback_pending"], 0);
+  assert.equal(body.gauges["async_queue.total_jobs"], 0);
+  assert.equal(body.gauges["async_queue.max_jobs"], 3);
+  assert.equal(body.gauges["async_queue.jobs_ratio"], 0);
+  assert.equal(body.gauges["async_queue.min_free_storage_mib"], 64);
+  assert.equal(body.gauges["async_queue.completed_ttl_ms"], config.asyncQueue.completedTtlMs);
+  assert.equal(body.gauges["async_queue.dispatch_concurrency"], 2);
+});
+
 test("gateway returns service unavailable when detailed health is unavailable", async (t) => {
   const config = createDefaultConfig("tiny");
   const unavailableHealth: HealthSnapshot = {

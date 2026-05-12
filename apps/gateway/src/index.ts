@@ -4,9 +4,11 @@ import { loadRayConfig, resolveAuthApiKeys, snapshotRayConfig } from "@ray/confi
 import {
   RayError,
   toErrorMessage,
+  type AsyncQueueSnapshot,
   type CreateInferenceJobRequest,
   type InferenceRequest,
   type RayConfig,
+  type RuntimeMetricsSnapshot,
 } from "@razroo/ray-core";
 import { RayRuntime, createRayRuntime } from "@ray/runtime";
 import { Logger, serializeError } from "@ray/telemetry";
@@ -76,6 +78,24 @@ function assertCliArgv(argv: unknown): asserts argv is string[] {
       throw new Error(`argv[${index}] must be at most ${MAX_GATEWAY_CLI_ARG_BYTES} bytes`);
     }
   }
+}
+
+function attachAsyncQueueMetrics(
+  metrics: RuntimeMetricsSnapshot,
+  snapshot: AsyncQueueSnapshot,
+): RuntimeMetricsSnapshot {
+  metrics.gauges["async_queue.enabled"] = snapshot.enabled ? 1 : 0;
+  metrics.gauges["async_queue.queued"] = snapshot.queued;
+  metrics.gauges["async_queue.running"] = snapshot.running;
+  metrics.gauges["async_queue.callback_pending"] = snapshot.callbackPending;
+  metrics.gauges["async_queue.total_jobs"] = snapshot.totalJobs;
+  metrics.gauges["async_queue.max_jobs"] = snapshot.maxJobs;
+  metrics.gauges["async_queue.jobs_ratio"] = snapshot.totalJobs / Math.max(1, snapshot.maxJobs);
+  metrics.gauges["async_queue.min_free_storage_mib"] = snapshot.minFreeStorageMiB;
+  metrics.gauges["async_queue.completed_ttl_ms"] = snapshot.completedTtlMs;
+  metrics.gauges["async_queue.dispatch_concurrency"] = snapshot.dispatchConcurrency;
+
+  return metrics;
 }
 
 function requireFlagValue(flag: string, value: string | undefined): string {
@@ -565,7 +585,13 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
           return;
         }
 
-        writeJsonWithoutReadingBody(request, response, 200, await runtime.collectMetricsSnapshot());
+        const metrics = await runtime.collectMetricsSnapshot();
+        writeJsonWithoutReadingBody(
+          request,
+          response,
+          200,
+          jobQueue ? attachAsyncQueueMetrics(metrics, jobQueue.snapshot()) : metrics,
+        );
         return;
       }
 
