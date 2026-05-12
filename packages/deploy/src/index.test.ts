@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -656,6 +656,38 @@ test("renderDeploymentBundle includes llama.cpp service for generic 1b profiles"
     bundle.llamaCppService ?? "",
     /LLAMA_ARG_MODEL=\/var\/lib\/ray\/models\/local-1b-q4\.gguf/,
   );
+});
+
+test("renderDeploymentBundle accepts every public example deployment profile", async () => {
+  const configDir = join(process.cwd(), "examples/config");
+  const publicConfigFiles = (await readdir(configDir))
+    .filter((entry) => entry.endsWith(".public.json"))
+    .sort();
+
+  assert.ok(publicConfigFiles.length > 0);
+
+  for (const configFile of publicConfigFiles) {
+    const bundle = await renderDeploymentBundle({
+      cwd: process.cwd(),
+      configPath: `./examples/config/${configFile}`,
+      user: "ray",
+      domain: "ray.example.com",
+      envFile: "/etc/ray/ray.env",
+      env: {
+        RAY_API_KEYS: "test-key",
+      },
+      memoryBudgetMiB: configFile.includes("8gb") ? 8192 : 4096,
+      runtimeBinary: "/usr/local/bin/bun",
+    });
+
+    const errorCodes = bundle.summary.diagnostics
+      .filter((diagnostic) => diagnostic.level === "error")
+      .map((diagnostic) => diagnostic.code);
+
+    assert.deepEqual(errorCodes, [], `${configFile} should render without errors`);
+    assert.match(bundle.service, /Description=Ray Gateway/);
+    assert.match(bundle.caddyfile, /^ray\.example\.com \{/m);
+  }
 });
 
 test("renderDeploymentBundle redacts adapter headers from summary output", async (t) => {
