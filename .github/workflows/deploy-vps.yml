@@ -368,14 +368,14 @@ jobs:
 
           SERVICE_USER="${SERVICE_USER:-ray}"
           if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
-            $SUDO useradd --system --home /srv/ray --shell /usr/sbin/nologin "$SERVICE_USER"
+            timeout 60s $SUDO useradd --system --home /srv/ray --shell /usr/sbin/nologin "$SERVICE_USER"
           fi
           SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
 
-          $SUDO install -d -m 0755 /srv/ray /etc/ray
-          $SUDO install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
-          $SUDO chown -R "$DEPLOY_USER:$DEPLOY_GROUP" /srv/ray
-          $SUDO chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
+          timeout 60s $SUDO install -d -m 0755 /srv/ray /etc/ray
+          timeout 60s $SUDO install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
+          timeout 120s $SUDO chown -R "$DEPLOY_USER:$DEPLOY_GROUP" /srv/ray
+          timeout 60s $SUDO chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
           ENDSSH
 
       - name: Sync repository to VPS
@@ -532,7 +532,7 @@ jobs:
               local candidate_version
               candidate_version="$(bun_runtime_version "$candidate")"
               if bun_version_at_least "$candidate_version" "$minimum_bun_version"; then
-                $SUDO install -m 0755 "$candidate" /usr/local/bin/bun
+                timeout 60s $SUDO install -m 0755 "$candidate" /usr/local/bin/bun
                 return
               fi
             fi
@@ -547,7 +547,7 @@ jobs:
               echo "Bun install produced unsupported version: ${current_version:-unknown}."
               exit 1
             fi
-            $SUDO install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
+            timeout 60s $SUDO install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
           }
 
           ensure_bun_runtime
@@ -556,22 +556,22 @@ jobs:
           timeout 300s /usr/local/bin/bun install --production --frozen-lockfile --ignore-scripts
 
           if [ "${CONFIG_SOURCE:-repo}" = "secret" ] && [ -n "${CONFIG_B64:-}" ]; then
-            printf '%s' "$CONFIG_B64" | base64 -d | $SUDO install -m 0640 -o root -g "$SERVICE_GROUP" /dev/stdin /etc/ray/ray.json
+            printf '%s' "$CONFIG_B64" | base64 -d | timeout 60s $SUDO install -m 0640 -o root -g "$SERVICE_GROUP" /dev/stdin /etc/ray/ray.json
           else
-            $SUDO install -m 0640 -o root -g "$SERVICE_GROUP" "/srv/ray/$CONFIG_REL" /etc/ray/ray.json
+            timeout 60s $SUDO install -m 0640 -o root -g "$SERVICE_GROUP" "/srv/ray/$CONFIG_REL" /etc/ray/ray.json
           fi
           if [ -n "${ENV_B64:-}" ]; then
-            printf '%s' "$ENV_B64" | base64 -d | $SUDO install -m 0600 -o root -g root /dev/stdin /etc/ray/ray.env
+            printf '%s' "$ENV_B64" | base64 -d | timeout 60s $SUDO install -m 0600 -o root -g root /dev/stdin /etc/ray/ray.env
           else
-            printf 'RAY_LOG_LEVEL=info\n' | $SUDO install -m 0600 -o root -g root /dev/stdin /etc/ray/ray.env
+            printf 'RAY_LOG_LEVEL=info\n' | timeout 60s $SUDO install -m 0600 -o root -g root /dev/stdin /etc/ray/ray.env
           fi
-          if [ -n "${RAY_DEPLOY_MEMORY_MIB:-}" ] && ! $SUDO grep -Eq '^RAY_DEPLOY_MEMORY_MIB=' /etc/ray/ray.env; then
-            if [ -s /etc/ray/ray.env ] && [ -n "$($SUDO tail -c 1 /etc/ray/ray.env)" ]; then
-              printf '\n' | $SUDO tee -a /etc/ray/ray.env >/dev/null
+          if [ -n "${RAY_DEPLOY_MEMORY_MIB:-}" ] && ! timeout 30s $SUDO grep -Eq '^RAY_DEPLOY_MEMORY_MIB=' /etc/ray/ray.env; then
+            if [ -s /etc/ray/ray.env ] && [ -n "$(timeout 30s $SUDO tail -c 1 /etc/ray/ray.env)" ]; then
+              printf '\n' | timeout 60s $SUDO tee -a /etc/ray/ray.env >/dev/null
             fi
-            printf 'RAY_DEPLOY_MEMORY_MIB=%s\n' "$RAY_DEPLOY_MEMORY_MIB" | $SUDO tee -a /etc/ray/ray.env >/dev/null
+            printf 'RAY_DEPLOY_MEMORY_MIB=%s\n' "$RAY_DEPLOY_MEMORY_MIB" | timeout 60s $SUDO tee -a /etc/ray/ray.env >/dev/null
           fi
-          $SUDO chmod 600 /etc/ray/ray.env
+          timeout 60s $SUDO chmod 600 /etc/ray/ray.env
 
           LLAMA_CONFIG_STATUS=0
           timeout 30s $SUDO /usr/local/bin/bun --eval '
@@ -671,24 +671,24 @@ jobs:
             --strict-filesystem \
             --output-dir "$RENDER_DIR" >/dev/null
 
-          $SUDO cp "$RENDER_DIR/ray-gateway.service" /etc/systemd/system/ray-gateway.service
+          timeout 60s $SUDO cp "$RENDER_DIR/ray-gateway.service" /etc/systemd/system/ray-gateway.service
           if [ "${INSTALL_CADDY:-false}" = "true" ]; then
             CADDY_TMP="$(mktemp)"
-            cp "$RENDER_DIR/Caddyfile" "$CADDY_TMP"
+            timeout 30s cp "$RENDER_DIR/Caddyfile" "$CADDY_TMP"
             timeout 30s $SUDO caddy validate --config "$CADDY_TMP"
-            $SUDO install -m 0644 "$CADDY_TMP" /etc/caddy/Caddyfile
+            timeout 60s $SUDO install -m 0644 "$CADDY_TMP" /etc/caddy/Caddyfile
           fi
           if [ -f "$RENDER_DIR/ray-llama-cpp.service" ]; then
-            $SUDO cp "$RENDER_DIR/ray-llama-cpp.service" /etc/systemd/system/ray-llama-cpp.service
+            timeout 60s $SUDO cp "$RENDER_DIR/ray-llama-cpp.service" /etc/systemd/system/ray-llama-cpp.service
           else
             if [ -f /etc/systemd/system/ray-llama-cpp.service ]; then
               timeout 60s $SUDO systemctl disable --now ray-llama-cpp.service || true
             fi
-            $SUDO rm -f /etc/systemd/system/ray-llama-cpp.service
+            timeout 60s $SUDO rm -f /etc/systemd/system/ray-llama-cpp.service
           fi
 
-          $SUDO chmod -R a+rX /srv/ray
-          $SUDO chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
+          timeout 120s $SUDO chmod -R a+rX /srv/ray
+          timeout 60s $SUDO chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
           timeout 60s $SUDO systemctl daemon-reload
           if [ -f /etc/systemd/system/ray-llama-cpp.service ]; then
             if ! timeout 60s $SUDO systemctl enable ray-llama-cpp.service; then
