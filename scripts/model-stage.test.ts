@@ -167,7 +167,7 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
     `test "$(head -c 4 -- './models/portable-1b.gguf')" = 'GGUF' || { printf '%s\\n' 'GGUF source does not start with the GGUF header: ./models/portable-1b.gguf' >&2; exit 1; }`,
     "sudo install -D -m 0640 -- './models/portable-1b.gguf' '/var/lib/ray/models/portable-1b.gguf'",
     "sudo chown 'rayops:rayops' '/var/lib/ray/models/portable-1b.gguf'",
-    "printf '%s  %s\\n' 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' '/var/lib/ray/models/portable-1b.gguf' | sha256sum -c -",
+    "printf '%s  %s\\n' 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' '/var/lib/ray/models/portable-1b.gguf' | sudo sha256sum -c -",
     "sudo -u 'rayops' test -r '/var/lib/ray/models/portable-1b.gguf'",
   ]);
 });

@@ -415,7 +415,7 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
     commands.splice(
       commands.length - 1,
       0,
-      `printf '%s  %s\\n' ${shellQuote(plan.sha256)} ${shellQuote(plan.modelPath)} | sha256sum -c -`,
+      `printf '%s  %s\\n' ${shellQuote(plan.sha256)} ${shellQuote(plan.modelPath)} | sudo sha256sum -c -`,
     );
   }
 
