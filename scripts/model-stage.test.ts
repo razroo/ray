@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -411,6 +421,52 @@ test("applyModelStagePlan installs verified artifacts into the resolved target p
   assert.equal(modelStats.mode & 0o777, 0o640);
   assert.equal(modelStats.uid, uid);
   assert.equal(modelStats.gid, gid);
+});
+
+test("applyModelStagePlan atomically replaces GGUF target symlinks", async (t) => {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) {
+    return;
+  }
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-apply-symlink-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const binaryPath = path.join(tempDir, "sources", "llama-server");
+  const modelPath = path.join(tempDir, "sources", "model.gguf");
+  const binaryTarget = path.join(tempDir, "target", "bin", "llama-server");
+  const modelTarget = path.join(tempDir, "target", "models", "model.gguf");
+  const linkedVictim = path.join(tempDir, "victim.gguf");
+  await mkdir(path.join(tempDir, "sources"), { recursive: true });
+  await mkdir(path.dirname(modelTarget), { recursive: true });
+  await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
+  await writeFile(modelPath, "GGUFnew-model", "utf8");
+  await writeFile(linkedVictim, "GGUFexisting-model", "utf8");
+  await symlink(linkedVictim, modelTarget);
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o644);
+
+  const plan = await createModelStagePlan({
+    cwd: tempDir,
+    configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
+    env: {
+      RAY_LLAMA_CPP_BINARY_PATH: binaryTarget,
+      RAY_MODEL_PATH: modelTarget,
+    },
+    serviceUser: String(uid),
+    serviceGroup: String(gid),
+    binarySourcePath: "./sources/llama-server",
+    sourcePath: "./sources/model.gguf",
+  });
+
+  await applyModelStagePlan(tempDir, plan);
+
+  assert.equal(await readFile(linkedVictim, "utf8"), "GGUFexisting-model");
+  assert.equal(await readFile(modelTarget, "utf8"), "GGUFnew-model");
+  assert.equal((await lstat(modelTarget)).isSymbolicLink(), false);
 });
 
 test("applyModelStagePlan rejects source binaries that fail the startup probe", async (t) => {

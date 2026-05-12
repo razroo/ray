@@ -1,7 +1,18 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { constants, createReadStream } from "node:fs";
-import { access, chmod, chown, copyFile, mkdir, open, stat, statfs } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  chown,
+  copyFile,
+  mkdir,
+  open,
+  rename,
+  rm,
+  stat,
+  statfs,
+} from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -33,6 +44,7 @@ const MAX_PROCESS_OUTPUT_CHARS = 1_000;
 const SYSTEMD_PRINCIPAL_PATTERN = /^(?:[A-Za-z_][A-Za-z0-9_-]{0,30}|[0-9]{1,10})$/;
 const SHA256_PATTERN = /^[a-fA-F0-9]{64}$/;
 const NUMERIC_PRINCIPAL_PATTERN = /^[0-9]{1,10}$/;
+const ATOMIC_STAGE_TEMP_PREFIX = ".ray-stage-";
 
 const execFileAsync = promisify(execFile);
 
@@ -703,12 +715,33 @@ async function resolveServiceOwnerIds(plan: ModelStagePlan): Promise<{ uid: numb
   return { uid, gid };
 }
 
-async function copyFileUnlessSame(sourcePath: string, targetPath: string): Promise<void> {
+function createAtomicStageTempPath(targetPath: string): string {
+  return path.join(
+    path.dirname(targetPath),
+    `${ATOMIC_STAGE_TEMP_PREFIX}${path.basename(targetPath)}-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`,
+  );
+}
+
+async function copyFileAtomicUnlessSame(
+  sourcePath: string,
+  targetPath: string,
+  prepareTemp?: (tempPath: string) => Promise<void>,
+): Promise<boolean> {
   if (path.resolve(sourcePath) === path.resolve(targetPath)) {
-    return;
+    return false;
   }
 
-  await copyFile(sourcePath, targetPath);
+  const tempPath = createAtomicStageTempPath(targetPath);
+
+  try {
+    await copyFile(sourcePath, tempPath);
+    await prepareTemp?.(tempPath);
+    await rename(tempPath, targetPath);
+    return true;
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 function statValueToNumber(value: number | bigint | undefined): number | undefined {
@@ -884,26 +917,52 @@ export async function applyModelStagePlan(
   const { uid, gid } = await resolveServiceOwnerIds(plan);
 
   await mkdir(path.dirname(binaryTargetPath), { recursive: true, mode: 0o755 });
-  await copyFileUnlessSame(binarySourcePath, binaryTargetPath);
-  await chmod(binaryTargetPath, 0o755);
-  if (plan.binarySha256) {
-    await assertSha256(binaryTargetPath, plan.binarySha256, "installed llama-server binary");
+  const copiedBinary = await copyFileAtomicUnlessSame(
+    binarySourcePath,
+    binaryTargetPath,
+    async (tempPath) => {
+      await chmod(tempPath, 0o755);
+      if (plan.binarySha256) {
+        await assertSha256(tempPath, plan.binarySha256, "staged llama-server binary");
+      }
+      await access(tempPath, constants.X_OK);
+      await assertLlamaCppBinaryStarts(tempPath, "staged llama-server binary", { uid, gid });
+    },
+  );
+  if (!copiedBinary) {
+    await chmod(binaryTargetPath, 0o755);
+    if (plan.binarySha256) {
+      await assertSha256(binaryTargetPath, plan.binarySha256, "installed llama-server binary");
+    }
+    await access(binaryTargetPath, constants.X_OK);
+    await assertLlamaCppBinaryStarts(binaryTargetPath, "installed llama-server binary", {
+      uid,
+      gid,
+    });
   }
-  await access(binaryTargetPath, constants.X_OK);
-  await assertLlamaCppBinaryStarts(binaryTargetPath, "installed llama-server binary", { uid, gid });
 
   await mkdir(path.dirname(modelTargetPath), { recursive: true, mode: 0o755 });
   if (path.resolve(modelSourcePath) !== path.resolve(modelTargetPath)) {
     await assertModelStageStorageHeadroom(modelSourcePath, path.dirname(modelTargetPath));
+    await copyFileAtomicUnlessSame(modelSourcePath, modelTargetPath, async (tempPath) => {
+      await assertGgufMagicHeader(tempPath, "staged GGUF model");
+      await chmod(tempPath, 0o640);
+      await chownIfNeeded(tempPath, uid, gid);
+      if (plan.sha256) {
+        await assertSha256(tempPath, plan.sha256, "staged GGUF model");
+      }
+      await assertModelReadableByServiceUser(tempPath, { uid, gid });
+    });
+    await assertModelReadableByServiceUser(modelTargetPath, { uid, gid });
+  } else {
+    await assertGgufMagicHeader(modelTargetPath, "installed GGUF model");
+    await chmod(modelTargetPath, 0o640);
+    await chownIfNeeded(modelTargetPath, uid, gid);
+    if (plan.sha256) {
+      await assertSha256(modelTargetPath, plan.sha256, "installed GGUF model");
+    }
+    await assertModelReadableByServiceUser(modelTargetPath, { uid, gid });
   }
-  await copyFileUnlessSame(modelSourcePath, modelTargetPath);
-  await assertGgufMagicHeader(modelTargetPath, "installed GGUF model");
-  await chmod(modelTargetPath, 0o640);
-  await chownIfNeeded(modelTargetPath, uid, gid);
-  if (plan.sha256) {
-    await assertSha256(modelTargetPath, plan.sha256, "installed GGUF model");
-  }
-  await assertModelReadableByServiceUser(modelTargetPath, { uid, gid });
 
   return {
     applied: true,
