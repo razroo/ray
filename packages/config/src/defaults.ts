@@ -243,7 +243,7 @@ function create1bDefaults(machineClass: OneBMachineClass): RayConfig {
   const is8gb = machineClass === "8gb";
 
   return {
-    profile: "1b",
+    profile: is8gb ? "1b-8gb" : "1b",
     server: {
       host: "127.0.0.1",
       port: 3000,
@@ -467,6 +467,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
   },
   sub1b: createSub1bDefaults("cx23"),
   "1b": create1bDefaults("cx23"),
+  "1b-8gb": create1bDefaults("8gb"),
   vps: {
     profile: "vps",
     server: {

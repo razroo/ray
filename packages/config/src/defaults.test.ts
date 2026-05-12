@@ -147,6 +147,31 @@ test("1b profile defaults to a conservative llama.cpp launch profile", () => {
   assert.equal(config.gracefulDegradation.cpuThrottledRatioThreshold, 0.2);
 });
 
+test("1b-8gb profile defaults to a roomier llama.cpp launch profile", () => {
+  const config = createDefaultConfig("1b-8gb");
+
+  assert.equal(config.profile, "1b-8gb");
+  assert.equal(config.model.adapter.kind, "llama.cpp");
+  assert.equal(config.model.operational?.memoryClassMiB, 8192);
+  assert.equal(config.model.maxOutputTokens, 256);
+
+  if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
+    throw new Error("Expected a llama.cpp launch profile");
+  }
+
+  assert.equal(config.model.adapter.launchProfile.preset, "single-vps-1b-8gb");
+  assert.equal(config.model.adapter.launchProfile.parallel, 2);
+  assert.equal(config.model.adapter.launchProfile.threadsBatch, 4);
+  assert.equal(config.model.adapter.launchProfile.cacheRamMiB, 768);
+  assert.equal(config.scheduler.concurrency, 2);
+  assert.equal(config.asyncQueue.minFreeStorageMiB, 512);
+  assert.equal(config.telemetry.slowRequestThresholdMs, 1800);
+  assert.equal(config.gracefulDegradation.memoryRssThresholdMiB, 768);
+  assert.equal(config.adaptiveTuning.queueLatencyThresholdMs, 450);
+  assert.equal(config.adaptiveTuning.minCompletionTokensPerSecond, 14);
+  assert.equal(config.rateLimit.maxKeys, 8192);
+});
+
 test("resolveAuthApiKeys parses comma and newline separated values", () => {
   const config = mergeConfig(createDefaultConfig("tiny"), {
     auth: {

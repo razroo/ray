@@ -213,7 +213,7 @@ For the roomier 3B-style OpenAI-compatible profile, use `bun run start:vps`.
 
 Use the 1B profile when the product needs better instruction following than the sub-1B default and can tolerate lower throughput on the same cheap-VPS class. Ray's 1B support is intended to be model-family and VPS-provider agnostic: pick a machine class, point Ray at a local GGUF/model backend, then tune context, slots, cache RAM, and scheduler budgets to the actual box.
 
-The generic starting points are [ray.1b.generic.json](examples/config/ray.1b.generic.json) for a conservative 4 GB single-slot VPS and [ray.1b.8gb.generic.json](examples/config/ray.1b.8gb.generic.json) for an 8 GB two-slot node. The Qwen/Hetzner configs remain checked-in reference baselines, not the product boundary.
+The generic starting points are [ray.1b.generic.json](examples/config/ray.1b.generic.json) for a conservative 4 GB single-slot VPS and [ray.1b.8gb.generic.json](examples/config/ray.1b.8gb.generic.json) for an 8 GB two-slot node. Use `RAY_PROFILE=1b-8gb` when selecting the roomier 8 GB defaults through environment-only config. The Qwen/Hetzner configs remain checked-in reference baselines, not the product boundary.
 
 ```bash
 bun run start:1b:generic

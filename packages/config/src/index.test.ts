@@ -77,7 +77,7 @@ test("loadRayConfig accepts the 1b 8gb launch preset", async () => {
     env: {},
   });
 
-  assert.equal(loaded.config.profile, "1b");
+  assert.equal(loaded.config.profile, "1b-8gb");
   assert.equal(loaded.config.scheduler.concurrency, 2);
 
   if (
@@ -107,6 +107,7 @@ test("loadRayConfig keeps checked-in 8gb profiles on 8gb operational defaults", 
       env: {},
     });
 
+    assert.equal(loaded.config.profile, "1b-8gb", configPath);
     assert.equal(loaded.config.model.operational?.memoryClassMiB, 8192, configPath);
     assert.equal(loaded.config.asyncQueue.minFreeStorageMiB, 512, configPath);
     assert.equal(loaded.config.telemetry.slowRequestThresholdMs, 1800, configPath);
@@ -123,6 +124,29 @@ test("loadRayConfig keeps checked-in 8gb profiles on 8gb operational defaults", 
 
     assert.equal(loaded.config.model.adapter.launchProfile.threadsBatch, 4, configPath);
   }
+});
+
+test("loadRayConfig accepts the 1b-8gb profile from environment", async () => {
+  const loaded = await loadRayConfig({
+    cwd: process.cwd(),
+    env: {
+      RAY_PROFILE: "1b-8gb",
+    },
+  });
+
+  assert.equal(loaded.config.profile, "1b-8gb");
+  assert.equal(loaded.config.scheduler.concurrency, 2);
+  assert.equal(loaded.config.model.operational?.memoryClassMiB, 8192);
+  assert.equal(loaded.config.asyncQueue.minFreeStorageMiB, 512);
+
+  if (
+    loaded.config.model.adapter.kind !== "llama.cpp" ||
+    !loaded.config.model.adapter.launchProfile
+  ) {
+    throw new Error("Expected a llama.cpp launch profile");
+  }
+
+  assert.equal(loaded.config.model.adapter.launchProfile.preset, "single-vps-1b-8gb");
 });
 
 test("loadRayConfig accepts generic 1b model profiles", async () => {

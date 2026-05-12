@@ -74,7 +74,7 @@ For a conservative 4 GB / 2 vCPU 1B-class box, start close to:
 Put the GGUF at the configured `model.adapter.launchProfile.modelPath`, usually
 under `/var/lib/ray/models`, before starting the generated llama.cpp service.
 
-On an 8 GB node, [ray.1b.8gb.generic.public.json](../../config/ray.1b.8gb.generic.public.json) raises context to `4096`, batch threads to `4`, cache RAM to `768` MiB, async queue storage headroom to `512` MiB, and gateway RSS degradation headroom to `768` MiB, and uses two parallel slots. The Qwen-specific [ray.1b.public.json](../../config/ray.1b.public.json) and [ray.1b.8gb.public.json](../../config/ray.1b.8gb.public.json) profiles are reference baselines for benchmark reproducibility.
+On an 8 GB node, [ray.1b.8gb.generic.public.json](../../config/ray.1b.8gb.generic.public.json) raises context to `4096`, batch threads to `4`, cache RAM to `768` MiB, async queue storage headroom to `512` MiB, and gateway RSS degradation headroom to `768` MiB, and uses two parallel slots. Set `RAY_PROFILE=1b-8gb` when selecting those defaults without a JSON config file. The Qwen-specific [ray.1b.public.json](../../config/ray.1b.public.json) and [ray.1b.8gb.public.json](../../config/ray.1b.8gb.public.json) profiles are reference baselines for benchmark reproducibility.
 
 ### 3. Build Ray
 

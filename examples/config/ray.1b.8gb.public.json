@@ -1,5 +1,5 @@
 {
-  "profile": "1b",
+  "profile": "1b-8gb",
   "asyncQueue": {
     "enabled": true,
     "storageDir": "/var/lib/ray/async-queue",

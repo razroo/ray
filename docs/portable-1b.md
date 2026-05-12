@@ -156,7 +156,8 @@ profile.
 
 For 8 GB nodes, start by raising context, slots, batch threads, cache RAM, async
 queue storage headroom, gateway RSS headroom, and adaptive latency/throughput
-thresholds through the 8 GB generic profile before adding more overrides.
+thresholds through the 8 GB generic profile before adding more overrides. Use
+`RAY_PROFILE=1b-8gb` when selecting those defaults without a JSON config file.
 
 ## Validate On The VPS
 
