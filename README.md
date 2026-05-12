@@ -139,7 +139,7 @@ scripts/
 
 The scaffold targets a credible first version:
 
-- `apps/gateway`: HTTP inference gateway with `/v1/infer`, `/v1/jobs`, `/livez`, `/health`, `/metrics`, and `/v1/config`
+- `apps/gateway`: HTTP inference gateway with `/v1/infer`, `/v1/jobs`, `/livez`, `/readyz`, `/health`, `/metrics`, and `/v1/config`
 - `packages/runtime`: request normalization, degradation policy, cache integration, and provider orchestration
 - `packages/models`: provider abstraction with `mock` and `openai-compatible` adapters
 - `packages/scheduler`: lightweight queueing, token-aware admission, concurrency limits, and in-flight deduplication

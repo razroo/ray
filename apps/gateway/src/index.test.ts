@@ -406,6 +406,8 @@ test("gateway protects detailed operational endpoints when auth is enabled", asy
   const baseUrl = `http://127.0.0.1:${address.port}`;
   const livez = await fetch(`${baseUrl}/livez`);
   assert.equal(livez.status, 200);
+  const readyz = await fetch(`${baseUrl}/readyz`);
+  assert.equal(readyz.status, 200);
 
   for (const pathname of ["/health", "/metrics", "/v1/config"]) {
     const rejected = await fetch(`${baseUrl}${pathname}`);
@@ -459,6 +461,12 @@ test("gateway returns service unavailable when detailed health is unavailable", 
   const baseUrl = `http://127.0.0.1:${address.port}`;
   const livez = await fetch(`${baseUrl}/livez`);
   assert.equal(livez.status, 200);
+
+  const readyz = await fetch(`${baseUrl}/readyz`);
+  assert.equal(readyz.status, 503);
+  const readyzBody = (await readyz.json()) as { status: string; provider?: unknown };
+  assert.equal(readyzBody.status, "unavailable");
+  assert.equal(readyzBody.provider, undefined);
 
   const response = await fetch(`${baseUrl}/health`);
   assert.equal(response.status, 503);

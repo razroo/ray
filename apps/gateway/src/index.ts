@@ -510,6 +510,20 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
         return;
       }
 
+      if (request.method === "GET" && url.pathname === "/readyz") {
+        const health = await runtime.health();
+        writeJsonWithoutReadingBody(
+          request,
+          response,
+          health.status === "unavailable" ? 503 : 200,
+          {
+            status: health.status,
+            service: "ray-gateway",
+          },
+        );
+        return;
+      }
+
       if (request.method === "GET" && url.pathname === "/health") {
         const bearerToken = authorizeProtectedRoute(
           request,

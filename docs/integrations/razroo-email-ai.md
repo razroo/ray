@@ -39,6 +39,7 @@ The gateway exposes:
 - `POST /v1/jobs` — async durable submission (same inference fields, plus optional `callbackUrl`). Returns `202 Accepted` and a job location.
 - `GET /v1/jobs/:id` — durable job state and final result/error.
 - `GET /livez` — lightweight unauthenticated liveness for reverse proxies.
+- `GET /readyz` — minimal unauthenticated readiness that checks backend/runtime health without exposing provider details.
 - `GET /health` — detailed queue/provider snapshot, detected backend capabilities (`applyTemplate`, `chatTemplate`, `jsonMode`, context window, slots), plus `asyncQueue` when enabled. Public profiles require Bearer auth.
 - `GET /v1/config` — non-secret config (sanitized) with capability hints for the configured model/profile. Public profiles require Bearer auth.
 
@@ -57,7 +58,7 @@ For `razroo-email-ai`, pass a deterministic `seed` per lead or per variant. That
 
 Use `stop` for hard section boundaries when you know the completion should terminate on a fixed delimiter, and `responseFormat: { "type": "json_object" }` for classification-style calls that need structured output from llama.cpp.
 
-If `razroo-email-ai` checks availability before sending inference, point the Ray backend check at `GET /livez`. Public Ray profiles intentionally protect detailed `/health` with Bearer auth, while `/livez` stays unauthenticated for reverse proxies and app liveness checks.
+If `razroo-email-ai` checks availability before sending inference, point a process-only check at `GET /livez` or a backend-aware check at `GET /readyz`. Public Ray profiles intentionally protect detailed `/health` with Bearer auth, while `/livez` and `/readyz` stay minimal and unauthenticated for health checks.
 
 Benchmark the 1B email path with:
 
