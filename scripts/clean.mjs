@@ -4,7 +4,7 @@ import path from "node:path";
 const root = process.cwd();
 const removableNames = new Set(["dist"]);
 const removableSuffixes = [".tsbuildinfo"];
-const skipNames = new Set([".git", "node_modules"]);
+const skipNames = new Set([".git", ".playwright-mcp", ".ray", "coverage", "node_modules", "tmp"]);
 
 async function walk(current) {
   const entries = await fs.readdir(current, { withFileTypes: true });

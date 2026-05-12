@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 const root = process.cwd();
 const testFiles = [];
 const scriptTestFiles = [];
-const skipNames = new Set([".git", "node_modules"]);
+const skipNames = new Set([".git", ".playwright-mcp", ".ray", "coverage", "node_modules", "tmp"]);
 const bunBinary = process.env.RAY_BUN_BINARY ?? (process.versions.bun ? process.execPath : "bun");
 const nodeBinary = process.env.RAY_NODE_BINARY ?? "node";
 
