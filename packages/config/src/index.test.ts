@@ -138,6 +138,7 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
       RAY_CACHE_MAX_ENTRIES: "128",
       RAY_DEGRADATION_MAX_PROMPT_CHARS: "4200",
       RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB: "448",
+      RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD: "0.35",
     },
   });
 
@@ -169,6 +170,7 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
   assert.equal(loaded.config.cache.maxEntries, 128);
   assert.equal(loaded.config.gracefulDegradation.maxPromptChars, 4200);
   assert.equal(loaded.config.gracefulDegradation.memoryRssThresholdMiB, 448);
+  assert.equal(loaded.config.gracefulDegradation.cpuThrottledRatioThreshold, 0.35);
 });
 
 test("loadRayConfig resolves relative llama.cpp launch paths against cwd", async () => {
@@ -281,6 +283,17 @@ test("loadRayConfig rejects malformed environment overrides", async () => {
       },
     }),
     /model\.adapter\.baseUrl must not include credentials/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD: "2",
+      },
+    }),
+    /Expected RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD to be greater than 0 and less than or equal to 1/,
   );
 });
 

@@ -11,6 +11,7 @@ export type DeepPartial<T> = {
 type Sub1bMachineClass = "cx23" | "cax11";
 type OneBMachineClass = "cx23" | "8gb";
 const unsafeMergeKeys = new Set(["__proto__", "constructor", "prototype"]);
+const DEFAULT_CPU_THROTTLED_RATIO_THRESHOLD = 0.2;
 
 function createSub1bLaunchProfile(machineClass: Sub1bMachineClass): LlamaCppLaunchProfile {
   if (machineClass === "cax11") {
@@ -138,6 +139,7 @@ function createSub1bDefaults(machineClass: Sub1bMachineClass): RayConfig {
       maxPromptChars: 6_000,
       degradeToMaxTokens: 128,
       memoryRssThresholdMiB: 512,
+      cpuThrottledRatioThreshold: DEFAULT_CPU_THROTTLED_RATIO_THRESHOLD,
     },
     promptCompiler: {
       enabled: true,
@@ -315,6 +317,7 @@ function create1bDefaults(machineClass: OneBMachineClass): RayConfig {
       maxPromptChars: is8gb ? 8_000 : 5_000,
       degradeToMaxTokens: is8gb ? 160 : 128,
       memoryRssThresholdMiB: is8gb ? 768 : 512,
+      cpuThrottledRatioThreshold: DEFAULT_CPU_THROTTLED_RATIO_THRESHOLD,
     },
     promptCompiler: {
       enabled: true,
@@ -421,6 +424,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       maxPromptChars: 4_000,
       degradeToMaxTokens: 96,
       memoryRssThresholdMiB: 256,
+      cpuThrottledRatioThreshold: DEFAULT_CPU_THROTTLED_RATIO_THRESHOLD,
     },
     promptCompiler: {
       enabled: true,
@@ -525,6 +529,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       maxPromptChars: 8_000,
       degradeToMaxTokens: 192,
       memoryRssThresholdMiB: 768,
+      cpuThrottledRatioThreshold: DEFAULT_CPU_THROTTLED_RATIO_THRESHOLD,
     },
     promptCompiler: {
       enabled: true,
@@ -627,6 +632,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       maxPromptChars: 12_000,
       degradeToMaxTokens: 256,
       memoryRssThresholdMiB: 1_024,
+      cpuThrottledRatioThreshold: DEFAULT_CPU_THROTTLED_RATIO_THRESHOLD,
     },
     promptCompiler: {
       enabled: true,

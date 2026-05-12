@@ -186,6 +186,24 @@ function parsePositiveInteger(value: string | undefined, label: string): number 
   return parsed;
 }
 
+function parsePositiveUnitInterval(value: string | undefined, label: string): number | undefined {
+  if (!isNonEmptyString(value)) {
+    return undefined;
+  }
+
+  const parsed = Number(value.trim());
+
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 1) {
+    throw new RayError(`Expected ${label} to be greater than 0 and less than or equal to 1`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { value },
+    });
+  }
+
+  return parsed;
+}
+
 function parseTcpPort(value: string | undefined, label: string): number | undefined {
   const parsed = parsePositiveInteger(value, label);
 
@@ -341,6 +359,10 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
   const degradationMemoryRssThresholdMiB = parsePositiveInteger(
     env.RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB,
     "RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB",
+  );
+  const degradationCpuThrottledRatioThreshold = parsePositiveUnitInterval(
+    env.RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD,
+    "RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD",
   );
 
   if (isNonEmptyString(host)) {
@@ -580,6 +602,10 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
     next.gracefulDegradation.memoryRssThresholdMiB = degradationMemoryRssThresholdMiB;
   }
 
+  if (degradationCpuThrottledRatioThreshold !== undefined) {
+    next.gracefulDegradation.cpuThrottledRatioThreshold = degradationCpuThrottledRatioThreshold;
+  }
+
   return next;
 }
 
@@ -716,6 +742,16 @@ function assertIntegerAtLeast(value: number, minimum: number, label: string): vo
 function assertUnitInterval(value: number, label: string): void {
   if (!Number.isFinite(value) || value < 0 || value > 1) {
     throw new RayError(`${label} must be between 0 and 1`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { value },
+    });
+  }
+}
+
+function assertPositiveUnitInterval(value: number, label: string): void {
+  if (!Number.isFinite(value) || value <= 0 || value > 1) {
+    throw new RayError(`${label} must be greater than 0 and less than or equal to 1`, {
       code: "config_validation_error",
       status: 500,
       details: { value },
@@ -1322,6 +1358,10 @@ function validateConfig(config: RayConfig): RayConfig {
     config.gracefulDegradation.memoryRssThresholdMiB,
     "gracefulDegradation.memoryRssThresholdMiB",
     MAX_GRACEFUL_DEGRADATION_MEMORY_RSS_MIB,
+  );
+  assertPositiveUnitInterval(
+    config.gracefulDegradation.cpuThrottledRatioThreshold,
+    "gracefulDegradation.cpuThrottledRatioThreshold",
   );
   if (config.gracefulDegradation.degradeToMaxTokens > config.model.maxOutputTokens) {
     throw new RayError(

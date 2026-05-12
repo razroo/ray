@@ -258,6 +258,7 @@ test("runtime clamps output under cgroup CPU throttling", async () => {
       enabled: true,
       degradeToMaxTokens: 32,
       memoryRssThresholdMiB: 4_096,
+      cpuThrottledRatioThreshold: 0.24,
     },
   });
   const runtime = createRayRuntime(config, {
@@ -294,14 +295,14 @@ test("runtime clamps output under cgroup CPU throttling", async () => {
   assert.equal(result.diagnostics?.degradation?.applied, true);
   assert.deepEqual(result.diagnostics?.degradation?.reasons, ["cpu_pressure"]);
   assert.equal(result.diagnostics?.degradation?.cgroupCpuThrottledRatio, 0.25);
-  assert.equal(result.diagnostics?.degradation?.cgroupCpuThrottledThreshold, 0.2);
+  assert.equal(result.diagnostics?.degradation?.cgroupCpuThrottledThreshold, 0.24);
   assert.equal(health.status, "degraded");
   assert.equal(health.runtime?.cpu?.degraded, true);
   assert.equal(health.runtime?.cpu?.cgroupCpuQuotaCores, 0.5);
   assert.equal(health.runtime?.cpu?.cgroupCpuThrottledRatio, 0.25);
-  assert.equal(health.runtime?.cpu?.cgroupCpuThrottledThreshold, 0.2);
+  assert.equal(health.runtime?.cpu?.cgroupCpuThrottledThreshold, 0.24);
   assert.equal(metrics.gauges["process.cpu.cgroup_throttled_ratio"], 0.25);
-  assert.equal(metrics.gauges["process.cpu.cgroup_throttled_threshold"], 0.2);
+  assert.equal(metrics.gauges["process.cpu.cgroup_throttled_threshold"], 0.24);
   assert.equal(metrics.gauges["process.cpu.pressure"], 1);
 });
 

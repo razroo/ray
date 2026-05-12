@@ -168,7 +168,6 @@ const PROC_SELF_CGROUP = "/proc/self/cgroup";
 const CGROUP_MEMORY_CACHE_TTL_MS = 250;
 const CGROUP_CPU_CACHE_TTL_MS = 250;
 const CGROUP_MEMORY_PRESSURE_RATIO = 0.9;
-const CGROUP_CPU_THROTTLED_RATIO = 0.2;
 const CGROUP_UNLIMITED_LIMIT_BYTES = 1024 ** 5;
 const unsafeMetadataKeys = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_LEARNED_FAMILY_HISTORY_KEYS = 512;
@@ -706,7 +705,7 @@ function resolveCgroupCpuPressure(
   return (
     config.gracefulDegradation.enabled &&
     snapshot?.throttledRatio !== undefined &&
-    snapshot.throttledRatio >= CGROUP_CPU_THROTTLED_RATIO
+    snapshot.throttledRatio >= config.gracefulDegradation.cpuThrottledRatioThreshold
   );
 }
 
@@ -744,6 +743,7 @@ function buildDegradationDiagnostics(options: {
   memoryPressure: MemoryPressureSnapshot;
   cgroupCpu: CgroupCpuSnapshot | undefined;
   memoryRssThresholdMiB: number;
+  cpuThrottledRatioThreshold: number;
 }): DegradationDiagnostics {
   const reasons: DegradationDiagnostics["reasons"] = [];
 
@@ -806,7 +806,7 @@ function buildDegradationDiagnostics(options: {
     ...(options.cgroupCpu?.throttledRatio !== undefined
       ? {
           cgroupCpuThrottledRatio: options.cgroupCpu.throttledRatio,
-          cgroupCpuThrottledThreshold: CGROUP_CPU_THROTTLED_RATIO,
+          cgroupCpuThrottledThreshold: options.cpuThrottledRatioThreshold,
         }
       : {}),
   };
@@ -821,6 +821,7 @@ function buildRuntimeHealthDiagnostics(options: {
   memoryPressure: MemoryPressureSnapshot;
   memoryRssThresholdMiB: number;
   cpuDegraded: boolean;
+  cpuThrottledRatioThreshold: number;
   cgroupCpu: CgroupCpuSnapshot | undefined;
 }): RuntimeHealthDiagnostics {
   return {
@@ -923,7 +924,7 @@ function buildRuntimeHealthDiagnostics(options: {
             ...(options.cgroupCpu.throttledRatio !== undefined
               ? {
                   cgroupCpuThrottledRatio: options.cgroupCpu.throttledRatio,
-                  cgroupCpuThrottledThreshold: CGROUP_CPU_THROTTLED_RATIO,
+                  cgroupCpuThrottledThreshold: options.cpuThrottledRatioThreshold,
                 }
               : {}),
           },
@@ -1864,6 +1865,7 @@ export class RayRuntime {
         memoryPressure,
         cgroupCpu,
         memoryRssThresholdMiB: this.config.gracefulDegradation.memoryRssThresholdMiB,
+        cpuThrottledRatioThreshold: this.config.gracefulDegradation.cpuThrottledRatioThreshold,
       }),
       promptCompiler: compiled.diagnostics,
       learnedOutputCap: learnedCap.diagnostics,
@@ -2049,6 +2051,7 @@ export class RayRuntime {
       memoryPressure,
       memoryRssThresholdMiB: this.config.gracefulDegradation.memoryRssThresholdMiB,
       cpuDegraded,
+      cpuThrottledRatioThreshold: this.config.gracefulDegradation.cpuThrottledRatioThreshold,
       cgroupCpu,
     });
     this.recordMemoryPressureMetrics(memoryPressure, memoryPressureSources);
@@ -2594,7 +2597,10 @@ export class RayRuntime {
     }
     if (snapshot.throttledRatio !== undefined) {
       this.metrics.gauge("process.cpu.cgroup_throttled_ratio", snapshot.throttledRatio);
-      this.metrics.gauge("process.cpu.cgroup_throttled_threshold", CGROUP_CPU_THROTTLED_RATIO);
+      this.metrics.gauge(
+        "process.cpu.cgroup_throttled_threshold",
+        this.config.gracefulDegradation.cpuThrottledRatioThreshold,
+      );
       this.metrics.gauge(
         "process.cpu.pressure",
         resolveCgroupCpuPressure(this.config, snapshot) ? 1 : 0,

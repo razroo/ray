@@ -169,6 +169,7 @@ export interface GracefulDegradationConfig {
   maxPromptChars: number;
   degradeToMaxTokens: number;
   memoryRssThresholdMiB: number;
+  cpuThrottledRatioThreshold: number;
 }
 
 export interface PromptCompilerConfig {

@@ -1580,6 +1580,7 @@ export class LlamaCppProvider implements ModelProvider {
           maxPromptChars: 1,
           degradeToMaxTokens: 1,
           memoryRssThresholdMiB: 1,
+          cpuThrottledRatioThreshold: 0.2,
         },
         promptCompiler: {
           enabled: false,

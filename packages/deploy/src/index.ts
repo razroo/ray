@@ -1451,6 +1451,9 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
     lines.push(
       `# RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB=${config.gracefulDegradation.memoryRssThresholdMiB}`,
     );
+    lines.push(
+      `# RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD=${config.gracefulDegradation.cpuThrottledRatioThreshold}`,
+    );
   }
 
   if (config.asyncQueue.enabled) {
