@@ -5,6 +5,7 @@ const MAX_ERROR_CODE_CHARS = 128;
 const MAX_ERROR_DETAIL_DEPTH = 6;
 const MAX_ERROR_DETAIL_OBJECT_KEYS = 64;
 const MAX_ERROR_DETAIL_ARRAY_ITEMS = 64;
+const MAX_ERROR_DETAIL_KEY_CHARS = 128;
 const MAX_ERROR_DETAIL_STRING_CHARS = 8_192;
 
 function assertErrorMessage(value: string): void {
@@ -36,12 +37,12 @@ function assertErrorStatus(value: number): void {
   }
 }
 
-function truncateDetailString(value: string): string {
-  if (value.length <= MAX_ERROR_DETAIL_STRING_CHARS) {
+function truncateDetailString(value: string, maxChars = MAX_ERROR_DETAIL_STRING_CHARS): string {
+  if (value.length <= maxChars) {
     return value;
   }
 
-  return `${value.slice(0, MAX_ERROR_DETAIL_STRING_CHARS)}...[truncated ${value.length - MAX_ERROR_DETAIL_STRING_CHARS} chars]`;
+  return `${value.slice(0, maxChars)}...[truncated ${value.length - maxChars} chars]`;
 }
 
 function snapshotErrorDetail(value: unknown, seen: WeakSet<object>, depth = 0): unknown {
@@ -123,10 +124,16 @@ function snapshotErrorDetail(value: unknown, seen: WeakSet<object>, depth = 0): 
     }
 
     for (const key of keys.slice(0, MAX_ERROR_DETAIL_OBJECT_KEYS)) {
+      const safeKey = truncateDetailString(key, MAX_ERROR_DETAIL_KEY_CHARS);
+
       try {
-        output[key] = snapshotErrorDetail((value as Record<string, unknown>)[key], seen, depth + 1);
+        output[safeKey] = snapshotErrorDetail(
+          (value as Record<string, unknown>)[key],
+          seen,
+          depth + 1,
+        );
       } catch (error) {
-        output[key] = `[Thrown: ${truncateDetailString(toErrorMessage(error))}]`;
+        output[safeKey] = `[Thrown: ${truncateDetailString(toErrorMessage(error))}]`;
       }
     }
 

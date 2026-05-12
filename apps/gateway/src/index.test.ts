@@ -798,6 +798,8 @@ test("gateway serializes unusual health details without failing the response", a
     label: "health",
     count: 2n,
   };
+  const longKey = `k${"x".repeat(140)}`;
+  circular[longKey] = "bounded-key";
   circular.self = circular;
   const runtime = {
     async health() {
@@ -833,10 +835,14 @@ test("gateway serializes unusual health details without failing the response", a
   const response = await fetch(`http://127.0.0.1:${address.port}/health`);
   assert.equal(response.status, 200);
   const body = (await response.json()) as HealthSnapshot & {
-    provider: { details: { count: string; self: string } };
+    provider: { details: { count: string; self: string; [key: string]: unknown } };
   };
   assert.equal(body.provider.details.count, "2");
   assert.equal(body.provider.details.self, "[Circular]");
+  assert.equal(
+    body.provider.details[`${longKey.slice(0, 128)}...[truncated 13 chars]`],
+    "bounded-key",
+  );
 });
 
 test("gateway serializes unusual error details without masking the original status", async (t) => {

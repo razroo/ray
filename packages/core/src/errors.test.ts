@@ -37,6 +37,8 @@ test("RayError stores bounded JSON-safe details", () => {
     bytes: new Uint8Array(16),
     values: Array.from({ length: 65 }, (_value, index) => index),
   };
+  const longKey = `k${"x".repeat(140)}`;
+  details[longKey] = "bounded-key";
   details.self = details;
   Object.defineProperty(details, "explode", {
     enumerable: true,
@@ -55,6 +57,7 @@ test("RayError stores bounded JSON-safe details", () => {
     explode?: string;
     bytes?: string;
     values?: unknown[];
+    [key: string]: unknown;
   };
 
   assert.equal(snapshot.count, "2");
@@ -63,6 +66,8 @@ test("RayError stores bounded JSON-safe details", () => {
   assert.equal(snapshot.explode, "[Thrown: getter boom]");
   assert.equal(snapshot.bytes, "[Uint8Array 16 bytes]");
   assert.equal(snapshot.values?.at(-1), "[Truncated 1 items]");
+  assert.equal(snapshot[`${longKey.slice(0, 128)}...[truncated 13 chars]`], "bounded-key");
+  assert.equal(snapshot[longKey], undefined);
 });
 
 test("RayError converts nested Error details into bounded objects", () => {

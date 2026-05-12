@@ -18,6 +18,8 @@ test("logger emits JSON for circular and non-JSON-native fields", () => {
     const circular: Record<string, unknown> = {
       label: "root",
     };
+    const longKey = `k${"x".repeat(140)}`;
+    circular[longKey] = "bounded-key";
     circular.self = circular;
 
     assert.doesNotThrow(() => {
@@ -34,12 +36,13 @@ test("logger emits JSON for circular and non-JSON-native fields", () => {
   const parsed = JSON.parse(line) as {
     service: string;
     count: string;
-    circular: { self: string };
+    circular: { self: string; [key: string]: unknown };
     huge: string;
   };
   assert.equal(parsed.service, "ray-test");
   assert.equal(parsed.count, "2");
   assert.equal(parsed.circular.self, "[Circular]");
+  assert.equal(parsed.circular[`k${"x".repeat(127)}...[truncated 13 chars]`], "bounded-key");
   assert.match(parsed.huge, /\[truncated 1 chars\]$/);
 });
 

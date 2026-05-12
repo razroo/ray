@@ -18,6 +18,7 @@ const logOrder: Record<LogLevel, number> = {
 const MAX_LOG_FIELD_DEPTH = 6;
 const MAX_LOG_OBJECT_KEYS = 64;
 const MAX_LOG_ARRAY_ITEMS = 64;
+const MAX_LOG_KEY_CHARS = 128;
 const MAX_LOG_STRING_CHARS = 8_192;
 const MAX_LOG_SERVICE_NAME_CHARS = 128;
 const MAX_METRIC_SERIES = 256;
@@ -83,12 +84,12 @@ function setBoundedMetricValue(metrics: Map<string, number>, name: string, value
   metrics.set(name, value);
 }
 
-function truncateLogString(value: string): string {
-  if (value.length <= MAX_LOG_STRING_CHARS) {
+function truncateLogString(value: string, maxChars = MAX_LOG_STRING_CHARS): string {
+  if (value.length <= maxChars) {
     return value;
   }
 
-  return `${value.slice(0, MAX_LOG_STRING_CHARS)}...[truncated ${value.length - MAX_LOG_STRING_CHARS} chars]`;
+  return `${value.slice(0, maxChars)}...[truncated ${value.length - maxChars} chars]`;
 }
 
 function sanitizeLogValue(value: unknown, seen: WeakSet<object>, depth = 0): unknown {
@@ -170,10 +171,16 @@ function sanitizeLogValue(value: unknown, seen: WeakSet<object>, depth = 0): unk
     }
 
     for (const key of keys.slice(0, MAX_LOG_OBJECT_KEYS)) {
+      const safeKey = truncateLogString(key, MAX_LOG_KEY_CHARS);
+
       try {
-        output[key] = sanitizeLogValue((value as Record<string, unknown>)[key], seen, depth + 1);
+        output[safeKey] = sanitizeLogValue(
+          (value as Record<string, unknown>)[key],
+          seen,
+          depth + 1,
+        );
       } catch (error) {
-        output[key] = `[Thrown: ${truncateLogString(toErrorMessage(error))}]`;
+        output[safeKey] = `[Thrown: ${truncateLogString(toErrorMessage(error))}]`;
       }
     }
 

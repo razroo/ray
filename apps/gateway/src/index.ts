@@ -35,6 +35,7 @@ const GATEWAY_MAX_REQUESTS_PER_SOCKET = 1_000;
 const MAX_RESPONSE_FIELD_DEPTH = 10;
 const MAX_RESPONSE_OBJECT_KEYS = 256;
 const MAX_RESPONSE_ARRAY_ITEMS = 512;
+const MAX_RESPONSE_OBJECT_KEY_CHARS = 128;
 const MAX_RESPONSE_STRING_CHARS = 65_536;
 
 export interface CreateGatewayHandlerOptions {
@@ -182,12 +183,12 @@ function writeJson(
   response.end(body);
 }
 
-function truncateResponseString(value: string): string {
-  if (value.length <= MAX_RESPONSE_STRING_CHARS) {
+function truncateResponseString(value: string, maxChars = MAX_RESPONSE_STRING_CHARS): string {
+  if (value.length <= maxChars) {
     return value;
   }
 
-  return `${value.slice(0, MAX_RESPONSE_STRING_CHARS)}...[truncated ${value.length - MAX_RESPONSE_STRING_CHARS} chars]`;
+  return `${value.slice(0, maxChars)}...[truncated ${value.length - maxChars} chars]`;
 }
 
 function sanitizeJsonResponseValue(value: unknown, seen: WeakSet<object>, depth = 0): unknown {
@@ -265,14 +266,16 @@ function sanitizeJsonResponseValue(value: unknown, seen: WeakSet<object>, depth 
     }
 
     for (const key of keys.slice(0, MAX_RESPONSE_OBJECT_KEYS)) {
+      const safeKey = truncateResponseString(key, MAX_RESPONSE_OBJECT_KEY_CHARS);
+
       try {
-        output[key] = sanitizeJsonResponseValue(
+        output[safeKey] = sanitizeJsonResponseValue(
           (value as Record<string, unknown>)[key],
           seen,
           depth + 1,
         );
       } catch (error) {
-        output[key] = `[Thrown: ${truncateResponseString(toErrorMessage(error))}]`;
+        output[safeKey] = `[Thrown: ${truncateResponseString(toErrorMessage(error))}]`;
       }
     }
 
