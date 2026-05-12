@@ -442,6 +442,65 @@ test("openai-compatible provider reports readiness and token usage", async (t) =
   });
 });
 
+test("openai-compatible provider ignores malformed token usage counters", async (t) => {
+  const server = createServer((request, response) => {
+    if (request.url === "/v1/chat/completions") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          choices: [{ message: { content: "hello" } }],
+          usage: {
+            prompt_tokens: -4,
+            completion_tokens: 3,
+            total_tokens: 1,
+          },
+        }),
+      );
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const provider = new OpenAICompatibleProvider(
+    createModel(`http://127.0.0.1:${address.port}`, 500),
+    {
+      kind: "openai-compatible",
+      baseUrl: `http://127.0.0.1:${address.port}`,
+      modelRef: "test-model-ref",
+      timeoutMs: 500,
+    },
+  );
+
+  const result = await provider.infer(
+    {
+      input: "hi",
+      maxTokens: 32,
+      temperature: 0.2,
+      topP: 0.9,
+      cache: true,
+      metadata: {},
+    },
+    createContext(new AbortController().signal),
+  );
+
+  assert.equal(result.output, "hello");
+  assert.deepEqual(result.usage?.tokens, {
+    prompt: 0,
+    completion: 3,
+    total: 3,
+  });
+});
+
 test("openai-compatible provider snapshots adapter config at construction", async (t) => {
   let observedHeader = "";
   let observedModel = "";

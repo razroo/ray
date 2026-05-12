@@ -710,6 +710,83 @@ test("llama.cpp provider falls back to chat completions for json_object requests
   assert.ok(!seenPaths.includes("/completion"));
 });
 
+test("llama.cpp provider sanitizes chat-completion token usage", async (t) => {
+  const server = createServer((request, response) => {
+    if (request.url === "/apply-template") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ prompt: "<s>json prompt" }));
+      return;
+    }
+
+    if (request.url === "/tokenize") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ tokens: [1, 2, 3] }));
+      return;
+    }
+
+    if (request.url === "/v1/chat/completions") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: '{"intent":"positive"}',
+              },
+            },
+          ],
+          usage: {
+            prompt_tokens: -3,
+            completion_tokens: 2,
+            total_tokens: 1,
+          },
+        }),
+      );
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const model = createModel(`http://127.0.0.1:${address.port}`, 500);
+  const provider = new LlamaCppProvider(model, model.adapter as LlamaCppProviderConfig);
+  const context = createContext(model, new AbortController().signal);
+  const request = {
+    input: "Classify the reply",
+    system: "Return only compact JSON.",
+    maxTokens: 64,
+    temperature: 0.2,
+    topP: 0.95,
+    cache: true,
+    metadata: {},
+    responseFormat: {
+      type: "json_object" as const,
+    },
+  };
+
+  const preparation = await provider.prepare(request, context);
+  const result = await provider.infer(request, {
+    ...context,
+    preparation,
+  });
+
+  assert.equal(result.output, '{"intent":"positive"}');
+  assert.deepEqual(result.usage?.tokens, {
+    prompt: 3,
+    completion: 2,
+    total: 5,
+  });
+});
+
 test("llama.cpp provider repairs invalid json_object chat responses once", async (t) => {
   let chatCalls = 0;
 

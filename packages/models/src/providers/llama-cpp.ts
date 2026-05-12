@@ -31,6 +31,7 @@ import {
   buildAdapterHeaders,
   extractAssistantText,
   normalizeBaseUrl,
+  normalizeOpenAICompatibleTokenUsage,
   readResponseBodyLimited,
   snapshotAdapterWarmupRequests,
   snapshotHttpAdapterConfig,
@@ -885,18 +886,7 @@ export class LlamaCppProvider implements ModelProvider {
       context.signal,
     )) as OpenAICompatibleResponse;
     const output = extractAssistantText(response);
-    const prompt = response.usage?.prompt_tokens ?? fallbackPromptTokens ?? 0;
-    const completion = response.usage?.completion_tokens ?? 0;
-    const usage =
-      response.usage || fallbackPromptTokens !== undefined
-        ? {
-            tokens: {
-              prompt,
-              completion,
-              total: response.usage?.total_tokens ?? prompt + completion,
-            },
-          }
-        : undefined;
+    const usage = normalizeOpenAICompatibleTokenUsage(response, fallbackPromptTokens);
 
     return {
       output,

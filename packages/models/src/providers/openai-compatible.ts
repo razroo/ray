@@ -16,6 +16,7 @@ import {
   adapterRequest,
   assertNonEmptyStringAtMost,
   extractAssistantText,
+  normalizeOpenAICompatibleTokenUsage,
   snapshotAdapterWarmupRequests,
   snapshotHttpAdapterConfig,
 } from "./http.js";
@@ -237,26 +238,11 @@ export class OpenAICompatibleProvider implements ModelProvider {
     )) as OpenAICompatibleResponse;
 
     const output = extractAssistantText(payload);
-    const usage: ProviderResult["usage"] = {};
-
-    if (
-      payload.usage?.prompt_tokens !== undefined ||
-      payload.usage?.completion_tokens !== undefined ||
-      payload.usage?.total_tokens !== undefined
-    ) {
-      const prompt = payload.usage?.prompt_tokens ?? 0;
-      const completion = payload.usage?.completion_tokens ?? 0;
-
-      usage.tokens = {
-        prompt,
-        completion,
-        total: payload.usage?.total_tokens ?? prompt + completion,
-      };
-    }
+    const usage = normalizeOpenAICompatibleTokenUsage(payload);
 
     return {
       output,
-      ...(Object.keys(usage).length > 0 ? { usage } : {}),
+      ...(usage ? { usage } : {}),
       diagnostics: {
         requestShape: "openai-chat",
       },

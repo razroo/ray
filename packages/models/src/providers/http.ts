@@ -14,6 +14,19 @@ interface OpenAICompatibleResponse {
       content?: string | Array<{ type?: string; text?: string }>;
     };
   }>;
+  usage?: {
+    prompt_tokens?: unknown;
+    completion_tokens?: unknown;
+    total_tokens?: unknown;
+  };
+}
+
+export interface OpenAICompatibleTokenUsage {
+  tokens: {
+    prompt: number;
+    completion: number;
+    total: number;
+  };
 }
 
 type HttpAdapterConfig = Pick<
@@ -49,6 +62,42 @@ interface LimitedResponseBody {
 
 export function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+export function normalizeOpenAICompatibleTokenUsage(
+  payload: OpenAICompatibleResponse,
+  fallbackPromptTokens?: number,
+): OpenAICompatibleTokenUsage | undefined {
+  const usage = payload.usage;
+  const prompt = isNonNegativeSafeInteger(usage?.prompt_tokens)
+    ? usage.prompt_tokens
+    : isNonNegativeSafeInteger(fallbackPromptTokens)
+      ? fallbackPromptTokens
+      : undefined;
+  const completion = isNonNegativeSafeInteger(usage?.completion_tokens)
+    ? usage.completion_tokens
+    : undefined;
+  const total = isNonNegativeSafeInteger(usage?.total_tokens) ? usage.total_tokens : undefined;
+
+  if (prompt === undefined && completion === undefined && total === undefined) {
+    return undefined;
+  }
+
+  const normalizedPrompt = prompt ?? 0;
+  const normalizedCompletion = completion ?? 0;
+  const computedTotal = normalizedPrompt + normalizedCompletion;
+
+  return {
+    tokens: {
+      prompt: normalizedPrompt,
+      completion: normalizedCompletion,
+      total: total !== undefined && total >= computedTotal ? total : computedTotal,
+    },
+  };
 }
 
 function assertStringLength(value: string, label: string, maximum: number): void {
