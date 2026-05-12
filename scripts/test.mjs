@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 
 export const MAX_TEST_DISCOVERY_DIRECTORIES = 4_096;
 export const MAX_TEST_DISCOVERY_FILES = 32_768;
+export const MAX_TEST_DIRECTORY_ENTRIES = 4_096;
 export const MAX_BUILT_TEST_FILES = 512;
 export const MAX_SCRIPT_TEST_FILES = 256;
 export const MAX_TEST_PATH_BYTES = 4_096;
@@ -22,6 +23,7 @@ function resolveDiscoveryLimits(options) {
   return {
     maxDirectories: options.maxDirectories ?? MAX_TEST_DISCOVERY_DIRECTORIES,
     maxFiles: options.maxFiles ?? MAX_TEST_DISCOVERY_FILES,
+    maxDirectoryEntries: options.maxDirectoryEntries ?? MAX_TEST_DIRECTORY_ENTRIES,
     maxBuiltTestFiles: options.maxBuiltTestFiles ?? MAX_BUILT_TEST_FILES,
     maxScriptTestFiles: options.maxScriptTestFiles ?? MAX_SCRIPT_TEST_FILES,
     maxPathBytes: options.maxPathBytes ?? MAX_TEST_PATH_BYTES,
@@ -37,6 +39,7 @@ function assertPositiveInteger(value, label) {
 function assertDiscoveryLimits(limits) {
   assertPositiveInteger(limits.maxDirectories, "maxDirectories");
   assertPositiveInteger(limits.maxFiles, "maxFiles");
+  assertPositiveInteger(limits.maxDirectoryEntries, "maxDirectoryEntries");
   assertPositiveInteger(limits.maxBuiltTestFiles, "maxBuiltTestFiles");
   assertPositiveInteger(limits.maxScriptTestFiles, "maxScriptTestFiles");
   assertPositiveInteger(limits.maxPathBytes, "maxPathBytes");
@@ -55,15 +58,44 @@ function assertDiscoveredFileCount(count, max, label) {
   }
 }
 
+async function readDirectoryEntriesBounded(current, limits) {
+  const entries = [];
+  let directory;
+
+  try {
+    directory = await fs.opendir(current);
+
+    for await (const entry of directory) {
+      entries.push(entry);
+
+      if (entries.length > limits.maxDirectoryEntries) {
+        throw new Error(
+          `Test discovery found more than ${limits.maxDirectoryEntries} entries in one directory: ${current}`,
+        );
+      }
+    }
+  } finally {
+    if (directory) {
+      try {
+        await directory.close();
+      } catch {
+        // Directory async iteration closes the handle on normal completion in some runtimes.
+      }
+    }
+  }
+
+  return entries.sort((left, right) => left.name.localeCompare(right.name));
+}
+
 async function collectDirectory(current, state, limits, skipNames) {
   state.directoryCount += 1;
   if (state.directoryCount > limits.maxDirectories) {
     throw new Error(`Test discovery visited more than ${limits.maxDirectories} directories`);
   }
 
-  const entries = await fs.readdir(current, { withFileTypes: true });
+  const entries = await readDirectoryEntriesBounded(current, limits);
 
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+  for (const entry of entries) {
     if (skipNames.has(entry.name)) {
       continue;
     }

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { promises as fs } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -47,6 +48,51 @@ test("collectTestFiles rejects excessive discovered test files", async (t) => {
   await assert.rejects(
     () => collectTestFiles(tempDir, { maxScriptTestFiles: 1 }),
     /Test discovery found more than 1 script tests/,
+  );
+});
+
+test("collectTestFiles streams directory entries without readdir", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-test-runner-stream-"));
+  const originalReaddir = fs.readdir;
+
+  t.after(async () => {
+    Object.defineProperty(fs, "readdir", {
+      configurable: true,
+      value: originalReaddir,
+    });
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  await mkdir(path.join(tempDir, "packages", "runtime", "dist"), { recursive: true });
+  await writeFile(path.join(tempDir, "packages", "runtime", "dist", "runtime.test.js"), "");
+
+  Object.defineProperty(fs, "readdir", {
+    configurable: true,
+    value: async () => {
+      throw new Error("readdir should not be used during test discovery");
+    },
+  });
+
+  const discovered = await collectTestFiles(tempDir);
+
+  assert.deepEqual(relativePaths(tempDir, discovered.testFiles), [
+    path.join("packages", "runtime", "dist", "runtime.test.js"),
+  ]);
+});
+
+test("collectTestFiles rejects excessive entries in one directory", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-test-runner-entry-cap-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  await mkdir(path.join(tempDir, "scripts"), { recursive: true });
+  await writeFile(path.join(tempDir, "scripts", "a.test.ts"), "");
+  await writeFile(path.join(tempDir, "scripts", "b.test.ts"), "");
+
+  await assert.rejects(
+    () => collectTestFiles(tempDir, { maxDirectoryEntries: 1 }),
+    /Test discovery found more than 1 entries in one directory/,
   );
 });
 
