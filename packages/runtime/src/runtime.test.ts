@@ -101,11 +101,14 @@ test("runtime clamps output under configured process RSS pressure", async () => 
   assert.deepEqual(result.diagnostics?.degradation?.reasons, ["memory_pressure"]);
   assert.equal(result.diagnostics?.degradation?.processRssMiB, 2);
   assert.equal(result.diagnostics?.degradation?.memoryRssThresholdMiB, 1);
+  assert.equal(result.diagnostics?.degradation?.processRssPressureRatio, 2);
   assert.equal(health.status, "degraded");
   assert.equal(health.runtime?.memory.degraded, true);
   assert.deepEqual(health.runtime?.memory.sources, ["process_rss"]);
   assert.equal(health.runtime?.memory.processRssMiB, 2);
   assert.equal(health.runtime?.memory.memoryRssThresholdMiB, 1);
+  assert.equal(health.runtime?.memory.processRssPressureRatio, 2);
+  assert.equal(metrics.gauges["process.memory.rss_pressure_ratio"], 2);
   assert.equal(metrics.gauges["process.memory.pressure"], 1);
 });
 
@@ -168,6 +171,7 @@ test("runtime clamps output under cgroup memory pressure", async () => {
   assert.deepEqual(result.diagnostics?.degradation?.reasons, ["memory_pressure"]);
   assert.deepEqual(result.diagnostics?.degradation?.memoryPressureSources, ["cgroup"]);
   assert.equal(result.diagnostics?.degradation?.processRssMiB, 32);
+  assert.equal(result.diagnostics?.degradation?.processRssPressureRatio, 0.0078);
   assert.equal(result.diagnostics?.degradation?.cgroupMemoryCurrentMiB, 950);
   assert.equal(result.diagnostics?.degradation?.cgroupMemoryHighMiB, 900);
   assert.equal(result.diagnostics?.degradation?.cgroupMemoryLimitMiB, 1_000);
@@ -192,6 +196,7 @@ test("runtime clamps output under cgroup memory pressure", async () => {
   assert.equal(health.runtime?.memory.degraded, true);
   assert.deepEqual(health.runtime?.memory.sources, ["cgroup"]);
   assert.equal(health.runtime?.memory.processRssMiB, 32);
+  assert.equal(health.runtime?.memory.processRssPressureRatio, 0.0078);
   assert.equal(health.runtime?.memory.cgroupMemoryCurrentMiB, 950);
   assert.equal(health.runtime?.memory.cgroupMemoryHighMiB, 900);
   assert.equal(health.runtime?.memory.cgroupMemoryLimitMiB, 1_000);
@@ -209,6 +214,7 @@ test("runtime clamps output under cgroup memory pressure", async () => {
   assert.equal(metrics.gauges["process.memory.cgroup_max_events"], 2);
   assert.equal(metrics.gauges["process.memory.cgroup_oom_events"], 1);
   assert.equal(metrics.gauges["process.memory.cgroup_oom_kill_events"], 0);
+  assert.equal(metrics.gauges["process.memory.rss_pressure_ratio"], 0.0078);
   assert.equal(metrics.gauges["process.memory.pressure"], 1);
 });
 
@@ -397,6 +403,7 @@ test("runtime collected metrics refresh live queue and cgroup pressure gauges", 
   assert.equal(metrics.gauges["process.memory.cgroup_limit_mib"], 1_000);
   assert.equal(metrics.gauges["process.memory.cgroup_pressure_ratio"], 0.875);
   assert.equal(metrics.gauges["process.memory.cgroup_pressure"], 0);
+  assert.equal(metrics.gauges["process.memory.rss_pressure_ratio"], 0.125);
   assert.equal(metrics.gauges["process.memory.cgroup_high_events"], 2);
   assert.equal(metrics.gauges["process.memory.cgroup_max_events"], 0);
   assert.equal(metrics.gauges["process.memory.cgroup_oom_events"], 0);
@@ -1178,6 +1185,7 @@ test("runtime metrics expose small-box process and provider telemetry", async ()
   assert.equal(metrics.gauges["provider.prompt_cache.reuse_ratio"], 0.5);
   assert.equal(metrics.gauges["provider.completion_tps"], 22);
   assert.ok(typeof metrics.gauges["process.memory.rss_mib"] === "number");
+  assert.ok(typeof metrics.gauges["process.memory.rss_pressure_ratio"] === "number");
   assert.ok(typeof metrics.gauges["process.memory.heap_used_mib"] === "number");
   assert.ok(typeof metrics.gauges["process.cpu.percent"] === "number");
   assert.ok(typeof metrics.gauges["runtime.event_loop_lag_p95_ms"] === "number");

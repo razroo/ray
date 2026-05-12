@@ -484,6 +484,7 @@ export interface DegradationDiagnostics {
   memoryPressureSources?: MemoryPressureSource[];
   processRssMiB?: number;
   memoryRssThresholdMiB?: number;
+  processRssPressureRatio?: number;
   cgroupMemoryCurrentMiB?: number;
   cgroupMemoryHighMiB?: number;
   cgroupMemoryLimitMiB?: number;
@@ -537,6 +538,7 @@ export interface RuntimeHealthDiagnostics {
     sources: MemoryPressureSource[];
     processRssMiB: number;
     memoryRssThresholdMiB: number;
+    processRssPressureRatio?: number;
     cgroupMemoryCurrentMiB?: number;
     cgroupMemoryHighMiB?: number;
     cgroupMemoryLimitMiB?: number;

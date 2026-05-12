@@ -734,6 +734,10 @@ function buildDegradationDiagnostics(options: {
       : {}),
     processRssMiB: options.memoryPressure.processRssMiB,
     memoryRssThresholdMiB: options.memoryRssThresholdMiB,
+    processRssPressureRatio: resolveProcessRssPressureRatio(
+      options.memoryPressure.processRssMiB,
+      options.memoryRssThresholdMiB,
+    ),
     ...(options.memoryPressure.cgroupMemoryCurrentMiB !== undefined
       ? { cgroupMemoryCurrentMiB: options.memoryPressure.cgroupMemoryCurrentMiB }
       : {}),
@@ -790,6 +794,10 @@ function buildRuntimeHealthDiagnostics(options: {
       sources: options.memoryPressureSources,
       processRssMiB: options.memoryPressure.processRssMiB,
       memoryRssThresholdMiB: options.memoryRssThresholdMiB,
+      processRssPressureRatio: resolveProcessRssPressureRatio(
+        options.memoryPressure.processRssMiB,
+        options.memoryRssThresholdMiB,
+      ),
       ...(options.memoryPressure.cgroupMemoryCurrentMiB !== undefined
         ? { cgroupMemoryCurrentMiB: options.memoryPressure.cgroupMemoryCurrentMiB }
         : {}),
@@ -856,6 +864,10 @@ function buildRuntimeHealthDiagnostics(options: {
 
 function bytesToMiB(value: number): number {
   return Number((value / BYTES_PER_MIB).toFixed(2));
+}
+
+function resolveProcessRssPressureRatio(processRssMiB: number, thresholdMiB: number): number {
+  return Number((processRssMiB / Math.max(1, thresholdMiB)).toFixed(4));
 }
 
 async function defaultReadTextFile(filePath: string): Promise<string> {
@@ -2474,6 +2486,13 @@ export class RayRuntime {
     this.metrics.gauge(
       "process.memory.rss_threshold_mib",
       this.config.gracefulDegradation.memoryRssThresholdMiB,
+    );
+    this.metrics.gauge(
+      "process.memory.rss_pressure_ratio",
+      resolveProcessRssPressureRatio(
+        memoryPressure.processRssMiB,
+        this.config.gracefulDegradation.memoryRssThresholdMiB,
+      ),
     );
     if (memoryPressure.cgroupMemoryCurrentMiB !== undefined) {
       this.metrics.gauge(
