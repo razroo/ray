@@ -170,6 +170,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.equal(codes.filter((code) => code === "non_bun_workflow_package_manager").length, 2);
   assert.ok(codes.includes("unbounded_workflow_health_probe"));
   assert.ok(codes.includes("unbounded_workflow_curl_install"));
+  assert.ok(codes.includes("workflow_curl_install_body_timeout_missing"));
   assert.ok(codes.includes("workflow_ssh_missing_keepalive"));
   assert.ok(codes.includes("workflow_public_caddy_auth_guard_missing"));
   assert.ok(codes.includes("workflow_secret_file_install_mode_missing"));

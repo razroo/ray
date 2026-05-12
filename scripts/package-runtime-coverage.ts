@@ -334,7 +334,11 @@ function isLocalHealthCurl(line: string): boolean {
 }
 
 function isPipedShellCurl(line: string): boolean {
-  return /\bcurl\b/.test(line) && /\|\s*(?:bash|sh)\b/.test(line);
+  return /\bcurl\b/.test(line) && /\|\s*(?:timeout\s+\d+s\s+)?(?:bash|sh)\b/.test(line);
+}
+
+function hasPipedShellTimeout(line: string): boolean {
+  return /\|\s*timeout\s+\d+s\s+(?:bash|sh)\b/.test(line);
 }
 
 function workflowWindowIncludes(lines: string[], index: number, pattern: string): boolean {
@@ -700,6 +704,17 @@ async function validateWorkflow(
       });
     }
 
+    if (isPipedShellCurl(line) && !hasPipedShellTimeout(line)) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_curl_install_body_timeout_missing",
+        workflowPath,
+        line: index + 1,
+        message:
+          "Workflow curl-to-shell installers must pipe through timeout so installer bodies cannot hang after the script download succeeds.",
+      });
+    }
+
     if (
       line.includes("ConnectTimeout=") &&
       (!workflowWindowIncludes(lines, index, "ServerAliveInterval=") ||
@@ -793,7 +808,7 @@ async function validateDeploymentDoc(
       });
     }
 
-    if (isPipedShellCurl(line) && !/\|\s*timeout\s+\d+s\s+(?:bash|sh)\b/.test(line)) {
+    if (isPipedShellCurl(line) && !hasPipedShellTimeout(line)) {
       diagnostics.push({
         level: "error",
         code: "vps_readme_curl_install_unbounded",
