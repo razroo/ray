@@ -2411,6 +2411,24 @@ export function diagnoseConfig(
     }
   }
 
+  if (!config.scheduler.dedupeInflight) {
+    diagnostics.push({
+      level: "warn",
+      code: "scheduler_dedupe_disabled",
+      message:
+        "In-flight request deduplication is disabled. Single-node VPS deployments should collapse duplicate work before it occupies scarce backend slots.",
+    });
+  }
+
+  if (!config.cache.enabled) {
+    diagnostics.push({
+      level: "warn",
+      code: "cache_disabled",
+      message:
+        "Gateway caching is disabled. Repeated prompts will always hit the backend, which can waste CPU, memory bandwidth, and queue time on small VPS deployments.",
+    });
+  }
+
   if (!gatewayBindsLoopback) {
     diagnostics.push({
       level: "error",

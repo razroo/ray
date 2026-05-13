@@ -563,8 +563,14 @@ test("diagnoseConfig flags unsafe public deployment defaults", () => {
   assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "graceful_degradation_disabled"));
 });
 
-test("diagnoseConfig warns when VPS prompt and adaptive caps are disabled", () => {
+test("diagnoseConfig warns when VPS efficiency controls are disabled", () => {
   const disabledConfig = mergeConfig(createDefaultConfig("vps"), {
+    scheduler: {
+      dedupeInflight: false,
+    },
+    cache: {
+      enabled: false,
+    },
     promptCompiler: {
       enabled: false,
     },
@@ -580,6 +586,10 @@ test("diagnoseConfig warns when VPS prompt and adaptive caps are disabled", () =
   assert.ok(
     disabledDiagnostics.some((diagnostic) => diagnostic.code === "adaptive_tuning_disabled"),
   );
+  assert.ok(
+    disabledDiagnostics.some((diagnostic) => diagnostic.code === "scheduler_dedupe_disabled"),
+  );
+  assert.ok(disabledDiagnostics.some((diagnostic) => diagnostic.code === "cache_disabled"));
 
   const learnedCapsConfig = mergeConfig(createDefaultConfig("vps"), {
     adaptiveTuning: {
