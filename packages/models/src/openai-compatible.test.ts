@@ -1183,3 +1183,35 @@ test("openai-compatible provider finds modelRef beyond mismatch detail cap", asy
     modelRef: "test-model-ref",
   });
 });
+
+test("openai-compatible provider reports failed health probes and configured base path", async (t) => {
+  const seenUrls: string[] = [];
+  const server = createServer((request, response) => {
+    seenUrls.push(request.url ?? "");
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const baseUrl = `http://127.0.0.1:${address.port}/v1`;
+  const provider = new OpenAICompatibleProvider(createModel(baseUrl, 500), {
+    kind: "openai-compatible",
+    baseUrl,
+    modelRef: "test-model-ref",
+    timeoutMs: 500,
+  });
+
+  const health = await provider.health();
+  assert.equal(health.status, "unavailable");
+  assert.deepEqual(seenUrls, ["/v1/v1/models", "/v1/health"]);
+  assert.equal(health.details?.probe, "/v1/models + /health");
+  assert.equal(health.details?.baseUrlPath, "/v1");
+  assert.match(String(health.details?.message), /404/);
+});

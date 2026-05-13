@@ -164,6 +164,11 @@ function snapshotOpenAIAdapter(
   return next;
 }
 
+function describeAdapterBaseUrlPath(baseUrl: string): string | undefined {
+  const pathname = new URL(baseUrl).pathname;
+  return pathname === "/" ? undefined : pathname;
+}
+
 export class OpenAICompatibleProvider implements ModelProvider {
   readonly kind = "openai-compatible";
   readonly modelId: string;
@@ -269,12 +274,16 @@ export class OpenAICompatibleProvider implements ModelProvider {
       lastFailure = error;
     }
 
+    const baseUrlPath = describeAdapterBaseUrlPath(this.adapter.baseUrl);
+
     return {
       status: "unavailable",
       checkedAt: new Date().toISOString(),
       latencyMs: Date.now() - startedAt,
       details: {
+        probe: "/v1/models + /health",
         message: toErrorMessage(lastFailure),
+        ...(baseUrlPath ? { baseUrlPath } : {}),
       },
     };
   }
