@@ -162,6 +162,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
       "      - run: rsync -az --delete ./ ray@example:/srv/ray/",
       "      - run: ssh ray@example.com 'bash -s'",
       "      - run: /usr/local/bin/bun install --production --frozen-lockfile --ignore-scripts",
+      "      - run: timeout 120s sudo chmod -R a+rX /srv/ray",
       "      - run: $SUDO /usr/local/bin/bun /srv/ray/packages/deploy/dist/cli.js doctor",
       '      - run: "$binary" --version | head -n 1',
       '      - run: bun --eval \'import { readFileSync } from "node:fs"; readFileSync("/etc/ray/ray.env", "utf8")\'',
@@ -247,11 +248,14 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("workflow_apt_get_unbounded"));
   assert.ok(codes.includes("workflow_rsync_session_timeout_missing"));
   assert.ok(codes.includes("workflow_rsync_timeout_missing"));
+  assert.ok(codes.includes("workflow_rsync_checkout_chmod_missing"));
+  assert.ok(codes.includes("workflow_recursive_checkout_chmod"));
   assert.ok(codes.includes("workflow_ssh_session_timeout_missing"));
   assert.ok(codes.includes("workflow_systemctl_timeout_missing"));
   assert.ok(codes.includes("workflow_journalctl_timeout_missing"));
   assert.ok(codes.includes("workflow_remote_bun_install_unbounded"));
   assert.ok(codes.includes("workflow_remote_bun_install_prune_missing"));
+  assert.ok(codes.includes("workflow_remote_bun_install_umask_missing"));
   assert.ok(codes.includes("workflow_remote_bun_command_unbounded"));
   assert.ok(codes.includes("workflow_bun_version_probe_unbounded"));
   assert.ok(codes.includes("workflow_gateway_runtime_bun_install_missing"));

@@ -538,6 +538,7 @@ jobs:
           timeout 900s rsync -az --delete \
             -e "$SSH_COMMAND" \
             --timeout=120 \
+            --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r \
             --exclude '.git' \
             --exclude '.github' \
             --exclude '.ray' \
@@ -718,6 +719,7 @@ jobs:
           ensure_bun_runtime
 
           cd /srv/ray
+          umask 022
           if [ -d node_modules ]; then
             timeout 120s rm -rf node_modules
           fi
@@ -904,7 +906,6 @@ jobs:
             timeout 60s $SUDO rm -f /etc/systemd/system/ray-llama-cpp.service
           fi
 
-          timeout 120s $SUDO chmod -R a+rX /srv/ray
           timeout 60s $SUDO chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
           timeout 60s $SUDO systemctl daemon-reload
           if [ -f /etc/systemd/system/ray-llama-cpp.service ]; then

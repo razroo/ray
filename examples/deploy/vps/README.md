@@ -118,15 +118,19 @@ On an 8 GB node, [ray.1b.8gb.generic.public.json](../../config/ray.1b.8gb.generi
 ### 3. Build Ray
 
 ```bash
+umask 022
 timeout 300s git clone --depth 1 https://github.com/razroo/ray.git /srv/ray
 cd /srv/ray
 timeout 300s bun install --frozen-lockfile
 timeout 300s bun run build
 SERVICE_USER="${RAY_DEPLOY_SERVICE_USER:-ray}"
 SERVICE_GROUP="$(id -g "$SERVICE_USER")"
-timeout 120s sudo chmod -R a+rX /srv/ray
 timeout 60s sudo chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
 ```
+
+The `umask 022` keeps the checkout, built files, and Bun-installed dependencies
+readable by the generated service user without a recursive permission walk over
+`node_modules`.
 
 ### 4. Place the config
 
@@ -466,8 +470,10 @@ workspace build, unsupported generated llama.cpp launch flags, low checkout free
 for the Bun production install, generated systemd unit verification, and
 generated Caddyfile validation fail before systemd tries to start the generated units. The
 configured gateway runtime binary defaults to `/usr/local/bin/bun`. The workflow
-removes stale `node_modules` under a timeout before the remote Bun production
-install so old dev dependencies do not accumulate between rsync deploys. Remote
+sets service-readable checkout modes during rsync, removes stale `node_modules`
+under a timeout, and runs the remote Bun production install with `umask 022` so
+old dev dependencies do not accumulate and deploys do not recursively chmod the
+synced repository. Remote
 Bun helper commands for config inspection, staging-plan rendering, doctor, and
 service rendering run under explicit timeouts; deploy-time GGUF staging gets a
 longer bounded copy window, and each remote SSH session has its own wall-clock

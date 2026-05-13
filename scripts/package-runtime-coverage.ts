@@ -1051,6 +1051,57 @@ function validateDeployWorkflowRsyncGuards(
           "VPS deploy workflow rsync calls must pass --timeout so stalled repository transfers fail instead of hanging a deploy indefinitely.",
       });
     }
+    if (rsyncCommand && !workflowCommandContinuationIncludes(lines, index, "--chmod=")) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_rsync_checkout_chmod_missing",
+        workflowPath,
+        line: index + 1,
+        message:
+          "VPS deploy workflow rsync calls must set service-readable checkout modes during transfer so deploys do not need a recursive chmod over the synced repository.",
+      });
+    }
+  }
+
+  return diagnostics;
+}
+
+function validateDeployWorkflowCheckoutPermissionGuards(
+  workflowPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+    if (/\bchmod\s+-R\b/.test(line) && line.includes("/srv/ray")) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_recursive_checkout_chmod",
+        workflowPath,
+        line: index + 1,
+        message:
+          "VPS deploy workflow must not recursively chmod /srv/ray after dependency install; normalize rsync modes and Bun install umask instead so small VPS deploys avoid walking node_modules.",
+      });
+    }
+  }
+
+  if (
+    contents.includes("/usr/local/bin/bun install --production") &&
+    !contents.includes("umask 022")
+  ) {
+    diagnostics.push({
+      level: "error",
+      code: "workflow_remote_bun_install_umask_missing",
+      workflowPath,
+      line: workflowLineNumber(lines, "/usr/local/bin/bun install --production"),
+      message:
+        "VPS deploy workflow must set umask 022 before the remote Bun production install so node_modules is service-readable without a recursive chmod.",
+    });
   }
 
   return diagnostics;
@@ -1447,6 +1498,9 @@ async function validateWorkflow(
   diagnostics.push(...validateDeployWorkflowStateOwnershipGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowAptGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRsyncGuards(workflowPath, lines));
+  diagnostics.push(
+    ...validateDeployWorkflowCheckoutPermissionGuards(workflowPath, contents, lines),
+  );
   diagnostics.push(...validateDeployWorkflowSshSessionGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowServiceCommandGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRemoteBunInstallGuards(workflowPath, lines));
