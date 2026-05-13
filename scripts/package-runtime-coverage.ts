@@ -782,6 +782,24 @@ function workflowCommandContinuationIncludes(
   return false;
 }
 
+function validateNoRepoOwnedDeployWorkflow(
+  workflowPath: string,
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "repo_owned_deploy_workflow_present",
+      workflowPath,
+      message:
+        "This open-source repo must not include a repo-owned deploy-vps.yml workflow; keep VPS deployment as manual operator tooling unless deployment automation is explicitly requested.",
+    },
+  ];
+}
+
 function validateDeployWorkflowPublicCaddyAuthGuard(
   workflowPath: string,
   contents: string,
@@ -1775,7 +1793,9 @@ async function validateWorkflow(
   workflowPath: string,
 ): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
   const contents = await readTextFileBounded(workflowPath, MAX_WORKFLOW_BYTES, "GitHub workflow");
-  const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
+  const diagnostics: PackageRuntimeCoverageDiagnostic[] = [
+    ...validateNoRepoOwnedDeployWorkflow(workflowPath),
+  ];
   const lines = contents.split(/\r?\n/);
   for (const [index, rawLine] of lines.entries()) {
     const line = rawLine.trim();
@@ -1940,7 +1960,7 @@ function validateDeployStoragePreflightScript(
       scriptPath,
       line: workflowLineNumber(lines, "DEFAULT_STORAGE_PATHS"),
       message:
-        "Manual deploy storage preflight must check /, /var/cache/apt, /var/lib/apt, /etc/ray, /etc/systemd/system, /etc/caddy, /srv/ray/.ray/bun-install-cache, and /var/tmp by default, load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from --ray-env-file, and include custom env-file model, llama.cpp binary, plus async-queue storage paths so operator-run package installs, config writes, artifact staging, and Bun installs use the same disk headroom guard as the VPS deploy workflow.",
+        "Manual deploy storage preflight must check /, /var/cache/apt, /var/lib/apt, /etc/ray, /etc/systemd/system, /etc/caddy, /srv/ray/.ray/bun-install-cache, and /var/tmp by default, load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from --ray-env-file, and include custom env-file model, llama.cpp binary, plus async-queue storage paths so operator-run package installs, config writes, artifact staging, and Bun installs use the same disk headroom guard as the manual deploy helpers.",
     },
   ];
 }

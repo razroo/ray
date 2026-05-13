@@ -90,6 +90,48 @@ test("validatePackageRuntimeCoverage accepts current Bun-first workspace manifes
   );
 });
 
+test("validatePackageRuntimeCoverage rejects repo-owned VPS deploy workflows", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-deploy-workflow-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const workflowDir = path.join(tempDir, ".github", "workflows");
+  await mkdir(workflowDir, { recursive: true });
+  const rootPackageJson = path.join(tempDir, "package.json");
+  const deployWorkflowPath = path.join(workflowDir, "deploy-vps.yml");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify(
+      {
+        name: "ray-test",
+        packageManager: "bun@1.3.9",
+        engines: {
+          bun: ">=1.3.0",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(deployWorkflowPath, ["name: Deploy VPS", "jobs: {}", ""].join("\n"));
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson],
+  });
+  const diagnostics = summary.results.flatMap((result) => result.diagnostics);
+
+  assert.equal(summary.ok, false);
+  assert.ok(
+    diagnostics.some(
+      (diagnostic) =>
+        diagnostic.code === "repo_owned_deploy_workflow_present" &&
+        diagnostic.workflowPath === deployWorkflowPath,
+    ),
+  );
+});
+
 test("validatePackageRuntimeCoverage rejects excessive package inputs before scanning", async () => {
   await assert.rejects(
     () =>
