@@ -53,6 +53,7 @@ jobs:
       RAY_DEPLOY_INSTALL_CADDY: ${{ vars.RAY_DEPLOY_INSTALL_CADDY }}
       RAY_CONFIG_PATH_VAR: ${{ vars.RAY_CONFIG_PATH }}
       RAY_GATEWAY_RUNTIME_BINARY: ${{ vars.RAY_GATEWAY_RUNTIME_BINARY }}
+      RAY_DEPLOY_CADDY_BINARY: ${{ vars.RAY_DEPLOY_CADDY_BINARY }}
       RAY_DEPLOY_READY_TIMEOUT_SECONDS: ${{ vars.RAY_DEPLOY_READY_TIMEOUT_SECONDS }}
     steps:
       - uses: actions/checkout@v5
@@ -225,7 +226,7 @@ jobs:
 
           DEPLOY_SETTINGS=$(CONFIG_PATH="$CONFIG_PATH" bun --eval '
           import { loadRayConfig, resolveAuthApiKeys } from "./packages/config/dist/index.js";
-          import { parseEnvironmentFile } from "./packages/deploy/dist/cli.js";
+          import { normalizeCaddyBinaryPath, parseEnvironmentFile } from "./packages/deploy/dist/cli.js";
 
           const readNonEmpty = (value) =>
             typeof value === "string" && value.trim().length > 0 ? value : undefined;
@@ -237,6 +238,23 @@ jobs:
             ...process.env,
             ...envOverrides,
           };
+          const rawCaddyBinary =
+            readNonEmpty(envOverrides.RAY_DEPLOY_CADDY_BINARY) ??
+            readNonEmpty(process.env.RAY_DEPLOY_CADDY_BINARY);
+          let caddyBinary = "";
+          if (rawCaddyBinary) {
+            try {
+              caddyBinary = normalizeCaddyBinaryPath(
+                rawCaddyBinary,
+                "RAY_DEPLOY_CADDY_BINARY",
+              );
+            } catch (error) {
+              process.stderr.write(
+                `::error::${error instanceof Error ? error.message : String(error)}\n`,
+              );
+              process.exit(1);
+            }
+          }
 
           const { config } = await loadRayConfig({
             cwd: process.cwd(),
@@ -260,11 +278,13 @@ jobs:
               readNonEmpty(envOverrides.RAY_DEPLOY_SERVICE_USER) ??
               readNonEmpty(process.env.RAY_DEPLOY_SERVICE_USER) ??
               "ray",
+            caddyBinary,
           }));
           ')
           HEALTH_PORT=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).healthPort')
           AUTH_ENABLED=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'String(JSON.parse(process.env.DEPLOY_SETTINGS).authEnabled)')
           SERVICE_USER=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).serviceUser')
+          CADDY_BINARY=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).caddyBinary ?? ""')
 
           if ! printf '%s' "$SERVICE_USER" | grep -Eq '^[A-Za-z_][A-Za-z0-9_-]{0,30}$'; then
             echo "::error::RAY_DEPLOY_SERVICE_USER must be a system account name using only letters, digits, underscores, or hyphens."
@@ -290,6 +310,7 @@ jobs:
           echo "install_caddy=$INSTALL_CADDY" >> "$GITHUB_OUTPUT"
           echo "ready_timeout_seconds=$READY_TIMEOUT_SECONDS" >> "$GITHUB_OUTPUT"
           echo "gateway_runtime_binary=$GATEWAY_RUNTIME_BINARY" >> "$GITHUB_OUTPUT"
+          echo "caddy_binary=$CADDY_BINARY" >> "$GITHUB_OUTPUT"
           echo "ssh_port=$SSH_PORT" >> "$GITHUB_OUTPUT"
           echo "ssh_user=$SSH_USER" >> "$GITHUB_OUTPUT"
 
@@ -334,12 +355,14 @@ jobs:
           SSH_PORT: ${{ steps.settings.outputs.ssh_port }}
           SERVICE_USER: ${{ steps.settings.outputs.service_user }}
           INSTALL_CADDY: ${{ steps.settings.outputs.install_caddy }}
+          CADDY_BINARY: ${{ steps.settings.outputs.caddy_binary }}
         run: |
           set -euo pipefail
           SSH_USER="${SSH_USER:-root}"
           SSH_PORT="${SSH_PORT:-22}"
           SERVICE_USER="${SERVICE_USER:-ray}"
           INSTALL_CADDY="${INSTALL_CADDY:-false}"
+          CADDY_BINARY="${CADDY_BINARY:-}"
           TARGET="$SSH_USER@$RAY_DEPLOY_HOST"
           SSH_ARGS=(
             -i "$HOME/.ssh/deploy_key"
@@ -356,7 +379,7 @@ jobs:
             printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
           }
 
-          timeout 900s ssh "${SSH_ARGS[@]}" "$TARGET" "INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") SERVICE_USER=$(shell_quote "$SERVICE_USER") bash -s" <<'ENDSSH'
+          timeout 900s ssh "${SSH_ARGS[@]}" "$TARGET" "INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") SERVICE_USER=$(shell_quote "$SERVICE_USER") CADDY_BINARY=$(shell_quote "$CADDY_BINARY") bash -s" <<'ENDSSH'
           set -euo pipefail
 
           SUDO=""
@@ -387,8 +410,17 @@ jobs:
           if ! command -v rsync >/dev/null 2>&1; then
             missing_packages="$missing_packages rsync"
           fi
-          if [ "${INSTALL_CADDY:-false}" = "true" ] && ! command -v caddy >/dev/null 2>&1; then
-            missing_packages="$missing_packages caddy"
+          if [ "${INSTALL_CADDY:-false}" = "true" ]; then
+            if [ -n "${CADDY_BINARY:-}" ]; then
+              if [ ! -x "$CADDY_BINARY" ] && [ "$CADDY_BINARY" = "/usr/bin/caddy" ]; then
+                missing_packages="$missing_packages caddy"
+              elif [ ! -x "$CADDY_BINARY" ]; then
+                echo "Configured RAY_DEPLOY_CADDY_BINARY is not executable: $CADDY_BINARY"
+                exit 1
+              fi
+            elif ! command -v caddy >/dev/null 2>&1; then
+              missing_packages="$missing_packages caddy"
+            fi
           fi
           if [ -n "$missing_packages" ]; then
             $SUDO env DEBIAN_FRONTEND=noninteractive timeout 300s apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=60 update
@@ -441,12 +473,14 @@ jobs:
           SERVICE_USER: ${{ steps.settings.outputs.service_user }}
           READY_TIMEOUT_SECONDS: ${{ steps.settings.outputs.ready_timeout_seconds }}
           GATEWAY_RUNTIME_BINARY: ${{ steps.settings.outputs.gateway_runtime_binary }}
+          CADDY_BINARY: ${{ steps.settings.outputs.caddy_binary }}
         run: |
           set -euo pipefail
           SSH_USER="${SSH_USER:-root}"
           SSH_PORT="${SSH_PORT:-22}"
           TARGET="$SSH_USER@$RAY_DEPLOY_HOST"
           SERVICE_USER="${SERVICE_USER:-ray}"
+          CADDY_BINARY="${CADDY_BINARY:-}"
           ENV_B64="$(printf '%s' "${RAY_ENV_FILE_CONTENTS:-}" | base64 -w 0)"
           CONFIG_B64="$(printf '%s' "${RAY_CONFIG_JSON:-}" | base64 -w 0)"
           SSH_ARGS=(
@@ -465,7 +499,7 @@ jobs:
           }
 
           timeout 4500s ssh "${SSH_ARGS[@]}" "$TARGET" \
-            "CONFIG_SOURCE=$(shell_quote "$CONFIG_SOURCE") CONFIG_REL=$(shell_quote "$CONFIG_REL") CONFIG_B64=$(shell_quote "$CONFIG_B64") HEALTH_PORT=$(shell_quote "$HEALTH_PORT") DEPLOY_DOMAIN=$(shell_quote "$DEPLOY_DOMAIN") INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") SERVICE_USER=$(shell_quote "$SERVICE_USER") READY_TIMEOUT_SECONDS=$(shell_quote "$READY_TIMEOUT_SECONDS") GATEWAY_RUNTIME_BINARY=$(shell_quote "$GATEWAY_RUNTIME_BINARY") RAY_DEPLOY_MEMORY_MIB=$(shell_quote "${RAY_DEPLOY_MEMORY_MIB:-}") ENV_B64=$(shell_quote "$ENV_B64") bash -s" <<'ENDSSH'
+            "CONFIG_SOURCE=$(shell_quote "$CONFIG_SOURCE") CONFIG_REL=$(shell_quote "$CONFIG_REL") CONFIG_B64=$(shell_quote "$CONFIG_B64") HEALTH_PORT=$(shell_quote "$HEALTH_PORT") DEPLOY_DOMAIN=$(shell_quote "$DEPLOY_DOMAIN") INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") SERVICE_USER=$(shell_quote "$SERVICE_USER") READY_TIMEOUT_SECONDS=$(shell_quote "$READY_TIMEOUT_SECONDS") GATEWAY_RUNTIME_BINARY=$(shell_quote "$GATEWAY_RUNTIME_BINARY") CADDY_BINARY=$(shell_quote "$CADDY_BINARY") RAY_DEPLOY_MEMORY_MIB=$(shell_quote "${RAY_DEPLOY_MEMORY_MIB:-}") ENV_B64=$(shell_quote "$ENV_B64") bash -s" <<'ENDSSH'
           set -euo pipefail
 
           SUDO=""
@@ -482,6 +516,11 @@ jobs:
           fi
           SERVICE_USER="${SERVICE_USER:-ray}"
           SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
+          CADDY_RUNTIME="${CADDY_BINARY:-caddy}"
+          CADDY_ARGS=()
+          if [ -n "${CADDY_BINARY:-}" ]; then
+            CADDY_ARGS=(--caddy-binary "$CADDY_BINARY")
+          fi
 
           dump_service_debug() {
             unit="$1"
@@ -711,6 +750,7 @@ jobs:
             --config /etc/ray/ray.json \
             --user "$SERVICE_USER" \
             --gateway-runtime-binary "$GATEWAY_RUNTIME_BINARY" \
+            "${CADDY_ARGS[@]}" \
             --ray-env-file /etc/ray/ray.env
 
           RENDER_DIR="$(mktemp -d)"
@@ -729,6 +769,7 @@ jobs:
             --user "$SERVICE_USER" \
             --domain "$DEPLOY_DOMAIN" \
             --gateway-runtime-binary "$GATEWAY_RUNTIME_BINARY" \
+            "${CADDY_ARGS[@]}" \
             --ray-env-file /etc/ray/ray.env \
             --strict-filesystem \
             --output-dir "$RENDER_DIR" >/dev/null
@@ -737,7 +778,7 @@ jobs:
           if [ "${INSTALL_CADDY:-false}" = "true" ]; then
             CADDY_TMP="$(mktemp)"
             timeout 30s cp "$RENDER_DIR/Caddyfile" "$CADDY_TMP"
-            timeout 30s $SUDO caddy validate --config "$CADDY_TMP"
+            timeout 30s $SUDO "$CADDY_RUNTIME" validate --config "$CADDY_TMP"
             timeout 60s $SUDO install -m 0644 "$CADDY_TMP" /etc/caddy/Caddyfile
           fi
           if [ -f "$RENDER_DIR/ray-llama-cpp.service" ]; then

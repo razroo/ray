@@ -386,7 +386,7 @@ Optional repository variables:
 - `RAY_DEPLOY_INSTALL_CADDY` — set to `true` to install and reload the generated Caddyfile; requires `RAY_DEPLOY_DOMAIN` to be a real public DNS name, not `ray.local`, `localhost`, loopback, or another `.local` placeholder
 - `RAY_CONFIG_PATH` — repo-relative config path to install, defaults to `./examples/config/ray.sub1b.public.json`; the workflow rejects absolute paths, path traversal, and paths excluded from repo sync before opening SSH
 - `RAY_GATEWAY_RUNTIME_BINARY` — absolute JavaScript runtime path rendered into `ray-gateway.service`, defaults to `/usr/local/bin/bun`; the deploy CLI and workflow reject relative paths and paths under `/home`, `/root`, or `/run/user` because generated units use `ProtectHome=true`
-- `RAY_DEPLOY_CADDY_BINARY` — absolute Caddy runtime path for local render/doctor checks when `caddy` is not on the deploy user's `PATH`; pass `--caddy-binary` to override it for one command
+- `RAY_DEPLOY_CADDY_BINARY` — absolute Caddy runtime path for local render/doctor checks and GitHub Actions deploys when `caddy` is not on the deploy user's `PATH`; pass `--caddy-binary` to override it for one command
 - `RAY_DEPLOY_READY_TIMEOUT_SECONDS` — bounded wait for `/readyz` after service restart before reloading Caddy, defaults to `120`
 - `RAY_AUTO_DEPLOY` — set to `true` if pushes to `main` should auto-deploy
 
@@ -424,7 +424,9 @@ than the repo's supported Bun runtime, prints the resolved llama.cpp binary and
 GGUF staging plan for llama.cpp deploy configs, verifies and stages source
 artifacts when both `RAY_LLAMA_CPP_BINARY_SOURCE_PATH` and
 `RAY_MODEL_SOURCE_PATH` are set in `/etc/ray/ray.env`, then runs
-`ray deploy doctor` on the VPS before restarting services. Missing API keys,
+`ray deploy doctor` on the VPS before restarting services. It validates and
+passes `RAY_DEPLOY_CADDY_BINARY` through remote doctor, render, and generated
+Caddyfile validation when a custom Caddy path is configured. Missing API keys,
 missing or corrupt GGUF files,
 memory-fit errors, exhausted async queue storage reserves, unsupported gateway
 runtimes, low checkout free space for the Bun production install, generated

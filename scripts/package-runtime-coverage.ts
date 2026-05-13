@@ -577,6 +577,43 @@ function validateDeployWorkflowPublicCaddyDomainGuard(
   ];
 }
 
+function validateDeployWorkflowCaddyBinaryGuards(
+  workflowPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  const caddyArgsExpansionCount = lines.filter((line) =>
+    line.includes('"${CADDY_ARGS[@]}"'),
+  ).length;
+
+  if (
+    contents.includes("RAY_DEPLOY_CADDY_BINARY: ${{ vars.RAY_DEPLOY_CADDY_BINARY }}") &&
+    contents.includes("normalizeCaddyBinaryPath") &&
+    contents.includes('echo "caddy_binary=$CADDY_BINARY" >> "$GITHUB_OUTPUT"') &&
+    contents.includes("CADDY_BINARY: ${{ steps.settings.outputs.caddy_binary }}") &&
+    contents.includes('CADDY_ARGS=(--caddy-binary "$CADDY_BINARY")') &&
+    caddyArgsExpansionCount >= 2 &&
+    contents.includes('"$CADDY_RUNTIME" validate --config "$CADDY_TMP"')
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "workflow_caddy_binary_guard_missing",
+      workflowPath,
+      line: workflowLineNumber(lines, "RAY_DEPLOY_CADDY_BINARY"),
+      message:
+        "VPS deploy workflow must honor RAY_DEPLOY_CADDY_BINARY for remote doctor, render, and Caddyfile validation so custom Caddy install paths work consistently.",
+    },
+  ];
+}
+
 function validateDeployWorkflowSecretFileInstalls(
   workflowPath: string,
   lines: string[],
@@ -997,6 +1034,7 @@ async function validateWorkflow(
 
   diagnostics.push(...validateDeployWorkflowPublicCaddyAuthGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowPublicCaddyDomainGuard(workflowPath, contents, lines));
+  diagnostics.push(...validateDeployWorkflowCaddyBinaryGuards(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowSecretFileInstalls(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowStateOwnershipGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowAptGuards(workflowPath, lines));
