@@ -10,7 +10,7 @@ import { createRayRuntime, type RayRuntime } from "@ray/runtime";
 import { RayError, type HealthSnapshot, type RuntimeMetricsSnapshot } from "@razroo/ray-core";
 import { Logger, type LogFields } from "@ray/telemetry";
 import { DurableInferenceQueue } from "./async-jobs.js";
-import { createGatewayServer, parseCliArgs, startGateway } from "./index.js";
+import { createGatewayServer, parseCliArgs, startGateway, stopGateway } from "./index.js";
 
 async function closeServer(server: Server): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -88,6 +88,66 @@ test("gateway bounds HTTP server timeouts for small VPS sockets", () => {
   assert.equal(gateway.server.requestTimeout, 30_000);
   assert.equal(gateway.server.keepAliveTimeout, 5_000);
   assert.equal(gateway.server.maxRequestsPerSocket, 1_000);
+});
+
+test("stopGateway force-closes active request sockets before systemd timeout", async (t) => {
+  const warnings: Array<{ message: string; fields: LogFields | undefined }> = [];
+  let requestStarted: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    requestStarted = resolve;
+  });
+  const server = createServer(() => {
+    requestStarted?.();
+  });
+  const sockets = new Set<ReturnType<typeof createConnection>>();
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.on("close", () => {
+      sockets.delete(socket);
+    });
+  });
+  const logger = {
+    debug() {},
+    info() {},
+    warn(message: string, fields?: LogFields) {
+      warnings.push({ message, fields });
+    },
+    error() {},
+  } as unknown as Logger;
+  const gateway = {
+    server,
+    runtime: {} as RayRuntime,
+    logger,
+    sockets,
+  };
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => {
+    server.closeAllConnections();
+    server.close(() => undefined);
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const socket = createConnection(address.port, "127.0.0.1");
+  socket.on("error", () => undefined);
+  await new Promise<void>((resolve) => socket.once("connect", resolve));
+  socket.write("GET /slow HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+  await started;
+
+  const closed = new Promise<void>((resolve) => socket.once("close", resolve));
+  await stopGateway(gateway, { signal: "SIGTERM", timeoutMs: 20 });
+  await closed;
+
+  assert.equal(
+    warnings[0]?.message,
+    "gateway shutdown timeout reached; closing active connections",
+  );
+  assert.equal(warnings[0]?.fields?.signal, "SIGTERM");
+  assert.equal(warnings[0]?.fields?.timeoutMs, 20);
 });
 
 test("gateway parseCliArgs accepts explicit config paths", () => {

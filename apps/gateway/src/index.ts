@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { isIP } from "node:net";
+import { isIP, type Socket } from "node:net";
 import { pathToFileURL } from "node:url";
 import { loadRayConfig, resolveAuthApiKeys, snapshotRayConfig } from "@ray/config";
 import {
@@ -35,6 +35,7 @@ const GATEWAY_HEADERS_TIMEOUT_MS = 15_000;
 const GATEWAY_REQUEST_TIMEOUT_MS = 30_000;
 const GATEWAY_KEEP_ALIVE_TIMEOUT_MS = 5_000;
 const GATEWAY_MAX_REQUESTS_PER_SOCKET = 1_000;
+const GATEWAY_SHUTDOWN_TIMEOUT_MS = 30_000;
 const MAX_RESPONSE_FIELD_DEPTH = 10;
 const MAX_RESPONSE_OBJECT_KEYS = 256;
 const MAX_RESPONSE_ARRAY_ITEMS = 512;
@@ -56,10 +57,16 @@ export interface GatewayServer {
   runtime: RayRuntime;
   jobQueue?: DurableInferenceQueue;
   logger: Logger;
+  sockets?: Set<Socket>;
 }
 
 export interface StartGatewayOptions extends CreateGatewayHandlerOptions {
   configPath?: string;
+}
+
+export interface StopGatewayOptions {
+  signal?: NodeJS.Signals;
+  timeoutMs?: number;
 }
 
 function assertCliArgv(argv: unknown): asserts argv is string[] {
@@ -1026,15 +1033,23 @@ export function createGatewayServer(options: CreateGatewayHandlerOptions): Gatew
     ...(jobQueue ? { jobQueue } : {}),
   });
   const server = createServer(handler);
+  const sockets = new Set<Socket>();
   server.requestTimeout = GATEWAY_REQUEST_TIMEOUT_MS;
   server.headersTimeout = GATEWAY_HEADERS_TIMEOUT_MS;
   server.keepAliveTimeout = GATEWAY_KEEP_ALIVE_TIMEOUT_MS;
   server.maxRequestsPerSocket = GATEWAY_MAX_REQUESTS_PER_SOCKET;
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.on("close", () => {
+      sockets.delete(socket);
+    });
+  });
 
   return {
     server,
     runtime,
     logger,
+    sockets,
     ...(jobQueue ? { jobQueue } : {}),
   };
 }
@@ -1069,6 +1084,52 @@ export async function startGateway(options: StartGatewayOptions): Promise<Gatewa
   return gateway;
 }
 
+export async function stopGateway(
+  gateway: GatewayServer,
+  options: StopGatewayOptions = {},
+): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? GATEWAY_SHUTDOWN_TIMEOUT_MS;
+  const signal = options.signal ?? "SIGTERM";
+  let forceTimeout: NodeJS.Timeout | undefined;
+
+  gateway.logger.info("gateway shutting down", { signal, timeoutMs });
+
+  try {
+    const closePromise = new Promise<void>((resolve, reject) => {
+      gateway.server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+
+    gateway.server.closeIdleConnections();
+
+    forceTimeout = setTimeout(() => {
+      gateway.logger.warn("gateway shutdown timeout reached; closing active connections", {
+        signal,
+        timeoutMs,
+      });
+      gateway.server.closeAllConnections();
+      for (const socket of gateway.sockets ?? []) {
+        socket.destroy();
+      }
+    }, timeoutMs);
+    forceTimeout.unref();
+
+    await closePromise;
+  } finally {
+    if (forceTimeout) {
+      clearTimeout(forceTimeout);
+    }
+
+    await gateway.jobQueue?.stop();
+  }
+}
+
 async function main(): Promise<void> {
   const cli = parseCliArgs(process.argv.slice(2));
   const { config, configPath } = await loadRayConfig({
@@ -1082,19 +1143,8 @@ async function main(): Promise<void> {
   });
 
   const shutdown = async (signal: NodeJS.Signals) => {
-    gateway.logger.info("gateway shutting down", { signal });
     try {
-      await new Promise<void>((resolve, reject) => {
-        gateway.server.close((error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-
-          resolve();
-        });
-      });
-      await gateway.jobQueue?.stop();
+      await stopGateway(gateway, { signal });
       process.exit(0);
     } catch (error) {
       gateway.logger.error("gateway shutdown failed", {
