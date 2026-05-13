@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -15,6 +15,7 @@ import {
   parseArgs,
   runBenchmark,
   waitForBenchmarkChildHealth,
+  writeStructuredOutput,
 } from "./benchmark.ts";
 
 async function withTestServer(
@@ -700,6 +701,63 @@ test("waitForBenchmarkChildHealth fails fast with bounded child output", async (
   await assert.rejects(
     () => waitForBenchmarkChildHealth(child, "llama.cpp server", "http://127.0.0.1:1", 30_000),
     /llama\.cpp server exited before becoming healthy \(code=42 signal=null\)[\s\S]*llama startup failed/,
+  );
+});
+
+test("writeStructuredOutput keeps existing reports when oversized output is rejected", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-benchmark-output-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const outputPath = path.join(tempDir, "latest.json");
+  await writeStructuredOutput(outputPath, {
+    kind: "benchmark-summary",
+    version: 1,
+    generatedAt: new Date(0).toISOString(),
+    args: {
+      baseUrl: "http://127.0.0.1:3000",
+      concurrency: 1,
+      requests: 1,
+      label: "bounded-output",
+    },
+    summary: {
+      label: "bounded-output",
+      baseUrl: "http://127.0.0.1:3000",
+      concurrency: 1,
+      requests: 1,
+      wallTimeMs: 1,
+    },
+  });
+  const previousContents = await readFile(outputPath, "utf8");
+
+  await assert.rejects(
+    () =>
+      writeStructuredOutput(outputPath, {
+        kind: "benchmark-summary",
+        version: 1,
+        generatedAt: new Date(0).toISOString(),
+        args: {
+          baseUrl: "http://127.0.0.1:3000",
+          concurrency: 1,
+          requests: 1,
+          label: "oversized-output",
+        },
+        summary: {
+          label: "x".repeat(8 * 1024 * 1024),
+          baseUrl: "http://127.0.0.1:3000",
+          concurrency: 1,
+          requests: 1,
+          wallTimeMs: 1,
+        },
+      }),
+    /Benchmark structured output must be at most 8388608 bytes/,
+  );
+
+  assert.equal(await readFile(outputPath, "utf8"), previousContents);
+  assert.equal(
+    (await readdir(tempDir)).some((entry) => entry.startsWith(".tmp-")),
+    false,
   );
 });
 

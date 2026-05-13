@@ -1,5 +1,6 @@
-import { access, mkdir, mkdtemp, open, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, open, rename, rm, stat, writeFile } from "node:fs/promises";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -39,6 +40,7 @@ const MAX_BENCHMARK_BASELINE_NOTE_CHARS = 1_024;
 const MAX_BENCHMARK_REQUEST_BODY_BYTES = 1_048_576;
 const MAX_BENCHMARK_ERROR_RESPONSE_BYTES = 64 * 1024;
 const MAX_BENCHMARK_SUCCESS_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MAX_BENCHMARK_OUTPUT_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_BENCHMARK_HISTORY_FILE_BYTES = 8 * 1024 * 1024;
 const BENCHMARK_HISTORY_RETAIN_BYTES = 6 * 1024 * 1024;
 const MAX_BENCHMARK_CHILD_OUTPUT_BYTES = 32 * 1024;
@@ -2658,13 +2660,34 @@ function printComparison(comparison: BenchmarkComparison): void {
   }
 }
 
-async function writeStructuredOutput(
+export async function writeStructuredOutput(
   outputPath: string,
   payload: BenchmarkSummaryOutput | AutotuneOutput | PromptFormatSweepOutput,
 ): Promise<void> {
   const resolvedPath = path.resolve(process.cwd(), outputPath);
-  await mkdir(path.dirname(resolvedPath), { recursive: true });
-  await writeFile(resolvedPath, `${JSON.stringify(payload, null, 2)}\n`);
+  const output = `${JSON.stringify(payload, null, 2)}\n`;
+  const outputBytes = Buffer.byteLength(output, "utf8");
+
+  if (outputBytes > MAX_BENCHMARK_OUTPUT_FILE_BYTES) {
+    throw new Error(
+      `Benchmark structured output must be at most ${MAX_BENCHMARK_OUTPUT_FILE_BYTES} bytes`,
+    );
+  }
+
+  const outputDirectory = path.dirname(resolvedPath);
+  const tempPath = path.join(
+    outputDirectory,
+    `.tmp-${path.basename(resolvedPath)}-${process.pid}-${randomUUID()}`,
+  );
+
+  await mkdir(outputDirectory, { recursive: true });
+  try {
+    await writeFile(tempPath, output, { flag: "wx" });
+    await rename(tempPath, resolvedPath);
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
   console.log(`Wrote structured output to ${resolvedPath}`);
 }
 
