@@ -248,6 +248,7 @@ const GATEWAY_ENTRYPOINT_RELATIVE_PATH = "apps/gateway/dist/index.js";
 const DEFAULT_GATEWAY_RUNTIME_BINARY = "/usr/local/bin/bun";
 const DEFAULT_CADDY_RUNTIME_BINARY = "/usr/bin/caddy";
 const DEFAULT_DEPLOY_MIN_FREE_STORAGE_MIB = 1_024;
+const MAX_DEPLOY_MIN_FREE_STORAGE_MIB = 1_048_576;
 const DEFAULT_DEPLOY_READY_TIMEOUT_SECONDS = 120;
 const BINARY_SOURCE_ENV = "RAY_LLAMA_CPP_BINARY_SOURCE_PATH";
 const MODEL_SOURCE_ENV = "RAY_MODEL_SOURCE_PATH";
@@ -1057,6 +1058,46 @@ function parseNonNegativeInteger(value: string): number | undefined {
 
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function parseDeployMinFreeStorageMiB(value: string): number {
+  const parsed = parseNonNegativeInteger(value);
+  if (parsed === undefined || parsed > MAX_DEPLOY_MIN_FREE_STORAGE_MIB) {
+    throw new Error(
+      `RAY_DEPLOY_MIN_FREE_STORAGE_MIB must be a non-negative integer less than or equal to ${MAX_DEPLOY_MIN_FREE_STORAGE_MIB}`,
+    );
+  }
+
+  return parsed;
+}
+
+function resolveDeployStorageCushionMiB(
+  env: NodeJS.ProcessEnv,
+  diagnostics: DeploymentDiagnostic[],
+): number {
+  const rawValue = readNonEmptyEnvValue(env.RAY_DEPLOY_MIN_FREE_STORAGE_MIB);
+
+  if (rawValue === undefined) {
+    return DEFAULT_DEPLOY_MIN_FREE_STORAGE_MIB;
+  }
+
+  try {
+    return parseDeployMinFreeStorageMiB(rawValue);
+  } catch (error) {
+    diagnostics.push({
+      level: "error",
+      code: "deploy_min_free_storage_invalid",
+      message: toErrorMessage(error),
+    });
+    return DEFAULT_DEPLOY_MIN_FREE_STORAGE_MIB;
+  }
+}
+
+function resolveWorkingDirectoryStorageCushionMiB(
+  env: NodeJS.ProcessEnv,
+  diagnostics: DeploymentDiagnostic[],
+): number {
+  return Math.max(MIN_WORKING_DIRECTORY_FREE_MIB, resolveDeployStorageCushionMiB(env, diagnostics));
 }
 
 function parseRuntimeVersion(value: string): ParsedRuntimeVersion | undefined {
@@ -2347,6 +2388,10 @@ export function diagnoseConfig(
   const strictFilesystem = options.strictFilesystem === true;
   const preflight = options.preflight;
   const gatewayBindsLoopback = isLoopbackHost(config.server.host);
+  const workingDirectoryStorageCushionMiB = resolveWorkingDirectoryStorageCushionMiB(
+    env,
+    diagnostics,
+  );
 
   if (!gatewayBindsLoopback) {
     diagnostics.push({
@@ -2667,17 +2712,17 @@ export function diagnoseConfig(
           message: `Doctor could not inspect free space for the generated systemd WorkingDirectory at ${workingDirectoryPath}${preflight.workingDirectoryStorageError ? ` (${preflight.workingDirectoryStorageError})` : ""}. Verify there is room for the synced Ray checkout, built gateway assets, and Bun production install before restarting ray-gateway.service.`,
         });
       } else if (preflight.workingDirectoryAvailableMiB !== undefined) {
-        if (preflight.workingDirectoryAvailableMiB < MIN_WORKING_DIRECTORY_FREE_MIB) {
+        if (preflight.workingDirectoryAvailableMiB < workingDirectoryStorageCushionMiB) {
           diagnostics.push({
             level: "error",
             code: "working_directory_storage_low",
-            message: `The generated systemd WorkingDirectory filesystem has ${formatMiB(preflight.workingDirectoryAvailableMiB)} free at ${workingDirectoryPath}, below the ${formatMiB(MIN_WORKING_DIRECTORY_FREE_MIB)} deployment cushion for the synced Ray checkout, built gateway assets, and Bun production install. Free disk space or move the checkout before restarting ray-gateway.service.`,
+            message: `The generated systemd WorkingDirectory filesystem has ${formatMiB(preflight.workingDirectoryAvailableMiB)} free at ${workingDirectoryPath}, below the ${formatMiB(workingDirectoryStorageCushionMiB)} deployment cushion for the synced Ray checkout, built gateway assets, and Bun production install. This cushion follows RAY_DEPLOY_MIN_FREE_STORAGE_MIB with a ${formatMiB(MIN_WORKING_DIRECTORY_FREE_MIB)} floor. Free disk space or move the checkout before restarting ray-gateway.service.`,
           });
         } else {
           diagnostics.push({
             level: "info",
             code: "working_directory_storage_ok",
-            message: `The generated systemd WorkingDirectory filesystem has ${formatMiB(preflight.workingDirectoryAvailableMiB)} free at ${workingDirectoryPath}, satisfying the ${formatMiB(MIN_WORKING_DIRECTORY_FREE_MIB)} deployment cushion for the synced Ray checkout, built gateway assets, and Bun production install.`,
+            message: `The generated systemd WorkingDirectory filesystem has ${formatMiB(preflight.workingDirectoryAvailableMiB)} free at ${workingDirectoryPath}, satisfying the ${formatMiB(workingDirectoryStorageCushionMiB)} deployment cushion for the synced Ray checkout, built gateway assets, and Bun production install. This cushion follows RAY_DEPLOY_MIN_FREE_STORAGE_MIB with a ${formatMiB(MIN_WORKING_DIRECTORY_FREE_MIB)} floor.`,
           });
         }
       }

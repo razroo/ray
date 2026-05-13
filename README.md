@@ -308,11 +308,12 @@ RAY_RATE_LIMIT_KEY_STRATEGY=ip+api-key
 ```
 
 `RAY_DEPLOY_SERVICE_USER`, `RAY_DEPLOY_DOMAIN`, `RAY_DEPLOY_MEMORY_MIB`,
-`RAY_GATEWAY_RUNTIME_BINARY`, and `RAY_DEPLOY_CADDY_BINARY` are consumed by the
-deploy CLI while rendering units or running doctor. Explicit CLI flags win over
-env-file values. `RAY_DEPLOY_SERVICE_USER` accepts an account name or numeric
-UID; workflow deploys create missing named accounts, while numeric UIDs must
-already resolve to an account on the VPS.
+`RAY_DEPLOY_MIN_FREE_STORAGE_MIB`, `RAY_GATEWAY_RUNTIME_BINARY`, and
+`RAY_DEPLOY_CADDY_BINARY` are consumed by the deploy CLI while rendering units
+or running doctor. Explicit CLI flags win over env-file values.
+`RAY_DEPLOY_SERVICE_USER` accepts an account name or numeric UID; workflow
+deploys create missing named accounts, while numeric UIDs must already resolve
+to an account on the VPS.
 The GitHub VPS workflow also honors `RAY_DEPLOY_DOMAIN`,
 `RAY_DEPLOY_INSTALL_CADDY`, `RAY_DEPLOY_MEMORY_MIB`,
 `RAY_DEPLOY_MIN_FREE_STORAGE_MIB`, `RAY_DEPLOY_READY_TIMEOUT_SECONDS`,
@@ -332,12 +333,16 @@ and runtime paths.
 Because `/etc/ray/ray.env` should usually be `0600` and root-owned, run manual
 helpers that read it with privileges that can read that file, for example
 `sudo /usr/local/bin/bun run ... -- --ray-env-file /etc/ray/ray.env`.
-Set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` when the workflow or manual
-`sudo /usr/local/bin/bun run deploy:storage -- --ray-env-file /etc/ray/ray.env` check should require
-more or less than the default 1024 MiB free on the root, APT cache/state,
-`/etc/ray`, `/etc/systemd/system`, `/etc/caddy`, checkout, Ray state, `/tmp`,
-`/var/tmp`, and repo-scoped Bun install-cache volumes before package bootstrap,
-rsync follow-up, config/unit/Caddy writes, or the remote Bun production install.
+Set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` when doctor should enforce a larger
+checkout/Bun install cushion, or when the workflow or manual
+`sudo /usr/local/bin/bun run deploy:storage -- --ray-env-file /etc/ray/ray.env`
+check should require more or less than the default 1024 MiB free on the root,
+APT cache/state, `/etc/ray`, `/etc/systemd/system`, `/etc/caddy`, checkout, Ray
+state, `/tmp`, `/var/tmp`, and repo-scoped Bun install-cache volumes before
+package bootstrap, rsync follow-up, config/unit/Caddy writes, or the remote Bun
+production install.
+Doctor uses the same value for the generated `WorkingDirectory` storage cushion,
+with a 512 MiB floor for the synced checkout and Bun production install.
 The workflow cleans APT archives and package lists after missing bootstrap
 packages are installed so package-manager residue does not consume the disk
 cushion. When `--ray-env-file` is supplied, the same preflight also checks custom

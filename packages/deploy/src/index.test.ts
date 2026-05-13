@@ -3184,7 +3184,72 @@ test("diagnoseConfig errors when the generated service user cannot access gatewa
 
 test("diagnoseConfig errors when strict working directory storage is below the deploy cushion", () => {
   const config = createDefaultConfig("tiny");
-  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+  const diagnostics = diagnoseConfig(config, {}, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      workingDirectoryPath: "/srv/ray",
+      workingDirectoryStatus: "found",
+      workingDirectoryAvailableMiB: 1023,
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "working_directory_storage_low");
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /1,023 MiB/);
+  assert.match(diagnostic.message, /1,024 MiB/);
+  assert.match(diagnostic.message, /RAY_DEPLOY_MIN_FREE_STORAGE_MIB/);
+  assert.match(diagnostic.message, /Bun production install/);
+});
+
+test("diagnoseConfig reports adequate working directory storage for strict deploys", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, {}, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      workingDirectoryPath: "/srv/ray",
+      workingDirectoryStatus: "found",
+      workingDirectoryAvailableMiB: 1024,
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "working_directory_storage_ok");
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+  assert.match(diagnostic.message, /1,024 MiB/);
+  assert.match(diagnostic.message, /deployment cushion/);
+});
+
+test("diagnoseConfig honors deploy storage reserve for working directory headroom", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(
+    config,
+    { RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "2048" },
+    undefined,
+    {
+      strictFilesystem: true,
+      preflight: {
+        workingDirectoryPath: "/srv/ray",
+        workingDirectoryStatus: "found",
+        workingDirectoryAvailableMiB: 1536,
+      },
+    },
+  );
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "working_directory_storage_low");
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /1,536 MiB/);
+  assert.match(diagnostic.message, /2,048 MiB/);
+  assert.match(diagnostic.message, /RAY_DEPLOY_MIN_FREE_STORAGE_MIB/);
+});
+
+test("diagnoseConfig keeps a minimum working directory storage floor", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, { RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "0" }, undefined, {
     strictFilesystem: true,
     preflight: {
       workingDirectoryPath: "/srv/ray",
@@ -3199,26 +3264,30 @@ test("diagnoseConfig errors when strict working directory storage is below the d
   assert.equal(diagnostic.level, "error");
   assert.match(diagnostic.message, /511 MiB/);
   assert.match(diagnostic.message, /512 MiB/);
-  assert.match(diagnostic.message, /Bun production install/);
 });
 
-test("diagnoseConfig reports adequate working directory storage for strict deploys", () => {
+test("diagnoseConfig rejects malformed deploy storage reserves", () => {
   const config = createDefaultConfig("tiny");
-  const diagnostics = diagnoseConfig(config, process.env, undefined, {
-    strictFilesystem: true,
-    preflight: {
-      workingDirectoryPath: "/srv/ray",
-      workingDirectoryStatus: "found",
-      workingDirectoryAvailableMiB: 512,
+  const diagnostics = diagnoseConfig(
+    config,
+    { RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "bad" },
+    undefined,
+    {
+      strictFilesystem: true,
+      preflight: {
+        workingDirectoryPath: "/srv/ray",
+        workingDirectoryStatus: "found",
+        workingDirectoryAvailableMiB: 4096,
+      },
     },
-  });
+  );
 
-  const diagnostic = diagnostics.find((entry) => entry.code === "working_directory_storage_ok");
+  const diagnostic = diagnostics.find((entry) => entry.code === "deploy_min_free_storage_invalid");
 
   assert.ok(diagnostic);
-  assert.equal(diagnostic.level, "info");
-  assert.match(diagnostic.message, /512 MiB/);
-  assert.match(diagnostic.message, /deployment cushion/);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /RAY_DEPLOY_MIN_FREE_STORAGE_MIB/);
+  assert.match(diagnostic.message, /non-negative integer/);
 });
 
 test("diagnoseConfig errors when strict working directory storage cannot be inspected", () => {

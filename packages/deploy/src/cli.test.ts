@@ -470,6 +470,7 @@ test("runCli prints deploy help without loading config or env files", async (t) 
   assert.match(help, /--ray-env-file <path>/);
   assert.match(help, /--systemd-env-file <path>/);
   assert.match(help, /RAY_DEPLOY_MEMORY_MIB/);
+  assert.match(help, /RAY_DEPLOY_MIN_FREE_STORAGE_MIB/);
 });
 
 test("runCli rejects oversized explicit env files before parsing", async (t) => {

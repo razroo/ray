@@ -79,7 +79,8 @@ Options:
 
 Deploy env values loaded by --env-file include RAY_API_KEYS, RAY_DEPLOY_SERVICE_USER,
 RAY_DEPLOY_DOMAIN, RAY_DEPLOY_MEMORY_MIB, RAY_GATEWAY_RUNTIME_BINARY,
-RAY_DEPLOY_CADDY_BINARY, and portable RAY_MODEL_* / RAY_LLAMA_CPP_* model overrides.
+RAY_DEPLOY_MIN_FREE_STORAGE_MIB, RAY_DEPLOY_CADDY_BINARY, and portable RAY_MODEL_* /
+RAY_LLAMA_CPP_* model overrides.
 `;
 
 function assertCliArgv(argv: unknown): asserts argv is string[] {
