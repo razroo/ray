@@ -115,6 +115,66 @@ test("runtime deduplicates successful provider warmup work", async () => {
   assert.equal(readyHealth.provider.status, "ready");
 });
 
+test("runtime reports warming while provider health is ready during warmup", async () => {
+  let warmCalls = 0;
+  let healthCalls = 0;
+  let releaseWarm: (() => void) | undefined;
+  const blockedWarm = new Promise<void>((resolve) => {
+    releaseWarm = resolve;
+  });
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "provider-health-warm-model",
+    capabilities: {
+      streaming: false,
+      quantized: false,
+      localBackend: true,
+    },
+    async warm() {
+      warmCalls += 1;
+      await blockedWarm;
+    },
+    async health() {
+      healthCalls += 1;
+      return {
+        status: "ready",
+        checkedAt: new Date().toISOString(),
+        details: {
+          backend: "ready",
+        },
+      };
+    },
+    async infer(request) {
+      return {
+        output: request.input,
+      };
+    },
+  };
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    model: {
+      warmOnBoot: true,
+    },
+  });
+  const runtime = createRayRuntime(config, { provider });
+
+  const warm = runtime.warm();
+  await waitForCondition(() => warmCalls === 1);
+
+  const warmingHealth = await runtime.health();
+  assert.equal(warmingHealth.status, "degraded");
+  assert.equal(warmingHealth.provider.status, "warming");
+  assert.equal(warmingHealth.provider.details?.backend, "ready");
+  assert.equal(warmingHealth.provider.details?.rayWarmupStatus, "warming");
+
+  releaseWarm?.();
+  await warm;
+
+  const readyHealth = await runtime.health();
+  assert.equal(healthCalls, 1);
+  assert.equal(readyHealth.status, "ok");
+  assert.equal(readyHealth.provider.status, "ready");
+});
+
 test("runtime retries provider warmup after a failed attempt", async () => {
   let warmCalls = 0;
   const provider: ModelProvider = {

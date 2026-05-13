@@ -3777,18 +3777,22 @@ export class RayRuntime {
 
     if (this.provider.health) {
       if (this.providerHealthCache && now - this.providerHealthCache.checkedAtMs < 1_000) {
-        return this.providerHealthCache.snapshot;
+        return this.recordProviderHealth(
+          this.applyWarmStateToProviderHealth(this.providerHealthCache.snapshot),
+        );
       }
 
       if (this.providerHealthInFlight) {
-        return this.providerHealthInFlight;
+        return this.recordProviderHealth(
+          this.applyWarmStateToProviderHealth(await this.providerHealthInFlight),
+        );
       }
 
       const healthPromise = this.refreshProviderHealth();
       this.providerHealthInFlight = healthPromise;
 
       try {
-        return await healthPromise;
+        return this.recordProviderHealth(this.applyWarmStateToProviderHealth(await healthPromise));
       } finally {
         if (this.providerHealthInFlight === healthPromise) {
           this.providerHealthInFlight = undefined;
@@ -3828,6 +3832,38 @@ export class RayRuntime {
     return snapshot;
   }
 
+  private applyWarmStateToProviderHealth(snapshot: ProviderHealthSnapshot): ProviderHealthSnapshot {
+    if (this.warmState === "warming") {
+      return {
+        ...snapshot,
+        status: snapshot.status === "unavailable" ? "unavailable" : "warming",
+        details: {
+          ...(snapshot.details ?? {}),
+          rayWarmupStatus: "warming",
+        },
+      };
+    }
+
+    if (this.warmState === "failed") {
+      return {
+        ...snapshot,
+        status: "unavailable",
+        details: {
+          ...(snapshot.details ?? {}),
+          rayWarmupStatus: "failed",
+          ...(this.lastWarmError ? { rayWarmupMessage: this.lastWarmError } : {}),
+        },
+      };
+    }
+
+    return snapshot;
+  }
+
+  private recordProviderHealth(snapshot: ProviderHealthSnapshot): ProviderHealthSnapshot {
+    this.metrics.recordProviderHealth(snapshot);
+    return snapshot;
+  }
+
   private async refreshProviderHealth(): Promise<ProviderHealthSnapshot> {
     try {
       const rawSnapshot = await this.provider.health?.();
@@ -3838,7 +3874,6 @@ export class RayRuntime {
           checkedAtMs: Date.now(),
           snapshot,
         };
-        this.metrics.recordProviderHealth(snapshot);
         return snapshot;
       }
     } catch (error) {
@@ -3853,7 +3888,6 @@ export class RayRuntime {
         checkedAtMs: Date.now(),
         snapshot,
       };
-      this.metrics.recordProviderHealth(snapshot);
       return snapshot;
     }
 
@@ -3865,7 +3899,6 @@ export class RayRuntime {
       checkedAtMs: Date.now(),
       snapshot,
     };
-    this.metrics.recordProviderHealth(snapshot);
     return snapshot;
   }
 
