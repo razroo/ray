@@ -125,6 +125,8 @@ test("validateConfigFiles requires explicit public ingress controls", async (t) 
   assert.ok(codes.includes("public_config_async_queue_max_jobs_explicit"));
   assert.ok(codes.includes("public_config_async_queue_storage_reserve_explicit"));
   assert.ok(codes.includes("public_config_async_queue_completed_ttl_explicit"));
+  assert.ok(codes.includes("public_config_async_queue_private_callbacks_explicit"));
+  assert.ok(codes.includes("public_config_async_queue_callback_hosts_explicit"));
 });
 
 test("validateConfigFiles accepts every checked-in example config", async () => {

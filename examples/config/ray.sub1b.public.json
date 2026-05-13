@@ -67,7 +67,9 @@
     "dispatchConcurrency": 1,
     "maxAttempts": 3,
     "callbackTimeoutMs": 5000,
-    "maxCallbackAttempts": 5
+    "maxCallbackAttempts": 5,
+    "callbackAllowPrivateNetwork": false,
+    "callbackAllowedHosts": []
   },
   "cache": {
     "enabled": true,

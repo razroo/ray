@@ -272,6 +272,25 @@ function expectPublicConfigString(
   );
 }
 
+function expectPublicConfigEmptyArray(
+  diagnostics: DeploymentDiagnostic[],
+  config: ConfigRecord,
+  keys: string[],
+  code: string,
+): void {
+  const actual = getConfigValue(config, keys);
+
+  if (Array.isArray(actual) && actual.length === 0) {
+    return;
+  }
+
+  pushPublicConfigPolicyError(
+    diagnostics,
+    code,
+    `Public example configs must explicitly declare ${keys.join(".")}=[].`,
+  );
+}
+
 function expectPublicConfigPositiveIntegerAtMost(
   diagnostics: DeploymentDiagnostic[],
   config: ConfigRecord,
@@ -437,6 +456,19 @@ async function diagnosePublicConfigPolicy(configPath: string): Promise<Deploymen
     ["asyncQueue", "completedTtlMs"],
     MAX_PUBLIC_ASYNC_QUEUE_COMPLETED_TTL_MS,
     "public_config_async_queue_completed_ttl_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["asyncQueue", "callbackAllowPrivateNetwork"],
+    false,
+    "public_config_async_queue_private_callbacks_explicit",
+  );
+  expectPublicConfigEmptyArray(
+    diagnostics,
+    parsed,
+    ["asyncQueue", "callbackAllowedHosts"],
+    "public_config_async_queue_callback_hosts_explicit",
   );
 
   return diagnostics;
