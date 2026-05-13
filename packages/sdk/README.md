@@ -5,7 +5,7 @@ Minimal TypeScript client for the [Ray](https://github.com/razroo/ray) inference
 ## Install
 
 ```bash
-npm install @razroo/ray-sdk
+bun add @razroo/ray-sdk
 ```
 
 Requires `@razroo/ray-core` (installed automatically as a dependency).

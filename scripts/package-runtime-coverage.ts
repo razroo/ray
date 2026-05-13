@@ -10,6 +10,7 @@ const DEFAULT_RUNTIME_DOCS = [
   "docs/integrations/razroo-email-ai.md",
   "docs/portable-1b.md",
   "docs/release-checklist.md",
+  "packages/sdk/README.md",
 ] as const;
 const VPS_TIMEOUT_DOCS = new Set([
   "examples/deploy/vps/README.md",
@@ -478,7 +479,7 @@ function isVpsRuntimeCurlCommand(line: string): boolean {
 }
 
 function hasDocumentationDomainCallbackUrl(line: string): boolean {
-  return /["']callbackUrl["']\s*:\s*["']https?:\/\/(?:[^/."']+\.)?example\.(?:com|net|org)\b/i.test(
+  return /(?:["']callbackUrl["']|\bcallbackUrl\b)\s*:\s*["']https?:\/\/(?:[^/."']+\.)?example\.(?:com|net|org)\b/i.test(
     line,
   );
 }
@@ -1149,6 +1150,17 @@ async function validateRuntimeDoc(
 
     const line = rawLine.trim();
 
+    if (hasDocumentationDomainCallbackUrl(line)) {
+      diagnostics.push({
+        level: "error",
+        code: "runtime_doc_example_callback_url",
+        docPath,
+        line: index + 1,
+        message:
+          "Runtime docs must not put documentation-domain callbackUrl values in executable examples. Omit callbackUrl or use an operator-owned endpoint.",
+      });
+    }
+
     for (const scriptName of collectDocumentedBunRunScripts(line)) {
       if (scriptName.length > 0 && options.rootScripts[scriptName] === undefined) {
         diagnostics.push({
@@ -1193,17 +1205,6 @@ async function validateRuntimeDoc(
         line: index + 1,
         message:
           "Runtime docs must not tell operators to use pnpm/yarn/npx or npm install/run/test. Use bun, bunx, or a direct binary instead.",
-      });
-    }
-
-    if (hasDocumentationDomainCallbackUrl(line)) {
-      diagnostics.push({
-        level: "error",
-        code: "runtime_doc_example_callback_url",
-        docPath,
-        line: index + 1,
-        message:
-          "Runtime docs must not put documentation-domain callbackUrl values in executable examples. Omit callbackUrl or use an operator-owned endpoint.",
       });
     }
 

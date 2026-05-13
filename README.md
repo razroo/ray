@@ -430,7 +430,7 @@ TypeScript libraries for integrating with the gateway:
 | **`@razroo/ray-core`** | Shared types and errors      |
 | **`@razroo/ray-sdk`**  | `RayClient` for the HTTP API |
 
-Install: `npm install @razroo/ray-sdk` (pulls **`@razroo/ray-core`**).
+Install: `bun add @razroo/ray-sdk` (pulls **`@razroo/ray-core`**).
 
 ### Versioning and releases
 

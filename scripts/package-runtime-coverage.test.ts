@@ -46,6 +46,11 @@ test("validatePackageRuntimeCoverage accepts current Bun-first workspace manifes
   assert.equal(summary.forbiddenLockfiles.length, 0);
   assert.ok(
     summary.results.some(
+      (result) => result.packagePath === path.join(repoRoot, "packages/sdk/README.md"),
+    ),
+  );
+  assert.ok(
+    summary.results.some(
       (result) =>
         result.packagePath === path.join(repoRoot, "package.json") &&
         result.packageManager?.startsWith("bun@"),
@@ -337,7 +342,6 @@ test("validatePackageRuntimeCoverage requires bounded curl probes in runtime doc
       "",
     ].join("\n"),
   );
-
   const summary = await validatePackageRuntimeCoverage({
     cwd: tempDir,
     packageJsonPaths: [rootPackageJson],
@@ -389,6 +393,21 @@ test("validatePackageRuntimeCoverage rejects documentation-domain callback URLs 
       "",
     ].join("\n"),
   );
+  await mkdir(path.join(tempDir, "packages", "sdk"), { recursive: true });
+  await writeFile(
+    path.join(tempDir, "packages", "sdk", "README.md"),
+    [
+      "# SDK",
+      "",
+      "```typescript",
+      "await client.createJob({",
+      '  input: "Draft",',
+      '  callbackUrl: "https://example.org/ray-callback",',
+      "});",
+      "```",
+      "",
+    ].join("\n"),
+  );
 
   const summary = await validatePackageRuntimeCoverage({
     cwd: tempDir,
@@ -397,8 +416,12 @@ test("validatePackageRuntimeCoverage rejects documentation-domain callback URLs 
   const diagnostics = summary.results.flatMap((result) => result.diagnostics);
 
   assert.equal(summary.ok, false);
-  assert.ok(
-    diagnostics.some((diagnostic) => diagnostic.code === "runtime_doc_example_callback_url"),
+  const callbackDiagnostics = diagnostics.filter(
+    (diagnostic) => diagnostic.code === "runtime_doc_example_callback_url",
+  );
+  assert.deepEqual(
+    callbackDiagnostics.map((diagnostic) => path.relative(tempDir, diagnostic.docPath ?? "")),
+    ["README.md", path.join("packages", "sdk", "README.md")],
   );
 });
 
