@@ -1551,7 +1551,7 @@ function boolToLaunchArg(value: boolean, enabledFlag: string, disabledFlag?: str
   return disabledFlag ? [disabledFlag] : [];
 }
 
-function buildLlamaCppLaunchArgs(profile: LlamaCppLaunchProfile): string[] {
+export function buildLlamaCppLaunchArgs(profile: LlamaCppLaunchProfile): string[] {
   assertLlamaCppLaunchProfileForEnvironment(profile);
 
   return [

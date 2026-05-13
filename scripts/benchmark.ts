@@ -6,7 +6,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadRayConfig, mergeConfig, type DeepPartial } from "@ray/config";
 import type { LlamaCppLaunchProfile, RayConfig } from "@razroo/ray-core";
-import { buildLlamaCppEnvironment } from "../packages/deploy/src/index.ts";
+import { buildLlamaCppEnvironment, buildLlamaCppLaunchArgs } from "../packages/deploy/src/index.ts";
 
 type AutotuneScope = "auto" | "gateway" | "full";
 type BenchmarkCheckOperator = "<=" | ">=" | "===";
@@ -2276,7 +2276,7 @@ async function startLlamaCppServer(launchProfile: LlamaCppLaunchProfile): Promis
   return await spawnBenchmarkChild(
     "llama.cpp server",
     launchProfile.binaryPath,
-    launchProfile.extraArgs ?? [],
+    buildBenchmarkLlamaCppServerArgs(launchProfile),
     {
       cwd: process.cwd(),
       env: {
@@ -2285,6 +2285,10 @@ async function startLlamaCppServer(launchProfile: LlamaCppLaunchProfile): Promis
       },
     },
   );
+}
+
+export function buildBenchmarkLlamaCppServerArgs(launchProfile: LlamaCppLaunchProfile): string[] {
+  return [...buildLlamaCppLaunchArgs(launchProfile), ...(launchProfile.extraArgs ?? [])];
 }
 
 async function stopChildProcess(child: ChildProcess): Promise<void> {

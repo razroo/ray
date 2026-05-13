@@ -10,6 +10,7 @@ import { createDefaultConfig } from "@ray/config";
 import {
   appendHistoryOutput,
   buildAutotuneCandidates,
+  buildBenchmarkLlamaCppServerArgs,
   loadBaseline,
   loadWorkload,
   parseArgs,
@@ -181,6 +182,30 @@ test("buildAutotuneCandidates caps scheduler sweeps near the active config", () 
     () => buildAutotuneCandidates(config, 257),
     /Autotune scheduler candidate limit must be a positive integer/,
   );
+});
+
+test("buildBenchmarkLlamaCppServerArgs mirrors generated launch profiles", () => {
+  const config = createDefaultConfig("1b");
+  if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
+    throw new Error("Expected llama.cpp launch profile");
+  }
+
+  config.model.adapter.launchProfile.extraArgs = ["--no-mmap"];
+  const args = buildBenchmarkLlamaCppServerArgs(config.model.adapter.launchProfile);
+
+  assert.deepEqual(args.slice(0, 6), [
+    "--model",
+    config.model.adapter.launchProfile.modelPath,
+    "--alias",
+    config.model.adapter.launchProfile.alias,
+    "--host",
+    config.model.adapter.launchProfile.host,
+  ]);
+  assert.match(args.join(" "), /--threads-batch 2/);
+  assert.match(args.join(" "), /--batch-size 192 --ubatch-size 96/);
+  assert.match(args.join(" "), /--cache-prompt --cache-reuse 192 --cache-ram 384/);
+  assert.match(args.join(" "), /--cont-batching --metrics --slots --warmup/);
+  assert.equal(args.at(-1), "--no-mmap");
 });
 
 test("loadWorkload rejects oversized benchmark workload files before parsing", async (t) => {
