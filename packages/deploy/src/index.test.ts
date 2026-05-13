@@ -605,6 +605,41 @@ test("diagnoseConfig warns when VPS efficiency controls are disabled", () => {
   assert.equal(learnedCapsDiagnostic.level, "warn");
 });
 
+test("diagnoseConfig warns when VPS output clamps cannot reduce completions", () => {
+  const tokenClampConfig = mergeConfig(createDefaultConfig("vps"), {
+    gracefulDegradation: {
+      degradeToMaxTokens: 384,
+    },
+  });
+  const tokenClampDiagnostic = diagnoseConfig(tokenClampConfig, process.env).find(
+    (diagnostic) => diagnostic.code === "graceful_degradation_token_clamp_ineffective",
+  );
+  assert.ok(tokenClampDiagnostic);
+  assert.equal(tokenClampDiagnostic.level, "warn");
+
+  const adaptiveReductionConfig = mergeConfig(createDefaultConfig("vps"), {
+    adaptiveTuning: {
+      maxOutputReductionRatio: 0,
+    },
+  });
+  const adaptiveReductionDiagnostic = diagnoseConfig(adaptiveReductionConfig, process.env).find(
+    (diagnostic) => diagnostic.code === "adaptive_output_reduction_disabled",
+  );
+  assert.ok(adaptiveReductionDiagnostic);
+  assert.equal(adaptiveReductionDiagnostic.level, "warn");
+
+  const adaptiveMinimumConfig = mergeConfig(createDefaultConfig("vps"), {
+    adaptiveTuning: {
+      minOutputTokens: 384,
+    },
+  });
+  const adaptiveMinimumDiagnostic = diagnoseConfig(adaptiveMinimumConfig, process.env).find(
+    (diagnostic) => diagnostic.code === "adaptive_min_output_tokens_ineffective",
+  );
+  assert.ok(adaptiveMinimumDiagnostic);
+  assert.equal(adaptiveMinimumDiagnostic.level, "warn");
+});
+
 test("diagnoseConfig warns when IP rate-limit proxy header posture is unsafe", () => {
   const publicBindConfig = mergeConfig(createDefaultConfig("vps"), {
     server: {

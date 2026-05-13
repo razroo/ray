@@ -2382,6 +2382,13 @@ export function diagnoseConfig(
       message:
         "Graceful degradation is disabled. Cheap single-node VPS deployments should keep queue, memory, CPU, and prompt clamps enabled so overload sheds work before the gateway can only queue or reject requests.",
     });
+  } else if (config.gracefulDegradation.degradeToMaxTokens >= config.model.maxOutputTokens) {
+    diagnostics.push({
+      level: "warn",
+      code: "graceful_degradation_token_clamp_ineffective",
+      message:
+        "gracefulDegradation.degradeToMaxTokens is at least model.maxOutputTokens, so degradation cannot reduce completion length under queue, memory, or CPU pressure.",
+    });
   }
 
   if (!config.promptCompiler.enabled) {
@@ -2400,6 +2407,20 @@ export function diagnoseConfig(
         code: "adaptive_tuning_disabled",
         message:
           "Adaptive tuning is disabled. Single-node VPS deployments should keep latency and throughput based output caps enabled so slow backends shed optional completion work under pressure.",
+      });
+    } else if (config.adaptiveTuning.maxOutputReductionRatio <= 0) {
+      diagnostics.push({
+        level: "warn",
+        code: "adaptive_output_reduction_disabled",
+        message:
+          "adaptiveTuning.maxOutputReductionRatio is 0, so adaptive tuning can observe pressure but cannot reduce completion length.",
+      });
+    } else if (config.adaptiveTuning.minOutputTokens >= config.model.maxOutputTokens) {
+      diagnostics.push({
+        level: "warn",
+        code: "adaptive_min_output_tokens_ineffective",
+        message:
+          "adaptiveTuning.minOutputTokens is at least model.maxOutputTokens, so adaptive tuning cannot lower the request cap under latency or throughput pressure.",
       });
     } else if (!config.adaptiveTuning.learnedFamilyCapEnabled) {
       diagnostics.push({
