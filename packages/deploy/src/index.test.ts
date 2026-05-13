@@ -1087,6 +1087,54 @@ test("renderLlamaCppService rejects malformed service options and launch profile
         user: "ray",
         launchProfile: {
           ...launchProfile,
+          binaryPath: "/home/ray/bin/llama-server",
+        },
+      }),
+    /model\.adapter\.launchProfile\.binaryPath is under \/home, \/root, or \/run\/user/,
+  );
+
+  assert.throws(
+    () =>
+      renderLlamaCppService({
+        user: "ray",
+        launchProfile: {
+          ...launchProfile,
+          binaryPath: "/var/tmp/llama-server",
+        },
+      }),
+    /model\.adapter\.launchProfile\.binaryPath is under \/tmp or \/var\/tmp/,
+  );
+
+  assert.throws(
+    () =>
+      renderLlamaCppService({
+        user: "ray",
+        launchProfile: {
+          ...launchProfile,
+          modelPath: "/root/models/local-1b.gguf",
+        },
+      }),
+    /model\.adapter\.launchProfile\.modelPath is under \/home, \/root, or \/run\/user/,
+  );
+
+  assert.throws(
+    () =>
+      renderLlamaCppService({
+        user: "ray",
+        launchProfile: {
+          ...launchProfile,
+          modelPath: "/tmp/local-1b.gguf",
+        },
+      }),
+    /model\.adapter\.launchProfile\.modelPath is under \/tmp or \/var\/tmp/,
+  );
+
+  assert.throws(
+    () =>
+      renderLlamaCppService({
+        user: "ray",
+        launchProfile: {
+          ...launchProfile,
           cachePrompt: "true" as never,
         },
       }),

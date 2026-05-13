@@ -1660,6 +1660,26 @@ export function renderCaddyfile(options: ReverseProxyOptions): string {
 export function renderLlamaCppService(options: LlamaCppServiceOptions): string {
   assertOptionsObject(options, "llama.cpp service options");
   assertLlamaCppLaunchProfileForService(options.launchProfile);
+  if (isSystemdProtectHomePath(options.launchProfile.binaryPath)) {
+    throw new Error(
+      "model.adapter.launchProfile.binaryPath is under /home, /root, or /run/user, but the generated llama.cpp service uses ProtectHome=true",
+    );
+  }
+  if (isSystemdPrivateTmpPath(options.launchProfile.binaryPath)) {
+    throw new Error(
+      "model.adapter.launchProfile.binaryPath is under /tmp or /var/tmp, but the generated llama.cpp service uses PrivateTmp=true",
+    );
+  }
+  if (isSystemdProtectHomePath(options.launchProfile.modelPath)) {
+    throw new Error(
+      "model.adapter.launchProfile.modelPath is under /home, /root, or /run/user, but the generated llama.cpp service uses ProtectHome=true",
+    );
+  }
+  if (isSystemdPrivateTmpPath(options.launchProfile.modelPath)) {
+    throw new Error(
+      "model.adapter.launchProfile.modelPath is under /tmp or /var/tmp, but the generated llama.cpp service uses PrivateTmp=true",
+    );
+  }
 
   if (options.envFile !== undefined) {
     assertSystemdScalar(options.envFile, "envFile");
