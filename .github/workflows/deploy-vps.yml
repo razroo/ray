@@ -92,11 +92,6 @@ jobs:
           SSH_PORT_INPUT="${RAY_DEPLOY_SSH_PORT:-22}"
           SSH_USER_INPUT="${RAY_DEPLOY_SSH_USER:-root}"
 
-          if [ -n "${RAY_DEPLOY_MEMORY_MIB:-}" ] && ! printf '%s' "$RAY_DEPLOY_MEMORY_MIB" | grep -Eq '^[1-9][0-9]*$'; then
-            echo "::error::RAY_DEPLOY_MEMORY_MIB must be a positive integer MiB value."
-            exit 1
-          fi
-
           READY_TIMEOUT_SECONDS=$(READY_TIMEOUT_SECONDS="$READY_TIMEOUT_SECONDS_INPUT" bun --eval '
           import { parseDeployReadyTimeoutSeconds } from "./packages/deploy/dist/cli.js";
 
@@ -200,6 +195,19 @@ jobs:
 
             fail(`${label} must be true or false.`);
           };
+          const parseOptionalPositiveInteger = (value, label) => {
+            const raw = readNonEmpty(value);
+            if (raw === undefined) {
+              return undefined;
+            }
+
+            const parsed = Number(raw.trim());
+            if (!/^\d+$/.test(raw.trim()) || !Number.isSafeInteger(parsed) || parsed <= 0) {
+              fail(`${label} must be a positive integer`);
+            }
+
+            return String(parsed);
+          };
           const publicCaddyHost = (siteAddress) => {
             const withoutScheme = siteAddress
               .toLowerCase()
@@ -242,6 +250,16 @@ jobs:
               "RAY_DEPLOY_INSTALL_CADDY",
             ) ??
             false;
+          const deployMemoryMiB =
+            parseOptionalPositiveInteger(
+              envOverrides.RAY_DEPLOY_MEMORY_MIB,
+              "RAY_DEPLOY_MEMORY_MIB",
+            ) ??
+            parseOptionalPositiveInteger(
+              process.env.RAY_DEPLOY_MEMORY_MIB,
+              "RAY_DEPLOY_MEMORY_MIB",
+            ) ??
+            "";
 
           if (/[\s{}]/.test(deployDomain)) {
             fail(
@@ -318,6 +336,7 @@ jobs:
               "ray",
             deployDomain,
             installCaddy,
+            deployMemoryMiB,
             gatewayRuntimeBinary,
             caddyBinary,
           }));
@@ -327,6 +346,7 @@ jobs:
           SERVICE_USER=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).serviceUser')
           DEPLOY_DOMAIN=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).deployDomain')
           INSTALL_CADDY=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'String(JSON.parse(process.env.DEPLOY_SETTINGS).installCaddy)')
+          DEPLOY_MEMORY_MIB=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).deployMemoryMiB ?? ""')
           GATEWAY_RUNTIME_BINARY=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).gatewayRuntimeBinary')
           CADDY_BINARY=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).caddyBinary ?? ""')
 
@@ -362,6 +382,7 @@ jobs:
           echo "service_user=$SERVICE_USER" >> "$GITHUB_OUTPUT"
           echo "deploy_domain=$DEPLOY_DOMAIN" >> "$GITHUB_OUTPUT"
           echo "install_caddy=$INSTALL_CADDY" >> "$GITHUB_OUTPUT"
+          echo "deploy_memory_mib=$DEPLOY_MEMORY_MIB" >> "$GITHUB_OUTPUT"
           echo "ready_timeout_seconds=$READY_TIMEOUT_SECONDS" >> "$GITHUB_OUTPUT"
           echo "gateway_runtime_binary=$GATEWAY_RUNTIME_BINARY" >> "$GITHUB_OUTPUT"
           echo "caddy_binary=$CADDY_BINARY" >> "$GITHUB_OUTPUT"
@@ -537,6 +558,7 @@ jobs:
           HEALTH_PORT: ${{ steps.settings.outputs.health_port }}
           DEPLOY_DOMAIN: ${{ steps.settings.outputs.deploy_domain }}
           INSTALL_CADDY: ${{ steps.settings.outputs.install_caddy }}
+          DEPLOY_MEMORY_MIB: ${{ steps.settings.outputs.deploy_memory_mib }}
           SERVICE_USER: ${{ steps.settings.outputs.service_user }}
           READY_TIMEOUT_SECONDS: ${{ steps.settings.outputs.ready_timeout_seconds }}
           GATEWAY_RUNTIME_BINARY: ${{ steps.settings.outputs.gateway_runtime_binary }}
@@ -566,7 +588,7 @@ jobs:
           }
 
           timeout 4500s ssh "${SSH_ARGS[@]}" "$TARGET" \
-            "CONFIG_SOURCE=$(shell_quote "$CONFIG_SOURCE") CONFIG_REL=$(shell_quote "$CONFIG_REL") CONFIG_B64=$(shell_quote "$CONFIG_B64") HEALTH_PORT=$(shell_quote "$HEALTH_PORT") DEPLOY_DOMAIN=$(shell_quote "$DEPLOY_DOMAIN") INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") SERVICE_USER=$(shell_quote "$SERVICE_USER") READY_TIMEOUT_SECONDS=$(shell_quote "$READY_TIMEOUT_SECONDS") GATEWAY_RUNTIME_BINARY=$(shell_quote "$GATEWAY_RUNTIME_BINARY") CADDY_BINARY=$(shell_quote "$CADDY_BINARY") RAY_DEPLOY_MEMORY_MIB=$(shell_quote "${RAY_DEPLOY_MEMORY_MIB:-}") ENV_B64=$(shell_quote "$ENV_B64") bash -s" <<'ENDSSH'
+            "CONFIG_SOURCE=$(shell_quote "$CONFIG_SOURCE") CONFIG_REL=$(shell_quote "$CONFIG_REL") CONFIG_B64=$(shell_quote "$CONFIG_B64") HEALTH_PORT=$(shell_quote "$HEALTH_PORT") DEPLOY_DOMAIN=$(shell_quote "$DEPLOY_DOMAIN") INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") SERVICE_USER=$(shell_quote "$SERVICE_USER") READY_TIMEOUT_SECONDS=$(shell_quote "$READY_TIMEOUT_SECONDS") GATEWAY_RUNTIME_BINARY=$(shell_quote "$GATEWAY_RUNTIME_BINARY") CADDY_BINARY=$(shell_quote "$CADDY_BINARY") RAY_DEPLOY_MEMORY_MIB=$(shell_quote "${DEPLOY_MEMORY_MIB:-}") ENV_B64=$(shell_quote "$ENV_B64") bash -s" <<'ENDSSH'
           set -euo pipefail
 
           SUDO=""

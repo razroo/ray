@@ -706,6 +706,42 @@ function validateDeployWorkflowCaddyEnvOverrides(
   ];
 }
 
+function validateDeployWorkflowMemoryEnvOverride(
+  workflowPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  if (!contents.includes("RAY_DEPLOY_MEMORY_MIB")) {
+    return [];
+  }
+
+  if (
+    contents.includes("envOverrides.RAY_DEPLOY_MEMORY_MIB") &&
+    contents.includes("process.env.RAY_DEPLOY_MEMORY_MIB") &&
+    contents.includes("deployMemoryMiB") &&
+    contents.includes('echo "deploy_memory_mib=$DEPLOY_MEMORY_MIB" >> "$GITHUB_OUTPUT"') &&
+    contents.includes("DEPLOY_MEMORY_MIB: ${{ steps.settings.outputs.deploy_memory_mib }}") &&
+    contents.includes('RAY_DEPLOY_MEMORY_MIB=$(shell_quote "${DEPLOY_MEMORY_MIB:-}")')
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "workflow_memory_env_override_missing",
+      workflowPath,
+      line: workflowLineNumber(lines, "RAY_DEPLOY_MEMORY_MIB"),
+      message:
+        "VPS deploy workflow must resolve RAY_DEPLOY_MEMORY_MIB after parsing RAY_ENV_FILE_CONTENTS so malformed env-file memory budgets fail before SSH and resolved budgets feed remote doctor, render, and staging.",
+    },
+  ];
+}
+
 function validateDeployWorkflowCaddyBinaryGuards(
   workflowPath: string,
   contents: string,
@@ -1308,6 +1344,7 @@ async function validateWorkflow(
   diagnostics.push(...validateDeployWorkflowPublicCaddyAuthGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowPublicCaddyDomainGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowCaddyEnvOverrides(workflowPath, contents, lines));
+  diagnostics.push(...validateDeployWorkflowMemoryEnvOverride(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowCaddyBinaryGuards(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowServiceUserGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowNumericServiceUserGuard(workflowPath, contents, lines));

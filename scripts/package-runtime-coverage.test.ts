@@ -147,6 +147,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
       "env:",
       "  RAY_DEPLOY_INSTALL_CADDY: ${{ vars.RAY_DEPLOY_INSTALL_CADDY }}",
       "  RAY_DEPLOY_DOMAIN: ${{ vars.RAY_DEPLOY_DOMAIN }}",
+      "  RAY_DEPLOY_MEMORY_MIB: ${{ vars.RAY_DEPLOY_MEMORY_MIB }}",
       "  RAY_DEPLOY_SERVICE_USER: ${{ vars.RAY_DEPLOY_SERVICE_USER }}",
       "  RAY_GATEWAY_RUNTIME_BINARY: ${{ vars.RAY_GATEWAY_RUNTIME_BINARY }}",
       "jobs:",
@@ -233,6 +234,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("workflow_public_caddy_auth_guard_missing"));
   assert.ok(codes.includes("workflow_public_caddy_domain_guard_missing"));
   assert.ok(codes.includes("workflow_caddy_env_override_missing"));
+  assert.ok(codes.includes("workflow_memory_env_override_missing"));
   assert.ok(codes.includes("workflow_caddy_binary_guard_missing"));
   assert.ok(codes.includes("workflow_service_user_parser_missing"));
   assert.ok(codes.includes("workflow_numeric_service_user_guard_missing"));
