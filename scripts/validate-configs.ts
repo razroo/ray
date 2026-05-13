@@ -11,6 +11,7 @@ const DEFAULT_SMOKE_API_KEY = "ray-config-smoke";
 const MAX_CONFIG_FILES = 128;
 const MAX_CLI_ARGS = 16;
 const MAX_CLI_ARG_BYTES = 4_096;
+const MAX_CONFIG_VALIDATION_PATH_BYTES = 4_096;
 const MAX_PUBLIC_MODEL_CONTEXT_WINDOW = 8_192;
 const MAX_PUBLIC_MODEL_OUTPUT_TOKENS = 256;
 const MAX_PUBLIC_MODEL_OPERATIONAL_TOKENS_PER_SECOND = 18;
@@ -156,6 +157,20 @@ function requireFlagValue(flag: string, value: string | undefined): string {
   return value;
 }
 
+function assertConfigValidationPathValue(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty path`);
+  }
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} must not contain control characters`);
+  }
+
+  if (Buffer.byteLength(value, "utf8") > MAX_CONFIG_VALIDATION_PATH_BYTES) {
+    throw new Error(`${label} must be at most ${MAX_CONFIG_VALIDATION_PATH_BYTES} bytes`);
+  }
+}
+
 export function parseArgs(argv: string[]): ValidateConfigsArgs {
   assertArgv(argv);
 
@@ -214,6 +229,8 @@ export function parseArgs(argv: string[]): ValidateConfigsArgs {
 }
 
 export async function collectConfigPaths(cwd: string, configDir: string): Promise<string[]> {
+  assertConfigValidationPathValue(cwd, "cwd");
+  assertConfigValidationPathValue(configDir, "configDir");
   const absoluteConfigDir = path.resolve(cwd, configDir);
   const configPaths: string[] = [];
   let directory: Awaited<ReturnType<typeof opendir>> | undefined;
@@ -1302,6 +1319,11 @@ export async function validateConfigFiles(options: {
 }): Promise<ConfigValidationSummary> {
   if (options.configPaths.length > MAX_CONFIG_FILES) {
     throw new Error(`Config validation can inspect at most ${MAX_CONFIG_FILES} config files`);
+  }
+
+  assertConfigValidationPathValue(options.cwd, "cwd");
+  for (const [index, configPath] of options.configPaths.entries()) {
+    assertConfigValidationPathValue(configPath, `configPaths[${index}]`);
   }
 
   const env = withSmokeAuthEnv(options.env ?? process.env);

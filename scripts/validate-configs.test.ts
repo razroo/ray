@@ -76,6 +76,13 @@ test("collectConfigPaths rejects excessive configs while streaming", async (t) =
   );
 });
 
+test("collectConfigPaths rejects oversized direct paths before reading directories", async () => {
+  await assert.rejects(
+    () => collectConfigPaths(process.cwd(), `configs/${"a".repeat(4096)}`),
+    /configDir must be at most 4096 bytes/,
+  );
+});
+
 test("validateConfigFiles rejects excessive config inputs before rendering", async () => {
   await assert.rejects(
     () =>
@@ -87,6 +94,17 @@ test("validateConfigFiles rejects excessive config inputs before rendering", asy
         ),
       }),
     /at most 128 config files/,
+  );
+});
+
+test("validateConfigFiles rejects oversized direct paths before rendering", async () => {
+  await assert.rejects(
+    () =>
+      validateConfigFiles({
+        cwd: process.cwd(),
+        configPaths: [`/${"a".repeat(4096)}`],
+      }),
+    /configPaths\[0\] must be at most 4096 bytes/,
   );
 });
 
