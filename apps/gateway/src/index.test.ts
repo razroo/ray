@@ -141,7 +141,59 @@ test("gateway bounds HTTP server socket and header resources for small VPS hosts
   assert.equal(gateway.server.keepAliveTimeout, 5_000);
   assert.equal(gateway.server.maxRequestsPerSocket, 1_000);
   assert.equal(gateway.server.maxConnections, 256);
+  assert.equal((gateway.server as Server & { maxHeaderSize: number }).maxHeaderSize, 12_288);
   assert.equal(gateway.server.maxHeadersCount, 64);
+});
+
+test("gateway rejects oversized HTTP headers before request handling", async (t) => {
+  const gateway = createGatewayServer({
+    config: createDefaultConfig("tiny"),
+  });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await new Promise<string>((resolve, reject) => {
+    const socket = createConnection(address.port, "127.0.0.1");
+    let raw = "";
+    let settled = false;
+
+    const finish = () => {
+      if (!settled) {
+        settled = true;
+        resolve(raw);
+      }
+    };
+
+    socket.setTimeout(1_000, () => {
+      socket.destroy(new Error("Timed out waiting for oversized header response"));
+    });
+    socket.on("connect", () => {
+      socket.write(
+        [
+          "GET /livez HTTP/1.1",
+          `Host: 127.0.0.1:${address.port}`,
+          `X-Ray-Bloat: ${"x".repeat(12_288)}`,
+          "",
+          "",
+        ].join("\r\n"),
+      );
+    });
+    socket.on("data", (chunk) => {
+      raw += chunk.toString("utf8");
+    });
+    socket.on("end", finish);
+    socket.on("close", finish);
+    socket.on("error", reject);
+  });
+
+  assert.match(response, /^HTTP\/1\.1 431 /);
+  assert.match(response, /\r\nconnection: close\r\n/i);
 });
 
 test("stopGateway force-closes active request sockets before systemd timeout", async (t) => {
