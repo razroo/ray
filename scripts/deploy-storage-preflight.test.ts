@@ -186,6 +186,28 @@ test("loadDeployStoragePreflightArgs rejects malformed ray env file thresholds",
   );
 });
 
+test("checkDeployStorageHeadroom rejects malformed direct options before probing", async () => {
+  await assert.rejects(
+    () =>
+      checkDeployStorageHeadroom({
+        paths: Array.from({ length: 17 }, (_value, index) => `/srv/ray-${index}`),
+      }),
+    /at most 16 storage paths/,
+  );
+  await assert.rejects(
+    () => checkDeployStorageHeadroom({ paths: ["/srv/ray"], minFreeStorageMiB: -1 }),
+    /minFreeStorageMiB must be a non-negative integer/,
+  );
+  await assert.rejects(
+    () => checkDeployStorageHeadroom({ paths: ["/srv/ray"], minFreeStorageMiB: 1.5 }),
+    /minFreeStorageMiB must be a non-negative integer/,
+  );
+  await assert.rejects(
+    () => checkDeployStorageHeadroom({ paths: ["/srv/ray"], minFreeStorageMiB: 1_048_577 }),
+    /minFreeStorageMiB must be less than or equal to 1048576/,
+  );
+});
+
 test("checkDeployStorageHeadroom reports nearest existing parent and Bun statfs layout", async () => {
   const existingPaths = new Set(["/srv", "/var/lib/ray", "/tmp"]);
   const summary = await checkDeployStorageHeadroom({

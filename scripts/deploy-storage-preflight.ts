@@ -125,6 +125,18 @@ function parseNonNegativeInteger(value: string | undefined, label: string): numb
   return parsed;
 }
 
+function normalizeMinFreeStorageMiB(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
+
+  if (value > MAX_MIN_FREE_STORAGE_MIB) {
+    throw new Error(`${label} must be less than or equal to ${MAX_MIN_FREE_STORAGE_MIB}`);
+  }
+
+  return value;
+}
+
 function normalizeOptionalPath(value: string, label: string): string {
   if (value.length === 0 || value.trim() !== value) {
     throw new Error(`${label} must be a non-empty path without surrounding whitespace`);
@@ -504,7 +516,14 @@ export async function checkDeployStorageHeadroom(
   } = {},
 ): Promise<DeployStoragePreflightSummary> {
   const paths = options.paths ?? [...DEFAULT_STORAGE_PATHS];
-  const minFreeStorageMiB = options.minFreeStorageMiB ?? DEFAULT_MIN_FREE_STORAGE_MIB;
+  if (paths.length > MAX_STORAGE_PATHS) {
+    throw new Error(`at most ${MAX_STORAGE_PATHS} storage paths can be checked`);
+  }
+
+  const minFreeStorageMiB = normalizeMinFreeStorageMiB(
+    options.minFreeStorageMiB ?? DEFAULT_MIN_FREE_STORAGE_MIB,
+    "minFreeStorageMiB",
+  );
   const statFn = options.stat ?? stat;
   const statfsFn = options.statfs ?? statfs;
 
