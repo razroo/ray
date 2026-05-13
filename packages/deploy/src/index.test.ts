@@ -824,6 +824,30 @@ test("renderDeploymentBundle redacts adapter headers from summary output", async
   assert.doesNotMatch(JSON.stringify(bundle.summary), /upstream-secret|shared-secret/);
 });
 
+test("renderDeploymentBundle warns when generated services run as root", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-root-service-user-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, `${JSON.stringify(config)}\n`, "utf8");
+
+  const bundle = await renderDeploymentBundle({
+    cwd: tempDir,
+    configPath,
+    user: "root",
+    domain: "ray.example.com",
+  });
+
+  const diagnostic = bundle.summary.diagnostics.find((entry) => entry.code === "service_user_root");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /non-root service account/);
+  assert.equal(bundle.summary.preflight.serviceUser, "root");
+});
+
 test("renderLlamaCppService emits a single-vps launch profile", () => {
   const config = mergeConfig(createDefaultConfig("vps"), {
     model: {
@@ -1916,6 +1940,24 @@ test("diagnoseConfig errors when the generated service user is missing in strict
   const diagnostic = diagnostics.find((entry) => entry.code === "service_user_missing");
   assert.ok(diagnostic);
   assert.equal(diagnostic.level, "error");
+});
+
+test("diagnoseConfig warns when the generated service user resolves to root", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      serviceUser: "0",
+      serviceUserStatus: "found",
+      serviceUserUid: 0,
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "service_user_root");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /root/);
+  assert.match(diagnostic.message, /systemd hardening/);
 });
 
 test("diagnoseConfig errors when the target host cannot run systemd units", () => {

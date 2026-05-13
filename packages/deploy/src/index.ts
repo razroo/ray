@@ -443,6 +443,16 @@ function formatModelStageApplyHint(env: NodeJS.ProcessEnv): string {
   return ` If the source artifacts are already on this VPS, set both ${BINARY_SOURCE_ENV} and ${MODEL_SOURCE_ENV}, then run \`${command}\` before rerunning doctor.`;
 }
 
+function isRootServiceUser(
+  preflight: Pick<DeploymentPreflight, "serviceUser" | "serviceUserUid">,
+): boolean {
+  return (
+    preflight.serviceUser === "root" ||
+    preflight.serviceUser === "0" ||
+    preflight.serviceUserUid === 0
+  );
+}
+
 function escapeSystemdScalar(value: string | number): string {
   return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/%/g, "%%");
 }
@@ -1948,6 +1958,15 @@ export function diagnoseConfig(
     });
   }
 
+  if (preflight?.serviceUser !== undefined && isRootServiceUser(preflight)) {
+    diagnostics.push({
+      level: "warn",
+      code: "service_user_root",
+      message:
+        'Generated Ray systemd units are configured to run as root. Use a dedicated non-root service account such as "ray" so a gateway or backend compromise is contained by systemd hardening and file ownership.',
+    });
+  }
+
   if (strictFilesystem && preflight?.systemdStatus !== undefined) {
     if (preflight.systemdStatus === "missing") {
       diagnostics.push({
@@ -3237,8 +3256,12 @@ async function collectServiceUserPreflight(
   strictFilesystem: boolean,
   hostFiles: DeploymentHostFilePaths = {},
 ): Promise<Partial<DeploymentPreflight>> {
-  if (user === undefined || !strictFilesystem) {
+  if (user === undefined) {
     return {};
+  }
+
+  if (!strictFilesystem) {
+    return { serviceUser: user };
   }
 
   try {
