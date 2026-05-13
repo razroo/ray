@@ -8,6 +8,7 @@ import {
   formatTextSummary,
   parseArgs,
   smokeDeployConfigs,
+  validateStaticVpsExamples,
 } from "./deploy-smoke.ts";
 
 test("parseArgs accepts strict deploy smoke options", () => {
@@ -150,4 +151,29 @@ test("smokeDeployConfigs renders every checked-in public deploy profile", async 
   assert.match(verboseSummary, /warn auth_keys_unverified:/);
   assert.doesNotMatch(verboseSummary, /async_queue_storage_(?:low|ok|not_directory|unreadable)/);
   assert.match(verboseSummary, /Summary: warnings=\d+ errors=0/);
+});
+
+test("validateStaticVpsExamples keeps checked-in VPS examples aligned with render output", async () => {
+  const result = await validateStaticVpsExamples({ cwd: process.cwd() });
+
+  assert.equal(result.errorCount, 0);
+  assert.deepEqual(result.diagnostics, []);
+});
+
+test("validateStaticVpsExamples reports drifted checked-in VPS examples", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-deploy-static-drift-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const servicePath = path.join(tempDir, "ray-gateway.service");
+  await writeFile(servicePath, "[Unit]\nDescription=stale\n", "utf8");
+
+  const result = await validateStaticVpsExamples({
+    cwd: process.cwd(),
+    servicePath,
+  });
+
+  assert.equal(result.errorCount, 1);
+  assert.equal(result.diagnostics[0]?.code, "static_vps_gateway_service_drift");
 });

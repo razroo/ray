@@ -1,4 +1,4 @@
-import { opendir } from "node:fs/promises";
+import { open, opendir } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { renderDeploymentBundle, type DeploymentDiagnostic } from "../packages/deploy/src/index.ts";
@@ -8,9 +8,16 @@ const DEFAULT_DOMAIN = "ray.example.com";
 const DEFAULT_RUNTIME_BINARY = "/usr/local/bin/bun";
 const DEFAULT_SERVICE_USER = "ray";
 const DEFAULT_SYSTEMD_ENV_FILE = "/etc/ray/ray.env";
+const STATIC_EXAMPLE_CONFIG = "examples/config/ray.sub1b.public.json";
+const STATIC_EXAMPLE_GATEWAY_SERVICE = "examples/deploy/vps/ray-gateway.service";
+const STATIC_EXAMPLE_LLAMA_CPP_SERVICE = "examples/deploy/vps/ray-llama-cpp.service";
+const STATIC_EXAMPLE_CADDYFILE = "examples/deploy/vps/Caddyfile";
+const STATIC_EXAMPLE_WORKING_DIRECTORY = "/srv/ray";
+const STATIC_EXAMPLE_CONFIG_PATH = "/etc/ray/ray.json";
 const MAX_CONFIG_FILES = 128;
 const MAX_CLI_ARGS = 24;
 const MAX_CLI_ARG_BYTES = 4_096;
+const MAX_STATIC_EXAMPLE_BYTES = 256 * 1024;
 
 export interface DeploySmokeArgs {
   cwd: string;
@@ -43,6 +50,15 @@ export interface DeploySmokeSummary {
   errorCount: number;
   warningCount: number;
   results: DeploySmokeResult[];
+  staticExample?: DeployStaticExampleResult;
+}
+
+export interface DeployStaticExampleResult {
+  servicePath: string;
+  llamaCppServicePath: string;
+  caddyfilePath: string;
+  diagnostics: DeploymentDiagnostic[];
+  errorCount: number;
 }
 
 const HELP = `Dry-run public Ray VPS deployment bundles.
@@ -287,6 +303,165 @@ export async function smokeDeployConfigs(options: {
   };
 }
 
+async function readStaticExampleFile(filePath: string): Promise<string> {
+  let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
+
+  try {
+    fileHandle = await open(filePath, "r");
+    const stats = await fileHandle.stat();
+
+    if (!stats.isFile()) {
+      throw new Error(`Static deploy example path must be a file: ${filePath}`);
+    }
+
+    if (stats.size > MAX_STATIC_EXAMPLE_BYTES) {
+      throw new Error(
+        `Static deploy example must be at most ${MAX_STATIC_EXAMPLE_BYTES} bytes: ${filePath}`,
+      );
+    }
+
+    const contents = await fileHandle.readFile("utf8");
+    if (Buffer.byteLength(contents, "utf8") > MAX_STATIC_EXAMPLE_BYTES) {
+      throw new Error(
+        `Static deploy example must be at most ${MAX_STATIC_EXAMPLE_BYTES} bytes: ${filePath}`,
+      );
+    }
+
+    return contents.replace(/\r\n/g, "\n");
+  } finally {
+    await fileHandle?.close().catch(() => undefined);
+  }
+}
+
+function normalizeRenderedStaticExample(
+  contents: string,
+  options: { cwd: string; configPath: string },
+): string {
+  const cwd = path.resolve(options.cwd);
+  const configPath = path.resolve(options.cwd, options.configPath);
+
+  return contents
+    .replace(/\r\n/g, "\n")
+    .replaceAll(configPath, STATIC_EXAMPLE_CONFIG_PATH)
+    .replaceAll(cwd, STATIC_EXAMPLE_WORKING_DIRECTORY);
+}
+
+function compareStaticExample(
+  diagnostics: DeploymentDiagnostic[],
+  options: {
+    label: string;
+    code: string;
+    filePath: string;
+    expected: string;
+    actual: string;
+  },
+): void {
+  if (options.actual !== options.expected) {
+    diagnostics.push({
+      level: "error",
+      code: options.code,
+      message: `${options.label} at ${options.filePath} has drifted from the deploy renderer. Regenerate or update the checked-in VPS example before relying on manual deployment docs.`,
+    });
+  }
+}
+
+export async function validateStaticVpsExamples(options: {
+  cwd: string;
+  servicePath?: string;
+  llamaCppServicePath?: string;
+  caddyfilePath?: string;
+}): Promise<DeployStaticExampleResult> {
+  const cwd = path.resolve(options.cwd);
+  const configPath = path.join(cwd, STATIC_EXAMPLE_CONFIG);
+  const servicePath = path.resolve(cwd, options.servicePath ?? STATIC_EXAMPLE_GATEWAY_SERVICE);
+  const llamaCppServicePath = path.resolve(
+    cwd,
+    options.llamaCppServicePath ?? STATIC_EXAMPLE_LLAMA_CPP_SERVICE,
+  );
+  const caddyfilePath = path.resolve(cwd, options.caddyfilePath ?? STATIC_EXAMPLE_CADDYFILE);
+  const diagnostics: DeploymentDiagnostic[] = [];
+
+  try {
+    const bundle = await renderDeploymentBundle({
+      cwd,
+      configPath,
+      user: DEFAULT_SERVICE_USER,
+      domain: DEFAULT_DOMAIN,
+      systemdEnvFile: DEFAULT_SYSTEMD_ENV_FILE,
+      runtimeBinary: DEFAULT_RUNTIME_BINARY,
+      inspectHostStorage: false,
+    });
+    const expectedService = normalizeRenderedStaticExample(bundle.service, { cwd, configPath });
+    const expectedLlamaCppService = bundle.llamaCppService;
+    const expectedCaddyfile = bundle.caddyfile.replace(/\r\n/g, "\n");
+    const [actualService, actualLlamaCppService, actualCaddyfile] = await Promise.all([
+      readStaticExampleFile(servicePath),
+      readStaticExampleFile(llamaCppServicePath),
+      readStaticExampleFile(caddyfilePath),
+    ]);
+
+    compareStaticExample(diagnostics, {
+      label: "Static Ray gateway systemd example",
+      code: "static_vps_gateway_service_drift",
+      filePath: servicePath,
+      expected: expectedService,
+      actual: actualService,
+    });
+
+    if (expectedLlamaCppService === undefined) {
+      diagnostics.push({
+        level: "error",
+        code: "static_vps_llama_cpp_service_unexpected",
+        message: `Static llama.cpp systemd example exists at ${llamaCppServicePath}, but the canonical public VPS profile no longer renders a llama.cpp service.`,
+      });
+    } else {
+      compareStaticExample(diagnostics, {
+        label: "Static llama.cpp systemd example",
+        code: "static_vps_llama_cpp_service_drift",
+        filePath: llamaCppServicePath,
+        expected: expectedLlamaCppService,
+        actual: actualLlamaCppService,
+      });
+    }
+
+    compareStaticExample(diagnostics, {
+      label: "Static Caddyfile example",
+      code: "static_vps_caddyfile_drift",
+      filePath: caddyfilePath,
+      expected: expectedCaddyfile,
+      actual: actualCaddyfile,
+    });
+  } catch (error) {
+    diagnostics.push({
+      level: "error",
+      code: "static_vps_examples_invalid",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  return {
+    servicePath,
+    llamaCppServicePath,
+    caddyfilePath,
+    diagnostics,
+    errorCount: diagnostics.length,
+  };
+}
+
+function attachStaticExample(
+  summary: DeploySmokeSummary,
+  staticExample: DeployStaticExampleResult,
+): DeploySmokeSummary {
+  const errorCount = summary.errorCount + staticExample.errorCount;
+
+  return {
+    ...summary,
+    staticExample,
+    errorCount,
+    ok: errorCount === 0,
+  };
+}
+
 function buildSmokeDeployEnv(_env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
 
@@ -335,6 +510,17 @@ export function formatTextSummary(
     }
   }
 
+  if (summary.staticExample) {
+    const status = summary.staticExample.errorCount > 0 ? "FAIL" : "OK";
+    lines.push(
+      `- ${status} static VPS examples gateway=${displayPath(cwd, summary.staticExample.servicePath)} llama=${displayPath(cwd, summary.staticExample.llamaCppServicePath)} caddy=${displayPath(cwd, summary.staticExample.caddyfilePath)} errors=${summary.staticExample.errorCount}`,
+    );
+
+    for (const diagnostic of summary.staticExample.diagnostics) {
+      lines.push(`  ${diagnostic.level} ${diagnostic.code}: ${diagnostic.message}`);
+    }
+  }
+
   if (summary.warningCount > 0 && !options.verbose) {
     lines.push("Run with --verbose to print warning diagnostics.");
   }
@@ -360,7 +546,7 @@ export async function runDeploySmokeCli(
 
     const cwd = path.resolve(args.cwd);
     const configPaths = await collectPublicConfigPaths(cwd, args.configDir);
-    const summary = await smokeDeployConfigs({
+    const deploySummary = await smokeDeployConfigs({
       cwd,
       configPaths,
       domain: args.domain,
@@ -368,6 +554,7 @@ export async function runDeploySmokeCli(
       serviceUser: args.serviceUser,
       systemdEnvFile: args.systemdEnvFile,
     });
+    const summary = attachStaticExample(deploySummary, await validateStaticVpsExamples({ cwd }));
 
     io.stdout.write(
       args.json

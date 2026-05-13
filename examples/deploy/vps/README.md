@@ -278,7 +278,7 @@ different environment variable name.
 
 ### 6. Install the systemd unit
 
-Start from [ray-gateway.service](./ray-gateway.service) or generate one from the deploy package.
+Start from [ray-gateway.service](./ray-gateway.service) and [ray-llama-cpp.service](./ray-llama-cpp.service), or generate both from the deploy package.
 The example unit includes `StateDirectory=ray`, so systemd creates `/var/lib/ray`
 for the gateway user before the async queue writes to `/var/lib/ray/async-queue`.
 When the deploy renderer emits a llama.cpp unit, install it as

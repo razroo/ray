@@ -1,7 +1,7 @@
 ray.example.com {
   encode zstd gzip
   request_body {
-    max_size 64000
+    max_size 48000
   }
   header {
     X-Content-Type-Options nosniff
