@@ -74,7 +74,7 @@ export interface DeploymentBundleSummary {
   };
 }
 
-type MemoryBudgetSource = "override" | "preset" | "host";
+type MemoryBudgetSource = "override" | "config" | "preset" | "host";
 type ModelFileFormatStatus = "valid" | "invalid" | "unreadable";
 type AsyncQueueStorageStatus = "directory" | "parent" | "not_directory" | "unreadable";
 type BinaryPreflightStatus = "found" | "missing" | "unreadable";
@@ -1487,6 +1487,7 @@ function formatMemoryEstimateMessage(estimate: LlamaCppMemoryEstimate): string {
 function resolveMemoryBudget(options: {
   preset: LlamaCppLaunchProfile["preset"];
   overrideMemoryBudgetMiB?: number;
+  configMemoryBudgetMiB?: number;
   hostMemoryMiB?: number;
 }): { memoryBudgetMiB: number; memoryBudgetSource: MemoryBudgetSource } {
   if (options.overrideMemoryBudgetMiB !== undefined) {
@@ -1497,10 +1498,13 @@ function resolveMemoryBudget(options: {
   }
 
   const presetBudgetMiB = getPresetMemoryBudgetMiB(options.preset);
+  const configuredBudgetMiB = options.configMemoryBudgetMiB;
+  const budgetMiB = configuredBudgetMiB ?? presetBudgetMiB;
+  const budgetSource: MemoryBudgetSource = configuredBudgetMiB !== undefined ? "config" : "preset";
   const hostMemoryMiB = options.hostMemoryMiB;
 
   if (hostMemoryMiB !== undefined && hostMemoryMiB > 0) {
-    if (hostMemoryMiB < presetBudgetMiB) {
+    if (hostMemoryMiB < budgetMiB) {
       return {
         memoryBudgetMiB: hostMemoryMiB,
         memoryBudgetSource: "host",
@@ -1508,14 +1512,14 @@ function resolveMemoryBudget(options: {
     }
 
     return {
-      memoryBudgetMiB: presetBudgetMiB,
-      memoryBudgetSource: "preset",
+      memoryBudgetMiB: budgetMiB,
+      memoryBudgetSource: budgetSource,
     };
   }
 
   return {
-    memoryBudgetMiB: presetBudgetMiB,
-    memoryBudgetSource: "preset",
+    memoryBudgetMiB: budgetMiB,
+    memoryBudgetSource: budgetSource,
   };
 }
 
@@ -5045,6 +5049,9 @@ async function collectDeploymentPreflight(
     preset: launchProfile.preset,
     ...(options.memoryBudgetMiB !== undefined
       ? { overrideMemoryBudgetMiB: options.memoryBudgetMiB }
+      : {}),
+    ...(config.model.operational?.memoryClassMiB !== undefined
+      ? { configMemoryBudgetMiB: config.model.operational.memoryClassMiB }
       : {}),
     hostMemoryMiB,
   });

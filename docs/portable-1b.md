@@ -227,6 +227,9 @@ timeout 300s bun run doctor:1b:8gb:generic
 ```
 
 Doctor checks auth/env readiness, env-file permissions, systemd host readiness and generated unit-file verification, Caddy availability and generated Caddyfile validation for the reverse proxy (`caddy` on `PATH`, `RAY_DEPLOY_CADDY_BINARY`, or `--caddy-binary`), generated systemd user readiness, service-user access to the rendered config file, Bun runtime (`/usr/local/bin/bun` by default, `RAY_GATEWAY_RUNTIME_BINARY`, or `--gateway-runtime-binary`) including service-user-scoped Bun/Node version compatibility, generated WorkingDirectory access and free-space headroom for the synced checkout and Bun production install, built gateway entrypoint and configured-runtime importability, `llama-server` binary service-user startup and generated launch-flag support, GGUF model file presence and header, and async queue storage, launch profile consistency, architecture compatibility for ARM CAX11 versus x64 CX23 sub-1B profiles, generated gateway and llama.cpp paths that would be hidden by `ProtectHome=true` or `PrivateTmp=true`, gateway cache and scheduler token-buffer budgets against generated `MemoryMax`, scheduler concurrency against detected host vCPUs, deploy memory overrides that exceed detected host RAM, projected memory fit against the generated backend `MemoryMax`, memory targets too small for the generated systemd cgroup floors, async queue storage headroom, swap cushion, and `vm.swappiness` for the 4 GB llama.cpp profile before the service starts.
+Without `RAY_DEPLOY_MEMORY_MIB` or `--memory-mib`, render, doctor, and model
+staging use the config `model.operational.memoryClassMiB` before falling back to
+the launch-profile preset.
 If doctor reports a missing swap cushion on a 4 GB VPS, run `bun run swap:plan`
 to print guarded commands for creating the default 1 GiB swap file while
 preserving the default 512 MiB free-space cushion on the swap parent filesystem

@@ -314,6 +314,9 @@ The GitHub VPS workflow also honors `RAY_DEPLOY_DOMAIN`,
 `RAY_ENV_FILE_CONTENTS` before repository variables when wiring remote
 prerequisites, storage preflight, doctor, render, readiness waits, and generated
 service commands.
+When no explicit deploy memory override is set, render, doctor, and model
+staging use `model.operational.memoryClassMiB` before falling back to the
+launch-profile preset, while still clamping to lower detected host RAM.
 When those CLI-consumed settings come from repository variables instead, the
 workflow appends the resolved non-secret values to `/etc/ray/ray.env` when they
 are absent so later manual `doctor`, `render`, and `model:stage` runs read the

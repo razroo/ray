@@ -989,6 +989,30 @@ test("renderDeploymentBundle includes llama.cpp service for generic 1b profiles"
   );
 });
 
+test("loadAndDiagnoseDeployment uses the config memory class without deploy overrides", async (t) => {
+  const tempDir = await mkRayDeployTempDir("ray-deploy-config-memory-");
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("1b");
+  if (!config.model.operational) {
+    throw new Error("Expected operational model metadata");
+  }
+  config.model.operational.memoryClassMiB = 1_536;
+
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+  });
+
+  assert.equal(inspected.preflight.memoryBudgetMiB, 1_536);
+  assert.equal(inspected.preflight.memoryBudgetSource, "config");
+});
+
 test("renderDeploymentBundle accepts every public example deployment profile", async () => {
   const configDir = join(process.cwd(), "examples/config");
   const publicConfigFiles = (await readdir(configDir))

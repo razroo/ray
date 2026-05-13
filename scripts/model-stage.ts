@@ -682,7 +682,7 @@ export async function createModelStagePlan(options: {
   }
   const memoryEstimate = estimateLlamaCppMemoryFit(loaded.config, adapter.launchProfile, {
     memoryBudgetMiB,
-    memoryBudgetSource: memoryBudgetSource === "env" ? "override" : "preset",
+    memoryBudgetSource: memoryBudgetSource === "env" ? "override" : "config",
     modelFileBytes: 0,
   });
   const requiredLaunchFlags = extractLlamaCppLaunchFlagTokens([
