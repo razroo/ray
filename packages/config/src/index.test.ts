@@ -75,6 +75,25 @@ test("loadRayConfig rejects oversized config files before parsing", async (t) =>
   );
 });
 
+test("loadRayConfig rejects oversized direct paths before reading", async () => {
+  await assert.rejects(
+    loadRayConfig({
+      cwd: `/${"a".repeat(4096)}`,
+      env: {},
+    }),
+    /cwd must be at most 4096 characters/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: `/${"a".repeat(4096)}`,
+      env: {},
+    }),
+    /configPath must be at most 4096 characters/,
+  );
+});
+
 test("loadRayConfig accepts every checked-in example config", async () => {
   const configDir = join(process.cwd(), "examples/config");
   const configFiles = (await readdir(configDir)).filter((entry) => entry.endsWith(".json")).sort();

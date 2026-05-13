@@ -178,6 +178,33 @@ async function readConfigFileBounded(configPath: string): Promise<string> {
   }
 }
 
+function assertConfigPathInput(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new RayError(`${label} must be a non-empty path`, {
+      code: "config_validation_error",
+      status: 500,
+    });
+  }
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new RayError(`${label} must not contain control characters`, {
+      code: "config_validation_error",
+      status: 500,
+    });
+  }
+
+  if (value.length > MAX_CONFIG_PATH_CHARS) {
+    throw new RayError(`${label} must be at most ${MAX_CONFIG_PATH_CHARS} characters`, {
+      code: "config_validation_error",
+      status: 500,
+      details: {
+        actualChars: value.length,
+        maxChars: MAX_CONFIG_PATH_CHARS,
+      },
+    });
+  }
+}
+
 function parseProfile(value: unknown, label: string): RayProfile | undefined {
   if (value === undefined) {
     return undefined;
@@ -2986,6 +3013,10 @@ export function resolveAuthApiKeys(config: RayConfig, env: NodeJS.ProcessEnv): S
 export async function loadRayConfig(options: LoadRayConfigOptions = {}): Promise<LoadedRayConfig> {
   const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
+  assertConfigPathInput(cwd, "cwd");
+  if (options.configPath !== undefined) {
+    assertConfigPathInput(options.configPath, "configPath");
+  }
   const absoluteConfigPath = options.configPath ? path.resolve(cwd, options.configPath) : undefined;
 
   let fileConfig: DeepPartial<RayConfig> | undefined;
