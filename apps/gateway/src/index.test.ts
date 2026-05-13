@@ -708,6 +708,121 @@ test("gateway accepts bounded Expect-Continue uploads after acknowledgement", as
   assert.match(response, /"output"/);
 });
 
+test("gateway rejects unauthorized Expect-Continue uploads before acknowledgement", async (t) => {
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    auth: {
+      enabled: true,
+    },
+  });
+  const gateway = createGatewayServer({
+    config,
+    env: {
+      RAY_API_KEYS: "secret-token",
+    },
+  });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await readRawUnfinishedRequestResponse(gateway.server, [
+    "POST /v1/infer HTTP/1.1",
+    `Host: 127.0.0.1:${address.port}`,
+    "Content-Type: application/json",
+    "Content-Length: 17",
+    "Expect: 100-continue",
+    "Connection: close",
+    "",
+    "",
+  ]);
+
+  assert.doesNotMatch(response, /^HTTP\/1\.1 100 Continue/m);
+  assert.match(response, /^HTTP\/1\.1 401 /);
+  assert.match(response, /\r\nconnection: close\r\n/i);
+  assert.match(response, /"code": "unauthorized"/);
+});
+
+test("gateway rejects rate-limited Expect-Continue uploads before acknowledgement", async (t) => {
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    rateLimit: {
+      enabled: true,
+      maxRequests: 1,
+      windowMs: 60_000,
+      keyStrategy: "ip",
+    },
+  });
+  const gateway = createGatewayServer({ config });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const accepted = await fetch(`http://127.0.0.1:${address.port}/v1/infer`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ input: "first" }),
+  });
+  assert.equal(accepted.status, 200);
+  await accepted.arrayBuffer();
+
+  const response = await readRawUnfinishedRequestResponse(gateway.server, [
+    "POST /v1/infer HTTP/1.1",
+    `Host: 127.0.0.1:${address.port}`,
+    "Content-Type: application/json",
+    "Content-Length: 17",
+    "Expect: 100-continue",
+    "Connection: close",
+    "",
+    "",
+  ]);
+
+  assert.doesNotMatch(response, /^HTTP\/1\.1 100 Continue/m);
+  assert.match(response, /^HTTP\/1\.1 429 /);
+  assert.match(response, /\r\nconnection: close\r\n/i);
+  assert.match(response, /\r\nretry-after: \d+\r\n/i);
+  assert.match(response, /"code": "rate_limited"/);
+});
+
+test("gateway rejects unsupported Expect-Continue content types before acknowledgement", async (t) => {
+  const gateway = createGatewayServer({
+    config: createDefaultConfig("tiny"),
+  });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await readRawUnfinishedRequestResponse(gateway.server, [
+    "POST /v1/infer HTTP/1.1",
+    `Host: 127.0.0.1:${address.port}`,
+    "Content-Type: text/plain",
+    "Content-Length: 17",
+    "Expect: 100-continue",
+    "Connection: close",
+    "",
+    "",
+  ]);
+
+  assert.doesNotMatch(response, /^HTTP\/1\.1 100 Continue/m);
+  assert.match(response, /^HTTP\/1\.1 415 /);
+  assert.match(response, /\r\nconnection: close\r\n/i);
+  assert.match(response, /"code": "unsupported_media_type"/);
+});
+
 test("gateway rejects unsupported inference content types before reading bytes", async (t) => {
   const config = mergeConfig(createDefaultConfig("tiny"), {
     server: {

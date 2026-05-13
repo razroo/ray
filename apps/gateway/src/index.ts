@@ -1660,7 +1660,6 @@ export function createGatewayServer(options: CreateGatewayHandlerOptions): Gatew
   });
   server.on("checkContinue", (request, response) => {
     trackGatewayHttpRequest(activeRequestsBySocket, request, response);
-    acknowledgeExpectContinue(request, response, config.server.requestBodyLimitBytes);
 
     void handler(request, response);
   });
