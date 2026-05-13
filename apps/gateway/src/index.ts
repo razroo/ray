@@ -58,6 +58,7 @@ export interface GatewayServer {
   jobQueue?: DurableInferenceQueue;
   logger: Logger;
   sockets?: Set<Socket>;
+  activeRequestsBySocket?: Map<Socket, number>;
 }
 
 export interface StartGatewayOptions extends CreateGatewayHandlerOptions {
@@ -132,6 +133,24 @@ function attachAsyncQueueHealth(
   }
 
   return health;
+}
+
+function destroyGatewaySockets(sockets: Iterable<Socket> | undefined): void {
+  for (const socket of sockets ?? []) {
+    socket.destroy();
+  }
+}
+
+function destroyIdleGatewaySockets(gateway: GatewayServer): void {
+  if (!gateway.sockets || !gateway.activeRequestsBySocket) {
+    return;
+  }
+
+  for (const socket of gateway.sockets) {
+    if ((gateway.activeRequestsBySocket.get(socket) ?? 0) === 0) {
+      socket.destroy();
+    }
+  }
 }
 
 function requireFlagValue(flag: string, value: string | undefined): string {
@@ -1034,6 +1053,7 @@ export function createGatewayServer(options: CreateGatewayHandlerOptions): Gatew
   });
   const server = createServer(handler);
   const sockets = new Set<Socket>();
+  const activeRequestsBySocket = new Map<Socket, number>();
   server.requestTimeout = GATEWAY_REQUEST_TIMEOUT_MS;
   server.headersTimeout = GATEWAY_HEADERS_TIMEOUT_MS;
   server.keepAliveTimeout = GATEWAY_KEEP_ALIVE_TIMEOUT_MS;
@@ -1044,12 +1064,33 @@ export function createGatewayServer(options: CreateGatewayHandlerOptions): Gatew
       sockets.delete(socket);
     });
   });
+  server.on("request", (request, response) => {
+    const socket = request.socket;
+    activeRequestsBySocket.set(socket, (activeRequestsBySocket.get(socket) ?? 0) + 1);
+
+    const releaseRequest = () => {
+      response.off("finish", releaseRequest);
+      response.off("close", releaseRequest);
+
+      const next = (activeRequestsBySocket.get(socket) ?? 1) - 1;
+      if (next <= 0) {
+        activeRequestsBySocket.delete(socket);
+        return;
+      }
+
+      activeRequestsBySocket.set(socket, next);
+    };
+
+    response.once("finish", releaseRequest);
+    response.once("close", releaseRequest);
+  });
 
   return {
     server,
     runtime,
     logger,
     sockets,
+    activeRequestsBySocket,
     ...(jobQueue ? { jobQueue } : {}),
   };
 }
@@ -1107,6 +1148,7 @@ export async function stopGateway(
     });
 
     gateway.server.closeIdleConnections();
+    destroyIdleGatewaySockets(gateway);
 
     forceTimeout = setTimeout(() => {
       gateway.logger.warn("gateway shutdown timeout reached; closing active connections", {
@@ -1114,9 +1156,7 @@ export async function stopGateway(
         timeoutMs,
       });
       gateway.server.closeAllConnections();
-      for (const socket of gateway.sockets ?? []) {
-        socket.destroy();
-      }
+      destroyGatewaySockets(gateway.sockets);
     }, timeoutMs);
     forceTimeout.unref();
 

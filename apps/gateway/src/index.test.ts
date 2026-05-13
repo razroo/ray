@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
-import { createConnection } from "node:net";
+import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -23,6 +23,44 @@ async function closeServer(server: Server): Promise<void> {
       resolve();
     });
   });
+}
+
+function trackTestServerSockets(server: Server): {
+  sockets: Set<Socket>;
+  activeRequestsBySocket: Map<Socket, number>;
+} {
+  const sockets = new Set<Socket>();
+  const activeRequestsBySocket = new Map<Socket, number>();
+
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.on("close", () => {
+      sockets.delete(socket);
+      activeRequestsBySocket.delete(socket);
+    });
+  });
+  server.on("request", (request, response) => {
+    const socket = request.socket;
+    activeRequestsBySocket.set(socket, (activeRequestsBySocket.get(socket) ?? 0) + 1);
+
+    const releaseRequest = () => {
+      response.off("finish", releaseRequest);
+      response.off("close", releaseRequest);
+
+      const next = (activeRequestsBySocket.get(socket) ?? 1) - 1;
+      if (next <= 0) {
+        activeRequestsBySocket.delete(socket);
+        return;
+      }
+
+      activeRequestsBySocket.set(socket, next);
+    };
+
+    response.once("finish", releaseRequest);
+    response.once("close", releaseRequest);
+  });
+
+  return { sockets, activeRequestsBySocket };
 }
 
 async function getAvailablePort(): Promise<number> {
@@ -99,13 +137,7 @@ test("stopGateway force-closes active request sockets before systemd timeout", a
   const server = createServer(() => {
     requestStarted?.();
   });
-  const sockets = new Set<ReturnType<typeof createConnection>>();
-  server.on("connection", (socket) => {
-    sockets.add(socket);
-    socket.on("close", () => {
-      sockets.delete(socket);
-    });
-  });
+  const { sockets, activeRequestsBySocket } = trackTestServerSockets(server);
   const logger = {
     debug() {},
     info() {},
@@ -119,6 +151,7 @@ test("stopGateway force-closes active request sockets before systemd timeout", a
     runtime: {} as RayRuntime,
     logger,
     sockets,
+    activeRequestsBySocket,
   };
 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -148,6 +181,72 @@ test("stopGateway force-closes active request sockets before systemd timeout", a
   );
   assert.equal(warnings[0]?.fields?.signal, "SIGTERM");
   assert.equal(warnings[0]?.fields?.timeoutMs, 20);
+});
+
+test("stopGateway closes tracked idle keep-alive sockets without waiting for timeout", async (t) => {
+  const warnings: Array<{ message: string; fields: LogFields | undefined }> = [];
+  const server = createServer((request, response) => {
+    request.resume();
+    response.end("ok");
+  });
+  const { sockets, activeRequestsBySocket } = trackTestServerSockets(server);
+  const logger = {
+    debug() {},
+    info() {},
+    warn(message: string, fields?: LogFields) {
+      warnings.push({ message, fields });
+    },
+    error() {},
+  } as unknown as Logger;
+  const gateway = {
+    server,
+    runtime: {} as RayRuntime,
+    logger,
+    sockets,
+    activeRequestsBySocket,
+  };
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => {
+    server.closeAllConnections();
+    server.close(() => undefined);
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const socket = createConnection(address.port, "127.0.0.1");
+  socket.on("error", () => undefined);
+  await new Promise<void>((resolve) => socket.once("connect", resolve));
+  const responseReceived = new Promise<void>((resolve, reject) => {
+    let raw = "";
+    const timeout = setTimeout(() => {
+      reject(new Error("Timed out waiting for keep-alive response"));
+    }, 1_000);
+
+    socket.on("data", (chunk) => {
+      raw += chunk.toString("utf8");
+      if (raw.includes("ok")) {
+        clearTimeout(timeout);
+        resolve();
+      }
+    });
+  });
+  socket.write("GET /ok HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: keep-alive\r\n\r\n");
+  await responseReceived;
+  for (let index = 0; index < 10 && activeRequestsBySocket.size > 0; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  assert.equal(activeRequestsBySocket.size, 0);
+
+  const closed = new Promise<void>((resolve) => socket.once("close", resolve));
+  await stopGateway(gateway, { signal: "SIGTERM", timeoutMs: 1_000 });
+  await closed;
+
+  assert.equal(warnings.length, 0);
+  assert.equal(sockets.size, 0);
 });
 
 test("gateway parseCliArgs accepts explicit config paths", () => {
