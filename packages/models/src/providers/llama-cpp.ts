@@ -763,8 +763,7 @@ export class LlamaCppProvider implements ModelProvider {
     context: ProviderContext,
   ): Promise<ProviderResult> {
     const preparation =
-      context.preparation?.request.input === request.input &&
-      context.preparation.request.system === request.system
+      context.preparation && this.preparationMatchesRequest(context.preparation, request)
         ? context.preparation
         : await this.prepare(request, context);
 
@@ -1415,10 +1414,20 @@ export class LlamaCppProvider implements ModelProvider {
       model: this.adapter.modelRef,
       input: request.input,
       system: request.system ?? "",
+      metadata: request.metadata,
       responseFormat: request.responseFormat?.type ?? "text",
       promptTemplateId: request.promptTemplateId ?? "",
       templateVariables: request.templateVariables ?? {},
     });
+  }
+
+  private preparationMatchesRequest(
+    preparation: ProviderRequestPreparation,
+    request: NormalizedInferenceRequest,
+  ): boolean {
+    return (
+      this.buildPreparationCacheKey(preparation.request) === this.buildPreparationCacheKey(request)
+    );
   }
 
   private rememberFamilyPreferredSlot(affinityKey: string, slotId: number): void {

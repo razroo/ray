@@ -610,6 +610,116 @@ test("llama.cpp provider falls back when native prompt templating is unavailable
   assert.ok(seenPaths.includes("/apply-template"));
 });
 
+test("llama.cpp provider keeps metadata prompt-format variants isolated", async (t) => {
+  const completionPrompts: string[] = [];
+
+  const server = createServer(async (request, response) => {
+    if (request.url === "/slots") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify([]));
+      return;
+    }
+
+    if (request.url === "/props") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          total_slots: 1,
+          chat_template: "{{ messages }}",
+          default_generation_settings: {
+            n_ctx: 4096,
+            model: "test-model-ref",
+          },
+        }),
+      );
+      return;
+    }
+
+    if (request.url === "/apply-template") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ prompt: "<native>Metadata sensitive</native>" }));
+      return;
+    }
+
+    if (request.url === "/tokenize") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ tokens: [1, 2, 3] }));
+      return;
+    }
+
+    if (request.url === "/completion") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+      completionPrompts.push(String(body.prompt ?? ""));
+
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          content: "ok",
+          timings: {
+            prompt_n: 3,
+            predicted_n: 1,
+          },
+        }),
+      );
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const model = createModel(`http://127.0.0.1:${address.port}`, 500);
+  const provider = new LlamaCppProvider(model, model.adapter as LlamaCppProviderConfig);
+  const context = createContext(model, new AbortController().signal);
+  const baseRequest = {
+    input: "Metadata sensitive",
+    maxTokens: 32,
+    temperature: 0.2,
+    topP: 0.95,
+    cache: true,
+  };
+  const nativeRequest = {
+    ...baseRequest,
+    metadata: {},
+  };
+  const fallbackRequest = {
+    ...baseRequest,
+    metadata: {
+      rayPromptFormat: "ray-chat-fallback",
+    },
+  };
+
+  const nativePreparation = await provider.prepare(nativeRequest, context);
+  const fallbackPreparation = await provider.prepare(fallbackRequest, context);
+  const nativeState = nativePreparation.providerState as { prompt?: string };
+  const fallbackState = fallbackPreparation.providerState as { prompt?: string };
+
+  assert.equal(nativePreparation.diagnostics?.promptFormat, "llama.cpp-template");
+  assert.equal(fallbackPreparation.diagnostics?.promptFormat, "ray-chat-fallback");
+  assert.equal(nativeState.prompt, "<native>Metadata sensitive</native>");
+  assert.match(fallbackState.prompt ?? "", /User:\nMetadata sensitive/);
+
+  await provider.infer(fallbackRequest, {
+    ...context,
+    preparation: nativePreparation,
+  });
+
+  assert.match(completionPrompts[0] ?? "", /User:\nMetadata sensitive/);
+  assert.doesNotMatch(completionPrompts[0] ?? "", /<native>/);
+});
+
 test("llama.cpp provider falls back to chat completions for json_object requests", async (t) => {
   const seenPaths: string[] = [];
 
