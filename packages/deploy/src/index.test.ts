@@ -661,6 +661,26 @@ test("diagnoseConfig warns when scheduler token buffers are high for gateway mem
   assert.match(diagnostic.message, /generated gateway MemoryMax of 896 MiB/);
 });
 
+test("diagnoseConfig warns when scheduler concurrency exceeds host CPUs", () => {
+  const config = mergeConfig(createDefaultConfig("vps"), {
+    scheduler: {
+      concurrency: 4,
+    },
+  });
+
+  const diagnostic = diagnoseConfig(config, process.env, undefined, {
+    preflight: {
+      hostCpuCount: 2,
+    },
+  }).find((entry) => entry.code === "scheduler_concurrency_exceeds_host_cpu");
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /scheduler\.concurrency \(4\)/);
+  assert.match(diagnostic.message, /2 vCPU host/);
+  assert.match(diagnostic.message, /CPU contention/);
+});
+
 test("diagnoseConfig surfaces invalid auth key material without retaining secrets", () => {
   const config = mergeConfig(createDefaultConfig("vps"), {
     auth: {

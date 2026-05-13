@@ -2856,6 +2856,17 @@ export function diagnoseConfig(
     }
   }
 
+  if (
+    preflight?.hostCpuCount !== undefined &&
+    config.scheduler.concurrency > preflight.hostCpuCount
+  ) {
+    diagnostics.push({
+      level: "warn",
+      code: "scheduler_concurrency_exceeds_host_cpu",
+      message: `scheduler.concurrency (${config.scheduler.concurrency}) is higher than the detected ${preflight.hostCpuCount} vCPU host. On a cheap single-node VPS, extra gateway concurrency usually increases CPU contention and tail latency unless the backend has matching slot and CPU headroom.`,
+    });
+  }
+
   if (config.asyncQueue.enabled) {
     if (config.asyncQueue.callbackAllowPrivateNetwork) {
       diagnostics.push({
