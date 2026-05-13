@@ -1654,6 +1654,43 @@ function validateDeployWorkflowGatewayRuntimeEnvOverride(
   ];
 }
 
+function validateDeployWorkflowRenderTempGuards(
+  workflowPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  if (!contents.includes('--output-dir "$RENDER_DIR"')) {
+    return [];
+  }
+
+  if (
+    contents.includes(
+      'RENDER_DIR="$(timeout 30s mktemp -d "${TMPDIR:-/tmp}/ray-render.XXXXXX")"',
+    ) &&
+    contents.includes('CADDY_TMP="$(timeout 30s mktemp "${TMPDIR:-/tmp}/ray-caddy.XXXXXX")"') &&
+    contents.includes('timeout 60s rm -rf "$RENDER_DIR" || true') &&
+    contents.includes('timeout 60s rm -f "$CADDY_TMP" || true') &&
+    contents.includes("trap cleanup_render_dir EXIT")
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "workflow_render_temp_cleanup_missing",
+      workflowPath,
+      line: workflowLineNumber(lines, "RENDER_DIR"),
+      message:
+        "VPS deploy workflow must create rendered service and temporary Caddy validation files with bounded mktemp calls and clean them under timeouts so failed deploys do not leave unbounded temp residue on small VPS disks.",
+    },
+  ];
+}
+
 function validateDeployWorkflowRootCommandGuards(
   workflowPath: string,
   lines: string[],
@@ -1831,6 +1868,7 @@ async function validateWorkflow(
   diagnostics.push(
     ...validateDeployWorkflowGatewayRuntimeEnvOverride(workflowPath, contents, lines),
   );
+  diagnostics.push(...validateDeployWorkflowRenderTempGuards(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowRootCommandGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRayEnvReadGuards(workflowPath, lines));
 

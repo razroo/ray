@@ -378,14 +378,14 @@ Use the generated Caddyfile from the render output so the public domain, request
 body cap, gateway port, and upstream response timeouts match the checked config.
 
 ```bash
-caddy_tmp="$(mktemp)"
+caddy_tmp="$(timeout 30s mktemp "${TMPDIR:-/tmp}/ray-caddy.XXXXXX")"
 caddy_status=0
-cp /tmp/ray-rendered/Caddyfile "$caddy_tmp"
+timeout 30s cp /tmp/ray-rendered/Caddyfile "$caddy_tmp"
 timeout 30s sudo caddy validate --config "$caddy_tmp" &&
   timeout 60s sudo install -m 0644 "$caddy_tmp" /etc/caddy/Caddyfile &&
   timeout 120s sudo systemctl enable --now caddy &&
   timeout 60s sudo systemctl reload caddy || caddy_status=$?
-rm -f "$caddy_tmp"
+timeout 60s rm -f "$caddy_tmp"
 test "$caddy_status" -eq 0
 ```
 
@@ -519,7 +519,8 @@ generated Caddyfile validation fail before systemd tries to start the generated 
 configured gateway runtime binary defaults to `/usr/local/bin/bun`. The workflow
 only changes ownership on the checkout root, sets service-readable checkout
 modes during rsync, removes stale `node_modules` under a timeout, stages and
-cleans fallback Bun installer output in a temporary directory, pins
+cleans fallback Bun installer output in a temporary directory, creates and
+cleans render/Caddy validation temp files under timeouts, pins
 `BUN_INSTALL_CACHE_DIR` under `/srv/ray/.ray/bun-install-cache`, and runs the
 remote Bun production install with `umask 022` so old dev dependencies and
 home-directory runtime/cache growth do not accumulate even when ownership

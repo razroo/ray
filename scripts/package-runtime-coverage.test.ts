@@ -282,6 +282,68 @@ test("validatePackageRuntimeCoverage requires guarded Bun installer copy cleanup
   );
 });
 
+test("validatePackageRuntimeCoverage requires bounded render temp cleanup", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-render-temp-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const workflowDir = path.join(tempDir, ".github", "workflows");
+  await mkdir(workflowDir, { recursive: true });
+  const rootPackageJson = path.join(tempDir, "package.json");
+  const deployWorkflowPath = path.join(workflowDir, "deploy-vps.yml");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify(
+      {
+        name: "ray-test",
+        packageManager: "bun@1.3.9",
+        engines: {
+          bun: ">=1.3.0",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    deployWorkflowPath,
+    [
+      "name: Deploy VPS",
+      "jobs:",
+      "  deploy:",
+      "    steps:",
+      "      - run: |",
+      '          RENDER_DIR="$(mktemp -d)"',
+      '          CADDY_TMP=""',
+      "          cleanup_render_dir() {",
+      '            rm -rf "$RENDER_DIR"',
+      '            rm -f "$CADDY_TMP"',
+      "          }",
+      "          trap cleanup_render_dir EXIT",
+      '          /usr/local/bin/bun /srv/ray/packages/deploy/dist/cli.js render --output-dir "$RENDER_DIR"',
+      '          CADDY_TMP="$(mktemp)"',
+      '          "$CADDY_RUNTIME" validate --config "$CADDY_TMP"',
+      "",
+    ].join("\n"),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson],
+  });
+  const diagnostics = summary.results.flatMap((result) => result.diagnostics);
+
+  assert.equal(summary.ok, false);
+  assert.ok(
+    diagnostics.some(
+      (diagnostic) =>
+        diagnostic.code === "workflow_render_temp_cleanup_missing" &&
+        diagnostic.workflowPath === deployWorkflowPath,
+    ),
+  );
+});
+
 test("validatePackageRuntimeCoverage requires deploy storage docs to mention binary path", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-storage-doc-"));
   t.after(async () => {

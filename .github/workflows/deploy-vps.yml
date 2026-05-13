@@ -1048,12 +1048,12 @@ jobs:
             "${CADDY_ARGS[@]}" \
             --ray-env-file /etc/ray/ray.env
 
-          RENDER_DIR="$(mktemp -d)"
+          RENDER_DIR="$(timeout 30s mktemp -d "${TMPDIR:-/tmp}/ray-render.XXXXXX")"
           CADDY_TMP=""
           cleanup_render_dir() {
-            rm -rf "$RENDER_DIR"
+            timeout 60s rm -rf "$RENDER_DIR" || true
             if [ -n "$CADDY_TMP" ]; then
-              rm -f "$CADDY_TMP"
+              timeout 60s rm -f "$CADDY_TMP" || true
             fi
           }
           trap cleanup_render_dir EXIT
@@ -1071,7 +1071,7 @@ jobs:
 
           timeout 60s $SUDO cp "$RENDER_DIR/ray-gateway.service" /etc/systemd/system/ray-gateway.service
           if [ "${INSTALL_CADDY:-false}" = "true" ]; then
-            CADDY_TMP="$(mktemp)"
+            CADDY_TMP="$(timeout 30s mktemp "${TMPDIR:-/tmp}/ray-caddy.XXXXXX")"
             timeout 30s cp "$RENDER_DIR/Caddyfile" "$CADDY_TMP"
             timeout 30s $SUDO "$CADDY_RUNTIME" validate --config "$CADDY_TMP"
             timeout 60s $SUDO install -m 0644 "$CADDY_TMP" /etc/caddy/Caddyfile
