@@ -1372,6 +1372,23 @@ function assertLaunchProfileDoesNotConflictWithGateway(
   );
 }
 
+function assertLaunchProfileHostIsLoopback(profile: LlamaCppLaunchProfile): void {
+  if (isLoopbackHost(profile.host)) {
+    return;
+  }
+
+  throw new RayError(
+    "model.adapter.launchProfile.host must be a loopback host so generated llama.cpp services stay behind Ray",
+    {
+      code: "config_validation_error",
+      status: 500,
+      details: {
+        launchHost: profile.host,
+      },
+    },
+  );
+}
+
 function assertRequestBodyLimitBytes(value: number): void {
   assertPositiveInteger(value, "server.requestBodyLimitBytes");
 
@@ -2470,6 +2487,7 @@ function validateConfig(config: RayConfig): RayConfig {
       }
 
       assertTcpPort(profile.port, "model.adapter.launchProfile.port");
+      assertLaunchProfileHostIsLoopback(profile);
       assertLaunchProfileDoesNotConflictWithGateway(config, profile);
       assertPositiveIntegerAtMost(
         profile.ctxSize,

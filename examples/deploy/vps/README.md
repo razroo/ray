@@ -472,7 +472,7 @@ file, package metadata, and the llama.cpp staging helper used during deploy.
 
 ## Operational Notes
 
-- Keep the model backend bound to localhost; generated llama.cpp services should keep `model.adapter.launchProfile.host` on `127.0.0.1` or `localhost`.
+- Keep the model backend bound to localhost; config loading and doctor reject generated llama.cpp services whose `model.adapter.launchProfile.host` is not `127.0.0.1`, `localhost`, or another loopback address.
 - Keep `model.adapter.baseUrl` on plain HTTP at the same loopback host, root, and port as `model.adapter.launchProfile` when Ray renders the llama.cpp service.
 - Let Ray be the public inference surface.
 - Keep the Ray gateway bound to localhost and expose it through Caddy or nginx.

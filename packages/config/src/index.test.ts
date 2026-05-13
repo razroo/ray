@@ -1902,6 +1902,19 @@ test("loadRayConfig rejects gateway and llama.cpp launch port conflicts", async 
   );
 });
 
+test("loadRayConfig rejects public llama.cpp launch hosts", async () => {
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      env: {
+        RAY_PROFILE: "1b",
+        RAY_LLAMA_CPP_HOST: "0.0.0.0",
+      },
+    }),
+    /model\.adapter\.launchProfile\.host must be a loopback host/,
+  );
+});
+
 test("loadRayConfig accepts sub1b email classifier variant", async () => {
   const loaded = await loadRayConfig({
     cwd: process.cwd(),
