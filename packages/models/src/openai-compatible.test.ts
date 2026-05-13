@@ -658,6 +658,76 @@ test("adapterRequest reports backend path on transport failures", async () => {
   );
 });
 
+test("adapterRequest refuses to follow backend redirects off the configured origin", async (t) => {
+  const envName = "RAY_TEST_REDIRECT_UPSTREAM_API_KEY";
+  const previousApiKey = process.env[envName];
+  process.env[envName] = "redirect-secret";
+
+  let redirectedRequests = 0;
+  const redirectedServer = createServer((_request, response) => {
+    redirectedRequests += 1;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ choices: [{ message: { content: "leaked" } }] }));
+  });
+
+  await new Promise<void>((resolve) => redirectedServer.listen(0, "127.0.0.1", resolve));
+  t.after(() => {
+    if (previousApiKey === undefined) {
+      delete process.env[envName];
+    } else {
+      process.env[envName] = previousApiKey;
+    }
+    redirectedServer.close();
+  });
+
+  const redirectedAddress = redirectedServer.address();
+  if (!redirectedAddress || typeof redirectedAddress === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const redirectingServer = createServer((_request, response) => {
+    response.writeHead(302, {
+      location: `http://127.0.0.1:${redirectedAddress.port}/v1/chat/completions`,
+    });
+    response.end("moved");
+  });
+
+  await new Promise<void>((resolve) => redirectingServer.listen(0, "127.0.0.1", resolve));
+  t.after(() => redirectingServer.close());
+
+  const redirectingAddress = redirectingServer.address();
+  if (!redirectingAddress || typeof redirectingAddress === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: `http://127.0.0.1:${redirectingAddress.port}`,
+          timeoutMs: 500,
+          apiKeyEnv: envName,
+        },
+        "/v1/chat/completions",
+        { method: "POST" },
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_upstream_error");
+
+      const details = (error as { details?: unknown }).details;
+      assert.ok(details && typeof details === "object" && !Array.isArray(details));
+      assert.equal((details as { pathname?: unknown }).pathname, "/v1/chat/completions");
+      assert.equal((details as { upstreamStatus?: unknown }).upstreamStatus, 302);
+      assert.equal((details as { body?: unknown }).body, "moved");
+
+      return true;
+    },
+  );
+
+  assert.equal(redirectedRequests, 0);
+});
+
 test("adapterRequest rejects oversized successful response bodies", async (t) => {
   const server = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/plain" });

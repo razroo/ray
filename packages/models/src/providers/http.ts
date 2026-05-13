@@ -779,6 +779,7 @@ export async function adapterRequest(
         ...buildAdapterHeaders(adapter),
         ...(init.headers ?? {}),
       },
+      redirect: "manual",
       signal: controller.signal,
     });
 
