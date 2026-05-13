@@ -88,6 +88,10 @@ export interface CgroupMemorySnapshot {
   maxEvents?: number;
   oomEvents?: number;
   oomKillEvents?: number;
+  highEventsDelta?: number;
+  maxEventsDelta?: number;
+  oomEventsDelta?: number;
+  oomKillEventsDelta?: number;
 }
 
 export interface CgroupMemoryReaderOptions {
@@ -142,6 +146,10 @@ interface MemoryPressureSnapshot {
   cgroupMemoryMaxEvents?: number;
   cgroupMemoryOomEvents?: number;
   cgroupMemoryOomKillEvents?: number;
+  cgroupMemoryHighEventsDelta?: number;
+  cgroupMemoryMaxEventsDelta?: number;
+  cgroupMemoryOomEventsDelta?: number;
+  cgroupMemoryOomKillEventsDelta?: number;
 }
 
 type PreparationSnapshot = RuntimeHealthDiagnostics["preparation"];
@@ -781,6 +789,57 @@ function resolveCgroupCpuPressure(
   );
 }
 
+function resolveCgroupCounterDelta(
+  current: number | undefined,
+  previous: number | undefined,
+): number | undefined {
+  if (current === undefined || previous === undefined) {
+    return undefined;
+  }
+
+  const delta = current - previous;
+  return Number.isSafeInteger(delta) && delta >= 0 ? delta : undefined;
+}
+
+function applyRecentCgroupMemoryEventDeltas(
+  snapshot: CgroupMemorySnapshot | undefined,
+  previous: CgroupMemorySnapshot | undefined,
+): CgroupMemorySnapshot | undefined {
+  if (!snapshot || !previous) {
+    return snapshot;
+  }
+
+  const highEventsDelta = resolveCgroupCounterDelta(snapshot.highEvents, previous.highEvents);
+  const maxEventsDelta = resolveCgroupCounterDelta(snapshot.maxEvents, previous.maxEvents);
+  const oomEventsDelta = resolveCgroupCounterDelta(snapshot.oomEvents, previous.oomEvents);
+  const oomKillEventsDelta = resolveCgroupCounterDelta(
+    snapshot.oomKillEvents,
+    previous.oomKillEvents,
+  );
+
+  return {
+    ...snapshot,
+    ...(highEventsDelta !== undefined ? { highEventsDelta } : {}),
+    ...(maxEventsDelta !== undefined ? { maxEventsDelta } : {}),
+    ...(oomEventsDelta !== undefined ? { oomEventsDelta } : {}),
+    ...(oomKillEventsDelta !== undefined ? { oomKillEventsDelta } : {}),
+  };
+}
+
+function hasRecentCgroupMemoryEvents(snapshot: {
+  cgroupMemoryHighEventsDelta?: number;
+  cgroupMemoryMaxEventsDelta?: number;
+  cgroupMemoryOomEventsDelta?: number;
+  cgroupMemoryOomKillEventsDelta?: number;
+}): boolean {
+  return (
+    (snapshot.cgroupMemoryHighEventsDelta ?? 0) > 0 ||
+    (snapshot.cgroupMemoryMaxEventsDelta ?? 0) > 0 ||
+    (snapshot.cgroupMemoryOomEventsDelta ?? 0) > 0 ||
+    (snapshot.cgroupMemoryOomKillEventsDelta ?? 0) > 0
+  );
+}
+
 function applyRecentCgroupCpuThrottlingRatio(
   snapshot: CgroupCpuSnapshot | undefined,
   previous: CgroupCpuSnapshot | undefined,
@@ -902,6 +961,20 @@ function buildDegradationDiagnostics(options: {
     ...(options.memoryPressure.cgroupMemoryOomKillEvents !== undefined
       ? { cgroupMemoryOomKillEvents: options.memoryPressure.cgroupMemoryOomKillEvents }
       : {}),
+    ...(options.memoryPressure.cgroupMemoryHighEventsDelta !== undefined
+      ? { cgroupMemoryHighEventsDelta: options.memoryPressure.cgroupMemoryHighEventsDelta }
+      : {}),
+    ...(options.memoryPressure.cgroupMemoryMaxEventsDelta !== undefined
+      ? { cgroupMemoryMaxEventsDelta: options.memoryPressure.cgroupMemoryMaxEventsDelta }
+      : {}),
+    ...(options.memoryPressure.cgroupMemoryOomEventsDelta !== undefined
+      ? { cgroupMemoryOomEventsDelta: options.memoryPressure.cgroupMemoryOomEventsDelta }
+      : {}),
+    ...(options.memoryPressure.cgroupMemoryOomKillEventsDelta !== undefined
+      ? {
+          cgroupMemoryOomKillEventsDelta: options.memoryPressure.cgroupMemoryOomKillEventsDelta,
+        }
+      : {}),
     ...(options.cgroupCpu?.throttledRatio !== undefined
       ? {
           cgroupCpuThrottledRatio: options.cgroupCpu.throttledRatio,
@@ -987,6 +1060,20 @@ function buildRuntimeHealthDiagnostics(options: {
         : {}),
       ...(options.memoryPressure.cgroupMemoryOomKillEvents !== undefined
         ? { cgroupMemoryOomKillEvents: options.memoryPressure.cgroupMemoryOomKillEvents }
+        : {}),
+      ...(options.memoryPressure.cgroupMemoryHighEventsDelta !== undefined
+        ? { cgroupMemoryHighEventsDelta: options.memoryPressure.cgroupMemoryHighEventsDelta }
+        : {}),
+      ...(options.memoryPressure.cgroupMemoryMaxEventsDelta !== undefined
+        ? { cgroupMemoryMaxEventsDelta: options.memoryPressure.cgroupMemoryMaxEventsDelta }
+        : {}),
+      ...(options.memoryPressure.cgroupMemoryOomEventsDelta !== undefined
+        ? { cgroupMemoryOomEventsDelta: options.memoryPressure.cgroupMemoryOomEventsDelta }
+        : {}),
+      ...(options.memoryPressure.cgroupMemoryOomKillEventsDelta !== undefined
+        ? {
+            cgroupMemoryOomKillEventsDelta: options.memoryPressure.cgroupMemoryOomKillEventsDelta,
+          }
         : {}),
     },
     ...(options.cgroupCpu
@@ -1525,6 +1612,10 @@ function resolveMemoryPressureSources(
     snapshot.cgroupMemoryPressureRatio !== undefined &&
     snapshot.cgroupMemoryPressureRatio >= CGROUP_MEMORY_PRESSURE_RATIO
   ) {
+    sources.push("cgroup");
+  }
+
+  if (!sources.includes("cgroup") && hasRecentCgroupMemoryEvents(snapshot)) {
     sources.push("cgroup");
   }
 
@@ -3993,6 +4084,18 @@ export class RayRuntime {
             ...(cgroupMemory.oomKillEvents !== undefined
               ? { cgroupMemoryOomKillEvents: cgroupMemory.oomKillEvents }
               : {}),
+            ...(cgroupMemory.highEventsDelta !== undefined
+              ? { cgroupMemoryHighEventsDelta: cgroupMemory.highEventsDelta }
+              : {}),
+            ...(cgroupMemory.maxEventsDelta !== undefined
+              ? { cgroupMemoryMaxEventsDelta: cgroupMemory.maxEventsDelta }
+              : {}),
+            ...(cgroupMemory.oomEventsDelta !== undefined
+              ? { cgroupMemoryOomEventsDelta: cgroupMemory.oomEventsDelta }
+              : {}),
+            ...(cgroupMemory.oomKillEventsDelta !== undefined
+              ? { cgroupMemoryOomKillEventsDelta: cgroupMemory.oomKillEventsDelta }
+              : {}),
           }
         : {}),
     };
@@ -4013,7 +4116,10 @@ export class RayRuntime {
     }
 
     try {
-      const snapshot = await this.cgroupMemory();
+      const snapshot = applyRecentCgroupMemoryEventDeltas(
+        await this.cgroupMemory(),
+        this.cgroupMemoryCache?.snapshot,
+      );
       this.cgroupMemoryCache = {
         checkedAtMs: now,
         snapshot,
@@ -4159,6 +4265,34 @@ export class RayRuntime {
         memoryPressure.cgroupMemoryOomKillEvents,
       );
     }
+    if (memoryPressure.cgroupMemoryHighEventsDelta !== undefined) {
+      this.metrics.gauge(
+        "process.memory.cgroup_high_events_delta",
+        memoryPressure.cgroupMemoryHighEventsDelta,
+      );
+    }
+    if (memoryPressure.cgroupMemoryMaxEventsDelta !== undefined) {
+      this.metrics.gauge(
+        "process.memory.cgroup_max_events_delta",
+        memoryPressure.cgroupMemoryMaxEventsDelta,
+      );
+    }
+    if (memoryPressure.cgroupMemoryOomEventsDelta !== undefined) {
+      this.metrics.gauge(
+        "process.memory.cgroup_oom_events_delta",
+        memoryPressure.cgroupMemoryOomEventsDelta,
+      );
+    }
+    if (memoryPressure.cgroupMemoryOomKillEventsDelta !== undefined) {
+      this.metrics.gauge(
+        "process.memory.cgroup_oom_kill_events_delta",
+        memoryPressure.cgroupMemoryOomKillEventsDelta,
+      );
+    }
+    this.metrics.gauge(
+      "process.memory.cgroup_event_pressure",
+      hasRecentCgroupMemoryEvents(memoryPressure) ? 1 : 0,
+    );
     this.metrics.gauge(
       "process.memory.pressure",
       this.config.gracefulDegradation.enabled && memoryPressureSources.length > 0 ? 1 : 0,

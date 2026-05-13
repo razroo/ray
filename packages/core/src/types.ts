@@ -498,6 +498,10 @@ export interface DegradationDiagnostics {
   cgroupMemoryMaxEvents?: number;
   cgroupMemoryOomEvents?: number;
   cgroupMemoryOomKillEvents?: number;
+  cgroupMemoryHighEventsDelta?: number;
+  cgroupMemoryMaxEventsDelta?: number;
+  cgroupMemoryOomEventsDelta?: number;
+  cgroupMemoryOomKillEventsDelta?: number;
   cgroupCpuThrottledRatio?: number;
   cgroupCpuThrottledThreshold?: number;
 }
@@ -566,6 +570,10 @@ export interface RuntimeHealthDiagnostics {
     cgroupMemoryMaxEvents?: number;
     cgroupMemoryOomEvents?: number;
     cgroupMemoryOomKillEvents?: number;
+    cgroupMemoryHighEventsDelta?: number;
+    cgroupMemoryMaxEventsDelta?: number;
+    cgroupMemoryOomEventsDelta?: number;
+    cgroupMemoryOomKillEventsDelta?: number;
   };
   cpu?: {
     degraded: boolean;

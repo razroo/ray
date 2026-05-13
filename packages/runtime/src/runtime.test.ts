@@ -232,7 +232,107 @@ test("runtime clamps output under cgroup memory pressure", async () => {
   assert.equal(metrics.gauges["process.memory.cgroup_max_events"], 2);
   assert.equal(metrics.gauges["process.memory.cgroup_oom_events"], 1);
   assert.equal(metrics.gauges["process.memory.cgroup_oom_kill_events"], 0);
+  assert.equal(metrics.gauges["process.memory.cgroup_event_pressure"], 0);
   assert.equal(metrics.gauges["process.memory.rss_pressure_ratio"], 0.0078);
+  assert.equal(metrics.gauges["process.memory.pressure"], 1);
+});
+
+test("runtime treats recent cgroup memory events as pressure", async () => {
+  let observedMaxTokens = 0;
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "cgroup-event-pressure-model",
+    capabilities: {
+      streaming: false,
+      quantized: false,
+      localBackend: true,
+    },
+    async infer(request) {
+      observedMaxTokens = request.maxTokens;
+      return {
+        output: "degraded",
+      };
+    },
+  };
+  const snapshots = [
+    {
+      currentMiB: 500,
+      highMiB: 800,
+      limitMiB: 1_000,
+      pressureRatio: 0.625,
+      highEvents: 1,
+      maxEvents: 0,
+      oomEvents: 0,
+      oomKillEvents: 0,
+    },
+    {
+      currentMiB: 500,
+      highMiB: 800,
+      limitMiB: 1_000,
+      pressureRatio: 0.625,
+      highEvents: 3,
+      maxEvents: 1,
+      oomEvents: 1,
+      oomKillEvents: 0,
+    },
+  ];
+  let snapshotIndex = 0;
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    gracefulDegradation: {
+      enabled: true,
+      degradeToMaxTokens: 32,
+      memoryRssThresholdMiB: 4_096,
+    },
+  });
+  const runtime = createRayRuntime(config, {
+    provider,
+    memoryUsage: () => ({
+      rss: 32 * 1024 * 1024,
+      heapTotal: 0,
+      heapUsed: 0,
+      external: 0,
+      arrayBuffers: 0,
+    }),
+    cgroupMemory: () => snapshots[Math.min(snapshotIndex++, snapshots.length - 1)],
+    cgroupCpu: false,
+  });
+
+  const initialHealth = await runtime.health();
+  assert.equal(initialHealth.status, "ok");
+  assert.equal(initialHealth.runtime?.memory.degraded, false);
+  assert.deepEqual(initialHealth.runtime?.memory.sources, []);
+
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  const result = await runtime.infer({
+    input: "hello world",
+    maxTokens: 128,
+    cache: false,
+  });
+  const health = await runtime.health();
+  const metrics = runtime.metricsSnapshot();
+
+  assert.equal(observedMaxTokens, 32);
+  assert.equal(result.degraded, true);
+  assert.deepEqual(result.diagnostics?.degradation?.reasons, ["memory_pressure"]);
+  assert.deepEqual(result.diagnostics?.degradation?.memoryPressureSources, ["cgroup"]);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemoryPressureRatio, 0.625);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemoryHighEventsDelta, 2);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemoryMaxEventsDelta, 1);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemoryOomEventsDelta, 1);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemoryOomKillEventsDelta, 0);
+  assert.equal(health.status, "degraded");
+  assert.equal(health.runtime?.memory.degraded, true);
+  assert.deepEqual(health.runtime?.memory.sources, ["cgroup"]);
+  assert.equal(health.runtime?.memory.cgroupMemoryHighEventsDelta, 2);
+  assert.equal(health.runtime?.memory.cgroupMemoryMaxEventsDelta, 1);
+  assert.equal(health.runtime?.memory.cgroupMemoryOomEventsDelta, 1);
+  assert.equal(health.runtime?.memory.cgroupMemoryOomKillEventsDelta, 0);
+  assert.equal(metrics.gauges["process.memory.cgroup_high_events_delta"], 2);
+  assert.equal(metrics.gauges["process.memory.cgroup_max_events_delta"], 1);
+  assert.equal(metrics.gauges["process.memory.cgroup_oom_events_delta"], 1);
+  assert.equal(metrics.gauges["process.memory.cgroup_oom_kill_events_delta"], 0);
+  assert.equal(metrics.gauges["process.memory.cgroup_event_pressure"], 1);
   assert.equal(metrics.gauges["process.memory.pressure"], 1);
 });
 
