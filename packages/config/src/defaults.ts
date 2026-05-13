@@ -12,6 +12,10 @@ type Sub1bMachineClass = "cx23" | "cax11";
 type OneBMachineClass = "cx23" | "8gb";
 const unsafeMergeKeys = new Set(["__proto__", "constructor", "prototype"]);
 const DEFAULT_CPU_THROTTLED_RATIO_THRESHOLD = 0.2;
+const DEFAULT_MEMORY_PSI_SOME_AVG10_THRESHOLD = 10;
+const DEFAULT_MEMORY_PSI_FULL_AVG10_THRESHOLD = 1;
+const DEFAULT_CPU_PSI_SOME_AVG10_THRESHOLD = 50;
+const DEFAULT_CPU_PSI_FULL_AVG10_THRESHOLD = 5;
 const MIB = 1024 * 1024;
 
 function createSub1bLaunchProfile(machineClass: Sub1bMachineClass): LlamaCppLaunchProfile {
@@ -150,6 +154,10 @@ function createSub1bDefaults(machineClass: Sub1bMachineClass): RayConfig {
       degradeToMaxTokens: 128,
       memoryRssThresholdMiB: 512,
       cpuThrottledRatioThreshold: DEFAULT_CPU_THROTTLED_RATIO_THRESHOLD,
+      memoryPsiSomeAvg10Threshold: DEFAULT_MEMORY_PSI_SOME_AVG10_THRESHOLD,
+      memoryPsiFullAvg10Threshold: DEFAULT_MEMORY_PSI_FULL_AVG10_THRESHOLD,
+      cpuPsiSomeAvg10Threshold: DEFAULT_CPU_PSI_SOME_AVG10_THRESHOLD,
+      cpuPsiFullAvg10Threshold: DEFAULT_CPU_PSI_FULL_AVG10_THRESHOLD,
     },
     promptCompiler: {
       enabled: true,
@@ -331,6 +339,10 @@ function create1bDefaults(machineClass: OneBMachineClass): RayConfig {
       degradeToMaxTokens: is8gb ? 160 : 128,
       memoryRssThresholdMiB: is8gb ? 768 : 512,
       cpuThrottledRatioThreshold: DEFAULT_CPU_THROTTLED_RATIO_THRESHOLD,
+      memoryPsiSomeAvg10Threshold: DEFAULT_MEMORY_PSI_SOME_AVG10_THRESHOLD,
+      memoryPsiFullAvg10Threshold: DEFAULT_MEMORY_PSI_FULL_AVG10_THRESHOLD,
+      cpuPsiSomeAvg10Threshold: DEFAULT_CPU_PSI_SOME_AVG10_THRESHOLD,
+      cpuPsiFullAvg10Threshold: DEFAULT_CPU_PSI_FULL_AVG10_THRESHOLD,
     },
     promptCompiler: {
       enabled: true,
@@ -439,6 +451,10 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       degradeToMaxTokens: 96,
       memoryRssThresholdMiB: 256,
       cpuThrottledRatioThreshold: DEFAULT_CPU_THROTTLED_RATIO_THRESHOLD,
+      memoryPsiSomeAvg10Threshold: DEFAULT_MEMORY_PSI_SOME_AVG10_THRESHOLD,
+      memoryPsiFullAvg10Threshold: DEFAULT_MEMORY_PSI_FULL_AVG10_THRESHOLD,
+      cpuPsiSomeAvg10Threshold: DEFAULT_CPU_PSI_SOME_AVG10_THRESHOLD,
+      cpuPsiFullAvg10Threshold: DEFAULT_CPU_PSI_FULL_AVG10_THRESHOLD,
     },
     promptCompiler: {
       enabled: true,
@@ -547,6 +563,10 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       degradeToMaxTokens: 192,
       memoryRssThresholdMiB: 768,
       cpuThrottledRatioThreshold: DEFAULT_CPU_THROTTLED_RATIO_THRESHOLD,
+      memoryPsiSomeAvg10Threshold: DEFAULT_MEMORY_PSI_SOME_AVG10_THRESHOLD,
+      memoryPsiFullAvg10Threshold: DEFAULT_MEMORY_PSI_FULL_AVG10_THRESHOLD,
+      cpuPsiSomeAvg10Threshold: DEFAULT_CPU_PSI_SOME_AVG10_THRESHOLD,
+      cpuPsiFullAvg10Threshold: DEFAULT_CPU_PSI_FULL_AVG10_THRESHOLD,
     },
     promptCompiler: {
       enabled: true,
@@ -651,6 +671,10 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       degradeToMaxTokens: 256,
       memoryRssThresholdMiB: 1_024,
       cpuThrottledRatioThreshold: DEFAULT_CPU_THROTTLED_RATIO_THRESHOLD,
+      memoryPsiSomeAvg10Threshold: DEFAULT_MEMORY_PSI_SOME_AVG10_THRESHOLD,
+      memoryPsiFullAvg10Threshold: DEFAULT_MEMORY_PSI_FULL_AVG10_THRESHOLD,
+      cpuPsiSomeAvg10Threshold: DEFAULT_CPU_PSI_SOME_AVG10_THRESHOLD,
+      cpuPsiFullAvg10Threshold: DEFAULT_CPU_PSI_FULL_AVG10_THRESHOLD,
     },
     promptCompiler: {
       enabled: true,

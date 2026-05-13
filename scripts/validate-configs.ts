@@ -63,6 +63,7 @@ const MAX_PUBLIC_DEGRADATION_PROMPT_CHARS = 8_000;
 const MAX_PUBLIC_DEGRADATION_TOKENS = 160;
 const MAX_PUBLIC_DEGRADATION_MEMORY_RSS_MIB = 768;
 const MAX_PUBLIC_DEGRADATION_CPU_THROTTLED_RATIO = 0.2;
+const MAX_PUBLIC_DEGRADATION_PSI_AVG10_THRESHOLD = 100;
 const MAX_PUBLIC_ADAPTIVE_SAMPLE_SIZE = 32;
 const MAX_PUBLIC_ADAPTIVE_QUEUE_LATENCY_MS = 600;
 const MAX_PUBLIC_ADAPTIVE_MIN_TOKENS_PER_SECOND = 14;
@@ -1140,6 +1141,34 @@ async function diagnosePublicConfigPolicy(configPath: string): Promise<Deploymen
     ["gracefulDegradation", "cpuThrottledRatioThreshold"],
     MAX_PUBLIC_DEGRADATION_CPU_THROTTLED_RATIO,
     "public_config_degradation_cpu_throttled_ratio_explicit",
+  );
+  expectPublicConfigPositiveNumberAtMost(
+    diagnostics,
+    parsed,
+    ["gracefulDegradation", "memoryPsiSomeAvg10Threshold"],
+    MAX_PUBLIC_DEGRADATION_PSI_AVG10_THRESHOLD,
+    "public_config_degradation_memory_psi_some_explicit",
+  );
+  expectPublicConfigPositiveNumberAtMost(
+    diagnostics,
+    parsed,
+    ["gracefulDegradation", "memoryPsiFullAvg10Threshold"],
+    MAX_PUBLIC_DEGRADATION_PSI_AVG10_THRESHOLD,
+    "public_config_degradation_memory_psi_full_explicit",
+  );
+  expectPublicConfigPositiveNumberAtMost(
+    diagnostics,
+    parsed,
+    ["gracefulDegradation", "cpuPsiSomeAvg10Threshold"],
+    MAX_PUBLIC_DEGRADATION_PSI_AVG10_THRESHOLD,
+    "public_config_degradation_cpu_psi_some_explicit",
+  );
+  expectPublicConfigPositiveNumberAtMost(
+    diagnostics,
+    parsed,
+    ["gracefulDegradation", "cpuPsiFullAvg10Threshold"],
+    MAX_PUBLIC_DEGRADATION_PSI_AVG10_THRESHOLD,
+    "public_config_degradation_cpu_psi_full_explicit",
   );
   expectPublicConfigValue(
     diagnostics,

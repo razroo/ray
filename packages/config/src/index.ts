@@ -86,6 +86,7 @@ const MAX_ASYNC_ATTEMPTS = 100;
 const MAX_CACHE_TTL_MS = 86_400_000;
 const MAX_GRACEFUL_DEGRADATION_PROMPT_CHARS = 65_536;
 const MAX_GRACEFUL_DEGRADATION_MEMORY_RSS_MIB = 65_536;
+const MAX_GRACEFUL_DEGRADATION_PSI_AVG10_THRESHOLD = 100;
 const MAX_ADAPTIVE_SAMPLE_SIZE = 512;
 const MAX_ADAPTIVE_FAMILY_HISTORY_SIZE = 1_024;
 const MAX_ADAPTIVE_LATENCY_THRESHOLD_MS = 120_000;
@@ -277,6 +278,31 @@ function parsePositiveUnitInterval(value: string | undefined, label: string): nu
       status: 500,
       details: { value },
     });
+  }
+
+  return parsed;
+}
+
+function parsePositiveNumberAtMost(
+  value: string | undefined,
+  label: string,
+  maximum: number,
+): number | undefined {
+  if (!isNonEmptyString(value)) {
+    return undefined;
+  }
+
+  const parsed = Number(value.trim());
+
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > maximum) {
+    throw new RayError(
+      `Expected ${label} to be greater than 0 and less than or equal to ${maximum}`,
+      {
+        code: "config_validation_error",
+        status: 500,
+        details: { value, maximum },
+      },
+    );
   }
 
   return parsed;
@@ -575,6 +601,26 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
   const degradationCpuThrottledRatioThreshold = parsePositiveUnitInterval(
     env.RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD,
     "RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD",
+  );
+  const degradationMemoryPsiSomeAvg10Threshold = parsePositiveNumberAtMost(
+    env.RAY_DEGRADATION_MEMORY_PSI_SOME_AVG10_THRESHOLD,
+    "RAY_DEGRADATION_MEMORY_PSI_SOME_AVG10_THRESHOLD",
+    MAX_GRACEFUL_DEGRADATION_PSI_AVG10_THRESHOLD,
+  );
+  const degradationMemoryPsiFullAvg10Threshold = parsePositiveNumberAtMost(
+    env.RAY_DEGRADATION_MEMORY_PSI_FULL_AVG10_THRESHOLD,
+    "RAY_DEGRADATION_MEMORY_PSI_FULL_AVG10_THRESHOLD",
+    MAX_GRACEFUL_DEGRADATION_PSI_AVG10_THRESHOLD,
+  );
+  const degradationCpuPsiSomeAvg10Threshold = parsePositiveNumberAtMost(
+    env.RAY_DEGRADATION_CPU_PSI_SOME_AVG10_THRESHOLD,
+    "RAY_DEGRADATION_CPU_PSI_SOME_AVG10_THRESHOLD",
+    MAX_GRACEFUL_DEGRADATION_PSI_AVG10_THRESHOLD,
+  );
+  const degradationCpuPsiFullAvg10Threshold = parsePositiveNumberAtMost(
+    env.RAY_DEGRADATION_CPU_PSI_FULL_AVG10_THRESHOLD,
+    "RAY_DEGRADATION_CPU_PSI_FULL_AVG10_THRESHOLD",
+    MAX_GRACEFUL_DEGRADATION_PSI_AVG10_THRESHOLD,
   );
   const promptCompilerEnabled = parseBoolean(
     env.RAY_PROMPT_COMPILER_ENABLED,
@@ -1086,6 +1132,22 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
     next.gracefulDegradation.cpuThrottledRatioThreshold = degradationCpuThrottledRatioThreshold;
   }
 
+  if (degradationMemoryPsiSomeAvg10Threshold !== undefined) {
+    next.gracefulDegradation.memoryPsiSomeAvg10Threshold = degradationMemoryPsiSomeAvg10Threshold;
+  }
+
+  if (degradationMemoryPsiFullAvg10Threshold !== undefined) {
+    next.gracefulDegradation.memoryPsiFullAvg10Threshold = degradationMemoryPsiFullAvg10Threshold;
+  }
+
+  if (degradationCpuPsiSomeAvg10Threshold !== undefined) {
+    next.gracefulDegradation.cpuPsiSomeAvg10Threshold = degradationCpuPsiSomeAvg10Threshold;
+  }
+
+  if (degradationCpuPsiFullAvg10Threshold !== undefined) {
+    next.gracefulDegradation.cpuPsiFullAvg10Threshold = degradationCpuPsiFullAvg10Threshold;
+  }
+
   if (promptCompilerEnabled !== undefined) {
     next.promptCompiler.enabled = promptCompilerEnabled;
   }
@@ -1591,6 +1653,16 @@ function assertPositiveUnitInterval(value: number, label: string): void {
       code: "config_validation_error",
       status: 500,
       details: { value },
+    });
+  }
+}
+
+function assertPositiveNumberAtMost(value: number, label: string, maximum: number): void {
+  if (!Number.isFinite(value) || value <= 0 || value > maximum) {
+    throw new RayError(`${label} must be greater than 0 and less than or equal to ${maximum}`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { value, maximum },
     });
   }
 }
@@ -2308,6 +2380,26 @@ function validateConfig(config: RayConfig): RayConfig {
   assertPositiveUnitInterval(
     config.gracefulDegradation.cpuThrottledRatioThreshold,
     "gracefulDegradation.cpuThrottledRatioThreshold",
+  );
+  assertPositiveNumberAtMost(
+    config.gracefulDegradation.memoryPsiSomeAvg10Threshold,
+    "gracefulDegradation.memoryPsiSomeAvg10Threshold",
+    MAX_GRACEFUL_DEGRADATION_PSI_AVG10_THRESHOLD,
+  );
+  assertPositiveNumberAtMost(
+    config.gracefulDegradation.memoryPsiFullAvg10Threshold,
+    "gracefulDegradation.memoryPsiFullAvg10Threshold",
+    MAX_GRACEFUL_DEGRADATION_PSI_AVG10_THRESHOLD,
+  );
+  assertPositiveNumberAtMost(
+    config.gracefulDegradation.cpuPsiSomeAvg10Threshold,
+    "gracefulDegradation.cpuPsiSomeAvg10Threshold",
+    MAX_GRACEFUL_DEGRADATION_PSI_AVG10_THRESHOLD,
+  );
+  assertPositiveNumberAtMost(
+    config.gracefulDegradation.cpuPsiFullAvg10Threshold,
+    "gracefulDegradation.cpuPsiFullAvg10Threshold",
+    MAX_GRACEFUL_DEGRADATION_PSI_AVG10_THRESHOLD,
   );
   if (config.gracefulDegradation.degradeToMaxTokens > config.model.maxOutputTokens) {
     throw new RayError(

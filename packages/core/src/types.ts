@@ -171,6 +171,10 @@ export interface GracefulDegradationConfig {
   degradeToMaxTokens: number;
   memoryRssThresholdMiB: number;
   cpuThrottledRatioThreshold: number;
+  memoryPsiSomeAvg10Threshold: number;
+  memoryPsiFullAvg10Threshold: number;
+  cpuPsiSomeAvg10Threshold: number;
+  cpuPsiFullAvg10Threshold: number;
 }
 
 export interface PromptCompilerConfig {

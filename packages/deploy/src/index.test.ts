@@ -702,6 +702,10 @@ test("renderEnvironmentFileExample documents gateway behavior switches", () => {
   assert.match(envFile, /RAY_DEGRADATION_QUEUE_DEPTH_THRESHOLD=10/);
   assert.match(envFile, /RAY_DEGRADATION_MAX_PROMPT_CHARS=5000/);
   assert.match(envFile, /RAY_DEGRADATION_MAX_TOKENS=128/);
+  assert.match(envFile, /RAY_DEGRADATION_MEMORY_PSI_SOME_AVG10_THRESHOLD=10/);
+  assert.match(envFile, /RAY_DEGRADATION_MEMORY_PSI_FULL_AVG10_THRESHOLD=1/);
+  assert.match(envFile, /RAY_DEGRADATION_CPU_PSI_SOME_AVG10_THRESHOLD=50/);
+  assert.match(envFile, /RAY_DEGRADATION_CPU_PSI_FULL_AVG10_THRESHOLD=5/);
   assert.match(envFile, /RAY_PROMPT_COMPILER_ENABLED=true/);
   assert.match(envFile, /RAY_PROMPT_COMPILER_COLLAPSE_WHITESPACE=true/);
   assert.match(envFile, /RAY_PROMPT_COMPILER_DEDUPE_REPEATED_LINES=true/);
@@ -811,6 +815,10 @@ test("renderEnvironmentFileExample documents portable llama.cpp model overrides"
   assert.match(envFile, /RAY_SCHEDULER_MAX_INFLIGHT_TOKENS=/);
   assert.match(envFile, /RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB=/);
   assert.match(envFile, /RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD=/);
+  assert.match(envFile, /RAY_DEGRADATION_MEMORY_PSI_SOME_AVG10_THRESHOLD=/);
+  assert.match(envFile, /RAY_DEGRADATION_MEMORY_PSI_FULL_AVG10_THRESHOLD=/);
+  assert.match(envFile, /RAY_DEGRADATION_CPU_PSI_SOME_AVG10_THRESHOLD=/);
+  assert.match(envFile, /RAY_DEGRADATION_CPU_PSI_FULL_AVG10_THRESHOLD=/);
 });
 
 test("renderEnvironmentFileExample documents async queue retention overrides", () => {

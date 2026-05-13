@@ -2,6 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createDefaultConfig, mergeConfig, resolveAuthApiKeys, sanitizeConfig } from "./index.js";
 
+function assertDefaultPsiThresholds(config: ReturnType<typeof createDefaultConfig>): void {
+  assert.equal(config.gracefulDegradation.memoryPsiSomeAvg10Threshold, 10);
+  assert.equal(config.gracefulDegradation.memoryPsiFullAvg10Threshold, 1);
+  assert.equal(config.gracefulDegradation.cpuPsiSomeAvg10Threshold, 50);
+  assert.equal(config.gracefulDegradation.cpuPsiFullAvg10Threshold, 5);
+}
+
 test("createDefaultConfig returns an isolated clone", () => {
   const left = createDefaultConfig("tiny");
   const right = createDefaultConfig("tiny");
@@ -125,6 +132,7 @@ test("sub1b profile defaults to a bounded llama.cpp launch profile", () => {
   assert.equal(config.cache.maxBytes, 2 * 1024 * 1024);
   assert.equal(config.gracefulDegradation.memoryRssThresholdMiB, 512);
   assert.equal(config.gracefulDegradation.cpuThrottledRatioThreshold, 0.2);
+  assertDefaultPsiThresholds(config);
   assert.equal(config.rateLimit.maxKeys, 4096);
   assert.equal(config.auth.enabled, false);
 });
@@ -177,6 +185,7 @@ test("1b profile defaults to a conservative llama.cpp launch profile", () => {
   assert.equal(config.cache.maxBytes, 2 * 1024 * 1024);
   assert.equal(config.gracefulDegradation.memoryRssThresholdMiB, 512);
   assert.equal(config.gracefulDegradation.cpuThrottledRatioThreshold, 0.2);
+  assertDefaultPsiThresholds(config);
 });
 
 test("1b-8gb profile defaults to a roomier llama.cpp launch profile", () => {
@@ -199,6 +208,7 @@ test("1b-8gb profile defaults to a roomier llama.cpp launch profile", () => {
   assert.equal(config.asyncQueue.minFreeStorageMiB, 512);
   assert.equal(config.telemetry.slowRequestThresholdMs, 1800);
   assert.equal(config.gracefulDegradation.memoryRssThresholdMiB, 768);
+  assertDefaultPsiThresholds(config);
   assert.equal(config.adaptiveTuning.queueLatencyThresholdMs, 450);
   assert.equal(config.adaptiveTuning.minCompletionTokensPerSecond, 14);
   assert.equal(config.rateLimit.maxKeys, 8192);

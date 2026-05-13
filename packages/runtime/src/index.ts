@@ -223,10 +223,6 @@ const CGROUP_MEMORY_CACHE_TTL_MS = 250;
 const CGROUP_CPU_CACHE_TTL_MS = 250;
 const LINUX_PRESSURE_CACHE_TTL_MS = 250;
 const CGROUP_MEMORY_PRESSURE_RATIO = 0.9;
-const LINUX_MEMORY_PSI_SOME_AVG10_PRESSURE = 10;
-const LINUX_MEMORY_PSI_FULL_AVG10_PRESSURE = 1;
-const LINUX_CPU_PSI_SOME_AVG10_PRESSURE = 50;
-const LINUX_CPU_PSI_FULL_AVG10_PRESSURE = 5;
 const CGROUP_UNLIMITED_LIMIT_BYTES = 1024 ** 5;
 const unsafeMetadataKeys = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_LEARNED_FAMILY_HISTORY_KEYS = 512;
@@ -836,20 +832,25 @@ function resolveCgroupCpuPressure(
   );
 }
 
-function resolveLinuxMemoryPressure(snapshot: MemoryPressureSnapshot): boolean {
+function resolveLinuxMemoryPressure(config: RayConfig, snapshot: MemoryPressureSnapshot): boolean {
   return (
     (snapshot.linuxMemoryPsiSomeAvg10 !== undefined &&
-      snapshot.linuxMemoryPsiSomeAvg10 >= LINUX_MEMORY_PSI_SOME_AVG10_PRESSURE) ||
+      snapshot.linuxMemoryPsiSomeAvg10 >= config.gracefulDegradation.memoryPsiSomeAvg10Threshold) ||
     (snapshot.linuxMemoryPsiFullAvg10 !== undefined &&
-      snapshot.linuxMemoryPsiFullAvg10 >= LINUX_MEMORY_PSI_FULL_AVG10_PRESSURE)
+      snapshot.linuxMemoryPsiFullAvg10 >= config.gracefulDegradation.memoryPsiFullAvg10Threshold)
   );
 }
 
-function resolveLinuxCpuPressure(snapshot: LinuxPressureSnapshot | undefined): boolean {
+function resolveLinuxCpuPressure(
+  config: RayConfig,
+  snapshot: LinuxPressureSnapshot | undefined,
+): boolean {
   const cpu = snapshot?.cpu;
   return (
-    (cpu?.someAvg10 !== undefined && cpu.someAvg10 >= LINUX_CPU_PSI_SOME_AVG10_PRESSURE) ||
-    (cpu?.fullAvg10 !== undefined && cpu.fullAvg10 >= LINUX_CPU_PSI_FULL_AVG10_PRESSURE)
+    (cpu?.someAvg10 !== undefined &&
+      cpu.someAvg10 >= config.gracefulDegradation.cpuPsiSomeAvg10Threshold) ||
+    (cpu?.fullAvg10 !== undefined &&
+      cpu.fullAvg10 >= config.gracefulDegradation.cpuPsiFullAvg10Threshold)
   );
 }
 
@@ -860,7 +861,7 @@ function resolveCpuPressure(
 ): boolean {
   return (
     config.gracefulDegradation.enabled &&
-    (resolveCgroupCpuPressure(config, cgroupCpu) || resolveLinuxCpuPressure(linuxPressure))
+    (resolveCgroupCpuPressure(config, cgroupCpu) || resolveLinuxCpuPressure(config, linuxPressure))
   );
 }
 
@@ -994,6 +995,10 @@ function buildDegradationDiagnostics(options: {
   linuxPressure: LinuxPressureSnapshot | undefined;
   memoryRssThresholdMiB: number;
   cpuThrottledRatioThreshold: number;
+  memoryPsiSomeAvg10Threshold: number;
+  memoryPsiFullAvg10Threshold: number;
+  cpuPsiSomeAvg10Threshold: number;
+  cpuPsiFullAvg10Threshold: number;
 }): DegradationDiagnostics {
   const reasons: DegradationDiagnostics["reasons"] = [];
 
@@ -1079,13 +1084,13 @@ function buildDegradationDiagnostics(options: {
     ...(options.memoryPressure.linuxMemoryPsiSomeAvg10 !== undefined
       ? {
           linuxMemoryPsiSomeAvg10: options.memoryPressure.linuxMemoryPsiSomeAvg10,
-          linuxMemoryPsiSomeAvg10Threshold: LINUX_MEMORY_PSI_SOME_AVG10_PRESSURE,
+          linuxMemoryPsiSomeAvg10Threshold: options.memoryPsiSomeAvg10Threshold,
         }
       : {}),
     ...(options.memoryPressure.linuxMemoryPsiFullAvg10 !== undefined
       ? {
           linuxMemoryPsiFullAvg10: options.memoryPressure.linuxMemoryPsiFullAvg10,
-          linuxMemoryPsiFullAvg10Threshold: LINUX_MEMORY_PSI_FULL_AVG10_PRESSURE,
+          linuxMemoryPsiFullAvg10Threshold: options.memoryPsiFullAvg10Threshold,
         }
       : {}),
     ...(options.cgroupCpu?.throttledRatio !== undefined
@@ -1097,13 +1102,13 @@ function buildDegradationDiagnostics(options: {
     ...(options.linuxPressure?.cpu?.someAvg10 !== undefined
       ? {
           linuxCpuPsiSomeAvg10: options.linuxPressure.cpu.someAvg10,
-          linuxCpuPsiSomeAvg10Threshold: LINUX_CPU_PSI_SOME_AVG10_PRESSURE,
+          linuxCpuPsiSomeAvg10Threshold: options.cpuPsiSomeAvg10Threshold,
         }
       : {}),
     ...(options.linuxPressure?.cpu?.fullAvg10 !== undefined
       ? {
           linuxCpuPsiFullAvg10: options.linuxPressure.cpu.fullAvg10,
-          linuxCpuPsiFullAvg10Threshold: LINUX_CPU_PSI_FULL_AVG10_PRESSURE,
+          linuxCpuPsiFullAvg10Threshold: options.cpuPsiFullAvg10Threshold,
         }
       : {}),
   };
@@ -1119,6 +1124,10 @@ function buildRuntimeHealthDiagnostics(options: {
   memoryRssThresholdMiB: number;
   cpuDegraded: boolean;
   cpuThrottledRatioThreshold: number;
+  memoryPsiSomeAvg10Threshold: number;
+  memoryPsiFullAvg10Threshold: number;
+  cpuPsiSomeAvg10Threshold: number;
+  cpuPsiFullAvg10Threshold: number;
   cgroupCpu: CgroupCpuSnapshot | undefined;
   linuxPressure: LinuxPressureSnapshot | undefined;
 }): RuntimeHealthDiagnostics {
@@ -1213,13 +1222,13 @@ function buildRuntimeHealthDiagnostics(options: {
       ...(options.memoryPressure.linuxMemoryPsiSomeAvg10 !== undefined
         ? {
             linuxMemoryPsiSomeAvg10: options.memoryPressure.linuxMemoryPsiSomeAvg10,
-            linuxMemoryPsiSomeAvg10Threshold: LINUX_MEMORY_PSI_SOME_AVG10_PRESSURE,
+            linuxMemoryPsiSomeAvg10Threshold: options.memoryPsiSomeAvg10Threshold,
           }
         : {}),
       ...(options.memoryPressure.linuxMemoryPsiFullAvg10 !== undefined
         ? {
             linuxMemoryPsiFullAvg10: options.memoryPressure.linuxMemoryPsiFullAvg10,
-            linuxMemoryPsiFullAvg10Threshold: LINUX_MEMORY_PSI_FULL_AVG10_PRESSURE,
+            linuxMemoryPsiFullAvg10Threshold: options.memoryPsiFullAvg10Threshold,
           }
         : {}),
     },
@@ -1263,13 +1272,13 @@ function buildRuntimeHealthDiagnostics(options: {
             ...(options.linuxPressure?.cpu?.someAvg10 !== undefined
               ? {
                   linuxCpuPsiSomeAvg10: options.linuxPressure.cpu.someAvg10,
-                  linuxCpuPsiSomeAvg10Threshold: LINUX_CPU_PSI_SOME_AVG10_PRESSURE,
+                  linuxCpuPsiSomeAvg10Threshold: options.cpuPsiSomeAvg10Threshold,
                 }
               : {}),
             ...(options.linuxPressure?.cpu?.fullAvg10 !== undefined
               ? {
                   linuxCpuPsiFullAvg10: options.linuxPressure.cpu.fullAvg10,
-                  linuxCpuPsiFullAvg10Threshold: LINUX_CPU_PSI_FULL_AVG10_PRESSURE,
+                  linuxCpuPsiFullAvg10Threshold: options.cpuPsiFullAvg10Threshold,
                 }
               : {}),
           },
@@ -1936,7 +1945,7 @@ function resolveMemoryPressureSources(
     sources.push("cgroup");
   }
 
-  if (resolveLinuxMemoryPressure(snapshot)) {
+  if (resolveLinuxMemoryPressure(config, snapshot)) {
     sources.push("linux_psi");
   }
 
@@ -3838,6 +3847,10 @@ export class RayRuntime {
         linuxPressure,
         memoryRssThresholdMiB: this.config.gracefulDegradation.memoryRssThresholdMiB,
         cpuThrottledRatioThreshold: this.config.gracefulDegradation.cpuThrottledRatioThreshold,
+        memoryPsiSomeAvg10Threshold: this.config.gracefulDegradation.memoryPsiSomeAvg10Threshold,
+        memoryPsiFullAvg10Threshold: this.config.gracefulDegradation.memoryPsiFullAvg10Threshold,
+        cpuPsiSomeAvg10Threshold: this.config.gracefulDegradation.cpuPsiSomeAvg10Threshold,
+        cpuPsiFullAvg10Threshold: this.config.gracefulDegradation.cpuPsiFullAvg10Threshold,
       }),
       promptCompiler: compiled.diagnostics,
       learnedOutputCap: learnedCap.diagnostics,
@@ -4035,6 +4048,10 @@ export class RayRuntime {
       memoryRssThresholdMiB: this.config.gracefulDegradation.memoryRssThresholdMiB,
       cpuDegraded,
       cpuThrottledRatioThreshold: this.config.gracefulDegradation.cpuThrottledRatioThreshold,
+      memoryPsiSomeAvg10Threshold: this.config.gracefulDegradation.memoryPsiSomeAvg10Threshold,
+      memoryPsiFullAvg10Threshold: this.config.gracefulDegradation.memoryPsiFullAvg10Threshold,
+      cpuPsiSomeAvg10Threshold: this.config.gracefulDegradation.cpuPsiSomeAvg10Threshold,
+      cpuPsiFullAvg10Threshold: this.config.gracefulDegradation.cpuPsiFullAvg10Threshold,
       cgroupCpu,
       linuxPressure,
     });
@@ -4727,18 +4744,18 @@ export class RayRuntime {
     if (linuxPressure?.cpu?.someAvg10 !== undefined) {
       this.metrics.gauge(
         "process.cpu.linux_psi_some_avg10_threshold",
-        LINUX_CPU_PSI_SOME_AVG10_PRESSURE,
+        this.config.gracefulDegradation.cpuPsiSomeAvg10Threshold,
       );
     }
     if (linuxPressure?.cpu?.fullAvg10 !== undefined) {
       this.metrics.gauge(
         "process.cpu.linux_psi_full_avg10_threshold",
-        LINUX_CPU_PSI_FULL_AVG10_PRESSURE,
+        this.config.gracefulDegradation.cpuPsiFullAvg10Threshold,
       );
     }
     this.metrics.gauge(
       "process.cpu.linux_psi_pressure",
-      resolveLinuxCpuPressure(linuxPressure) ? 1 : 0,
+      resolveLinuxCpuPressure(this.config, linuxPressure) ? 1 : 0,
     );
     this.metrics.gauge(
       "process.cpu.pressure",
@@ -4851,7 +4868,7 @@ export class RayRuntime {
       );
       this.metrics.gauge(
         "process.memory.linux_psi_some_avg10_threshold",
-        LINUX_MEMORY_PSI_SOME_AVG10_PRESSURE,
+        this.config.gracefulDegradation.memoryPsiSomeAvg10Threshold,
       );
     }
     if (memoryPressure.linuxMemoryPsiFullAvg10 !== undefined) {
@@ -4861,12 +4878,12 @@ export class RayRuntime {
       );
       this.metrics.gauge(
         "process.memory.linux_psi_full_avg10_threshold",
-        LINUX_MEMORY_PSI_FULL_AVG10_PRESSURE,
+        this.config.gracefulDegradation.memoryPsiFullAvg10Threshold,
       );
     }
     this.metrics.gauge(
       "process.memory.linux_psi_pressure",
-      resolveLinuxMemoryPressure(memoryPressure) ? 1 : 0,
+      resolveLinuxMemoryPressure(this.config, memoryPressure) ? 1 : 0,
     );
     this.metrics.gauge(
       "process.memory.cgroup_event_pressure",

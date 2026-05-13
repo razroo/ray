@@ -317,6 +317,10 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
       RAY_DEGRADATION_MAX_PROMPT_CHARS: "4200",
       RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB: "448",
       RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD: "0.35",
+      RAY_DEGRADATION_MEMORY_PSI_SOME_AVG10_THRESHOLD: "8.5",
+      RAY_DEGRADATION_MEMORY_PSI_FULL_AVG10_THRESHOLD: "0.75",
+      RAY_DEGRADATION_CPU_PSI_SOME_AVG10_THRESHOLD: "42.25",
+      RAY_DEGRADATION_CPU_PSI_FULL_AVG10_THRESHOLD: "3.5",
       RAY_PROMPT_COMPILER_ENABLED: "false",
       RAY_PROMPT_COMPILER_COLLAPSE_WHITESPACE: "false",
       RAY_PROMPT_COMPILER_DEDUPE_REPEATED_LINES: "false",
@@ -413,6 +417,10 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
   assert.equal(loaded.config.gracefulDegradation.maxPromptChars, 4200);
   assert.equal(loaded.config.gracefulDegradation.memoryRssThresholdMiB, 448);
   assert.equal(loaded.config.gracefulDegradation.cpuThrottledRatioThreshold, 0.35);
+  assert.equal(loaded.config.gracefulDegradation.memoryPsiSomeAvg10Threshold, 8.5);
+  assert.equal(loaded.config.gracefulDegradation.memoryPsiFullAvg10Threshold, 0.75);
+  assert.equal(loaded.config.gracefulDegradation.cpuPsiSomeAvg10Threshold, 42.25);
+  assert.equal(loaded.config.gracefulDegradation.cpuPsiFullAvg10Threshold, 3.5);
   assert.equal(loaded.config.promptCompiler.enabled, false);
   assert.equal(loaded.config.promptCompiler.collapseWhitespace, false);
   assert.equal(loaded.config.promptCompiler.dedupeRepeatedLines, false);
@@ -644,6 +652,17 @@ test("loadRayConfig rejects malformed environment overrides", async () => {
       },
     }),
     /Expected RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD to be greater than 0 and less than or equal to 1/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_DEGRADATION_MEMORY_PSI_SOME_AVG10_THRESHOLD: "101",
+      },
+    }),
+    /Expected RAY_DEGRADATION_MEMORY_PSI_SOME_AVG10_THRESHOLD to be greater than 0 and less than or equal to 100/,
   );
 
   await assert.rejects(

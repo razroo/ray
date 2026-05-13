@@ -2217,6 +2217,18 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
     lines.push(
       `# RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD=${config.gracefulDegradation.cpuThrottledRatioThreshold}`,
     );
+    lines.push(
+      `# RAY_DEGRADATION_MEMORY_PSI_SOME_AVG10_THRESHOLD=${config.gracefulDegradation.memoryPsiSomeAvg10Threshold}`,
+    );
+    lines.push(
+      `# RAY_DEGRADATION_MEMORY_PSI_FULL_AVG10_THRESHOLD=${config.gracefulDegradation.memoryPsiFullAvg10Threshold}`,
+    );
+    lines.push(
+      `# RAY_DEGRADATION_CPU_PSI_SOME_AVG10_THRESHOLD=${config.gracefulDegradation.cpuPsiSomeAvg10Threshold}`,
+    );
+    lines.push(
+      `# RAY_DEGRADATION_CPU_PSI_FULL_AVG10_THRESHOLD=${config.gracefulDegradation.cpuPsiFullAvg10Threshold}`,
+    );
   }
 
   if (config.asyncQueue.enabled) {

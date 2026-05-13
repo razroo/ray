@@ -426,6 +426,8 @@ test("runtime clamps output under Linux memory pressure stalls", async () => {
       enabled: true,
       degradeToMaxTokens: 32,
       memoryRssThresholdMiB: 4_096,
+      memoryPsiSomeAvg10Threshold: 12,
+      memoryPsiFullAvg10Threshold: 0.5,
     },
   });
   const runtime = createRayRuntime(config, {
@@ -460,16 +462,16 @@ test("runtime clamps output under Linux memory pressure stalls", async () => {
   assert.deepEqual(result.diagnostics?.degradation?.reasons, ["memory_pressure"]);
   assert.deepEqual(result.diagnostics?.degradation?.memoryPressureSources, ["linux_psi"]);
   assert.equal(result.diagnostics?.degradation?.linuxMemoryPsiSomeAvg10, 12.5);
-  assert.equal(result.diagnostics?.degradation?.linuxMemoryPsiSomeAvg10Threshold, 10);
+  assert.equal(result.diagnostics?.degradation?.linuxMemoryPsiSomeAvg10Threshold, 12);
   assert.equal(result.diagnostics?.degradation?.linuxMemoryPsiFullAvg10, 0.25);
-  assert.equal(result.diagnostics?.degradation?.linuxMemoryPsiFullAvg10Threshold, 1);
+  assert.equal(result.diagnostics?.degradation?.linuxMemoryPsiFullAvg10Threshold, 0.5);
   assert.equal(health.status, "degraded");
   assert.equal(health.runtime?.memory.degraded, true);
   assert.deepEqual(health.runtime?.memory.sources, ["linux_psi"]);
   assert.equal(health.runtime?.memory.linuxMemoryPsiSomeAvg10, 12.5);
-  assert.equal(health.runtime?.memory.linuxMemoryPsiSomeAvg10Threshold, 10);
+  assert.equal(health.runtime?.memory.linuxMemoryPsiSomeAvg10Threshold, 12);
   assert.equal(metrics.gauges["process.memory.linux_psi_some_avg10"], 12.5);
-  assert.equal(metrics.gauges["process.memory.linux_psi_some_avg10_threshold"], 10);
+  assert.equal(metrics.gauges["process.memory.linux_psi_some_avg10_threshold"], 12);
   assert.equal(metrics.gauges["process.memory.linux_psi_pressure"], 1);
   assert.equal(metrics.gauges["process.memory.pressure"], 1);
 });
@@ -665,6 +667,8 @@ test("runtime clamps output under Linux CPU pressure stalls", async () => {
       enabled: true,
       degradeToMaxTokens: 32,
       memoryRssThresholdMiB: 4_096,
+      cpuPsiSomeAvg10Threshold: 60,
+      cpuPsiFullAvg10Threshold: 4,
     },
   });
   const runtime = createRayRuntime(config, {
@@ -698,15 +702,15 @@ test("runtime clamps output under Linux CPU pressure stalls", async () => {
   assert.equal(result.degraded, true);
   assert.deepEqual(result.diagnostics?.degradation?.reasons, ["cpu_pressure"]);
   assert.equal(result.diagnostics?.degradation?.linuxCpuPsiSomeAvg10, 62.5);
-  assert.equal(result.diagnostics?.degradation?.linuxCpuPsiSomeAvg10Threshold, 50);
+  assert.equal(result.diagnostics?.degradation?.linuxCpuPsiSomeAvg10Threshold, 60);
   assert.equal(result.diagnostics?.degradation?.linuxCpuPsiFullAvg10, 0);
-  assert.equal(result.diagnostics?.degradation?.linuxCpuPsiFullAvg10Threshold, 5);
+  assert.equal(result.diagnostics?.degradation?.linuxCpuPsiFullAvg10Threshold, 4);
   assert.equal(health.status, "degraded");
   assert.equal(health.runtime?.cpu?.degraded, true);
   assert.equal(health.runtime?.cpu?.linuxCpuPsiSomeAvg10, 62.5);
-  assert.equal(health.runtime?.cpu?.linuxCpuPsiSomeAvg10Threshold, 50);
+  assert.equal(health.runtime?.cpu?.linuxCpuPsiSomeAvg10Threshold, 60);
   assert.equal(metrics.gauges["process.cpu.linux_psi_some_avg10"], 62.5);
-  assert.equal(metrics.gauges["process.cpu.linux_psi_some_avg10_threshold"], 50);
+  assert.equal(metrics.gauges["process.cpu.linux_psi_some_avg10_threshold"], 60);
   assert.equal(metrics.gauges["process.cpu.linux_psi_pressure"], 1);
   assert.equal(metrics.gauges["process.cpu.pressure"], 1);
 });

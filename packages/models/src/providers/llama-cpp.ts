@@ -1607,6 +1607,10 @@ export class LlamaCppProvider implements ModelProvider {
           degradeToMaxTokens: 1,
           memoryRssThresholdMiB: 1,
           cpuThrottledRatioThreshold: 0.2,
+          memoryPsiSomeAvg10Threshold: 10,
+          memoryPsiFullAvg10Threshold: 1,
+          cpuPsiSomeAvg10Threshold: 50,
+          cpuPsiFullAvg10Threshold: 5,
         },
         promptCompiler: {
           enabled: false,
