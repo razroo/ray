@@ -2375,6 +2375,15 @@ export function diagnoseConfig(
     }
   }
 
+  if (!config.gracefulDegradation.enabled) {
+    diagnostics.push({
+      level: "warn",
+      code: "graceful_degradation_disabled",
+      message:
+        "Graceful degradation is disabled. Cheap single-node VPS deployments should keep queue, memory, CPU, and prompt clamps enabled so overload sheds work before the gateway can only queue or reject requests.",
+    });
+  }
+
   if (!gatewayBindsLoopback) {
     diagnostics.push({
       level: "error",

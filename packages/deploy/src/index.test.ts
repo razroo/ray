@@ -551,12 +551,16 @@ test("diagnoseConfig flags unsafe public deployment defaults", () => {
     rateLimit: {
       enabled: false,
     },
+    gracefulDegradation: {
+      enabled: false,
+    },
   });
 
   const diagnostics = diagnoseConfig(config, process.env);
 
   assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "auth_disabled"));
   assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "rate_limit_disabled"));
+  assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "graceful_degradation_disabled"));
 });
 
 test("diagnoseConfig warns when IP rate-limit proxy header posture is unsafe", () => {

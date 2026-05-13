@@ -566,6 +566,7 @@ file, package metadata, and the llama.cpp staging helper used during deploy.
 - Keep `RAY_LLAMA_CPP_THREADS` and `RAY_LLAMA_CPP_THREADS_BATCH` at or below the VPS vCPU count. Doctor records detected host CPU count and warns when the launch profile overcommits compute threads.
 - Keep `scheduler.requestTimeoutMs` slightly above `model.adapter.timeoutMs` so provider timeouts remain visible.
 - Keep `scheduler.maxQueuedTokens` and `scheduler.maxInflightTokens` sized for the gateway memory limit. Doctor warns when their estimated token buffer can consume too much of the generated gateway `MemoryMax`.
+- Keep `RAY_GRACEFUL_DEGRADATION_ENABLED=true` on cheap single-node VPS deployments. Doctor warns when it is disabled because queue, prompt, memory, CPU, and PSI clamps are part of the overload-shedding contract.
 - Keep `RAY_DEGRADATION_QUEUE_DEPTH_THRESHOLD` below `RAY_SCHEDULER_MAX_QUEUE` when graceful degradation is enabled. Config loading rejects thresholds at or above the queue cap because accepted requests would hit admission backpressure before the queue-pressure output clamp can apply.
 - Use `RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB` when the gateway process needs to clamp output before RSS pressure becomes a swap or OOM problem.
 - Use `RAY_DEGRADATION_MEMORY_CGROUP_PRESSURE_RATIO_THRESHOLD` when generated cgroup memory ceilings need a more or less aggressive clamp before the gateway reaches `MemoryHigh` or `MemoryMax`.
