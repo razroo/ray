@@ -848,6 +848,32 @@ test("renderDeploymentBundle warns when generated services run as root", async (
   assert.equal(bundle.summary.preflight.serviceUser, "root");
 });
 
+test("renderDeploymentBundle warns when the Caddy site address is still local", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-local-caddy-site-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, `${JSON.stringify(config)}\n`, "utf8");
+
+  const bundle = await renderDeploymentBundle({
+    cwd: tempDir,
+    configPath,
+    user: "ray",
+    domain: "ray.local",
+  });
+
+  const diagnostic = bundle.summary.diagnostics.find(
+    (entry) => entry.code === "caddy_site_address_local",
+  );
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /RAY_DEPLOY_DOMAIN/);
+  assert.equal(bundle.summary.preflight.caddySiteAddress, "ray.local");
+});
+
 test("renderLlamaCppService emits a single-vps launch profile", () => {
   const config = mergeConfig(createDefaultConfig("vps"), {
     model: {
@@ -1896,6 +1922,20 @@ test("diagnoseConfig errors when systemd EnvironmentFile paths are relative", ()
   const diagnostics = diagnoseConfig(config, { RAY_API_KEYS: "test-key" }, "ray.env");
 
   assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "env_file_relative"));
+});
+
+test("diagnoseConfig warns when the generated Caddy site address is local", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    preflight: {
+      caddySiteAddress: "localhost:8443",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "caddy_site_address_local");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /real public DNS name/);
 });
 
 test("loadAndDiagnoseDeployment warns when EnvironmentFile permissions are open in strict mode", async (t) => {

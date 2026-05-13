@@ -94,6 +94,7 @@ export interface DeploymentPreflight {
   hostMemoryMiB?: number;
   hostCpuCount?: number;
   hostArchitecture?: string;
+  caddySiteAddress?: string;
   memoryBudgetMiB?: number;
   memoryBudgetSource?: MemoryBudgetSource;
   modelFileBytes?: number;
@@ -410,6 +411,48 @@ function getUrlPort(url: URL): number {
   }
 
   return url.protocol === "https:" ? 443 : 80;
+}
+
+function extractCaddySiteAddressHost(value: string): string | undefined {
+  const siteAddress = value.trim().toLowerCase();
+
+  if (siteAddress.length === 0) {
+    return undefined;
+  }
+
+  if (/^[a-z][a-z0-9+.-]*:\/\//.test(siteAddress)) {
+    try {
+      const parsed = new URL(siteAddress);
+      return normalizeHostLiteral(parsed.hostname);
+    } catch {
+      return undefined;
+    }
+  }
+
+  const bracketedHost = /^\[([^\]]+)](?::\d+)?$/.exec(siteAddress);
+  if (bracketedHost?.[1]) {
+    return normalizeHostLiteral(bracketedHost[1]);
+  }
+
+  if (siteAddress.startsWith(":")) {
+    return undefined;
+  }
+
+  const host =
+    siteAddress.includes(":") && siteAddress.indexOf(":") === siteAddress.lastIndexOf(":")
+      ? siteAddress.slice(0, siteAddress.indexOf(":"))
+      : siteAddress;
+  return normalizeHostLiteral(host.replace(/^\*\./, ""));
+}
+
+function isLocalCaddySiteAddress(value: string): boolean {
+  const host = extractCaddySiteAddressHost(value);
+
+  if (host === undefined || host.length === 0) {
+    return true;
+  }
+
+  return host === "ray.local" || host.endsWith(".local") || isLoopbackHost(host);
 }
 
 function inferRayStateDirectory(config: RayConfig): string | undefined {
@@ -1955,6 +1998,17 @@ export function diagnoseConfig(
       code: "env_file_relative",
       message:
         "EnvironmentFile paths rendered into systemd units must be absolute. Pass an absolute --ray-env-file path or resolve it against --cwd before rendering.",
+    });
+  }
+
+  if (
+    preflight?.caddySiteAddress !== undefined &&
+    isLocalCaddySiteAddress(preflight.caddySiteAddress)
+  ) {
+    diagnostics.push({
+      level: "warn",
+      code: "caddy_site_address_local",
+      message: `Generated Caddyfile site address "${preflight.caddySiteAddress}" is local or placeholder-only. Set --domain or RAY_DEPLOY_DOMAIN to the real public DNS name before installing Caddy on a VPS.`,
     });
   }
 
@@ -4099,6 +4153,8 @@ async function collectDeploymentPreflight(
   const hostArchitecture = process.arch;
   const systemdPreflight = await collectSystemdPreflight(options.strictFilesystem === true);
   const caddyPreflight = await collectCaddyPreflight(options.strictFilesystem === true);
+  const caddySiteAddressPreflight =
+    options.domain !== undefined ? { caddySiteAddress: options.domain } : {};
   const caddyConfigPreflight = await collectCaddyConfigPreflight(
     config,
     options.domain ?? "ray.local",
@@ -4158,6 +4214,7 @@ async function collectDeploymentPreflight(
       ...(hostCpuCount !== undefined ? { hostCpuCount } : {}),
       hostArchitecture,
       ...storagePreflight,
+      ...caddySiteAddressPreflight,
       ...systemdPreflight,
       ...caddyPreflight,
       ...caddyConfigPreflight,
@@ -4210,6 +4267,7 @@ async function collectDeploymentPreflight(
     ...(hostCpuCount !== undefined ? { hostCpuCount } : {}),
     hostArchitecture,
     ...storagePreflight,
+    ...caddySiteAddressPreflight,
     ...systemdPreflight,
     ...caddyPreflight,
     ...caddyConfigPreflight,

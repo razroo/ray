@@ -380,7 +380,7 @@ Optional repository variables:
 - `RAY_DEPLOY_SSH_USER` — SSH login user, defaults to `root`; the workflow validates it as a simple system account name or numeric UID before opening SSH, and non-root users must have passwordless sudo
 - `RAY_DEPLOY_SSH_PORT` — SSH port for deploy, defaults to `22`
 - `RAY_DEPLOY_SERVICE_USER` — generated non-root systemd service account, defaults to `ray`; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--user` is omitted
-- `RAY_DEPLOY_DOMAIN` — Caddy site address to render, defaults to `ray.local`; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--domain` is omitted
+- `RAY_DEPLOY_DOMAIN` — Caddy site address to render, defaults to `ray.local`; set it to the real public DNS name before installing Caddy because render/doctor warn on local placeholder addresses; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--domain` is omitted
 - `RAY_DEPLOY_MEMORY_MIB` — optional VPS memory class used by workflow doctor/render when `/etc/ray/ray.env` does not already set it; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--memory-mib` is omitted
 - `RAY_DEPLOY_INSTALL_CADDY` — set to `true` to install and reload the generated Caddyfile; requires `RAY_DEPLOY_DOMAIN`
 - `RAY_CONFIG_PATH` — repo-relative config path to install, defaults to `./examples/config/ray.sub1b.public.json`; the workflow rejects absolute paths, path traversal, and paths excluded from repo sync before opening SSH
@@ -461,6 +461,7 @@ file, package metadata, and the llama.cpp staging helper used during deploy.
 - Keep `model.adapter.baseUrl` on plain HTTP at the same loopback host, root, and port as `model.adapter.launchProfile` when Ray renders the llama.cpp service.
 - Let Ray be the public inference surface.
 - Keep the Ray gateway bound to localhost and expose it through Caddy or nginx.
+- Set `RAY_DEPLOY_DOMAIN` or pass `--domain` with the real public DNS name before installing the generated Caddyfile; render and doctor warn when the generated site address is still `ray.local`, `localhost`, loopback, or another `.local` placeholder.
 - Enable `auth.enabled` before exposing Ray publicly; it also protects detailed `/health`, `/metrics`, and `/v1/config` responses.
 - Keep `/etc/ray/ray.env` private, for example with `sudo chmod 600 /etc/ray/ray.env`; doctor warns when the env file is group/world-readable.
 - Create the generated service user before manual render/restart steps, or set `RAY_DEPLOY_SERVICE_USER` in the deploy env file when not using the default `ray` account; use a dedicated non-root account because doctor warns when generated Ray services are configured to run as root.
