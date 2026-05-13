@@ -13,6 +13,7 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_CLI_ARGS = 16;
 const MAX_CLI_ARG_BYTES = 4_096;
+const MAX_GATEWAY_SMOKE_PATH_BYTES = 4_096;
 const MAX_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_TEXT_BYTES = 256 * 1024;
 const PUBLIC_SAFETY_API_KEY = "ray-gateway-smoke";
@@ -157,6 +158,20 @@ function requireFlagValue(flag: string, value: string | undefined): string {
   }
 
   return value;
+}
+
+function assertGatewaySmokePathValue(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty path`);
+  }
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} must not contain control characters`);
+  }
+
+  if (Buffer.byteLength(value, "utf8") > MAX_GATEWAY_SMOKE_PATH_BYTES) {
+    throw new Error(`${label} must be at most ${MAX_GATEWAY_SMOKE_PATH_BYTES} bytes`);
+  }
 }
 
 function parsePositiveInteger(value: string, label: string, maximum: number): number {
@@ -995,6 +1010,8 @@ export async function smokeGateway(options: {
   publicSafety?: boolean;
   asyncQueue?: boolean;
 }): Promise<GatewaySmokeSummary> {
+  assertGatewaySmokePathValue(options.cwd, "cwd");
+  assertGatewaySmokePathValue(options.configPath, "configPath");
   const cwd = path.resolve(options.cwd);
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const configEnv = Object.create(null) as NodeJS.ProcessEnv;

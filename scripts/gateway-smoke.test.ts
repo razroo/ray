@@ -6,6 +6,7 @@ import {
   formatTextSummary,
   parseArgs,
   runGatewaySmokeCli,
+  smokeGateway,
   type GatewaySmokeSummary,
 } from "./gateway-smoke.ts";
 
@@ -140,6 +141,28 @@ test("fetchText refuses to follow smoke probe redirects", async (t) => {
   assert.equal(response.text, "manual redirect");
   assert.equal(redirectedRequests, 0);
   assert.equal(redirectedAuthorization, undefined);
+});
+
+test("smokeGateway rejects oversized direct paths before startup", async () => {
+  await assert.rejects(
+    () =>
+      smokeGateway({
+        cwd: `/${"a".repeat(4096)}`,
+        configPath: "./examples/config/ray.tiny.json",
+        host: "127.0.0.1",
+      }),
+    /cwd must be at most 4096 bytes/,
+  );
+
+  await assert.rejects(
+    () =>
+      smokeGateway({
+        cwd: repoRoot,
+        configPath: `/${"a".repeat(4096)}`,
+        host: "127.0.0.1",
+      }),
+    /configPath must be at most 4096 bytes/,
+  );
 });
 
 test("formatTextSummary reports the checked gateway endpoints", () => {
