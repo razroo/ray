@@ -3193,8 +3193,9 @@ test("loadAndDiagnoseDeployment errors when the projected memory fit exceeds a 4
 
   const diagnostic = inspected.diagnostics.find((entry) => entry.code === "memory_fit_exceeded");
   assert.ok(diagnostic);
-  assert.match(diagnostic.message, /Projected llama\.cpp working set is about/);
-  assert.match(diagnostic.message, /safe budget of 3,276 MiB/);
+  assert.match(diagnostic.message, /Projected llama\.cpp backend working set is about/);
+  assert.match(diagnostic.message, /generated backend MemoryMax safe budget of 2,124 MiB/);
+  assert.match(diagnostic.message, /gateway-memory-max=1,152 MiB/);
 });
 
 test("loadAndDiagnoseDeployment errors when the configured model file is missing in strict mode", async (t) => {

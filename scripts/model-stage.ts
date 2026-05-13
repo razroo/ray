@@ -554,7 +554,7 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
     plan.nonModelWorkingSetMiB !== undefined
       ? `source_bytes="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s stat -c %s -- ${shellQuote(
           sourcePath,
-        )})" || exit "$?"; source_mib="$(((\${source_bytes:-0} + ${BYTES_PER_MIB - 1}) / ${BYTES_PER_MIB}))"; test "$source_mib" -ge 1 || source_mib=1; projected_mib="$((source_mib + ${plan.nonModelWorkingSetMiB}))"; test "$projected_mib" -le ${plan.safeMemoryBudgetMiB} || { printf '%s\\n' "Projected llama.cpp working set would be \${projected_mib} MiB, above the safe budget of ${plan.safeMemoryBudgetMiB} MiB on the ${plan.memoryBudgetMiB} MiB ${plan.memoryBudgetSource} memory target. Use a smaller GGUF or reduce cache/context before staging." >&2; exit 1; }`
+        )})" || exit "$?"; source_mib="$(((\${source_bytes:-0} + ${BYTES_PER_MIB - 1}) / ${BYTES_PER_MIB}))"; test "$source_mib" -ge 1 || source_mib=1; projected_mib="$((source_mib + ${plan.nonModelWorkingSetMiB}))"; test "$projected_mib" -le ${plan.safeMemoryBudgetMiB} || { printf '%s\\n' "Projected llama.cpp backend working set would be \${projected_mib} MiB, above the generated backend MemoryMax safe budget of ${plan.safeMemoryBudgetMiB} MiB on the ${plan.memoryBudgetMiB} MiB ${plan.memoryBudgetSource} memory target. Use a smaller GGUF or reduce cache/context before staging." >&2; exit 1; }`
       : undefined;
   const modelChecksumPreflight = plan.sha256
     ? `printf '%s  %s\\n' ${shellQuote(plan.sha256)} ${shellQuote(sourcePath)} | timeout ${STAGE_MODEL_CHECKSUM_TIMEOUT_SECONDS}s sha256sum -c -`
@@ -766,7 +766,7 @@ export function formatTextPlan(cwd: string, plan: ModelStagePlan): string {
     plan.nonModelWorkingSetMiB !== undefined
   ) {
     lines.push(
-      `- memory target: ${plan.memoryBudgetMiB} MiB ${plan.memoryBudgetSource} target, ${plan.safeMemoryBudgetMiB} MiB safe budget, ${plan.nonModelWorkingSetMiB} MiB non-model working set`,
+      `- memory target: ${plan.memoryBudgetMiB} MiB ${plan.memoryBudgetSource} target, ${plan.safeMemoryBudgetMiB} MiB generated backend MemoryMax safe budget, ${plan.nonModelWorkingSetMiB} MiB non-model backend working set`,
     );
   }
 
@@ -1192,7 +1192,7 @@ function assertModelStageMemoryFit(sourceBytes: number, plan: ModelStagePlan): v
   }
 
   throw new Error(
-    `GGUF source is ${fit.sourceMiB} MiB, producing a projected llama.cpp working set of ${fit.projectedWorkingSetMiB} MiB, above the safe budget of ${fit.safeMemoryBudgetMiB} MiB on the ${fit.memoryBudgetMiB} MiB ${fit.memoryBudgetSource} memory target. Use a smaller GGUF or reduce cache/context before staging.`,
+    `GGUF source is ${fit.sourceMiB} MiB, producing a projected llama.cpp backend working set of ${fit.projectedWorkingSetMiB} MiB, above the generated backend MemoryMax safe budget of ${fit.safeMemoryBudgetMiB} MiB on the ${fit.memoryBudgetMiB} MiB ${fit.memoryBudgetSource} memory target. Use a smaller GGUF or reduce cache/context before staging.`,
   );
 }
 

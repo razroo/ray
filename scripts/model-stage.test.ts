@@ -144,29 +144,29 @@ test("evaluateModelStageStorageHeadroom keeps a post-copy reserve", () => {
   assert.throws(() => evaluateModelStageStorageHeadroom(1, -1), /availableMiB/);
 });
 
-test("evaluateModelStageMemoryFit bounds projected llama.cpp working sets", () => {
-  const fit = evaluateModelStageMemoryFit(2_000 * MiB + 1, {
+test("evaluateModelStageMemoryFit bounds projected llama.cpp backend working sets", () => {
+  const fit = evaluateModelStageMemoryFit(1_400 * MiB + 1, {
     memoryBudgetMiB: 4096,
     memoryBudgetSource: "config",
-    safeMemoryBudgetMiB: 3276,
-    nonModelWorkingSetMiB: 1136,
+    safeMemoryBudgetMiB: 2380,
+    nonModelWorkingSetMiB: 928,
   });
 
   assert.deepEqual(fit, {
-    sourceMiB: 2001,
-    nonModelWorkingSetMiB: 1136,
-    projectedWorkingSetMiB: 3137,
-    safeMemoryBudgetMiB: 3276,
+    sourceMiB: 1401,
+    nonModelWorkingSetMiB: 928,
+    projectedWorkingSetMiB: 2329,
+    safeMemoryBudgetMiB: 2380,
     memoryBudgetMiB: 4096,
     memoryBudgetSource: "config",
     ok: true,
   });
   assert.equal(
-    evaluateModelStageMemoryFit(2_200 * MiB, {
+    evaluateModelStageMemoryFit(1_500 * MiB, {
       memoryBudgetMiB: 4096,
       memoryBudgetSource: "config",
-      safeMemoryBudgetMiB: 3276,
-      nonModelWorkingSetMiB: 1136,
+      safeMemoryBudgetMiB: 2380,
+      nonModelWorkingSetMiB: 928,
     })?.ok,
     false,
   );
@@ -176,8 +176,8 @@ test("evaluateModelStageMemoryFit bounds projected llama.cpp working sets", () =
       evaluateModelStageMemoryFit(-1, {
         memoryBudgetMiB: 4096,
         memoryBudgetSource: "config",
-        safeMemoryBudgetMiB: 3276,
-        nonModelWorkingSetMiB: 1136,
+        safeMemoryBudgetMiB: 2380,
+        nonModelWorkingSetMiB: 928,
       }),
     /sourceBytes/,
   );
@@ -227,8 +227,8 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
   assert.equal(plan.modelPath, "/var/lib/ray/models/portable-1b.gguf");
   assert.equal(plan.memoryBudgetMiB, 4096);
   assert.equal(plan.memoryBudgetSource, "config");
-  assert.equal(plan.safeMemoryBudgetMiB, 3276);
-  assert.equal(plan.nonModelWorkingSetMiB, 1135);
+  assert.equal(plan.safeMemoryBudgetMiB, 2380);
+  assert.equal(plan.nonModelWorkingSetMiB, 928);
   assert.ok(plan.requiredLaunchFlags.includes("--ctx-size"));
   assert.ok(plan.requiredLaunchFlags.includes("--cache-ram"));
   assert.equal(plan.commands[0], "timeout 60s sudo install -d -m 0755 '/usr/local/bin'");
@@ -241,7 +241,7 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
   );
   assert.match(commandsText, /binary_help="\$\(timeout 10s '\.\/bin\/llama-server' --help 2>&1\)"/);
   assert.match(commandsText, /generated launch flag: --ctx-size/);
-  assert.match(commandsText, /Projected llama\.cpp working set would be/);
+  assert.match(commandsText, /Projected llama\.cpp backend working set would be/);
   assert.match(commandsText, /timeout 30s df -Pm '\/var\/lib\/ray\/models'/);
   assert.match(commandsText, /GGUF source does not start with the GGUF header/);
   assert.match(
@@ -322,7 +322,7 @@ test("createModelStagePlan reads staging sources and checksums from env", async 
       "printf '%s  %s\\n' 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' '/tmp/ray-artifacts/local-1b-q4.gguf' | timeout 1800s sha256sum -c -",
     ),
   );
-  assert.match(plan.commands.join("\n"), /Projected llama\.cpp working set would be/);
+  assert.match(plan.commands.join("\n"), /Projected llama\.cpp backend working set would be/);
   assert.match(plan.commands.join("\n"), /timeout 30s df -Pm '\/var\/lib\/ray\/models'/);
 });
 
@@ -372,7 +372,7 @@ test("formatTextPlan prints an operator-ready staging plan", async () => {
   assert.match(text, /required llama\.cpp launch flags: \d+ checked against --help output/);
   assert.match(text, /target GGUF: \/var\/lib\/ray\/models\/qwen2\.5-0\.5b-instruct-q4_k_m\.gguf/);
   assert.match(text, /memory target: 4096 MiB config target/);
-  assert.match(text, /Projected llama\.cpp working set would be/);
+  assert.match(text, /Projected llama\.cpp backend working set would be/);
   assert.match(text, /keep at least 256 MiB free after copying the GGUF/);
   assert.match(text, /timeout 30s head -c 4/);
   assert.match(text, /GGUF source does not start with the GGUF header/);
@@ -569,7 +569,7 @@ test("checkModelStageSources rejects GGUF sources that exceed the memory target"
 
   await assert.rejects(
     checkModelStageSources(tempDir, plan),
-    /projected llama\.cpp working set.*safe budget/,
+    /projected llama\.cpp backend working set.*MemoryMax safe budget/,
   );
 });
 

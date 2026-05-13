@@ -198,6 +198,7 @@ export interface LlamaCppMemoryEstimate {
   kvCacheMiB: number;
   runtimeMiB: number;
   schedulerBufferMiB: number;
+  gatewayMemoryMaxMiB: number;
   reserveMiB: number;
   safeBudgetMiB: number;
   projectedWorkingSetMiB: number;
@@ -218,7 +219,6 @@ export interface DeploymentHostFilePaths {
 
 const BYTES_PER_MIB = 1024 * 1024;
 const DEFAULT_CACHE_RAM_MIB = 8_192;
-const RAY_RUNTIME_RESERVE_MIB = 192;
 const LLAMA_CPP_RUNTIME_RESERVE_MIB = 160;
 const GGUF_MAGIC = "GGUF";
 const MIN_SYSTEM_RESERVE_MIB = 768;
@@ -1407,15 +1407,19 @@ function estimateKvBytesPerToken(preset: LlamaCppLaunchProfile["preset"]): numbe
 }
 
 function formatMemoryEstimateMessage(estimate: LlamaCppMemoryEstimate): string {
-  return `Projected llama.cpp working set is about ${formatMiB(
+  return `Projected llama.cpp backend working set is about ${formatMiB(
     estimate.projectedWorkingSetMiB,
-  )} against a safe budget of ${formatMiB(estimate.safeBudgetMiB)} on a ${formatMiB(
+  )} against a generated backend MemoryMax safe budget of ${formatMiB(
+    estimate.safeBudgetMiB,
+  )} on a ${formatMiB(
     estimate.memoryBudgetMiB,
   )} ${estimate.memoryBudgetSource} target. Components: model=${formatMiB(
     estimate.modelFileMiB,
   )}, cache-ram=${formatMiB(estimate.promptCacheMiB)}, kv=${formatMiB(
     estimate.kvCacheMiB,
-  )}, runtime=${formatMiB(estimate.runtimeMiB)}, scheduler=${formatMiB(
+  )}, llama-runtime=${formatMiB(estimate.runtimeMiB)}, gateway-memory-max=${formatMiB(
+    estimate.gatewayMemoryMaxMiB,
+  )}, scheduler=${formatMiB(
     estimate.schedulerBufferMiB,
   )}, reserve=${formatMiB(estimate.reserveMiB)}.`;
 }
@@ -1485,15 +1489,17 @@ export function estimateLlamaCppMemoryFit(
     (config.scheduler.maxQueuedTokens + config.scheduler.maxInflightTokens) *
       SCHEDULER_BYTES_PER_TOKEN,
   );
-  const runtimeMiB = RAY_RUNTIME_RESERVE_MIB + LLAMA_CPP_RUNTIME_RESERVE_MIB;
+  const runtimeMiB = LLAMA_CPP_RUNTIME_RESERVE_MIB;
   const reserveMiB = Math.max(
     MIN_SYSTEM_RESERVE_MIB,
     Math.ceil(preflight.memoryBudgetMiB * SYSTEM_RESERVE_RATIO),
   );
-  const safeBudgetMiB = Math.max(0, preflight.memoryBudgetMiB - reserveMiB);
+  const gatewayMemoryMaxMiB = resolveGatewayMemoryControls(config).memoryMaxMiB;
+  const safeBudgetMiB = resolveLlamaCppMemoryControls(launchProfile, preflight, {
+    memoryMaxMiB: gatewayMemoryMaxMiB,
+  }).memoryMaxMiB;
   const modelFileMiB = bytesToMiBRoundedUp(preflight.modelFileBytes);
-  const projectedWorkingSetMiB =
-    modelFileMiB + promptCacheMiB + kvCacheMiB + runtimeMiB + schedulerBufferMiB;
+  const projectedWorkingSetMiB = modelFileMiB + promptCacheMiB + kvCacheMiB + runtimeMiB;
 
   return {
     memoryBudgetMiB: preflight.memoryBudgetMiB,
@@ -1503,6 +1509,7 @@ export function estimateLlamaCppMemoryFit(
     kvCacheMiB,
     runtimeMiB,
     schedulerBufferMiB,
+    gatewayMemoryMaxMiB,
     reserveMiB,
     safeBudgetMiB,
     projectedWorkingSetMiB,
