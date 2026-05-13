@@ -46,10 +46,21 @@ export interface GatewayAsyncQueueSummary {
   finalStatus: string;
   pollCount: number;
   outputChars: number;
+  observability: GatewayAsyncQueueObservabilitySummary;
   auth?: {
     missingStatus: number;
     invalidStatus: number;
   };
+}
+
+export interface GatewayAsyncQueueObservabilitySummary {
+  healthStatus: number;
+  metricsStatus: number;
+  healthTotalJobs: number;
+  metricsTotalJobs: number;
+  callbackConcurrency: number;
+  activeInferenceJobs: number;
+  activeCallbackDeliveries: number;
 }
 
 export interface GatewaySmokeSummary {
@@ -333,6 +344,34 @@ function requireInferenceOutput(payload: unknown): string {
 function requireStringField(payload: unknown, field: string, label: string): string {
   if (!isRecord(payload) || typeof payload[field] !== "string" || payload[field].length === 0) {
     throw new Error(`${label} returned a JSON payload without a non-empty ${field} string`);
+  }
+
+  return payload[field];
+}
+
+function requireRecordField(
+  payload: unknown,
+  field: string,
+  label: string,
+): Record<string, unknown> {
+  if (!isRecord(payload) || !isRecord(payload[field])) {
+    throw new Error(`${label} returned a JSON payload without a ${field} object`);
+  }
+
+  return payload[field];
+}
+
+function requireNumberField(payload: unknown, field: string, label: string): number {
+  if (!isRecord(payload) || typeof payload[field] !== "number") {
+    throw new Error(`${label} returned a JSON payload without a numeric ${field} field`);
+  }
+
+  return payload[field];
+}
+
+function requireBooleanField(payload: unknown, field: string, label: string): boolean {
+  if (!isRecord(payload) || typeof payload[field] !== "boolean") {
+    throw new Error(`${label} returned a JSON payload without a boolean ${field} field`);
   }
 
   return payload[field];
@@ -685,6 +724,11 @@ async function smokeAsyncQueue(options: {
       if (!snapshot.output || snapshot.output.length === 0) {
         throw new Error("async queue smoke completed without a non-empty result output string");
       }
+      const observability = await smokeAsyncQueueObservability({
+        baseUrl: options.baseUrl,
+        timeoutMs: options.timeoutMs,
+        token: options.token,
+      });
 
       return {
         createStatus: createResponse.status,
@@ -693,6 +737,7 @@ async function smokeAsyncQueue(options: {
         finalStatus: snapshot.status,
         pollCount,
         outputChars: snapshot.output.length,
+        observability,
       };
     }
 
@@ -706,6 +751,174 @@ async function smokeAsyncQueue(options: {
   throw new Error(
     `async queue smoke did not finish within ${options.timeoutMs}ms; last status was ${lastStatus}`,
   );
+}
+
+async function smokeAsyncQueueObservability(options: {
+  baseUrl: string;
+  timeoutMs: number;
+  token?: string;
+}): Promise<GatewayAsyncQueueObservabilitySummary> {
+  const headers: Record<string, string> = {};
+
+  if (options.token) {
+    headers.authorization = `Bearer ${options.token}`;
+  }
+
+  const init = {
+    method: "GET",
+    ...(Object.keys(headers).length > 0 ? { headers } : {}),
+  };
+  const healthResponse = await fetchJson(
+    `${options.baseUrl}/health`,
+    init,
+    options.timeoutMs,
+    "/health async queue observability",
+  );
+  assertStatusOk(healthResponse, "/health async queue observability");
+
+  const metricsResponse = await fetchJson(
+    `${options.baseUrl}/metrics`,
+    init,
+    options.timeoutMs,
+    "/metrics async queue observability",
+  );
+  assertStatusOk(metricsResponse, "/metrics async queue observability");
+
+  const healthAsyncQueue = requireRecordField(
+    healthResponse.payload,
+    "asyncQueue",
+    "/health async queue observability",
+  );
+  const metricsGauges = requireRecordField(
+    metricsResponse.payload,
+    "gauges",
+    "/metrics async queue observability",
+  );
+  const healthEnabled = requireBooleanField(healthAsyncQueue, "enabled", "/health asyncQueue");
+  const healthTotalJobs = requireNumberField(healthAsyncQueue, "totalJobs", "/health asyncQueue");
+  const healthMaxJobs = requireNumberField(healthAsyncQueue, "maxJobs", "/health asyncQueue");
+  const healthJobsPressure = requireBooleanField(
+    healthAsyncQueue,
+    "jobsPressure",
+    "/health asyncQueue",
+  );
+  const healthActiveInferenceJobs = requireNumberField(
+    healthAsyncQueue,
+    "activeInferenceJobs",
+    "/health asyncQueue",
+  );
+  const healthActiveCallbackDeliveries = requireNumberField(
+    healthAsyncQueue,
+    "activeCallbackDeliveries",
+    "/health asyncQueue",
+  );
+  const healthCallbackConcurrency = requireNumberField(
+    healthAsyncQueue,
+    "callbackConcurrency",
+    "/health asyncQueue",
+  );
+
+  if (!healthEnabled) {
+    throw new Error("/health asyncQueue.enabled was false during async queue smoke");
+  }
+
+  if (healthTotalJobs < 1) {
+    throw new Error(`/health asyncQueue.totalJobs was ${healthTotalJobs}, expected at least 1`);
+  }
+
+  if (healthMaxJobs !== 16) {
+    throw new Error(`/health asyncQueue.maxJobs was ${healthMaxJobs}, expected 16`);
+  }
+
+  if (healthJobsPressure) {
+    throw new Error("/health asyncQueue.jobsPressure was true after a single smoke job");
+  }
+
+  if (healthActiveInferenceJobs !== 0 || healthActiveCallbackDeliveries !== 0) {
+    throw new Error(
+      `/health asyncQueue active work did not drain: activeInferenceJobs=${healthActiveInferenceJobs}, activeCallbackDeliveries=${healthActiveCallbackDeliveries}`,
+    );
+  }
+
+  if (healthCallbackConcurrency !== 1) {
+    throw new Error(
+      `/health asyncQueue.callbackConcurrency was ${healthCallbackConcurrency}, expected 1`,
+    );
+  }
+
+  const metricsEnabled = requireNumberField(
+    metricsGauges,
+    "async_queue.enabled",
+    "/metrics gauges",
+  );
+  const metricsTotalJobs = requireNumberField(
+    metricsGauges,
+    "async_queue.total_jobs",
+    "/metrics gauges",
+  );
+  const metricsMaxJobs = requireNumberField(
+    metricsGauges,
+    "async_queue.max_jobs",
+    "/metrics gauges",
+  );
+  const metricsJobsPressure = requireNumberField(
+    metricsGauges,
+    "async_queue.jobs_pressure",
+    "/metrics gauges",
+  );
+  const metricsActiveInferenceJobs = requireNumberField(
+    metricsGauges,
+    "async_queue.active_inference_jobs",
+    "/metrics gauges",
+  );
+  const metricsActiveCallbackDeliveries = requireNumberField(
+    metricsGauges,
+    "async_queue.active_callback_deliveries",
+    "/metrics gauges",
+  );
+  const metricsCallbackConcurrency = requireNumberField(
+    metricsGauges,
+    "async_queue.callback_concurrency",
+    "/metrics gauges",
+  );
+
+  if (metricsEnabled !== 1) {
+    throw new Error(`/metrics async_queue.enabled was ${metricsEnabled}, expected 1`);
+  }
+
+  if (metricsTotalJobs !== healthTotalJobs) {
+    throw new Error(
+      `/metrics async_queue.total_jobs (${metricsTotalJobs}) did not match /health totalJobs (${healthTotalJobs})`,
+    );
+  }
+
+  if (metricsMaxJobs !== healthMaxJobs) {
+    throw new Error(
+      `/metrics async_queue.max_jobs (${metricsMaxJobs}) did not match /health maxJobs (${healthMaxJobs})`,
+    );
+  }
+
+  if (metricsJobsPressure !== 0) {
+    throw new Error(`/metrics async_queue.jobs_pressure was ${metricsJobsPressure}, expected 0`);
+  }
+
+  if (
+    metricsActiveInferenceJobs !== healthActiveInferenceJobs ||
+    metricsActiveCallbackDeliveries !== healthActiveCallbackDeliveries ||
+    metricsCallbackConcurrency !== healthCallbackConcurrency
+  ) {
+    throw new Error("/metrics async active-work gauges did not match /health asyncQueue fields");
+  }
+
+  return {
+    healthStatus: healthResponse.status,
+    metricsStatus: metricsResponse.status,
+    healthTotalJobs,
+    metricsTotalJobs,
+    callbackConcurrency: healthCallbackConcurrency,
+    activeInferenceJobs: healthActiveInferenceJobs,
+    activeCallbackDeliveries: healthActiveCallbackDeliveries,
+  };
 }
 
 export async function smokeGateway(options: {
@@ -949,6 +1162,7 @@ export function formatTextSummary(cwd: string, summary: GatewaySmokeSummary): st
   if (summary.asyncQueue) {
     lines.push(
       `- async job: HTTP ${summary.asyncQueue.createStatus}, polls=${summary.asyncQueue.pollCount}, status=${summary.asyncQueue.finalStatus}, outputChars=${summary.asyncQueue.outputChars}`,
+      `- async observability: health=${summary.asyncQueue.observability.healthStatus}, metrics=${summary.asyncQueue.observability.metricsStatus}, totalJobs=${summary.asyncQueue.observability.healthTotalJobs}, callbackConcurrency=${summary.asyncQueue.observability.callbackConcurrency}`,
     );
     if (summary.asyncQueue.auth) {
       lines.push(

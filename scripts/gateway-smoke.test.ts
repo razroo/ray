@@ -151,6 +151,15 @@ test("formatTextSummary reports async queue job smoke results", () => {
       finalStatus: "succeeded",
       pollCount: 3,
       outputChars: 42,
+      observability: {
+        healthStatus: 200,
+        metricsStatus: 200,
+        healthTotalJobs: 1,
+        metricsTotalJobs: 1,
+        callbackConcurrency: 1,
+        activeInferenceJobs: 0,
+        activeCallbackDeliveries: 0,
+      },
       auth: {
         missingStatus: 401,
         invalidStatus: 401,
@@ -162,6 +171,7 @@ test("formatTextSummary reports async queue job smoke results", () => {
 
   assert.match(text, /mode: async-queue/);
   assert.match(text, /async job: HTTP 202, polls=3, status=succeeded, outputChars=42/);
+  assert.match(text, /async observability: health=200, metrics=200, totalJobs=1/);
   assert.match(text, /async job auth: missing=401, invalid=401/);
 });
 
@@ -254,6 +264,16 @@ test("runGatewaySmokeCli verifies async queue submission and completion", async 
   assert.match(summary.asyncQueue?.location ?? "", /^\/v1\/jobs\//);
   assert.ok((summary.asyncQueue?.pollCount ?? 0) > 0);
   assert.ok((summary.asyncQueue?.outputChars ?? 0) > 0);
+  assert.equal(summary.asyncQueue?.observability.healthStatus, 200);
+  assert.equal(summary.asyncQueue?.observability.metricsStatus, 200);
+  assert.ok((summary.asyncQueue?.observability.healthTotalJobs ?? 0) >= 1);
+  assert.equal(
+    summary.asyncQueue?.observability.metricsTotalJobs,
+    summary.asyncQueue?.observability.healthTotalJobs,
+  );
+  assert.equal(summary.asyncQueue?.observability.callbackConcurrency, 1);
+  assert.equal(summary.asyncQueue?.observability.activeInferenceJobs, 0);
+  assert.equal(summary.asyncQueue?.observability.activeCallbackDeliveries, 0);
 });
 
 test("runGatewaySmokeCli verifies authenticated public async queue submission", async () => {
@@ -281,4 +301,14 @@ test("runGatewaySmokeCli verifies authenticated public async queue submission", 
   assert.match(summary.asyncQueue?.location ?? "", /^\/v1\/jobs\//);
   assert.ok((summary.asyncQueue?.pollCount ?? 0) > 0);
   assert.ok((summary.asyncQueue?.outputChars ?? 0) > 0);
+  assert.equal(summary.asyncQueue?.observability.healthStatus, 200);
+  assert.equal(summary.asyncQueue?.observability.metricsStatus, 200);
+  assert.ok((summary.asyncQueue?.observability.healthTotalJobs ?? 0) >= 1);
+  assert.equal(
+    summary.asyncQueue?.observability.metricsTotalJobs,
+    summary.asyncQueue?.observability.healthTotalJobs,
+  );
+  assert.equal(summary.asyncQueue?.observability.callbackConcurrency, 1);
+  assert.equal(summary.asyncQueue?.observability.activeInferenceJobs, 0);
+  assert.equal(summary.asyncQueue?.observability.activeCallbackDeliveries, 0);
 });
