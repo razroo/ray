@@ -2236,6 +2236,27 @@ test("diagnoseConfig reports a compatible configured Bun runtime", () => {
   assert.match(diagnostic.message, /Bun version 1\.3\.9/);
 });
 
+test("diagnoseConfig warns when the configured gateway runtime is Node", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      gatewayRuntimeBinaryPath: "/usr/local/bin/node",
+      gatewayRuntimeBinaryStatus: "found",
+      gatewayRuntimeKind: "node",
+      gatewayRuntimeVersion: "22.12.0",
+      gatewayRuntimeVersionStatus: "ok",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "gateway_runtime_node_fallback");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /Node\.js/);
+  assert.match(diagnostic.message, /preferred small-VPS runtime/);
+  assert.match(diagnostic.message, /\/usr\/local\/bin\/bun/);
+});
+
 test("diagnoseConfig errors when the configured GGUF model header is invalid", () => {
   const config = createDefaultConfig("1b");
   const diagnostics = diagnoseConfig(config, process.env, undefined, {

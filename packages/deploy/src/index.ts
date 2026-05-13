@@ -2206,6 +2206,14 @@ export function diagnoseConfig(
         message: `The generated systemd service user "${preflight.serviceUser ?? "the configured service user"}" cannot execute the configured gateway runtime binary at ${runtimePath}${preflight.gatewayRuntimeBinaryAccessError ? ` (${preflight.gatewayRuntimeBinaryAccessError})` : ""}. Install Bun in a service-readable path such as ${DEFAULT_GATEWAY_RUNTIME_BINARY} or adjust ownership and mode bits before restarting ray-gateway.service.`,
       });
     } else {
+      if (preflight.gatewayRuntimeKind === "node") {
+        diagnostics.push({
+          level: "warn",
+          code: "gateway_runtime_node_fallback",
+          message: `Gateway runtime at ${runtimePath} is Node.js. Bun at ${DEFAULT_GATEWAY_RUNTIME_BINARY} is Ray's preferred small-VPS runtime; keep Node only as a compatibility fallback when Bun is unavailable.`,
+        });
+      }
+
       if (preflight.gatewayRuntimeKind && preflight.gatewayRuntimeVersionStatus === "too_old") {
         const runtimeKind = formatGatewayRuntimeKind(preflight.gatewayRuntimeKind);
         const minimum = minimumGatewayRuntimeVersion(preflight.gatewayRuntimeKind).raw;
