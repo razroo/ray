@@ -181,6 +181,8 @@ test("validatePackageRuntimeCoverage requires VPS deploy trigger for storage pre
       '          DEPLOY_MIN_FREE_STORAGE_MIB=$(shell_quote "$DEPLOY_MIN_FREE_STORAGE_MIB")',
       "          timeout 30s df -Pm",
       "          timeout 60s $SUDO install -d -m 0755 /etc/caddy",
+      '          check_free_storage /var/cache/apt "APT package cache"',
+      '          check_free_storage /var/lib/apt "APT package state"',
       '          check_free_storage /etc/ray "Ray config directory"',
       '          check_free_storage /etc/systemd/system "systemd unit directory"',
       '          check_free_storage /etc/caddy "Caddy config directory"',

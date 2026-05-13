@@ -946,6 +946,8 @@ function validateDeployWorkflowStoragePreflight(
     ) &&
     remoteStorageSettingCount >= 2 &&
     contents.includes("timeout 30s df -Pm") &&
+    contents.includes('check_free_storage /var/cache/apt "APT package cache"') &&
+    contents.includes('check_free_storage /var/lib/apt "APT package state"') &&
     contents.includes("timeout 60s $SUDO install -d -m 0755 /etc/caddy") &&
     contents.includes('check_free_storage /etc/ray "Ray config directory"') &&
     contents.includes('check_free_storage /etc/systemd/system "systemd unit directory"') &&
@@ -971,7 +973,7 @@ function validateDeployWorkflowStoragePreflight(
       workflowPath,
       line: workflowLineNumber(lines, "RAY_DEPLOY_MIN_FREE_STORAGE_MIB"),
       message:
-        "VPS deploy workflow must run on deploy-storage-preflight script changes and preflight remote free storage before package bootstrap, repository sync follow-up, config/unit/Caddy writes, Bun install-cache use, Bun production install, and env-file model, llama.cpp binary, or async-queue storage use so small VPS disks fail clearly before deploy work fills them.",
+        "VPS deploy workflow must run on deploy-storage-preflight script changes and preflight remote free storage before APT package bootstrap, repository sync follow-up, config/unit/Caddy writes, Bun install-cache use, Bun production install, and env-file model, llama.cpp binary, or async-queue storage use so small VPS disks fail clearly before deploy work fills them.",
     },
   ];
 }
@@ -1819,6 +1821,8 @@ function validateDeployStoragePreflightScript(
   }
 
   if (
+    contents.includes('"/var/cache/apt"') &&
+    contents.includes('"/var/lib/apt"') &&
     contents.includes('"/etc/ray"') &&
     contents.includes('"/etc/systemd/system"') &&
     contents.includes('"/etc/caddy"') &&
@@ -1847,7 +1851,7 @@ function validateDeployStoragePreflightScript(
       scriptPath,
       line: workflowLineNumber(lines, "DEFAULT_STORAGE_PATHS"),
       message:
-        "Manual deploy storage preflight must check /etc/ray, /etc/systemd/system, /etc/caddy, /srv/ray/.ray/bun-install-cache, and /var/tmp by default, load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from --ray-env-file, and include custom env-file model, llama.cpp binary, plus async-queue storage paths so operator-run config writes, artifact staging, and Bun installs use the same disk headroom guard as the VPS deploy workflow.",
+        "Manual deploy storage preflight must check /var/cache/apt, /var/lib/apt, /etc/ray, /etc/systemd/system, /etc/caddy, /srv/ray/.ray/bun-install-cache, and /var/tmp by default, load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from --ray-env-file, and include custom env-file model, llama.cpp binary, plus async-queue storage paths so operator-run package installs, config writes, artifact staging, and Bun installs use the same disk headroom guard as the VPS deploy workflow.",
     },
   ];
 }

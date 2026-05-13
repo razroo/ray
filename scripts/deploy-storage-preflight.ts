@@ -13,6 +13,8 @@ const MAX_STORAGE_PATHS = 16;
 const MAX_STORAGE_PATH_BYTES = 4_096;
 const BYTES_PER_MIB = 1024 * 1024;
 const DEFAULT_STORAGE_PATHS = [
+  "/var/cache/apt",
+  "/var/lib/apt",
   "/etc/ray",
   "/etc/systemd/system",
   "/etc/caddy",
@@ -64,7 +66,7 @@ Usage:
   bun ./scripts/deploy-storage-preflight.ts [options]
 
 Options:
-  --path <path>          Absolute path to check. Repeatable. Defaults to /etc/ray, /etc/systemd/system, /etc/caddy, /srv/ray, /srv/ray/.ray/bun-install-cache, /var/lib/ray, /tmp, /var/tmp, plus model, llama.cpp binary, and async-queue paths from --env-file when set.
+  --path <path>          Absolute path to check. Repeatable. Defaults to /var/cache/apt, /var/lib/apt, /etc/ray, /etc/systemd/system, /etc/caddy, /srv/ray, /srv/ray/.ray/bun-install-cache, /var/lib/ray, /tmp, /var/tmp, plus model, llama.cpp binary, and async-queue paths from --env-file when set.
   --min-free-mib <n>    Required free storage in MiB. Default: RAY_DEPLOY_MIN_FREE_STORAGE_MIB or ${DEFAULT_MIN_FREE_STORAGE_MIB}. Use 0 to skip the threshold.
   --env-file <path>      Load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from a bounded dotenv file unless --min-free-mib is set.
   --ray-env-file <path>  Alias for --env-file.

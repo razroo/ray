@@ -545,6 +545,8 @@ jobs:
 
           validate_min_free_storage_mib
           check_free_storage "/" "root filesystem"
+          check_free_storage /var/cache/apt "APT package cache"
+          check_free_storage /var/lib/apt "APT package state"
 
           missing_packages=""
           if ! command -v curl >/dev/null 2>&1; then
@@ -603,6 +605,8 @@ jobs:
           timeout 60s $SUDO install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
           timeout 60s $SUDO chown "$DEPLOY_USER:$DEPLOY_GROUP" /srv/ray
           timeout 60s $SUDO chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
+          check_free_storage /var/cache/apt "APT package cache"
+          check_free_storage /var/lib/apt "APT package state"
           check_free_storage /etc/ray "Ray config directory"
           check_free_storage /etc/systemd/system "systemd unit directory"
           check_free_storage /etc/caddy "Caddy config directory"
