@@ -2496,6 +2496,59 @@ test("runtime keeps learned caps below-min token requests stable", async () => {
   assert.deepEqual(observedMaxTokens, [64, 64, 16]);
 });
 
+test("runtime disables learned output caps when adaptive tuning is disabled", async () => {
+  const observedMaxTokens: number[] = [];
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "adaptive-disabled-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async infer(request) {
+      observedMaxTokens.push(request.maxTokens);
+      return {
+        output: "ok",
+        usage: {
+          tokens: {
+            prompt: 8,
+            completion: 4,
+            total: 12,
+          },
+        },
+      };
+    },
+  };
+  const runtime = createRayRuntime(
+    mergeConfig(createDefaultConfig("tiny"), {
+      adaptiveTuning: {
+        enabled: false,
+        learnedFamilyCapEnabled: true,
+        learnedCapMinSamples: 2,
+        learnedCapHeadroomTokens: 4,
+        minOutputTokens: 32,
+      },
+    }),
+    { provider },
+  );
+
+  for (let index = 0; index < 4; index += 1) {
+    const result = await runtime.infer({
+      input: `adaptive disabled sample ${index}`,
+      maxTokens: 64,
+      cache: false,
+      metadata: {
+        promptFamily: "adaptive-disabled-family",
+      },
+    });
+
+    assert.equal(result.diagnostics?.learnedOutputCap?.applied, false);
+  }
+
+  assert.deepEqual(observedMaxTokens, [64, 64, 64, 64]);
+});
+
 test("runtime bounds learned output family history across unique prompt families", async () => {
   const provider: ModelProvider = {
     kind: "llama.cpp",

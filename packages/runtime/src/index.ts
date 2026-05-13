@@ -1777,6 +1777,7 @@ function applyLearnedOutputCap(
       : config.adaptiveTuning.draftPercentile;
 
   if (
+    !config.adaptiveTuning.enabled ||
     !config.adaptiveTuning.learnedFamilyCapEnabled ||
     !familyHistory ||
     sampleCount < config.adaptiveTuning.learnedCapMinSamples
