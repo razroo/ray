@@ -297,6 +297,7 @@ const GATEWAY_RATE_LIMIT_KEY_STORE_WARN_RATIO = 0.02;
 const GATEWAY_RATE_LIMIT_KEY_STORE_WARN_MIN_MIB = 16;
 const GATEWAY_SCHEDULER_BUFFER_WARN_RATIO = 0.15;
 const GATEWAY_SCHEDULER_BUFFER_WARN_MIN_MIB = 96;
+const ASYNC_QUEUE_PERSISTED_JOB_FILE_LIMIT_BYTES = 2 * 1024 * 1024;
 const MIN_WORKING_DIRECTORY_FREE_MIB = 512;
 const LLAMA_CPP_MEMORY_HIGH_RATIO = 0.9;
 const LLAMA_CPP_SWAP_MAX_RATIO = 0.25;
@@ -1621,6 +1622,12 @@ function estimateSchedulerBufferMiB(config: Pick<RayConfig, "scheduler">): numbe
 
 function estimateRateLimitKeyStoreMiB(config: Pick<RayConfig, "rateLimit">): number {
   return bytesToMiBRoundedUp(config.rateLimit.maxKeys * GATEWAY_RATE_LIMIT_KEY_ESTIMATED_BYTES);
+}
+
+function estimateAsyncQueueRetainedJobStoreMiB(config: Pick<RayConfig, "asyncQueue">): number {
+  return bytesToMiBRoundedUp(
+    config.asyncQueue.maxJobs * ASYNC_QUEUE_PERSISTED_JOB_FILE_LIMIT_BYTES,
+  );
 }
 
 function resolveLlamaCppMemoryControls(
@@ -2998,6 +3005,16 @@ export function diagnoseConfig(
         level: "warn",
         code: "async_queue_dispatch_exceeds_scheduler_concurrency",
         message: `asyncQueue.dispatchConcurrency (${config.asyncQueue.dispatchConcurrency}) is higher than scheduler.concurrency (${config.scheduler.concurrency}). On a cheap single-node VPS this cannot create more backend slots; it only lets durable jobs pile up behind the in-process scheduler, so lower asyncQueue.dispatchConcurrency or raise scheduler.concurrency only after sizing the backend.`,
+      });
+    }
+
+    const asyncQueueRetainedJobStoreMiB = estimateAsyncQueueRetainedJobStoreMiB(config);
+
+    if (asyncQueueRetainedJobStoreMiB > config.asyncQueue.minFreeStorageMiB) {
+      diagnostics.push({
+        level: "warn",
+        code: "async_queue_retained_jobs_exceed_storage_reserve",
+        message: `asyncQueue.maxJobs (${config.asyncQueue.maxJobs}) can retain up to ${formatMiB(asyncQueueRetainedJobStoreMiB)} of job records at the gateway's ${formatMiB(bytesToMiBRoundedUp(ASYNC_QUEUE_PERSISTED_JOB_FILE_LIMIT_BYTES))} per-job persistence cap, but asyncQueue.minFreeStorageMiB keeps only ${formatMiB(config.asyncQueue.minFreeStorageMiB)} free before admissions stop. On a cheap VPS, lower RAY_ASYNC_QUEUE_MAX_JOBS, raise RAY_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB, or move asyncQueue.storageDir to a larger persistent volume.`,
       });
     }
 

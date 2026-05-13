@@ -2175,6 +2175,29 @@ test("diagnoseConfig warns when async dispatch exceeds scheduler concurrency", (
   assert.match(diagnostic.message, /cannot create more backend slots/);
 });
 
+test("diagnoseConfig warns when async retained jobs can exceed storage reserve", () => {
+  const config = mergeConfig(createDefaultConfig("1b"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir: "/var/lib/ray/async-queue",
+      maxJobs: 512,
+      minFreeStorageMiB: 256,
+    },
+  });
+
+  const diagnostics = diagnoseConfig(config, process.env);
+  const diagnostic = diagnostics.find(
+    (entry) => entry.code === "async_queue_retained_jobs_exceed_storage_reserve",
+  );
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /asyncQueue\.maxJobs \(512\)/);
+  assert.match(diagnostic.message, /1,024 MiB/);
+  assert.match(diagnostic.message, /asyncQueue\.minFreeStorageMiB/);
+  assert.match(diagnostic.message, /RAY_ASYNC_QUEUE_MAX_JOBS/);
+});
+
 test("diagnoseConfig warns when non-strict async queue storage is below reserved headroom", () => {
   const config = mergeConfig(createDefaultConfig("1b"), {
     asyncQueue: {
