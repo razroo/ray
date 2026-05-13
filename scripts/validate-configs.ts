@@ -374,6 +374,25 @@ function expectPublicConfigStringArrayValue(
   );
 }
 
+function expectPublicConfigAbsent(
+  diagnostics: DeploymentDiagnostic[],
+  config: ConfigRecord,
+  keys: string[],
+  code: string,
+): void {
+  const actual = getConfigValue(config, keys);
+
+  if (actual === undefined) {
+    return;
+  }
+
+  pushPublicConfigPolicyError(
+    diagnostics,
+    code,
+    `Public example configs must not declare ${keys.join(".")}.`,
+  );
+}
+
 function expectPublicConfigPositiveIntegerAtMost(
   diagnostics: DeploymentDiagnostic[],
   config: ConfigRecord,
@@ -606,6 +625,24 @@ async function diagnosePublicConfigPolicy(configPath: string): Promise<Deploymen
     ["model", "adapter", "modelRef"],
     "public_config_model_adapter_ref_explicit",
   );
+  expectPublicConfigAbsent(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "apiKeyEnv"],
+    "public_config_model_adapter_api_key_env_absent",
+  );
+  expectPublicConfigAbsent(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "headers"],
+    "public_config_model_adapter_headers_absent",
+  );
+  expectPublicConfigAbsent(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "slotId"],
+    "public_config_model_adapter_slot_id_absent",
+  );
   expectPublicConfigPositiveIntegerAtMost(
     diagnostics,
     parsed,
@@ -791,6 +828,12 @@ async function diagnosePublicConfigPolicy(configPath: string): Promise<Deploymen
     ["model", "adapter", "launchProfile", "contextShift"],
     true,
     "public_config_model_launch_context_shift_explicit",
+  );
+  expectPublicConfigAbsent(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "extraArgs"],
+    "public_config_model_launch_extra_args_absent",
   );
   expectPublicConfigValue(
     diagnostics,

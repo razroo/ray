@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -220,6 +220,53 @@ test("validateConfigFiles requires explicit public runtime guardrails", async (t
   assert.ok(codes.includes("public_config_adaptive_draft_percentile_explicit"));
   assert.ok(codes.includes("public_config_adaptive_short_percentile_explicit"));
   assert.ok(codes.includes("public_config_adaptive_headroom_tokens_explicit"));
+});
+
+test("validateConfigFiles rejects public backend secret headers and extra launch args", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-config-public-backend-policy-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const configPath = path.join(tempDir, "ray.backend-policy.public.json");
+  const publicConfig = JSON.parse(
+    await readFile(path.join(process.cwd(), "examples/config/ray.sub1b.public.json"), "utf8"),
+  ) as {
+    model: {
+      adapter: {
+        apiKeyEnv?: string;
+        headers?: Record<string, string>;
+        slotId?: number;
+        launchProfile: {
+          extraArgs?: string[];
+        };
+      };
+    };
+  };
+
+  publicConfig.model.adapter.apiKeyEnv = "UPSTREAM_API_KEY";
+  publicConfig.model.adapter.headers = { "x-test": "value" };
+  publicConfig.model.adapter.slotId = 0;
+  publicConfig.model.adapter.launchProfile.extraArgs = ["--mlock"];
+  await writeFile(configPath, JSON.stringify(publicConfig), "utf8");
+
+  const summary = await validateConfigFiles({
+    cwd: process.cwd(),
+    configPaths: [configPath],
+    env: {
+      ...process.env,
+      RAY_API_KEYS: "smoke",
+    },
+  });
+  const codes = summary.results.flatMap((result) =>
+    result.diagnostics.map((diagnostic) => diagnostic.code),
+  );
+
+  assert.equal(summary.ok, false);
+  assert.ok(codes.includes("public_config_model_adapter_api_key_env_absent"));
+  assert.ok(codes.includes("public_config_model_adapter_headers_absent"));
+  assert.ok(codes.includes("public_config_model_adapter_slot_id_absent"));
+  assert.ok(codes.includes("public_config_model_launch_extra_args_absent"));
 });
 
 test("validateConfigFiles accepts every checked-in example config", async () => {
