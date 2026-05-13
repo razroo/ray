@@ -213,16 +213,6 @@ export class RequestScheduler<T> {
     const costTokens = normalizeCostTokens(options.costTokens);
     const preferredSlot = normalizePreferredSlot(options.preferredSlot);
 
-    if (key && this.config.dedupeInflight) {
-      const existing = this.dedupeMap.get(key);
-      if (existing) {
-        return existing.then((result) => ({
-          ...result,
-          deduplicated: true,
-        }));
-      }
-    }
-
     if (costTokens > this.config.maxInflightTokens || costTokens > this.config.maxQueuedTokens) {
       throw new RayError("The request exceeds the scheduler token budget", {
         code: "request_token_budget_exceeded",
@@ -232,6 +222,16 @@ export class RequestScheduler<T> {
           ...this.snapshot(),
         },
       });
+    }
+
+    if (key && this.config.dedupeInflight) {
+      const existing = this.dedupeMap.get(key);
+      if (existing) {
+        return existing.then((result) => ({
+          ...result,
+          deduplicated: true,
+        }));
+      }
     }
 
     if (

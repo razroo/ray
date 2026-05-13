@@ -142,6 +142,57 @@ test("scheduler deduplicates matching inflight work", async () => {
   assert.equal(b.deduplicated, true);
 });
 
+test("scheduler rejects over-budget keyed work before deduplicating", async () => {
+  const scheduler = new RequestScheduler<string>({
+    concurrency: 1,
+    maxQueue: 8,
+    maxQueuedTokens: 64,
+    maxInflightTokens: 32,
+    requestTimeoutMs: 1_000,
+    dedupeInflight: true,
+    batchWindowMs: 0,
+    affinityLookahead: 8,
+    shortJobMaxTokens: 96,
+  });
+
+  let releaseBlocked!: () => void;
+  let markStarted!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    releaseBlocked = resolve;
+  });
+  const firstStarted = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+
+  const first = scheduler.schedule({
+    key: "same",
+    costTokens: 16,
+    handler: async () => {
+      markStarted();
+      await blocked;
+      return "ok";
+    },
+  });
+
+  await firstStarted;
+
+  assert.throws(
+    () =>
+      scheduler.schedule({
+        key: "same",
+        costTokens: 80,
+        handler: async () => "not-used",
+      }),
+    (error: unknown) =>
+      error instanceof Error &&
+      "code" in error &&
+      (error as { code?: string }).code === "request_token_budget_exceeded",
+  );
+
+  releaseBlocked();
+  assert.equal((await first).value, "ok");
+});
+
 test("scheduler handles cleanup after rejected keyed work", async () => {
   const unhandledRejections: unknown[] = [];
   const onUnhandledRejection = (reason: unknown) => {
