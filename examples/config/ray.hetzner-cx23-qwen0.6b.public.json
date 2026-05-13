@@ -152,9 +152,12 @@
     "trustProxyHeaders": true
   },
   "tags": {
+    "target": "sub1b",
+    "hosting": "cheap-vps",
     "integration": "razroo-email-ai",
     "hardware": "hetzner-cx23",
     "engine": "llama.cpp",
+    "modelSize": "0.6b-class",
     "exposure": "public"
   }
 }

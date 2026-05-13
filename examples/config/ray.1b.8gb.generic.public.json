@@ -136,6 +136,7 @@
   },
   "tags": {
     "target": "1b",
+    "hosting": "single-node-8gb",
     "hardware": "generic-8gb-vps-class",
     "engine": "llama.cpp",
     "modelSize": "1b-class",

@@ -86,7 +86,6 @@ test("validateConfigFiles requires explicit public runtime guardrails", async (t
   await writeFile(
     configPath,
     JSON.stringify({
-      profile: "1b",
       auth: {
         enabled: true,
         apiKeyEnv: "RAY_API_KEYS",
@@ -96,7 +95,7 @@ test("validateConfigFiles requires explicit public runtime guardrails", async (t
         maxRequests: 75,
       },
       tags: {
-        exposure: "public",
+        ignored: "metadata",
       },
     }),
     "utf8",
@@ -115,6 +114,13 @@ test("validateConfigFiles requires explicit public runtime guardrails", async (t
   );
 
   assert.equal(summary.ok, false);
+  assert.ok(codes.includes("public_config_profile_explicit"));
+  assert.ok(codes.includes("public_config_tag_target_explicit"));
+  assert.ok(codes.includes("public_config_tag_hosting_explicit"));
+  assert.ok(codes.includes("public_config_tag_hardware_explicit"));
+  assert.ok(codes.includes("public_config_tag_engine_explicit"));
+  assert.ok(codes.includes("public_config_tag_model_size_explicit"));
+  assert.ok(codes.includes("public_config_tag_exposure_explicit"));
   assert.ok(codes.includes("public_config_server_host_explicit"));
   assert.ok(codes.includes("public_config_request_body_limit_explicit"));
   assert.ok(codes.includes("public_config_model_id_explicit"));

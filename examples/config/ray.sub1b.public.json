@@ -134,8 +134,11 @@
     "trustProxyHeaders": true
   },
   "tags": {
+    "target": "sub1b",
+    "hosting": "cheap-vps",
     "hardware": "hetzner-cx23-class",
     "engine": "llama.cpp",
+    "modelSize": "0.5b-class",
     "exposure": "public"
   }
 }

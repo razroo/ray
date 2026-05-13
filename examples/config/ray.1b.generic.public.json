@@ -136,6 +136,7 @@
   },
   "tags": {
     "target": "1b",
+    "hosting": "cheap-vps",
     "hardware": "generic-4gb-vps-class",
     "engine": "llama.cpp",
     "modelSize": "1b-class",

@@ -449,6 +449,45 @@ async function diagnosePublicConfigPolicy(configPath: string): Promise<Deploymen
     return diagnostics;
   }
 
+  expectPublicConfigString(diagnostics, parsed, ["profile"], "public_config_profile_explicit");
+  expectPublicConfigString(
+    diagnostics,
+    parsed,
+    ["tags", "target"],
+    "public_config_tag_target_explicit",
+  );
+  expectPublicConfigString(
+    diagnostics,
+    parsed,
+    ["tags", "hosting"],
+    "public_config_tag_hosting_explicit",
+  );
+  expectPublicConfigString(
+    diagnostics,
+    parsed,
+    ["tags", "hardware"],
+    "public_config_tag_hardware_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["tags", "engine"],
+    "llama.cpp",
+    "public_config_tag_engine_explicit",
+  );
+  expectPublicConfigString(
+    diagnostics,
+    parsed,
+    ["tags", "modelSize"],
+    "public_config_tag_model_size_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["tags", "exposure"],
+    "public",
+    "public_config_tag_exposure_explicit",
+  );
   expectPublicConfigValue(
     diagnostics,
     parsed,
