@@ -628,6 +628,85 @@ test("loadRayConfig rejects unresolved relative llama.cpp launch executables", a
   );
 });
 
+test("loadRayConfig rejects malformed llama.cpp launch paths from env overrides", async () => {
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_MODEL_PATH: " /models/local-1b-q4.gguf",
+      },
+    }),
+    /model\.adapter\.launchProfile\.modelPath must be a path without surrounding whitespace/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_LLAMA_CPP_BINARY_PATH: "/usr/local/bin/llama-server\n",
+      },
+    }),
+    /model\.adapter\.launchProfile\.binaryPath must not contain control characters/,
+  );
+});
+
+test("loadRayConfig rejects malformed llama.cpp launch paths from config files", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-config-launch-paths-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const modelPathConfigPath = join(tempDir, "ray.launch-model-path.invalid.json");
+  await writeFile(
+    modelPathConfigPath,
+    JSON.stringify({
+      profile: "1b",
+      model: {
+        adapter: {
+          launchProfile: {
+            modelPath: "/var/lib/ray/models/local-1b-q4.gguf\r",
+          },
+        },
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: modelPathConfigPath,
+      env: {},
+    }),
+    /model\.adapter\.launchProfile\.modelPath must not contain control characters/,
+  );
+
+  const binaryPathConfigPath = join(tempDir, "ray.launch-binary-path.invalid.json");
+  await writeFile(
+    binaryPathConfigPath,
+    JSON.stringify({
+      profile: "1b",
+      model: {
+        adapter: {
+          launchProfile: {
+            binaryPath: "/usr/local/bin/llama-server ",
+          },
+        },
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: binaryPathConfigPath,
+      env: {},
+    }),
+    /model\.adapter\.launchProfile\.binaryPath must be a path without surrounding whitespace/,
+  );
+});
+
 test("loadRayConfig rejects malformed environment overrides", async () => {
   await assert.rejects(
     loadRayConfig({

@@ -1303,6 +1303,9 @@ function resolveConfigPaths(config: RayConfig, cwd: string): RayConfig {
 
   if (next.model.adapter.kind === "llama.cpp" && next.model.adapter.launchProfile) {
     const profile = next.model.adapter.launchProfile;
+    assertConfigPathInput(profile.modelPath, "model.adapter.launchProfile.modelPath");
+    assertConfigPathInput(profile.binaryPath, "model.adapter.launchProfile.binaryPath");
+
     if (!path.isAbsolute(profile.modelPath)) {
       profile.modelPath = path.resolve(cwd, profile.modelPath);
     }
@@ -2771,17 +2774,9 @@ function validateConfig(config: RayConfig): RayConfig {
 
     if (config.model.adapter.launchProfile) {
       const profile = config.model.adapter.launchProfile;
-      assertNonEmptyStringLength(
-        profile.binaryPath,
-        "model.adapter.launchProfile.binaryPath",
-        MAX_CONFIG_PATH_CHARS,
-      );
+      assertConfigPathInput(profile.binaryPath, "model.adapter.launchProfile.binaryPath");
       assertAbsolutePath(profile.binaryPath, "model.adapter.launchProfile.binaryPath");
-      assertNonEmptyStringLength(
-        profile.modelPath,
-        "model.adapter.launchProfile.modelPath",
-        MAX_CONFIG_PATH_CHARS,
-      );
+      assertConfigPathInput(profile.modelPath, "model.adapter.launchProfile.modelPath");
       assertAbsolutePath(profile.modelPath, "model.adapter.launchProfile.modelPath");
       assertNonEmptyStringLength(
         profile.host,
