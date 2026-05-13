@@ -2556,6 +2556,9 @@ test("diagnoseConfig errors when the generated service user cannot access gatewa
   assert.equal(entrypointDiagnostic.level, "error");
   assert.match(entrypointDiagnostic.message, /ray/);
   assert.match(entrypointDiagnostic.message, /read permission/);
+  assert.match(entrypointDiagnostic.message, /rsync --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r/);
+  assert.match(entrypointDiagnostic.message, /umask 022/);
+  assert.doesNotMatch(entrypointDiagnostic.message, /chmod -R/);
 
   const importDiagnostic = diagnostics.find(
     (entry) => entry.code === "gateway_entrypoint_import_failed",

@@ -2669,7 +2669,7 @@ export function diagnoseConfig(
       diagnostics.push({
         level: "error",
         code: "gateway_entrypoint_service_user_inaccessible",
-        message: `The generated systemd service user "${preflight.serviceUser ?? "the configured service user"}" cannot read the built Ray gateway entrypoint at ${entrypointPath}${preflight.gatewayEntrypointAccessError ? ` (${preflight.gatewayEntrypointAccessError})` : ""}. Run chmod -R a+rX on the Ray checkout or adjust ownership before restarting ray-gateway.service.`,
+        message: `The generated systemd service user "${preflight.serviceUser ?? "the configured service user"}" cannot read the built Ray gateway entrypoint at ${entrypointPath}${preflight.gatewayEntrypointAccessError ? ` (${preflight.gatewayEntrypointAccessError})` : ""}. Sync or build the checkout with service-readable permissions, for example rsync --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r plus umask 022 before the Bun install, or adjust targeted ownership and mode bits before restarting ray-gateway.service.`,
       });
     } else {
       diagnostics.push({
