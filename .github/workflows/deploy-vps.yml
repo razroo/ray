@@ -596,9 +596,15 @@ jobs:
           fi
 
           timeout 60s $SUDO install -d -m 0755 /srv/ray /etc/ray
+          if [ "${INSTALL_CADDY:-false}" = "true" ]; then
+            timeout 60s $SUDO install -d -m 0755 /etc/caddy
+          fi
           timeout 60s $SUDO install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
           timeout 60s $SUDO chown "$DEPLOY_USER:$DEPLOY_GROUP" /srv/ray
           timeout 60s $SUDO chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
+          check_free_storage /etc/ray "Ray config directory"
+          check_free_storage /etc/systemd/system "systemd unit directory"
+          check_free_storage /etc/caddy "Caddy config directory"
           check_free_storage /srv/ray "synced checkout"
           check_free_storage /var/lib/ray "Ray state"
           check_free_storage /tmp "temporary directory"
@@ -861,6 +867,13 @@ jobs:
           check_free_storage "$BUN_INSTALL_CACHE_DIR" "Bun install cache"
           check_free_storage /srv/ray "Bun production install"
           timeout 300s /usr/local/bin/bun install --production --frozen-lockfile --ignore-scripts
+
+          if [ "${INSTALL_CADDY:-false}" = "true" ]; then
+            timeout 60s $SUDO install -d -m 0755 /etc/caddy
+          fi
+          check_free_storage /etc/ray "Ray config directory"
+          check_free_storage /etc/systemd/system "systemd unit directory"
+          check_free_storage /etc/caddy "Caddy config directory"
 
           if [ "${CONFIG_SOURCE:-repo}" = "secret" ] && [ -n "${CONFIG_B64:-}" ]; then
             printf '%s' "$CONFIG_B64" | base64 -d | timeout 60s $SUDO install -m 0640 -o root -g "$SERVICE_GROUP" /dev/stdin /etc/ray/ray.json

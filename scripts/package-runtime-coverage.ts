@@ -865,6 +865,10 @@ function validateDeployWorkflowStoragePreflight(
     ) &&
     remoteStorageSettingCount >= 2 &&
     contents.includes("timeout 30s df -Pm") &&
+    contents.includes("timeout 60s $SUDO install -d -m 0755 /etc/caddy") &&
+    contents.includes('check_free_storage /etc/ray "Ray config directory"') &&
+    contents.includes('check_free_storage /etc/systemd/system "systemd unit directory"') &&
+    contents.includes('check_free_storage /etc/caddy "Caddy config directory"') &&
     contents.includes('check_free_storage /srv/ray "synced checkout"') &&
     contents.includes('check_free_storage /var/lib/ray "Ray state"') &&
     contents.includes('check_free_storage /tmp "temporary directory"') &&
@@ -886,7 +890,7 @@ function validateDeployWorkflowStoragePreflight(
       workflowPath,
       line: workflowLineNumber(lines, "RAY_DEPLOY_MIN_FREE_STORAGE_MIB"),
       message:
-        "VPS deploy workflow must preflight remote free storage before package bootstrap, repository sync follow-up, Bun install-cache use, Bun production install, and env-file model or async-queue storage use so small VPS disks fail clearly before deploy work fills them.",
+        "VPS deploy workflow must preflight remote free storage before package bootstrap, repository sync follow-up, config/unit/Caddy writes, Bun install-cache use, Bun production install, and env-file model or async-queue storage use so small VPS disks fail clearly before deploy work fills them.",
     },
   ];
 }
