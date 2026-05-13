@@ -41,7 +41,7 @@ const MAX_LLAMA_CPP_BINARY_SOURCE_BYTES = 512 * BYTES_PER_MIB;
 const MAX_LLAMA_CPP_BINARY_SOURCE_MIB = MAX_LLAMA_CPP_BINARY_SOURCE_BYTES / BYTES_PER_MIB;
 const MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB = 256;
 const GGUF_MAGIC = "GGUF";
-const LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS = 5;
+const LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS = 10;
 const LLAMA_CPP_BINARY_SMOKE_TIMEOUT_MS = LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS * 1000;
 const LLAMA_CPP_BINARY_SMOKE_MAX_BUFFER_BYTES = 64 * 1024;
 const STAGE_INSPECT_TIMEOUT_SECONDS = 30;
@@ -518,14 +518,14 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
   )} && trap - EXIT )`;
   const commands = [
     `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo install -d -m 0755 ${shellQuote(plan.binaryDirectory)}`,
+    `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo install -d -m 0755 ${shellQuote(plan.modelDirectory)}`,
     binarySourcePreflight,
     ...(binaryChecksumPreflight ? [binaryChecksumPreflight] : []),
-    binaryAtomicInstall,
-    `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo install -d -m 0755 ${shellQuote(plan.modelDirectory)}`,
     ...(modelMemoryPreflight ? [modelMemoryPreflight] : []),
     modelStoragePreflight,
     modelFormatPreflight,
     ...(modelChecksumPreflight ? [modelChecksumPreflight] : []),
+    binaryAtomicInstall,
     modelAtomicInstall,
   ];
 
@@ -1214,6 +1214,11 @@ export async function applyModelStagePlan(
   const modelTargetPath = resolveStageTargetPath(cwd, plan.modelPath);
   const { uid, gid } = await resolveServiceOwnerIds(plan);
 
+  await mkdir(path.dirname(modelTargetPath), { recursive: true, mode: 0o755 });
+  if (path.resolve(modelSourcePath) !== path.resolve(modelTargetPath)) {
+    await assertModelStageStorageHeadroom(modelSourcePath, path.dirname(modelTargetPath), options);
+  }
+
   await mkdir(path.dirname(binaryTargetPath), { recursive: true, mode: 0o755 });
   const copiedBinary = await copyFileAtomicUnlessSame(
     binarySourcePath,
@@ -1239,9 +1244,7 @@ export async function applyModelStagePlan(
     });
   }
 
-  await mkdir(path.dirname(modelTargetPath), { recursive: true, mode: 0o755 });
   if (path.resolve(modelSourcePath) !== path.resolve(modelTargetPath)) {
-    await assertModelStageStorageHeadroom(modelSourcePath, path.dirname(modelTargetPath), options);
     await copyFileAtomicUnlessSame(modelSourcePath, modelTargetPath, async (tempPath) => {
       await assertGgufMagicHeader(tempPath, "staged GGUF model");
       await chmod(tempPath, 0o640);

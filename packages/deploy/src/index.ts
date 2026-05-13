@@ -2670,6 +2670,15 @@ export function diagnoseConfig(
         });
       }
 
+      if (isTemporaryStoragePath(launchProfile.binaryPath)) {
+        diagnostics.push({
+          level: "error",
+          code: "llama_binary_path_private_tmp",
+          message:
+            "model.adapter.launchProfile.binaryPath is under /tmp or /var/tmp, but the generated llama.cpp service uses PrivateTmp=true and temporary storage can be hidden or wiped. Install llama-server somewhere persistent such as /usr/local/bin/llama-server.",
+        });
+      }
+
       if (strictFilesystem && preflight?.llamaCppBinaryStatus !== undefined) {
         const binaryPath = preflight.llamaCppBinaryPath ?? launchProfile.binaryPath;
 
@@ -2732,6 +2741,15 @@ export function diagnoseConfig(
           code: "llama_model_path_home_protected",
           message:
             "model.adapter.launchProfile.modelPath is under /home, /root, or /run/user, but the generated llama.cpp service uses ProtectHome=true. Store GGUF files somewhere service-readable such as /var/lib/ray/models.",
+        });
+      }
+
+      if (isTemporaryStoragePath(launchProfile.modelPath)) {
+        diagnostics.push({
+          level: "error",
+          code: "llama_model_path_private_tmp",
+          message:
+            "model.adapter.launchProfile.modelPath is under /tmp or /var/tmp, but the generated llama.cpp service uses PrivateTmp=true and temporary storage can be hidden or wiped. Store GGUF files somewhere persistent such as /var/lib/ray/models.",
         });
       }
 

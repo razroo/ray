@@ -1839,6 +1839,35 @@ test("diagnoseConfig errors when generated systemd paths are hidden by ProtectHo
   );
 });
 
+test("diagnoseConfig errors when generated llama.cpp paths use temporary storage", () => {
+  const config = createDefaultConfig("1b");
+
+  if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
+    throw new Error("Expected llama.cpp launch profile");
+  }
+
+  config.model.adapter.launchProfile.binaryPath = "/tmp/llama-server";
+  config.model.adapter.launchProfile.modelPath = "/var/tmp/local-1b.gguf";
+
+  const diagnostics = diagnoseConfig(config, process.env);
+
+  const binaryDiagnostic = diagnostics.find(
+    (diagnostic) => diagnostic.code === "llama_binary_path_private_tmp",
+  );
+  assert.ok(binaryDiagnostic);
+  assert.equal(binaryDiagnostic.level, "error");
+  assert.match(binaryDiagnostic.message, /PrivateTmp=true/);
+  assert.match(binaryDiagnostic.message, /\/usr\/local\/bin\/llama-server/);
+
+  const modelDiagnostic = diagnostics.find(
+    (diagnostic) => diagnostic.code === "llama_model_path_private_tmp",
+  );
+  assert.ok(modelDiagnostic);
+  assert.equal(modelDiagnostic.level, "error");
+  assert.match(modelDiagnostic.message, /PrivateTmp=true/);
+  assert.match(modelDiagnostic.message, /\/var\/lib\/ray\/models/);
+});
+
 test("diagnoseConfig errors when generated llama.cpp service binds publicly", () => {
   const config = createDefaultConfig("1b");
 

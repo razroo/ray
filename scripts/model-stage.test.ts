@@ -207,14 +207,14 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
   assert.equal(plan.nonModelWorkingSetMiB, 1135);
   assert.deepEqual(plan.commands, [
     "timeout 60s sudo install -d -m 0755 '/usr/local/bin'",
+    "timeout 60s sudo install -d -m 0755 '/var/lib/ray/models'",
     `binary_source_bytes="$(timeout 30s stat -c %s -- './bin/llama-server')" || exit "$?"; test "\${binary_source_bytes:-0}" -le 536870912 || { printf '%s\\n' 'llama-server source must be at most 512 MiB before copying to /usr/local/bin/llama-server.' >&2; exit 1; }`,
     "printf '%s  %s\\n' 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' './bin/llama-server' | timeout 120s sha256sum -c -",
-    `( binary_tmp="$(timeout 30s sudo mktemp '/usr/local/bin/.ray-stage-llama-server.XXXXXX')" && cleanup_binary_tmp() { timeout 30s sudo rm -f -- "$binary_tmp"; } && trap cleanup_binary_tmp EXIT && timeout 120s sudo install -m 0755 -- './bin/llama-server' "$binary_tmp" && timeout 30s sudo -u 'rayops' test -x "$binary_tmp" && timeout 15s sudo -u 'rayops' timeout 5s "$binary_tmp" --help >/dev/null && timeout 60s sudo mv -f -- "$binary_tmp" '/usr/local/bin/llama-server' && trap - EXIT )`,
-    "timeout 60s sudo install -d -m 0755 '/var/lib/ray/models'",
     `source_bytes="$(timeout 30s stat -c %s -- './models/portable-1b.gguf')" || exit "$?"; source_mib="$(((\${source_bytes:-0} + 1048575) / 1048576))"; test "$source_mib" -ge 1 || source_mib=1; projected_mib="$((source_mib + 1135))"; test "$projected_mib" -le 3276 || { printf '%s\\n' "Projected llama.cpp working set would be \${projected_mib} MiB, above the safe budget of 3276 MiB on the 4096 MiB config memory target. Use a smaller GGUF or reduce cache/context before staging." >&2; exit 1; }`,
     `source_bytes="$(timeout 30s stat -c %s -- './models/portable-1b.gguf')" || exit "$?"; df_output="$(timeout 30s df -Pm '/var/lib/ray/models')" || exit "$?"; source_mib="$(((\${source_bytes:-0} + 1048575) / 1048576))"; test "$source_mib" -ge 1 || source_mib=1; required_mib="$((source_mib + 256))"; available_mib="$(printf '%s\\n' "$df_output" | awk 'NR==2 {print $4}')"; test "\${available_mib:-0}" -ge "\${required_mib:-0}" || { printf '%s\\n' 'Not enough free space in /var/lib/ray/models: keep at least 256 MiB free after copying the GGUF.' >&2; exit 1; }`,
     `magic="$(timeout 30s head -c 4 -- './models/portable-1b.gguf')" || exit "$?"; test "$magic" = 'GGUF' || { printf '%s\\n' 'GGUF source does not start with the GGUF header: ./models/portable-1b.gguf' >&2; exit 1; }`,
     "printf '%s  %s\\n' 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' './models/portable-1b.gguf' | timeout 1800s sha256sum -c -",
+    `( binary_tmp="$(timeout 30s sudo mktemp '/usr/local/bin/.ray-stage-llama-server.XXXXXX')" && cleanup_binary_tmp() { timeout 30s sudo rm -f -- "$binary_tmp"; } && trap cleanup_binary_tmp EXIT && timeout 120s sudo install -m 0755 -- './bin/llama-server' "$binary_tmp" && timeout 30s sudo -u 'rayops' test -x "$binary_tmp" && timeout 20s sudo -u 'rayops' timeout 10s "$binary_tmp" --help >/dev/null && timeout 60s sudo mv -f -- "$binary_tmp" '/usr/local/bin/llama-server' && trap - EXIT )`,
     `( model_tmp="$(timeout 30s sudo mktemp '/var/lib/ray/models/.ray-stage-portable-1b.gguf.XXXXXX')" && cleanup_model_tmp() { timeout 30s sudo rm -f -- "$model_tmp"; } && trap cleanup_model_tmp EXIT && timeout 1800s sudo install -m 0640 -- './models/portable-1b.gguf' "$model_tmp" && { model_magic="$(timeout 30s sudo head -c 4 -- "$model_tmp")" || exit "$?"; test "$model_magic" = 'GGUF' || { printf '%s\\n' 'Staged GGUF copy does not start with the GGUF header before replacing /var/lib/ray/models/portable-1b.gguf.' >&2; exit 1; }; } && timeout 60s sudo chown 'rayops:rayops' "$model_tmp" && timeout 30s sudo -u 'rayops' test -r "$model_tmp" && timeout 60s sudo mv -f -- "$model_tmp" '/var/lib/ray/models/portable-1b.gguf' && trap - EXIT )`,
   ]);
 });
@@ -323,7 +323,7 @@ test("formatTextPlan prints an operator-ready staging plan", async () => {
     text,
     /timeout 120s sudo install -m 0755 -- '\/path\/to\/llama-server' "\$binary_tmp"/,
   );
-  assert.match(text, /timeout 15s sudo -u 'ray' timeout 5s "\$binary_tmp" --help >\/dev\/null/);
+  assert.match(text, /timeout 20s sudo -u 'ray' timeout 10s "\$binary_tmp" --help >\/dev\/null/);
   assert.match(text, /target GGUF: \/var\/lib\/ray\/models\/qwen2\.5-0\.5b-instruct-q4_k_m\.gguf/);
   assert.match(text, /memory target: 4096 MiB config target/);
   assert.match(text, /Projected llama\.cpp working set would be/);
@@ -354,7 +354,7 @@ test("formatCommandPlan prints shell commands only", async () => {
   assert.equal(text, plan.commands.join("\n"));
   assert.doesNotMatch(text, /Ray llama\.cpp artifact staging plan/);
   assert.match(text, /^timeout 60s sudo install -d -m 0755/);
-  assert.match(text, /timeout 15s sudo -u 'ray' timeout 5s "\$binary_tmp" --help >\/dev\/null/);
+  assert.match(text, /timeout 20s sudo -u 'ray' timeout 10s "\$binary_tmp" --help >\/dev\/null/);
   assert.match(text, /timeout 30s head -c 4 -- '\.\/model\.gguf'/);
   assert.match(text, /timeout 30s sudo -u 'ray' test -r "\$model_tmp"/);
 });
@@ -667,6 +667,7 @@ test("applyModelStagePlan rejects low target storage before copying models", asy
       }),
     /Not enough free space/,
   );
+  await assert.rejects(stat(binaryTarget), /ENOENT/);
   await assert.rejects(stat(modelTarget), /ENOENT/);
 });
 
