@@ -37,6 +37,7 @@ const MAX_GATEWAY_CONFIG_PATH_CHARS = 4_096;
 const MAX_GATEWAY_REQUEST_TARGET_CHARS = 8_192;
 const MAX_GATEWAY_HOST_HEADER_CHARS = 512;
 const MAX_GATEWAY_CONTENT_TYPE_CHARS = 256;
+const MAX_GATEWAY_CONTENT_ENCODING_CHARS = 128;
 const GATEWAY_HEADERS_TIMEOUT_MS = 15_000;
 const GATEWAY_REQUEST_TIMEOUT_MS = 30_000;
 const GATEWAY_KEEP_ALIVE_TIMEOUT_MS = 5_000;
@@ -933,6 +934,19 @@ function createUnsupportedJsonContentTypeError(contentType: string | undefined):
   });
 }
 
+function createUnsupportedContentEncodingError(contentEncoding: string | undefined): RayError {
+  return new RayError("Request content encoding must be identity", {
+    code: "unsupported_content_encoding",
+    status: 415,
+    details: {
+      ...(contentEncoding !== undefined
+        ? { contentEncoding: truncateResponseString(contentEncoding, 128) }
+        : {}),
+      supported: ["identity"],
+    },
+  });
+}
+
 function isJsonContentType(contentType: string): boolean {
   const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
   const [type, subtype, extra] = mediaType.split("/");
@@ -968,6 +982,42 @@ function assertJsonContentType(request: IncomingMessage): void {
 
   if (!isJsonContentType(contentType)) {
     throw createUnsupportedJsonContentTypeError(contentType);
+  }
+}
+
+function isIdentityContentEncoding(contentEncoding: string): boolean {
+  const codings = contentEncoding.split(",").map((coding) => coding.trim().toLowerCase());
+
+  return codings.length > 0 && codings.every((coding) => coding === "identity");
+}
+
+function assertIdentityContentEncoding(request: IncomingMessage): void {
+  const contentEncoding = request.headers["content-encoding"];
+
+  if (contentEncoding === undefined) {
+    return;
+  }
+
+  if (typeof contentEncoding !== "string" || contentEncoding.trim().length === 0) {
+    throw createUnsupportedContentEncodingError(undefined);
+  }
+
+  if (contentEncoding.length > MAX_GATEWAY_CONTENT_ENCODING_CHARS) {
+    throw new RayError(
+      `Content-Encoding header must be at most ${MAX_GATEWAY_CONTENT_ENCODING_CHARS} characters`,
+      {
+        code: "unsupported_content_encoding",
+        status: 415,
+        details: {
+          actualChars: contentEncoding.length,
+          maxChars: MAX_GATEWAY_CONTENT_ENCODING_CHARS,
+        },
+      },
+    );
+  }
+
+  if (!isIdentityContentEncoding(contentEncoding)) {
+    throw createUnsupportedContentEncodingError(contentEncoding);
   }
 }
 
@@ -1281,6 +1331,7 @@ function shouldCloseRequestAfterReject(request: IncomingMessage, error: RayError
     (error.code === "body_too_large" ||
       error.code === "invalid_request" ||
       error.code === "request_target_too_large" ||
+      error.code === "unsupported_content_encoding" ||
       error.code === "unsupported_media_type")
   );
 }
@@ -1486,6 +1537,7 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
         }
 
         assertJsonContentType(request);
+        assertIdentityContentEncoding(request);
         acknowledgeExpectContinue(request, response, config.server.requestBodyLimitBytes);
         const body = (await readJsonBody(
           request,
@@ -1531,6 +1583,7 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
         }
 
         assertJsonContentType(request);
+        assertIdentityContentEncoding(request);
         acknowledgeExpectContinue(request, response, config.server.requestBodyLimitBytes);
         const body = (await readJsonBody(
           request,

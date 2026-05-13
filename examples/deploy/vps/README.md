@@ -566,6 +566,7 @@ file, package metadata, and the llama.cpp staging helper used during deploy.
 - Point OpenAI-compatible `model.adapter.baseUrl` at the backend origin or reverse-proxy prefix before `/v1`; Ray appends `/v1/models` and `/v1/chat/completions` itself, and doctor warns when the base URL already ends in `/v1`.
 - Backend adapter requests do not follow redirects; fix any 30x response at the local model server or reverse proxy instead of depending on Ray to chase it.
 - Return `application/json` or `application/*+json` from JSON-speaking backends; malformed JSON under those media types is treated as an invalid backend response, while other successful media types are passed through as text.
+- Send gateway JSON request bodies uncompressed or with `Content-Encoding: identity`; unsupported encodings are rejected before the gateway acknowledges `Expect: 100-continue` uploads or reads the body.
 - Let Ray be the public inference surface.
 - Keep the Ray gateway bound to localhost and expose it through Caddy or nginx.
 - Set `RAY_DEPLOY_DOMAIN` or pass `--domain` with the real public DNS name before installing the generated Caddyfile; render and doctor warn when the generated site address is still `ray.local`, `localhost`, loopback, or another `.local` placeholder.

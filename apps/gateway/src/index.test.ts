@@ -823,6 +823,37 @@ test("gateway rejects unsupported Expect-Continue content types before acknowled
   assert.match(response, /"code": "unsupported_media_type"/);
 });
 
+test("gateway rejects unsupported Expect-Continue content encodings before acknowledgement", async (t) => {
+  const gateway = createGatewayServer({
+    config: createDefaultConfig("tiny"),
+  });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await readRawUnfinishedRequestResponse(gateway.server, [
+    "POST /v1/infer HTTP/1.1",
+    `Host: 127.0.0.1:${address.port}`,
+    "Content-Type: application/json",
+    "Content-Encoding: gzip",
+    "Content-Length: 17",
+    "Expect: 100-continue",
+    "Connection: close",
+    "",
+    "",
+  ]);
+
+  assert.doesNotMatch(response, /^HTTP\/1\.1 100 Continue/m);
+  assert.match(response, /^HTTP\/1\.1 415 /);
+  assert.match(response, /\r\nconnection: close\r\n/i);
+  assert.match(response, /"code": "unsupported_content_encoding"/);
+});
+
 test("gateway rejects unsupported Expect headers with bounded JSON diagnostics", async (t) => {
   const warnings: Array<{ message: string; fields: LogFields | undefined }> = [];
   const logger = {
@@ -940,6 +971,45 @@ test("gateway rejects unsupported async job content types before reading bytes",
   assert.match(response, /"code": "unsupported_media_type"/);
 });
 
+test("gateway rejects unsupported async job content encodings before reading bytes", async (t) => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-gateway-content-encoding-"));
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir,
+    },
+    server: {
+      requestBodyLimitBytes: 16,
+    },
+  });
+  const gateway = createGatewayServer({ config });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    await closeServer(gateway.server);
+    await rm(storageDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await readRawUnfinishedRequestResponse(gateway.server, [
+    "POST /v1/jobs HTTP/1.1",
+    `Host: 127.0.0.1:${address.port}`,
+    "Content-Type: application/json",
+    "Content-Encoding: br",
+    "Content-Length: 17",
+    "",
+    "",
+  ]);
+
+  assert.match(response, /^HTTP\/1\.1 415 /);
+  assert.match(response, /\r\nconnection: close\r\n/i);
+  assert.match(response, /"code": "unsupported_content_encoding"/);
+});
+
 test("gateway accepts structured JSON content types", async (t) => {
   const gateway = createGatewayServer({
     config: createDefaultConfig("tiny"),
@@ -957,6 +1027,33 @@ test("gateway accepts structured JSON content types", async (t) => {
     method: "POST",
     headers: {
       "content-type": "application/vnd.ray+json; charset=utf-8",
+    },
+    body: JSON.stringify({
+      input: "hello",
+    }),
+  });
+
+  assert.equal(response.status, 200);
+});
+
+test("gateway accepts identity content encoding", async (t) => {
+  const gateway = createGatewayServer({
+    config: createDefaultConfig("tiny"),
+  });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/v1/infer`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "content-encoding": "identity",
     },
     body: JSON.stringify({
       input: "hello",
