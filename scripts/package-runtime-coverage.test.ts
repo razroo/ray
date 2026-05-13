@@ -521,6 +521,67 @@ test("validatePackageRuntimeCoverage requires timeouts for VPS Ray helper aliase
   );
 });
 
+test("validatePackageRuntimeCoverage requires privileges for root env-file helpers", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-vps-env-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const vpsDocDir = path.join(tempDir, "examples", "deploy", "vps");
+  await mkdir(vpsDocDir, { recursive: true });
+  const rootPackageJson = path.join(tempDir, "package.json");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify(
+      {
+        name: "ray-test",
+        packageManager: "bun@1.3.0",
+        engines: { bun: ">=1.3" },
+        scripts: {
+          "deploy:storage": "bun ./scripts/deploy-storage-preflight.ts",
+          "doctor:1b:generic":
+            "bun packages/deploy/dist/cli.js doctor --ray-env-file /etc/ray/ray.env",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    path.join(vpsDocDir, "README.md"),
+    [
+      "# VPS deploy",
+      "",
+      "```bash",
+      "timeout 300s bun run doctor:1b:generic",
+      "timeout 60s bun run deploy:storage -- --ray-env-file /etc/ray/ray.env",
+      "timeout 120s bun packages/deploy/dist/cli.js render \\",
+      "  --ray-env-file /etc/ray/ray.env",
+      "timeout 300s sudo /usr/local/bin/bun run doctor:1b:generic",
+      "timeout 60s sudo /usr/local/bin/bun run deploy:storage -- --ray-env-file /etc/ray/ray.env",
+      "timeout 120s sudo /usr/local/bin/bun packages/deploy/dist/cli.js render \\",
+      "  --ray-env-file /etc/ray/ray.env",
+      "```",
+      "",
+    ].join("\n"),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson],
+  });
+  const diagnostics = summary.results.flatMap((result) => result.diagnostics);
+  const privilegeDiagnostics = diagnostics.filter(
+    (diagnostic) => diagnostic.code === "vps_readme_ray_env_helper_privileges_missing",
+  );
+
+  assert.equal(summary.ok, false);
+  assert.deepEqual(
+    privilegeDiagnostics.map((diagnostic) => diagnostic.line),
+    [4, 5, 7],
+  );
+});
+
 test("validatePackageRuntimeCoverage requires bounded curl probes in runtime docs", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-vps-curl-"));
   t.after(async () => {

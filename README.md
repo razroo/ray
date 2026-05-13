@@ -333,7 +333,7 @@ Because `/etc/ray/ray.env` should usually be `0600` and root-owned, run manual
 helpers that read it with privileges that can read that file, for example
 `sudo /usr/local/bin/bun run ... -- --ray-env-file /etc/ray/ray.env`.
 Set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` when the workflow or manual
-`bun run deploy:storage -- --ray-env-file /etc/ray/ray.env` check should require
+`sudo /usr/local/bin/bun run deploy:storage -- --ray-env-file /etc/ray/ray.env` check should require
 more or less than the default 1024 MiB free on the root, checkout, Ray state,
 `/tmp`, `/var/tmp`, and repo-scoped Bun install-cache volumes before package
 bootstrap, rsync follow-up, or the remote Bun production install. When

@@ -1822,6 +1822,38 @@ function isVpsRayHelperCommandRequiringTimeout(line: string): boolean {
   );
 }
 
+function isRootRayEnvLoadingScript(
+  scriptName: string,
+  rootScripts: Record<string, string>,
+): boolean {
+  return rootScripts[scriptName]?.includes("--ray-env-file /etc/ray/ray.env") === true;
+}
+
+function isRootRayEnvLoadingCommand(line: string, rootScripts: Record<string, string>): boolean {
+  return (
+    line.includes("--ray-env-file /etc/ray/ray.env") ||
+    collectDocumentedBunRunScripts(line).some((scriptName) =>
+      isRootRayEnvLoadingScript(scriptName, rootScripts),
+    )
+  );
+}
+
+function shellCommandWindowHasPrivilegedBun(lines: string[], index: number): boolean {
+  const start = Math.max(0, index - 4);
+  for (let windowIndex = index; windowIndex >= start; windowIndex -= 1) {
+    const line = lines[windowIndex]?.trim() ?? "";
+    if (isShellFenceStart(line) || isFenceEnd(line)) {
+      break;
+    }
+
+    if (/\bsudo\s+\/usr\/local\/bin\/bun\b/.test(line)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function referencesImplicitRaySystemdUnit(line: string): boolean {
   return /\b(?:journalctl|systemctl)\b.*\bray-(?:gateway|llama-cpp)(?!\.service)\b/.test(line);
 }
@@ -2043,6 +2075,21 @@ async function validateRuntimeDoc(
         line: index + 1,
         message:
           "VPS deployment docs must run Ray helper scripts under timeout so config, staging, doctor, benchmark, or autotune commands cannot hang indefinitely on small hosts.",
+      });
+    }
+
+    if (
+      options.enforceVpsTimeouts &&
+      isRootRayEnvLoadingCommand(line, options.rootScripts) &&
+      !shellCommandWindowHasPrivilegedBun(lines, index)
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "vps_readme_ray_env_helper_privileges_missing",
+        docPath,
+        line: index + 1,
+        message:
+          "VPS deployment docs must run shell examples that load /etc/ray/ray.env with sudo /usr/local/bin/bun because the env file should be root-owned 0600.",
       });
     }
   }
