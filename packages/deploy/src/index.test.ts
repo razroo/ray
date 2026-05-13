@@ -2023,6 +2023,25 @@ test("diagnoseConfig errors when generated gateway and llama.cpp ports conflict"
   assert.match(diagnostic.message, /distinct local sockets/);
 });
 
+test("diagnoseConfig errors when adapter baseUrl points at the gateway socket", () => {
+  const config = createDefaultConfig("vps");
+
+  if (config.model.adapter.kind !== "openai-compatible") {
+    throw new Error("Expected OpenAI-compatible adapter");
+  }
+
+  config.model.adapter.baseUrl = `http://localhost:${config.server.port}`;
+
+  const diagnostics = diagnoseConfig(config, process.env);
+  const diagnostic = diagnostics.find((entry) => entry.code === "adapter_base_url_gateway_loop");
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /Ray gateway listen socket/);
+  assert.match(diagnostic.message, /model backend/);
+  assert.match(diagnostic.message, /recursively call the gateway/);
+});
+
 test("diagnoseConfig errors when Ray points away from the generated llama.cpp service", () => {
   const publicBaseUrlConfig = createDefaultConfig("1b");
   const portMismatchConfig = createDefaultConfig("1b");

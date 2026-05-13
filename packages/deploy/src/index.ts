@@ -427,6 +427,20 @@ function localBindHostsOverlap(left: string, right: string): boolean {
   );
 }
 
+function adapterBaseUrlTargetsGatewaySocket(config: RayConfig, adapterBaseUrl: URL): boolean {
+  if (getUrlPort(adapterBaseUrl) !== config.server.port) {
+    return false;
+  }
+
+  const gatewayHost = normalizeHostLiteral(config.server.host);
+  const adapterHost = normalizeHostLiteral(adapterBaseUrl.hostname);
+  if (!isLoopbackHost(adapterHost) && adapterHost !== gatewayHost) {
+    return false;
+  }
+
+  return localBindHostsOverlap(gatewayHost, adapterHost);
+}
+
 function normalizeHostLiteral(value: string): string {
   const trimmed = value.trim().toLowerCase();
   return trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
@@ -2624,6 +2638,15 @@ export function diagnoseConfig(
     config.model.adapter.kind === "openai-compatible" ||
     config.model.adapter.kind === "llama.cpp"
   ) {
+    const adapterBaseUrl = parseAdapterBaseUrl(config.model.adapter.baseUrl);
+    if (adapterBaseUrl && adapterBaseUrlTargetsGatewaySocket(config, adapterBaseUrl)) {
+      diagnostics.push({
+        level: "error",
+        code: "adapter_base_url_gateway_loop",
+        message: `model.adapter.baseUrl (${config.model.adapter.baseUrl}) points at the Ray gateway listen socket (${config.server.host}:${config.server.port}). Point it at the model backend instead so inference requests do not recursively call the gateway.`,
+      });
+    }
+
     if (config.scheduler.requestTimeoutMs <= config.model.adapter.timeoutMs) {
       diagnostics.push({
         level: "warn",
