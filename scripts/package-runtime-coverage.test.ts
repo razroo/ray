@@ -294,6 +294,52 @@ test("validatePackageRuntimeCoverage requires timeouts for VPS Ray helper aliase
   );
 });
 
+test("validatePackageRuntimeCoverage requires bounded curl probes in VPS docs", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-vps-curl-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const integrationDocDir = path.join(tempDir, "docs", "integrations");
+  await mkdir(integrationDocDir, { recursive: true });
+  const rootPackageJson = path.join(tempDir, "package.json");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify({
+      name: "ray-test",
+      packageManager: "bun@1.3.0",
+      engines: { bun: ">=1.3" },
+    }),
+  );
+  await writeFile(
+    path.join(integrationDocDir, "razroo-email-ai.md"),
+    [
+      "# Integration",
+      "",
+      "```bash",
+      "curl -sS http://127.0.0.1:3000/v1/infer",
+      "curl -fsS --connect-timeout 2 --max-time 30 http://127.0.0.1:3000/readyz",
+      "curl -fsSL --retry 3 --connect-timeout 10 --max-time 120 https://bun.sh/install | timeout 300s bash",
+      "```",
+      "",
+    ].join("\n"),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson],
+  });
+  const timeoutDiagnostics = summary.results
+    .flatMap((result) => result.diagnostics)
+    .filter((diagnostic) => diagnostic.code === "vps_readme_curl_timeout_missing");
+
+  assert.equal(summary.ok, false);
+  assert.deepEqual(
+    timeoutDiagnostics.map((diagnostic) => diagnostic.line),
+    [4],
+  );
+});
+
 test("validatePackageRuntimeCoverage rejects oversized runtime coverage inputs", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-size-"));
   t.after(async () => {

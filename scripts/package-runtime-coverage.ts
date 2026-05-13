@@ -469,6 +469,14 @@ function hasPipedShellTimeout(line: string): boolean {
   return /\|\s*timeout\s+\d+s\s+(?:bash|sh)\b/.test(line);
 }
 
+function isVpsRuntimeCurlCommand(line: string): boolean {
+  return (
+    /^(?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|[^\s]+)\s+)*(?:timeout\s+\d+s\s+)?curl\b/.test(
+      line,
+    ) && !isPipedShellCurl(line)
+  );
+}
+
 function workflowWindowIncludes(lines: string[], index: number, pattern: string): boolean {
   const start = Math.max(0, index - 2);
   const end = Math.min(lines.length, index + 3);
@@ -1190,6 +1198,21 @@ async function validateRuntimeDoc(
         line: index + 1,
         message:
           "VPS deployment docs must pipe curl-to-shell installers through timeout so the installer body cannot hang after the script download succeeds.",
+      });
+    }
+
+    if (
+      options.enforceVpsTimeouts &&
+      isVpsRuntimeCurlCommand(line) &&
+      (!line.includes("--connect-timeout") || !line.includes("--max-time"))
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "vps_readme_curl_timeout_missing",
+        docPath,
+        line: index + 1,
+        message:
+          "VPS deployment docs must run runtime curl probes with --connect-timeout and --max-time so a wedged gateway cannot hang operator checks.",
       });
     }
 

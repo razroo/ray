@@ -56,7 +56,7 @@ The gateway exposes:
 With the public profile, a minimal `curl` check is:
 
 ```bash
-curl -sS http://127.0.0.1:3000/v1/infer \
+curl -fsS --connect-timeout 2 --max-time 30 http://127.0.0.1:3000/v1/infer \
   -H 'authorization: Bearer replace-with-real-key' \
   -H 'content-type: application/json' \
   -d '{"input":"Hello"}'
