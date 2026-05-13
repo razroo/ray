@@ -3434,6 +3434,22 @@ export function diagnoseConfig(
       }
 
       if (preflight?.memoryBudgetMiB !== undefined) {
+        if (
+          preflight.memoryBudgetSource === "override" &&
+          preflight.hostMemoryMiB !== undefined &&
+          preflight.memoryBudgetMiB > preflight.hostMemoryMiB
+        ) {
+          diagnostics.push({
+            level: strictFilesystem ? "error" : "warn",
+            code: "memory_budget_exceeds_host_memory",
+            message: `The ${formatMiB(
+              preflight.memoryBudgetMiB,
+            )} deploy memory target from RAY_DEPLOY_MEMORY_MIB or --memory-mib is above the detected ${formatMiB(
+              preflight.hostMemoryMiB,
+            )} host memory. Use a target no larger than the VPS RAM so generated gateway and llama.cpp cgroups do not overcommit the node.`,
+          });
+        }
+
         const memoryFloor = evaluateLlamaCppSystemdMemoryFloor(config, preflight.memoryBudgetMiB);
 
         if (!memoryFloor.ok) {

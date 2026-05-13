@@ -1915,6 +1915,33 @@ test("diagnoseConfig errors when deploy memory cannot fit generated cgroup floor
   assert.match(diagnostic.message, /backend minimum MemoryMax=512 MiB/);
 });
 
+test("diagnoseConfig flags deploy memory overrides above detected host memory", () => {
+  const config = createDefaultConfig("1b");
+  const preflight = {
+    hostMemoryMiB: 4_096,
+    memoryBudgetMiB: 8_192,
+    memoryBudgetSource: "override" as const,
+  };
+
+  const renderDiagnostic = diagnoseConfig(config, process.env, undefined, { preflight }).find(
+    (entry) => entry.code === "memory_budget_exceeds_host_memory",
+  );
+  assert.ok(renderDiagnostic);
+  assert.equal(renderDiagnostic.level, "warn");
+
+  const doctorDiagnostic = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight,
+  }).find((entry) => entry.code === "memory_budget_exceeds_host_memory");
+
+  assert.ok(doctorDiagnostic);
+  assert.equal(doctorDiagnostic.level, "error");
+  assert.match(doctorDiagnostic.message, /8,192 MiB deploy memory target/);
+  assert.match(doctorDiagnostic.message, /4,096 MiB host memory/);
+  assert.match(doctorDiagnostic.message, /RAY_DEPLOY_MEMORY_MIB/);
+  assert.match(doctorDiagnostic.message, /--memory-mib/);
+});
+
 test("diagnoseConfig warns when async queue storage is not durable", () => {
   const relativeConfig = mergeConfig(createDefaultConfig("1b"), {
     asyncQueue: {
