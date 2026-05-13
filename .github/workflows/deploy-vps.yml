@@ -737,7 +737,7 @@ jobs:
             if [ -z "${value:-}" ]; then
               return 0
             fi
-            if timeout 30s $SUDO grep -Eq "^${key}=" /etc/ray/ray.env; then
+            if timeout 30s $SUDO grep -Eq "^[[:space:]]*${key}[[:space:]]*=" /etc/ray/ray.env; then
               return 0
             fi
             if [ -s /etc/ray/ray.env ] && [ -n "$(timeout 30s $SUDO tail -c 1 /etc/ray/ray.env)" ]; then

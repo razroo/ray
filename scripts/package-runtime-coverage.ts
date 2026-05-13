@@ -802,7 +802,7 @@ function validateDeployWorkflowResolvedEnvPersistence(
       'append_ray_env_default RAY_GATEWAY_RUNTIME_BINARY "$GATEWAY_RUNTIME_BINARY"',
     ) &&
     contents.includes('append_ray_env_default RAY_DEPLOY_CADDY_BINARY "${CADDY_BINARY:-}"') &&
-    contents.includes("timeout 30s $SUDO grep -Eq") &&
+    contents.includes('"^[[:space:]]*${key}[[:space:]]*="') &&
     contents.includes("timeout 60s $SUDO tee -a /etc/ray/ray.env")
   ) {
     return [];
