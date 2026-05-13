@@ -338,10 +338,15 @@ export interface AsyncQueueSnapshot {
   jobsRatio: number;
   jobsPressure: boolean;
   pressureThreshold: number;
+  pendingAdmissions: number;
   availableStorageMiB?: number;
   minFreeStorageMiB: number;
+  reservedAdmissionMiB: number;
+  effectiveAvailableStorageMiB?: number;
   storageReserveRatio?: number;
   storageLow?: boolean;
+  storageAdmissionReserveRatio?: number;
+  storageAdmissionLow?: boolean;
   completedTtlMs: number;
   pollIntervalMs: number;
   dispatchConcurrency: number;

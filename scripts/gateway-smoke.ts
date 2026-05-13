@@ -62,6 +62,9 @@ export interface GatewayAsyncQueueObservabilitySummary {
   callbackConcurrency: number;
   activeInferenceJobs: number;
   activeCallbackDeliveries: number;
+  pendingAdmissions: number;
+  effectiveAvailableStorageMiB: number;
+  storageAdmissionLow: boolean;
 }
 
 export interface GatewaySmokeSummary {
@@ -101,6 +104,9 @@ interface AsyncQueueObservabilityRead extends GatewayAsyncQueueObservabilitySumm
   metricsActiveInferenceJobs: number;
   metricsActiveCallbackDeliveries: number;
   metricsCallbackConcurrency: number;
+  metricsPendingAdmissions: number;
+  metricsEffectiveAvailableStorageMiB: number;
+  metricsStorageAdmissionLow: number;
 }
 
 const HELP = `Run a loopback Ray gateway smoke using the tiny mock-provider profile.
@@ -851,6 +857,20 @@ async function smokeAsyncQueueObservability(options: {
       throw new Error("/metrics async callback concurrency did not match /health asyncQueue");
     }
 
+    if (observation.metricsPendingAdmissions !== observation.pendingAdmissions) {
+      throw new Error("/metrics async pending admissions did not match /health asyncQueue");
+    }
+
+    if (
+      observation.metricsEffectiveAvailableStorageMiB !== observation.effectiveAvailableStorageMiB
+    ) {
+      throw new Error("/metrics async effective storage headroom did not match /health asyncQueue");
+    }
+
+    if (observation.metricsStorageAdmissionLow !== (observation.storageAdmissionLow ? 1 : 0)) {
+      throw new Error("/metrics async admission storage pressure did not match /health asyncQueue");
+    }
+
     if (
       observation.activeInferenceJobs === 0 &&
       observation.activeCallbackDeliveries === 0 &&
@@ -865,6 +885,9 @@ async function smokeAsyncQueueObservability(options: {
         callbackConcurrency: observation.callbackConcurrency,
         activeInferenceJobs: observation.activeInferenceJobs,
         activeCallbackDeliveries: observation.activeCallbackDeliveries,
+        pendingAdmissions: observation.pendingAdmissions,
+        effectiveAvailableStorageMiB: observation.effectiveAvailableStorageMiB,
+        storageAdmissionLow: observation.storageAdmissionLow,
       };
     }
 
@@ -948,6 +971,21 @@ async function readAsyncQueueObservability(options: {
     "callbackConcurrency",
     "/health asyncQueue",
   );
+  const healthPendingAdmissions = requireNumberField(
+    healthAsyncQueue,
+    "pendingAdmissions",
+    "/health asyncQueue",
+  );
+  const healthEffectiveAvailableStorageMiB = requireNumberField(
+    healthAsyncQueue,
+    "effectiveAvailableStorageMiB",
+    "/health asyncQueue",
+  );
+  const healthStorageAdmissionLow = requireBooleanField(
+    healthAsyncQueue,
+    "storageAdmissionLow",
+    "/health asyncQueue",
+  );
 
   const metricsEnabled = requireNumberField(
     metricsGauges,
@@ -984,6 +1022,21 @@ async function readAsyncQueueObservability(options: {
     "async_queue.callback_concurrency",
     "/metrics gauges",
   );
+  const metricsPendingAdmissions = requireNumberField(
+    metricsGauges,
+    "async_queue.pending_admissions",
+    "/metrics gauges",
+  );
+  const metricsEffectiveAvailableStorageMiB = requireNumberField(
+    metricsGauges,
+    "async_queue.effective_available_storage_mib",
+    "/metrics gauges",
+  );
+  const metricsStorageAdmissionLow = requireNumberField(
+    metricsGauges,
+    "async_queue.storage_admission_low",
+    "/metrics gauges",
+  );
 
   return {
     healthStatus: healthResponse.status,
@@ -1002,6 +1055,12 @@ async function readAsyncQueueObservability(options: {
     metricsActiveInferenceJobs,
     metricsActiveCallbackDeliveries,
     metricsCallbackConcurrency,
+    pendingAdmissions: healthPendingAdmissions,
+    effectiveAvailableStorageMiB: healthEffectiveAvailableStorageMiB,
+    storageAdmissionLow: healthStorageAdmissionLow,
+    metricsPendingAdmissions,
+    metricsEffectiveAvailableStorageMiB,
+    metricsStorageAdmissionLow,
   };
 }
 
@@ -1248,7 +1307,7 @@ export function formatTextSummary(cwd: string, summary: GatewaySmokeSummary): st
   if (summary.asyncQueue) {
     lines.push(
       `- async job: HTTP ${summary.asyncQueue.createStatus}, polls=${summary.asyncQueue.pollCount}, status=${summary.asyncQueue.finalStatus}, outputChars=${summary.asyncQueue.outputChars}`,
-      `- async observability: health=${summary.asyncQueue.observability.healthStatus}, metrics=${summary.asyncQueue.observability.metricsStatus}, totalJobs=${summary.asyncQueue.observability.healthTotalJobs}, callbackConcurrency=${summary.asyncQueue.observability.callbackConcurrency}`,
+      `- async observability: health=${summary.asyncQueue.observability.healthStatus}, metrics=${summary.asyncQueue.observability.metricsStatus}, totalJobs=${summary.asyncQueue.observability.healthTotalJobs}, callbackConcurrency=${summary.asyncQueue.observability.callbackConcurrency}, effectiveStorageMiB=${summary.asyncQueue.observability.effectiveAvailableStorageMiB}`,
     );
     if (summary.asyncQueue.auth) {
       lines.push(

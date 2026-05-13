@@ -1286,7 +1286,9 @@ export class DurableInferenceQueue {
       jobsRatio,
       jobsPressure,
       pressureThreshold: ASYNC_QUEUE_JOB_PRESSURE_RATIO,
+      pendingAdmissions: this.pendingJobAdmissions,
       minFreeStorageMiB: this.options.config.minFreeStorageMiB,
+      reservedAdmissionMiB: this.pendingJobAdmissions * PERSISTED_JOB_FILE_LIMIT_MIB,
       completedTtlMs: this.options.config.completedTtlMs,
       pollIntervalMs: this.options.config.pollIntervalMs,
       dispatchConcurrency: this.options.config.dispatchConcurrency,
@@ -1303,11 +1305,19 @@ export class DurableInferenceQueue {
 
     if (availableStorageMiB !== undefined) {
       snapshot.availableStorageMiB = availableStorageMiB;
+      snapshot.effectiveAvailableStorageMiB = availableStorageMiB - snapshot.reservedAdmissionMiB;
       snapshot.storageReserveRatio = Number(
         (availableStorageMiB / Math.max(1, snapshot.minFreeStorageMiB)).toFixed(4),
       );
       snapshot.storageLow = availableStorageMiB < snapshot.minFreeStorageMiB;
-      snapshot.degraded = snapshot.degraded || snapshot.storageLow;
+      snapshot.storageAdmissionReserveRatio = Number(
+        (snapshot.effectiveAvailableStorageMiB / Math.max(1, snapshot.minFreeStorageMiB)).toFixed(
+          4,
+        ),
+      );
+      snapshot.storageAdmissionLow =
+        snapshot.effectiveAvailableStorageMiB < snapshot.minFreeStorageMiB;
+      snapshot.degraded = snapshot.degraded || snapshot.storageLow || snapshot.storageAdmissionLow;
     }
 
     return snapshot;

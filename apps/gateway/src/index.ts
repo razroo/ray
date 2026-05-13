@@ -191,15 +191,28 @@ function attachAsyncQueueMetrics(
   metrics.gauges["async_queue.jobs_ratio"] = snapshot.jobsRatio;
   metrics.gauges["async_queue.jobs_pressure"] = snapshot.jobsPressure ? 1 : 0;
   metrics.gauges["async_queue.pressure_threshold"] = snapshot.pressureThreshold;
+  metrics.gauges["async_queue.pending_admissions"] = snapshot.pendingAdmissions;
   if (snapshot.availableStorageMiB !== undefined) {
     metrics.gauges["async_queue.available_storage_mib"] = snapshot.availableStorageMiB;
   }
   metrics.gauges["async_queue.min_free_storage_mib"] = snapshot.minFreeStorageMiB;
+  metrics.gauges["async_queue.reserved_admission_mib"] = snapshot.reservedAdmissionMiB;
+  if (snapshot.effectiveAvailableStorageMiB !== undefined) {
+    metrics.gauges["async_queue.effective_available_storage_mib"] =
+      snapshot.effectiveAvailableStorageMiB;
+  }
   if (snapshot.storageReserveRatio !== undefined) {
     metrics.gauges["async_queue.storage_reserve_ratio"] = snapshot.storageReserveRatio;
   }
   if (snapshot.storageLow !== undefined) {
     metrics.gauges["async_queue.storage_low"] = snapshot.storageLow ? 1 : 0;
+  }
+  if (snapshot.storageAdmissionReserveRatio !== undefined) {
+    metrics.gauges["async_queue.storage_admission_reserve_ratio"] =
+      snapshot.storageAdmissionReserveRatio;
+  }
+  if (snapshot.storageAdmissionLow !== undefined) {
+    metrics.gauges["async_queue.storage_admission_low"] = snapshot.storageAdmissionLow ? 1 : 0;
   }
   metrics.gauges["async_queue.completed_ttl_ms"] = snapshot.completedTtlMs;
   metrics.gauges["async_queue.poll_interval_ms"] = snapshot.pollIntervalMs;

@@ -470,10 +470,15 @@ test("durable inference queue rejects new jobs when storage reserve is exhausted
     );
     const snapshot = await queue.snapshotWithStorage();
     assert.equal(snapshot.totalJobs, 0);
+    assert.equal(snapshot.pendingAdmissions, 0);
     assert.equal(snapshot.minFreeStorageMiB, 128);
     assert.equal(snapshot.availableStorageMiB, 127);
+    assert.equal(snapshot.reservedAdmissionMiB, 0);
+    assert.equal(snapshot.effectiveAvailableStorageMiB, 127);
     assert.equal(snapshot.storageReserveRatio, 0.9922);
     assert.equal(snapshot.storageLow, true);
+    assert.equal(snapshot.storageAdmissionReserveRatio, 0.9922);
+    assert.equal(snapshot.storageAdmissionLow, true);
     assert.equal(snapshot.degraded, true);
   } finally {
     await rm(storageDir, { recursive: true, force: true });
@@ -549,6 +554,103 @@ test("durable inference queue reserves storage headroom for concurrent admission
   }
 });
 
+test("durable inference queue reports admission-adjusted storage pressure", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-storage-observe-"));
+  let statfsCalls = 0;
+  let releaseSecondStorageRead!: () => void;
+  let markSecondStorageReadStarted!: () => void;
+  let releaseCallbackLookup!: () => void;
+  let markCallbackLookupStarted!: () => void;
+  const secondStorageReadReleased = new Promise<void>((resolve) => {
+    releaseSecondStorageRead = resolve;
+  });
+  const secondStorageReadStarted = new Promise<void>((resolve) => {
+    markSecondStorageReadStarted = resolve;
+  });
+  const callbackLookupReleased = new Promise<void>((resolve) => {
+    releaseCallbackLookup = resolve;
+  });
+  const callbackLookupStarted = new Promise<void>((resolve) => {
+    markCallbackLookupStarted = resolve;
+  });
+
+  try {
+    const config = mergeConfig(createDefaultConfig("tiny"), {
+      asyncQueue: {
+        enabled: true,
+        storageDir,
+        maxJobs: 4,
+        minFreeStorageMiB: 2,
+      },
+    });
+    const runtime = createRayRuntime(config);
+    const logger = new Logger("test", "error");
+    const queue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+      statfsImpl: async () => {
+        statfsCalls += 1;
+        if (statfsCalls === 2) {
+          markSecondStorageReadStarted();
+          await secondStorageReadReleased;
+        }
+
+        return {
+          bavail: 5,
+          bsize: 1024 * 1024,
+        };
+      },
+      lookupImpl: async () => {
+        markCallbackLookupStarted();
+        await callbackLookupReleased;
+        return [{ address: "93.184.216.34" }];
+      },
+    });
+
+    const first = queue.enqueue({
+      input: "First job held during callback normalization",
+      callbackUrl: "https://callback.example/ray",
+    });
+    await callbackLookupStarted;
+    const second = queue.enqueue({
+      input: "Second job waits on storage admission",
+    });
+    const secondResult = second.then(
+      (job) => ({ status: "fulfilled" as const, job }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
+    await secondStorageReadStarted;
+
+    const snapshot = await queue.snapshotWithStorage();
+    assert.equal(snapshot.pendingAdmissions, 2);
+    assert.equal(snapshot.availableStorageMiB, 5);
+    assert.equal(snapshot.minFreeStorageMiB, 2);
+    assert.equal(snapshot.reservedAdmissionMiB, 4);
+    assert.equal(snapshot.effectiveAvailableStorageMiB, 1);
+    assert.equal(snapshot.storageReserveRatio, 2.5);
+    assert.equal(snapshot.storageLow, false);
+    assert.equal(snapshot.storageAdmissionReserveRatio, 0.5);
+    assert.equal(snapshot.storageAdmissionLow, true);
+    assert.equal(snapshot.degraded, true);
+
+    releaseSecondStorageRead();
+    const rejected = await secondResult;
+    assert.equal(rejected.status, "rejected");
+    assert.ok(rejected.error instanceof RayError);
+    assert.equal(rejected.error.code, "async_queue_storage_low");
+
+    releaseCallbackLookup();
+    const accepted = await first;
+    assert.equal(accepted.status, "queued");
+    assert.equal(queue.snapshot().pendingAdmissions, 0);
+  } finally {
+    releaseSecondStorageRead?.();
+    releaseCallbackLookup?.();
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});
+
 test("durable inference queue handles Bun statfs zero block size", async () => {
   const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-bun-statfs-"));
 
@@ -587,8 +689,12 @@ test("durable inference queue handles Bun statfs zero block size", async () => {
 
     const snapshot = await queue.snapshotWithStorage();
     assert.equal(snapshot.availableStorageMiB, 127);
+    assert.equal(snapshot.reservedAdmissionMiB, 0);
+    assert.equal(snapshot.effectiveAvailableStorageMiB, 127);
     assert.equal(snapshot.storageReserveRatio, 0.9922);
     assert.equal(snapshot.storageLow, true);
+    assert.equal(snapshot.storageAdmissionReserveRatio, 0.9922);
+    assert.equal(snapshot.storageAdmissionLow, true);
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }
