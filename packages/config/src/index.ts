@@ -107,6 +107,18 @@ const DNS_HOST_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const unsafeEnvironmentVariableNames = new Set(["__proto__", "constructor", "prototype"]);
+const reservedAdapterHeaderNames = new Set([
+  "connection",
+  "content-length",
+  "host",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
 
 export interface LoadRayConfigOptions {
   configPath?: string;
@@ -1470,6 +1482,14 @@ function assertHttpHeaderRecord(value: Record<string, string>, label: string): v
   for (const [key, entry] of Object.entries(value)) {
     if (!HTTP_HEADER_NAME_PATTERN.test(key)) {
       throw new RayError(`${label} names must be valid HTTP header token strings`, {
+        code: "config_validation_error",
+        status: 500,
+        details: { key },
+      });
+    }
+
+    if (reservedAdapterHeaderNames.has(key.toLowerCase())) {
+      throw new RayError(`${label}.${key} must not use a transport-controlled header name`, {
         code: "config_validation_error",
         status: 500,
         details: { key },

@@ -209,6 +209,20 @@ test("adapterRequest rejects invalid direct adapter config before dispatch", asy
         {
           baseUrl: "http://127.0.0.1:8080",
           timeoutMs: 500,
+          headers: { "Content-Length": "10" },
+        },
+        "/health",
+        {},
+      ),
+    /adapter\.headers\.Content-Length must not use a transport-controlled header name/,
+  );
+
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: "http://127.0.0.1:8080",
+          timeoutMs: 500,
           headers: { "x-test": "good\r\nbad" },
         },
         "/health",

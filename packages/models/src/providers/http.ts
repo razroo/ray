@@ -58,6 +58,18 @@ const MAX_ASSISTANT_CONTENT_PARTS = 512;
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 const unsafeAdapterRecordKeys = new Set(["__proto__", "constructor", "prototype"]);
+const reservedAdapterHeaderNames = new Set([
+  "connection",
+  "content-length",
+  "host",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
 
 interface LimitedResponseBody {
   body: string;
@@ -266,6 +278,10 @@ function assertHeaderRecord(value: Record<string, string> | undefined, label: st
       !HTTP_HEADER_NAME_PATTERN.test(key)
     ) {
       throw new TypeError(`${label} names must be valid bounded HTTP token strings`);
+    }
+
+    if (reservedAdapterHeaderNames.has(key.toLowerCase())) {
+      throw new TypeError(`${label}.${key} must not use a transport-controlled header name`);
     }
 
     if (/[\0\r\n]/.test(entry)) {

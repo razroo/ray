@@ -1292,6 +1292,30 @@ test("loadRayConfig rejects oversized structured config collections", async (t) 
     /model\.adapter\.headers names must be valid HTTP header token strings/,
   );
 
+  const reservedHeaderConfigPath = join(tempDir, "ray.header-reserved.invalid.json");
+  await writeFile(
+    reservedHeaderConfigPath,
+    JSON.stringify({
+      profile: "vps",
+      model: {
+        adapter: {
+          headers: {
+            Host: "127.0.0.1:8081",
+          },
+        },
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: reservedHeaderConfigPath,
+      env: {},
+    }),
+    /model\.adapter\.headers\.Host must not use a transport-controlled header name/,
+  );
+
   const headerValueConfigPath = join(tempDir, "ray.header-value.invalid.json");
   await writeFile(
     headerValueConfigPath,
