@@ -8,6 +8,7 @@ const DEFAULT_RUNTIME_DOCS = [
   "README.md",
   "examples/deploy/vps/README.md",
   "docs/integrations/razroo-email-ai.md",
+  "docs/npm-publishing.md",
   "docs/portable-1b.md",
   "docs/release-checklist.md",
 ] as const;

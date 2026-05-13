@@ -41,7 +41,7 @@ test("validatePackageRuntimeCoverage accepts current Bun-first workspace manifes
   assert.equal(summary.ok, true);
   assert.ok(summary.packageCount >= 10);
   assert.ok(summary.workflowCount >= 1);
-  assert.ok(summary.docCount >= 7);
+  assert.ok(summary.docCount >= 8);
   assert.ok(summary.scriptCount > 0);
   assert.equal(summary.forbiddenLockfiles.length, 0);
   assert.ok(
@@ -52,6 +52,11 @@ test("validatePackageRuntimeCoverage accepts current Bun-first workspace manifes
   assert.ok(
     summary.results.some(
       (result) => result.packagePath === path.join(repoRoot, "packages/sdk/README.md"),
+    ),
+  );
+  assert.ok(
+    summary.results.some(
+      (result) => result.packagePath === path.join(repoRoot, "docs/npm-publishing.md"),
     ),
   );
   assert.ok(
@@ -186,6 +191,18 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
     ["# Release checklist", "", "```bash", "npm run test", "```", ""].join("\n"),
   );
   await writeFile(
+    path.join(tempDir, "docs", "npm-publishing.md"),
+    [
+      "# Publishing",
+      "",
+      "```bash",
+      "npm install @razroo/ray-sdk",
+      "npm publish ./pkg.tgz --provenance",
+      "```",
+      "",
+    ].join("\n"),
+  );
+  await writeFile(
     path.join(packageDocDir, "README.md"),
     ["# SDK", "", "```bash", "npm install @razroo/ray-sdk", "```", ""].join("\n"),
   );
@@ -232,7 +249,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("vps_readme_ray_service_suffix_missing"));
   assert.ok(codes.includes("vps_readme_ray_helper_timeout_missing"));
   assert.ok(codes.includes("runtime_doc_bun_script_missing"));
-  assert.equal(codes.filter((code) => code === "non_bun_runtime_doc_command").length, 5);
+  assert.equal(codes.filter((code) => code === "non_bun_runtime_doc_command").length, 6);
   assert.ok(codes.includes("non_bun_lockfile_present"));
 });
 

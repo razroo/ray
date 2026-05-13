@@ -130,7 +130,7 @@ cd packages/sdk && bun run release:check-source -- "$(bun -e 'console.log(requir
 ## Consumers
 
 ```bash
-npm install @razroo/ray-sdk
+bun add @razroo/ray-sdk
 ```
 
-The SDK lists `@razroo/ray-core` as a dependency; npm installs both.
+Bun installs the SDK from the npm registry, and the SDK lists `@razroo/ray-core` as a dependency so both packages are installed together.
