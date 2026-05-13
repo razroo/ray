@@ -38,6 +38,8 @@ const GATEWAY_HEADERS_TIMEOUT_MS = 15_000;
 const GATEWAY_REQUEST_TIMEOUT_MS = 30_000;
 const GATEWAY_KEEP_ALIVE_TIMEOUT_MS = 5_000;
 const GATEWAY_MAX_REQUESTS_PER_SOCKET = 1_000;
+const GATEWAY_MAX_CONNECTIONS = 256;
+const GATEWAY_MAX_HEADERS_COUNT = 64;
 const GATEWAY_SHUTDOWN_TIMEOUT_MS = 30_000;
 const GATEWAY_WARMUP_RETRY_INITIAL_MS = 2_000;
 const GATEWAY_WARMUP_RETRY_MAX_MS = 15_000;
@@ -1308,6 +1310,8 @@ export function createGatewayServer(options: CreateGatewayHandlerOptions): Gatew
   server.headersTimeout = GATEWAY_HEADERS_TIMEOUT_MS;
   server.keepAliveTimeout = GATEWAY_KEEP_ALIVE_TIMEOUT_MS;
   server.maxRequestsPerSocket = GATEWAY_MAX_REQUESTS_PER_SOCKET;
+  server.maxConnections = GATEWAY_MAX_CONNECTIONS;
+  server.maxHeadersCount = GATEWAY_MAX_HEADERS_COUNT;
   server.on("connection", (socket) => {
     sockets.add(socket);
     socket.on("close", () => {

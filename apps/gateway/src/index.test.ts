@@ -131,7 +131,7 @@ async function readRawUnfinishedRequestResponse(
   });
 }
 
-test("gateway bounds HTTP server timeouts for small VPS sockets", () => {
+test("gateway bounds HTTP server socket and header resources for small VPS hosts", () => {
   const gateway = createGatewayServer({
     config: createDefaultConfig("tiny"),
   });
@@ -140,6 +140,8 @@ test("gateway bounds HTTP server timeouts for small VPS sockets", () => {
   assert.equal(gateway.server.requestTimeout, 30_000);
   assert.equal(gateway.server.keepAliveTimeout, 5_000);
   assert.equal(gateway.server.maxRequestsPerSocket, 1_000);
+  assert.equal(gateway.server.maxConnections, 256);
+  assert.equal(gateway.server.maxHeadersCount, 64);
 });
 
 test("stopGateway force-closes active request sockets before systemd timeout", async (t) => {
