@@ -43,6 +43,7 @@ const MAX_PACKAGE_JSON_FILES = 128;
 const MAX_PACKAGE_DISCOVERY_DIRECTORIES = 4_096;
 const MAX_PACKAGE_DISCOVERY_FILES = 32_768;
 const MAX_DISCOVERY_PATH_BYTES = 4_096;
+const MAX_RUNTIME_COVERAGE_PATH_BYTES = 4_096;
 const MAX_WORKFLOW_BYTES = 512 * 1024;
 const MAX_WORKFLOW_FILES = 64;
 const MAX_WORKFLOW_DIRECTORY_ENTRIES = 1_024;
@@ -141,6 +142,20 @@ function requireFlagValue(flag: string, value: string | undefined): string {
   }
 
   return value;
+}
+
+function assertRuntimeCoveragePathValue(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty path`);
+  }
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} must not contain control characters`);
+  }
+
+  if (Buffer.byteLength(value, "utf8") > MAX_RUNTIME_COVERAGE_PATH_BYTES) {
+    throw new Error(`${label} must be at most ${MAX_RUNTIME_COVERAGE_PATH_BYTES} bytes`);
+  }
 }
 
 export function parseArgs(argv: string[]): PackageRuntimeCoverageArgs {
@@ -296,6 +311,7 @@ async function collectPackageJsonPathsFromDirectory(
 }
 
 export async function collectPackageJsonPaths(cwd: string): Promise<string[]> {
+  assertRuntimeCoveragePathValue(cwd, "cwd");
   const resolvedCwd = path.resolve(cwd);
   const state: PackageDiscoveryState = {
     root: resolvedCwd,
@@ -2433,11 +2449,15 @@ export async function validatePackageRuntimeCoverage(options: {
   cwd: string;
   packageJsonPaths: string[];
 }): Promise<PackageRuntimeCoverageSummary> {
+  assertRuntimeCoveragePathValue(options.cwd, "cwd");
   const cwd = path.resolve(options.cwd);
   if (options.packageJsonPaths.length > MAX_PACKAGE_JSON_FILES) {
     throw new Error(
       `Package runtime coverage can inspect at most ${MAX_PACKAGE_JSON_FILES} package.json files`,
     );
+  }
+  for (const [index, packageJsonPath] of options.packageJsonPaths.entries()) {
+    assertRuntimeCoveragePathValue(packageJsonPath, `packageJsonPaths[${index}]`);
   }
 
   const results: PackageRuntimeCoverageResult[] = [];

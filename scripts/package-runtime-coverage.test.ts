@@ -104,6 +104,26 @@ test("validatePackageRuntimeCoverage rejects excessive package inputs before sca
   );
 });
 
+test("validatePackageRuntimeCoverage rejects oversized direct paths before scanning", async () => {
+  await assert.rejects(
+    () =>
+      validatePackageRuntimeCoverage({
+        cwd: `/${"a".repeat(4096)}`,
+        packageJsonPaths: [path.join(repoRoot, "package.json")],
+      }),
+    /cwd must be at most 4096 bytes/,
+  );
+
+  await assert.rejects(
+    () =>
+      validatePackageRuntimeCoverage({
+        cwd: repoRoot,
+        packageJsonPaths: [`/${"a".repeat(4096)}`],
+      }),
+    /packageJsonPaths\[0\] must be at most 4096 bytes/,
+  );
+});
+
 test("validatePackageRuntimeCoverage requires config and Bun cache storage preflight coverage", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-storage-"));
   t.after(async () => {
@@ -1272,6 +1292,13 @@ test("collectPackageJsonPaths rejects excessive package manifests while streamin
   await assert.rejects(
     () => collectPackageJsonPaths(tempDir),
     /Repository must contain at most 128 package\.json files/,
+  );
+});
+
+test("collectPackageJsonPaths rejects oversized direct roots before discovery", async () => {
+  await assert.rejects(
+    () => collectPackageJsonPaths(`/${"a".repeat(4096)}`),
+    /cwd must be at most 4096 bytes/,
   );
 });
 
