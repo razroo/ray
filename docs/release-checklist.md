@@ -22,7 +22,7 @@ Aligned with [roadmap Phase 1 exit criteria](roadmap.md) and day-one operator ex
    In another terminal:
 
    ```bash
-   curl -s http://127.0.0.1:3000/v1/infer \
+   curl -fsS --connect-timeout 2 --max-time 30 http://127.0.0.1:3000/v1/infer \
      -H 'content-type: application/json' \
      -d '{"input":"Smoke test."}'
    ```

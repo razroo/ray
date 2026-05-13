@@ -294,7 +294,7 @@ test("validatePackageRuntimeCoverage requires timeouts for VPS Ray helper aliase
   );
 });
 
-test("validatePackageRuntimeCoverage requires bounded curl probes in VPS docs", async (t) => {
+test("validatePackageRuntimeCoverage requires bounded curl probes in runtime docs", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-vps-curl-"));
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
@@ -324,18 +324,38 @@ test("validatePackageRuntimeCoverage requires bounded curl probes in VPS docs", 
       "",
     ].join("\n"),
   );
+  await writeFile(
+    path.join(tempDir, "README.md"),
+    [
+      "# Readme",
+      "",
+      "```bash",
+      "curl -sS http://127.0.0.1:3000/v1/jobs",
+      "curl -fsS --connect-timeout 2 --max-time 30 http://127.0.0.1:3000/livez",
+      "```",
+      "",
+    ].join("\n"),
+  );
 
   const summary = await validatePackageRuntimeCoverage({
     cwd: tempDir,
     packageJsonPaths: [rootPackageJson],
   });
-  const timeoutDiagnostics = summary.results
-    .flatMap((result) => result.diagnostics)
-    .filter((diagnostic) => diagnostic.code === "vps_readme_curl_timeout_missing");
+  const diagnostics = summary.results.flatMap((result) => result.diagnostics);
+  const vpsTimeoutDiagnostics = diagnostics.filter(
+    (diagnostic) => diagnostic.code === "vps_readme_curl_timeout_missing",
+  );
+  const runtimeTimeoutDiagnostics = diagnostics.filter(
+    (diagnostic) => diagnostic.code === "runtime_doc_curl_timeout_missing",
+  );
 
   assert.equal(summary.ok, false);
   assert.deepEqual(
-    timeoutDiagnostics.map((diagnostic) => diagnostic.line),
+    vpsTimeoutDiagnostics.map((diagnostic) => diagnostic.line),
+    [4],
+  );
+  assert.deepEqual(
+    runtimeTimeoutDiagnostics.map((diagnostic) => diagnostic.line),
     [4],
   );
 });

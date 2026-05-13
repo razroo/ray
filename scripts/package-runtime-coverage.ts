@@ -1217,6 +1217,21 @@ async function validateRuntimeDoc(
     }
 
     if (
+      !options.enforceVpsTimeouts &&
+      isVpsRuntimeCurlCommand(line) &&
+      (!line.includes("--connect-timeout") || !line.includes("--max-time"))
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "runtime_doc_curl_timeout_missing",
+        docPath,
+        line: index + 1,
+        message:
+          "Runtime docs must run curl probes with --connect-timeout and --max-time so local gateway checks cannot hang indefinitely.",
+      });
+    }
+
+    if (
       options.enforceVpsTimeouts &&
       /\bbun\s+install\b/.test(line) &&
       (!line.includes("timeout ") || !line.includes("--frozen-lockfile"))

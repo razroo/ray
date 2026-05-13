@@ -176,7 +176,7 @@ bun run dev:tiny
 In another terminal:
 
 ```bash
-curl -s http://127.0.0.1:3000/v1/infer \
+curl -fsS --connect-timeout 2 --max-time 30 http://127.0.0.1:3000/v1/infer \
   -H 'content-type: application/json' \
   -d '{"input":"Explain why cheap VPS inference matters."}'
 ```
@@ -184,7 +184,7 @@ curl -s http://127.0.0.1:3000/v1/infer \
 Async durable queue on the same gateway:
 
 ```bash
-curl -s http://127.0.0.1:3000/v1/jobs \
+curl -fsS --connect-timeout 2 --max-time 30 http://127.0.0.1:3000/v1/jobs \
   -H 'content-type: application/json' \
   -d '{"input":"Draft a follow-up email body.","callbackUrl":"https://example.com/ray-callback"}'
 ```
