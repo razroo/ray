@@ -952,7 +952,7 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
       !isNonEmptyString(env.RAY_LLAMA_CPP_BASE_URL) &&
       (isNonEmptyString(llamaHost) || llamaPort !== undefined)
     ) {
-      next.model.adapter.baseUrl = `http://${profile.host}:${profile.port}`;
+      next.model.adapter.baseUrl = `http://${formatHostForHttpBaseUrl(profile.host)}:${profile.port}`;
     }
   }
 
@@ -1273,6 +1273,11 @@ function getUrlPort(url: URL): number {
 function normalizeHostLiteral(value: string): string {
   const trimmed = value.trim().toLowerCase();
   return trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+}
+
+function formatHostForHttpBaseUrl(value: string): string {
+  const host = normalizeHostLiteral(value);
+  return isIP(host) === 6 ? `[${host}]` : value;
 }
 
 function isLoopbackHost(value: string): boolean {

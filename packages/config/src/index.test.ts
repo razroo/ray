@@ -443,6 +443,29 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
   assert.equal(loaded.config.rateLimit.trustProxyHeaders, false);
 });
 
+test("loadRayConfig brackets IPv6 llama.cpp launch hosts when deriving base URLs", async () => {
+  const loaded = await loadRayConfig({
+    cwd: process.cwd(),
+    configPath: "./examples/config/ray.1b.json",
+    env: {
+      RAY_LLAMA_CPP_HOST: "::1",
+      RAY_LLAMA_CPP_PORT: "8090",
+    },
+  });
+
+  assert.equal(loaded.config.model.adapter.kind, "llama.cpp");
+
+  if (
+    loaded.config.model.adapter.kind !== "llama.cpp" ||
+    !loaded.config.model.adapter.launchProfile
+  ) {
+    throw new Error("Expected a llama.cpp launch profile");
+  }
+
+  assert.equal(loaded.config.model.adapter.launchProfile.host, "::1");
+  assert.equal(loaded.config.model.adapter.baseUrl, "http://[::1]:8090");
+});
+
 test("documented portable 1b dotenv examples resolve to single-slot budgets", async () => {
   const examples = [
     {
