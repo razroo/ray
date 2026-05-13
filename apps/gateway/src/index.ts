@@ -79,6 +79,7 @@ export interface CreateGatewayHandlerOptions {
   env?: NodeJS.ProcessEnv;
   rateLimiter?: FixedWindowRateLimiter;
   warmupSnapshot?: () => GatewayWarmupSnapshot | undefined;
+  httpResourceSnapshot?: () => GatewayHttpResourceSnapshot | undefined;
 }
 
 export interface GatewayServer {
@@ -104,6 +105,21 @@ export interface GatewayWarmupSnapshot {
   retryInMs: number;
   succeeded: boolean;
   stopped: boolean;
+}
+
+export interface GatewayHttpResourceSnapshot {
+  sockets: number;
+  activeSockets: number;
+  idleSockets: number;
+  activeRequests: number;
+  maxConnections: number;
+  connectionRatio: number;
+  maxHeaderBytes: number;
+  maxHeadersCount: number;
+  maxRequestsPerSocket: number;
+  headersTimeoutMs: number;
+  requestTimeoutMs: number;
+  keepAliveTimeoutMs: number;
 }
 
 export interface GatewayWarmupController {
@@ -184,6 +200,26 @@ function attachGatewayWarmupMetrics(
   metrics.gauges["gateway.warmup.retry_delay_ms"] = snapshot.retryInMs;
   metrics.gauges["gateway.warmup.succeeded"] = snapshot.succeeded ? 1 : 0;
   metrics.gauges["gateway.warmup.stopped"] = snapshot.stopped ? 1 : 0;
+
+  return metrics;
+}
+
+function attachGatewayHttpResourceMetrics(
+  metrics: RuntimeMetricsSnapshot,
+  snapshot: GatewayHttpResourceSnapshot,
+): RuntimeMetricsSnapshot {
+  metrics.gauges["gateway.http.sockets"] = snapshot.sockets;
+  metrics.gauges["gateway.http.active_sockets"] = snapshot.activeSockets;
+  metrics.gauges["gateway.http.idle_sockets"] = snapshot.idleSockets;
+  metrics.gauges["gateway.http.active_requests"] = snapshot.activeRequests;
+  metrics.gauges["gateway.http.max_connections"] = snapshot.maxConnections;
+  metrics.gauges["gateway.http.connection_ratio"] = snapshot.connectionRatio;
+  metrics.gauges["gateway.http.max_header_bytes"] = snapshot.maxHeaderBytes;
+  metrics.gauges["gateway.http.max_headers_count"] = snapshot.maxHeadersCount;
+  metrics.gauges["gateway.http.max_requests_per_socket"] = snapshot.maxRequestsPerSocket;
+  metrics.gauges["gateway.http.headers_timeout_ms"] = snapshot.headersTimeoutMs;
+  metrics.gauges["gateway.http.request_timeout_ms"] = snapshot.requestTimeoutMs;
+  metrics.gauges["gateway.http.keep_alive_timeout_ms"] = snapshot.keepAliveTimeoutMs;
 
   return metrics;
 }
@@ -324,6 +360,33 @@ function destroyIdleGatewaySockets(gateway: GatewayServer): void {
       socket.destroy();
     }
   }
+}
+
+function snapshotGatewayHttpResources(
+  sockets: Set<Socket>,
+  activeRequestsBySocket: Map<Socket, number>,
+): GatewayHttpResourceSnapshot {
+  let activeRequests = 0;
+  for (const count of activeRequestsBySocket.values()) {
+    activeRequests += count;
+  }
+
+  const activeSockets = activeRequestsBySocket.size;
+
+  return {
+    sockets: sockets.size,
+    activeSockets,
+    idleSockets: Math.max(0, sockets.size - activeSockets),
+    activeRequests,
+    maxConnections: GATEWAY_MAX_CONNECTIONS,
+    connectionRatio: sockets.size / GATEWAY_MAX_CONNECTIONS,
+    maxHeaderBytes: GATEWAY_MAX_HEADER_BYTES,
+    maxHeadersCount: GATEWAY_MAX_HEADERS_COUNT,
+    maxRequestsPerSocket: GATEWAY_MAX_REQUESTS_PER_SOCKET,
+    headersTimeoutMs: GATEWAY_HEADERS_TIMEOUT_MS,
+    requestTimeoutMs: GATEWAY_REQUEST_TIMEOUT_MS,
+    keepAliveTimeoutMs: GATEWAY_KEEP_ALIVE_TIMEOUT_MS,
+  };
 }
 
 function requireFlagValue(flag: string, value: string | undefined): string {
@@ -1151,6 +1214,10 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
         if (warmupSnapshot) {
           attachGatewayWarmupMetrics(metrics, warmupSnapshot);
         }
+        const httpResourceSnapshot = handlerOptions.httpResourceSnapshot?.();
+        if (httpResourceSnapshot) {
+          attachGatewayHttpResourceMetrics(metrics, httpResourceSnapshot);
+        }
         writeJsonWithoutReadingBody(
           request,
           response,
@@ -1381,6 +1448,8 @@ export function createGatewayServer(options: CreateGatewayHandlerOptions): Gatew
         })
       : undefined);
   let warmup: GatewayWarmupController | undefined;
+  const sockets = new Set<Socket>();
+  const activeRequestsBySocket = new Map<Socket, number>();
   const handler = createGatewayRequestHandler({
     ...options,
     config,
@@ -1388,10 +1457,9 @@ export function createGatewayServer(options: CreateGatewayHandlerOptions): Gatew
     logger,
     ...(jobQueue ? { jobQueue } : {}),
     warmupSnapshot: () => warmup?.snapshot(),
+    httpResourceSnapshot: () => snapshotGatewayHttpResources(sockets, activeRequestsBySocket),
   });
   const server = createServer({ maxHeaderSize: GATEWAY_MAX_HEADER_BYTES }, handler);
-  const sockets = new Set<Socket>();
-  const activeRequestsBySocket = new Map<Socket, number>();
   server.requestTimeout = GATEWAY_REQUEST_TIMEOUT_MS;
   server.headersTimeout = GATEWAY_HEADERS_TIMEOUT_MS;
   server.keepAliveTimeout = GATEWAY_KEEP_ALIVE_TIMEOUT_MS;

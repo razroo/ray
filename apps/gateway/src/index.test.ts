@@ -946,6 +946,18 @@ test("gateway metrics endpoint refreshes live runtime gauges", async (t) => {
   assert.equal(body.gauges["cache.bytes"], 0);
   assert.equal(body.gauges["cache.max_bytes"], config.cache.maxBytes);
   assert.equal(body.gauges["cache.bytes_ratio"], 0);
+  assert.equal(body.gauges["gateway.http.sockets"], 1);
+  assert.equal(body.gauges["gateway.http.active_sockets"], 1);
+  assert.equal(body.gauges["gateway.http.idle_sockets"], 0);
+  assert.equal(body.gauges["gateway.http.active_requests"], 1);
+  assert.equal(body.gauges["gateway.http.max_connections"], 256);
+  assert.equal(body.gauges["gateway.http.connection_ratio"], 1 / 256);
+  assert.equal(body.gauges["gateway.http.max_header_bytes"], 12_288);
+  assert.equal(body.gauges["gateway.http.max_headers_count"], 64);
+  assert.equal(body.gauges["gateway.http.max_requests_per_socket"], 1_000);
+  assert.equal(body.gauges["gateway.http.headers_timeout_ms"], 15_000);
+  assert.equal(body.gauges["gateway.http.request_timeout_ms"], 30_000);
+  assert.equal(body.gauges["gateway.http.keep_alive_timeout_ms"], 5_000);
   assert.equal(body.gauges["process.memory.rss_pressure_ratio"], 0.125);
   assert.equal(body.gauges["process.memory.cgroup_current_mib"], 640);
   assert.equal(body.gauges["process.memory.cgroup_high_mib"], 800);
