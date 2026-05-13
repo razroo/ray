@@ -2264,6 +2264,45 @@ test("diagnoseConfig errors when adapter baseUrl points at the gateway socket", 
   assert.match(diagnostic.message, /recursively call the gateway/);
 });
 
+test("diagnoseConfig warns when OpenAI-compatible baseUrl includes the appended v1 route prefix", () => {
+  const defaultConfig = createDefaultConfig("vps");
+  const versionedConfig = createDefaultConfig("vps");
+  const prefixedConfig = createDefaultConfig("vps");
+
+  if (
+    defaultConfig.model.adapter.kind !== "openai-compatible" ||
+    versionedConfig.model.adapter.kind !== "openai-compatible" ||
+    prefixedConfig.model.adapter.kind !== "openai-compatible"
+  ) {
+    throw new Error("Expected OpenAI-compatible adapters");
+  }
+
+  versionedConfig.model.adapter.baseUrl = "http://127.0.0.1:8081/v1";
+  prefixedConfig.model.adapter.baseUrl = "http://127.0.0.1:8081/proxy";
+
+  const defaultDiagnostics = diagnoseConfig(defaultConfig, process.env);
+  const versionedDiagnostics = diagnoseConfig(versionedConfig, process.env);
+  const prefixedDiagnostics = diagnoseConfig(prefixedConfig, process.env);
+  const versionedDiagnostic = versionedDiagnostics.find(
+    (entry) => entry.code === "openai_compatible_base_url_includes_v1_path",
+  );
+
+  assert.ok(
+    !defaultDiagnostics.some(
+      (entry) => entry.code === "openai_compatible_base_url_includes_v1_path",
+    ),
+  );
+  assert.ok(
+    !prefixedDiagnostics.some(
+      (entry) => entry.code === "openai_compatible_base_url_includes_v1_path",
+    ),
+  );
+  assert.ok(versionedDiagnostic);
+  assert.equal(versionedDiagnostic.level, "warn");
+  assert.match(versionedDiagnostic.message, /Ray appends OpenAI-compatible routes/);
+  assert.match(versionedDiagnostic.message, /\/v1\/v1/);
+});
+
 test("diagnoseConfig warns when single-node OpenAI-compatible profiles point off-node", () => {
   for (const profile of ["vps", "balanced"] as const) {
     const loopbackConfig = createDefaultConfig(profile);

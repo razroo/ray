@@ -478,6 +478,11 @@ function isSingleNodeOpenAiCompatibleProfile(profile: RayConfig["profile"]): boo
   return profile === "vps" || profile === "balanced";
 }
 
+function adapterBaseUrlPathEndsWithOpenAiVersion(adapterBaseUrl: URL): boolean {
+  const segments = adapterBaseUrl.pathname.split("/").filter((segment) => segment.length > 0);
+  return segments[segments.length - 1]?.toLowerCase() === "v1";
+}
+
 function normalizeHostLiteral(value: string): string {
   const trimmed = value.trim().toLowerCase();
   return trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
@@ -2928,6 +2933,18 @@ export function diagnoseConfig(
         level: "error",
         code: "adapter_base_url_gateway_loop",
         message: `model.adapter.baseUrl (${config.model.adapter.baseUrl}) points at the Ray gateway listen socket (${config.server.host}:${config.server.port}). Point it at the model backend instead so inference requests do not recursively call the gateway.`,
+      });
+    }
+
+    if (
+      adapterBaseUrl &&
+      config.model.adapter.kind === "openai-compatible" &&
+      adapterBaseUrlPathEndsWithOpenAiVersion(adapterBaseUrl)
+    ) {
+      diagnostics.push({
+        level: "warn",
+        code: "openai_compatible_base_url_includes_v1_path",
+        message: `model.adapter.baseUrl (${config.model.adapter.baseUrl}) ends in /v1, but Ray appends OpenAI-compatible routes such as /v1/models and /v1/chat/completions. Point baseUrl at the backend origin or reverse-proxy prefix before /v1 so health checks and inference do not call a doubled /v1/v1 path.`,
       });
     }
 
