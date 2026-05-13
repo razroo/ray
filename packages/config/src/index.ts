@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   type LlamaCppLaunchProfile,
   RayError,
+  getLlamaCppLaunchProfileExtraArgOverride,
   isNonEmptyString,
   type LogLevel,
   type Quantization,
@@ -2003,6 +2004,28 @@ function assertStringArray(
   }
 }
 
+function assertLlamaCppLaunchProfileExtraArgs(value: string[] | undefined): void {
+  assertStringArray(value, "model.adapter.launchProfile.extraArgs");
+
+  for (const [index, entry] of (value ?? []).entries()) {
+    const override = getLlamaCppLaunchProfileExtraArgOverride(entry);
+    if (override) {
+      throw new RayError(
+        `model.adapter.launchProfile.extraArgs[${index}] must not override ${override}; use the launchProfile field or RAY_LLAMA_CPP_* env override instead`,
+        {
+          code: "config_validation_error",
+          status: 500,
+          details: {
+            index,
+            value: entry,
+            override,
+          },
+        },
+      );
+    }
+  }
+}
+
 function isValidDnsHostname(value: string): boolean {
   if (value.length === 0 || value.length > MAX_CALLBACK_ALLOWED_HOST_CHARS) {
     return false;
@@ -2708,7 +2731,7 @@ function validateConfig(config: RayConfig): RayConfig {
         );
       }
 
-      assertStringArray(profile.extraArgs, "model.adapter.launchProfile.extraArgs");
+      assertLlamaCppLaunchProfileExtraArgs(profile.extraArgs);
     }
   }
 

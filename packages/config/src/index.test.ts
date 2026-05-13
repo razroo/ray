@@ -1662,6 +1662,45 @@ test("loadRayConfig rejects oversized structured config collections", async (t) 
     }),
     /model\.adapter\.launchProfile\.extraArgs must contain at most 64 entries/,
   );
+
+  const unsafeExtraArgsCases = [
+    {
+      fileName: "ray.extra-args-host.invalid.json",
+      extraArgs: ["--host", "0.0.0.0"],
+      pattern: /model\.adapter\.launchProfile\.extraArgs\[0\] must not override --host/,
+    },
+    {
+      fileName: "ray.extra-args-batch.invalid.json",
+      extraArgs: ["--batch-size=4096"],
+      pattern: /model\.adapter\.launchProfile\.extraArgs\[0\] must not override --batch-size/,
+    },
+  ];
+
+  for (const testCase of unsafeExtraArgsCases) {
+    const configPath = join(tempDir, testCase.fileName);
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        profile: "1b",
+        model: {
+          adapter: {
+            launchProfile: {
+              extraArgs: testCase.extraArgs,
+            },
+          },
+        },
+      }),
+    );
+
+    await assert.rejects(
+      loadRayConfig({
+        cwd: process.cwd(),
+        configPath,
+        env: {},
+      }),
+      testCase.pattern,
+    );
+  }
 });
 
 test("loadRayConfig validates async callback allowed host patterns", async (t) => {

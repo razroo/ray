@@ -9,6 +9,49 @@ const MAX_STABLE_BINARY_BYTES = 16 * 1024 * 1024;
 const MAX_REQUEST_ID_PREFIX_CHARS = 32;
 const MAX_ERROR_MESSAGE_CHARS = 8_000;
 const MAX_SLEEP_MS = 120_000;
+const llamaCppLaunchProfileExtraArgFlags = new Set([
+  "--alias",
+  "--batch-size",
+  "--cache-idle-slots",
+  "--cache-prompt",
+  "--cache-ram",
+  "--cache-reuse",
+  "--cont-batching",
+  "--context-shift",
+  "--ctx-size",
+  "--host",
+  "--kv-unified",
+  "--metrics",
+  "--model",
+  "--no-cache-idle-slots",
+  "--no-cache-prompt",
+  "--no-cont-batching",
+  "--no-context-shift",
+  "--no-kv-unified",
+  "--no-slots",
+  "--no-warmup",
+  "--parallel",
+  "--port",
+  "--slots",
+  "--threads",
+  "--threads-batch",
+  "--threads-http",
+  "--ubatch-size",
+  "--warmup",
+  "-a",
+  "-b",
+  "-c",
+  "-cb",
+  "-cram",
+  "-kvu",
+  "-m",
+  "-nocb",
+  "-no-kvu",
+  "-np",
+  "-t",
+  "-tb",
+  "-ub",
+]);
 
 function assertStableStringLength(value: string, label: string, maximum: number): void {
   if (value.length > maximum) {
@@ -249,4 +292,9 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+export function getLlamaCppLaunchProfileExtraArgOverride(value: string): string | undefined {
+  const normalized = value.includes("=") ? value.slice(0, value.indexOf("=")) : value;
+  return llamaCppLaunchProfileExtraArgFlags.has(normalized) ? normalized : undefined;
 }

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   clamp,
   createRequestId,
+  getLlamaCppLaunchProfileExtraArgOverride,
   hashValue,
   sleep,
   stableStringify,
@@ -114,4 +115,13 @@ test("sleep rejects invalid direct durations", async () => {
   assert.throws(() => sleep(-1), /sleep duration/);
   assert.throws(() => sleep(1.5), /sleep duration/);
   assert.throws(() => sleep(120_001), /sleep duration/);
+});
+
+test("getLlamaCppLaunchProfileExtraArgOverride detects launch-profile args", () => {
+  assert.equal(getLlamaCppLaunchProfileExtraArgOverride("--host"), "--host");
+  assert.equal(getLlamaCppLaunchProfileExtraArgOverride("--port=8082"), "--port");
+  assert.equal(getLlamaCppLaunchProfileExtraArgOverride("-m=/models/other.gguf"), "-m");
+  assert.equal(getLlamaCppLaunchProfileExtraArgOverride("--no-cache-prompt"), "--no-cache-prompt");
+  assert.equal(getLlamaCppLaunchProfileExtraArgOverride("--jinja-template=chatml"), undefined);
+  assert.equal(getLlamaCppLaunchProfileExtraArgOverride("--no-mmap"), undefined);
 });

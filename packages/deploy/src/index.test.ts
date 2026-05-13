@@ -1164,6 +1164,18 @@ test("renderLlamaCppService rejects malformed service options and launch profile
       }),
     /model\.adapter\.launchProfile\.extraArgs must contain at most 64 entries/,
   );
+
+  assert.throws(
+    () =>
+      renderLlamaCppService({
+        user: "ray",
+        launchProfile: {
+          ...launchProfile,
+          extraArgs: ["--port=8082"],
+        },
+      }),
+    /model\.adapter\.launchProfile\.extraArgs\[0\] must not override --port/,
+  );
 });
 
 test("renderLlamaCppService escapes systemd directive values", () => {
@@ -1300,6 +1312,10 @@ test("buildLlamaCppEnvironment emits cache and slot flags explicitly", () => {
   });
 
   assert.equal(environment.LLAMA_ARG_CACHE_RAM, "512");
+  assert.equal(environment.LLAMA_ARG_BATCH, "256");
+  assert.equal(environment.LLAMA_ARG_BATCH_SIZE, "256");
+  assert.equal(environment.LLAMA_ARG_UBATCH, "128");
+  assert.equal(environment.LLAMA_ARG_UBATCH_SIZE, "128");
   assert.equal(environment.LLAMA_ARG_THREADS_BATCH, "2");
   assert.equal(environment.LLAMA_ARG_KV_UNIFIED, "1");
   assert.equal(environment.LLAMA_ARG_CACHE_IDLE_SLOTS, "1");

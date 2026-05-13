@@ -5,7 +5,12 @@ import { isIP } from "node:net";
 import { availableParallelism, tmpdir, totalmem } from "node:os";
 import path from "node:path";
 import { loadRayConfig, resolveAuthApiKeys, sanitizeConfig } from "@ray/config";
-import { toErrorMessage, type LlamaCppLaunchProfile, type RayConfig } from "@razroo/ray-core";
+import {
+  getLlamaCppLaunchProfileExtraArgOverride,
+  toErrorMessage,
+  type LlamaCppLaunchProfile,
+  type RayConfig,
+} from "@razroo/ray-core";
 
 export interface SystemdServiceOptions {
   workingDirectory: string;
@@ -857,6 +862,26 @@ function assertOptionalSystemdStringArray(
   }
 }
 
+function assertLlamaCppLaunchProfileExtraArgs(
+  value: unknown,
+): asserts value is string[] | undefined {
+  assertOptionalSystemdStringArray(
+    value,
+    "model.adapter.launchProfile.extraArgs",
+    MAX_LLAMA_CPP_EXTRA_ARGS,
+    MAX_LLAMA_CPP_EXTRA_ARG_CHARS,
+  );
+
+  for (const [index, entry] of (value ?? []).entries()) {
+    const override = getLlamaCppLaunchProfileExtraArgOverride(entry);
+    if (override) {
+      throw new Error(
+        `model.adapter.launchProfile.extraArgs[${index}] must not override ${override}; use the launchProfile field instead`,
+      );
+    }
+  }
+}
+
 function assertLlamaCppLaunchProfileForEnvironment(
   value: unknown,
 ): asserts value is LlamaCppLaunchProfile {
@@ -909,12 +934,7 @@ function assertLlamaCppLaunchProfileForService(
   assertSystemdScalar(value.binaryPath, "model.adapter.launchProfile.binaryPath");
   assertAbsolutePath(value.binaryPath, "model.adapter.launchProfile.binaryPath");
 
-  assertOptionalSystemdStringArray(
-    value.extraArgs,
-    "model.adapter.launchProfile.extraArgs",
-    MAX_LLAMA_CPP_EXTRA_ARGS,
-    MAX_LLAMA_CPP_EXTRA_ARG_CHARS,
-  );
+  assertLlamaCppLaunchProfileExtraArgs(value.extraArgs);
 }
 
 function boolToEnv(value: boolean): "1" | "0" {
@@ -1504,7 +1524,9 @@ export function buildLlamaCppEnvironment(profile: LlamaCppLaunchProfile): Record
       ? { LLAMA_ARG_THREADS_BATCH: profile.threadsBatch.toString() }
       : {}),
     LLAMA_ARG_THREADS_HTTP: profile.threadsHttp.toString(),
+    LLAMA_ARG_BATCH: profile.batchSize.toString(),
     LLAMA_ARG_BATCH_SIZE: profile.batchSize.toString(),
+    LLAMA_ARG_UBATCH: profile.ubatchSize.toString(),
     LLAMA_ARG_UBATCH_SIZE: profile.ubatchSize.toString(),
     LLAMA_ARG_CACHE_PROMPT: boolToEnv(profile.cachePrompt),
     LLAMA_ARG_CACHE_REUSE: profile.cacheReuse.toString(),
