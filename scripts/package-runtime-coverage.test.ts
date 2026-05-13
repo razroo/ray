@@ -156,6 +156,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
       "sudo apt-get install -y curl",
       "git clone https://github.com/razroo/ray.git /srv/ray",
       "bun install",
+      "bun run doctor",
       "npm run build",
       "sudo install -m 0644 Caddyfile /etc/caddy/Caddyfile",
       "sudo systemctl reload caddy",
@@ -212,9 +213,69 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("vps_readme_command_timeout_missing"));
   assert.ok(codes.includes("vps_readme_bun_install_unbounded"));
   assert.ok(codes.includes("vps_readme_ray_service_suffix_missing"));
+  assert.ok(codes.includes("vps_readme_ray_helper_timeout_missing"));
   assert.ok(codes.includes("runtime_doc_bun_script_missing"));
   assert.equal(codes.filter((code) => code === "non_bun_runtime_doc_command").length, 4);
   assert.ok(codes.includes("non_bun_lockfile_present"));
+});
+
+test("validatePackageRuntimeCoverage requires timeouts for VPS Ray helper aliases", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-vps-timeout-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const vpsDocDir = path.join(tempDir, "examples", "deploy", "vps");
+  await mkdir(vpsDocDir, { recursive: true });
+  const rootPackageJson = path.join(tempDir, "package.json");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify(
+      {
+        name: "ray-test",
+        packageManager: "bun@1.3.0",
+        engines: { bun: ">=1.3" },
+        scripts: {
+          "benchmark:assert:cx23:1b": "bun ./scripts/benchmark.ts",
+          "deploy:smoke": "bun ./scripts/deploy-smoke.ts",
+          "doctor:1b:generic": "bun packages/deploy/dist/cli.js doctor",
+          "model:stage:1b:generic": "bun packages/deploy/dist/cli.js model-stage",
+          "validate:config:all": "bun ./scripts/validate-configs.ts --all",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    path.join(vpsDocDir, "README.md"),
+    [
+      "# VPS deploy",
+      "",
+      "```bash",
+      "bun run doctor:1b:generic",
+      "timeout 300s bun run model:stage:1b:generic",
+      "RAY_API_KEYS=smoke bun run validate:config:all",
+      "timeout 1800s bun run benchmark:assert:cx23:1b",
+      "```",
+      "",
+    ].join("\n"),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson],
+  });
+  const diagnostics = summary.results.flatMap((result) => result.diagnostics);
+  const timeoutDiagnostics = diagnostics.filter(
+    (diagnostic) => diagnostic.code === "vps_readme_ray_helper_timeout_missing",
+  );
+
+  assert.equal(summary.ok, false);
+  assert.deepEqual(
+    timeoutDiagnostics.map((diagnostic) => diagnostic.line),
+    [4, 6],
+  );
 });
 
 test("validatePackageRuntimeCoverage rejects oversized runtime coverage inputs", async (t) => {

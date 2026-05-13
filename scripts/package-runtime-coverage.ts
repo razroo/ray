@@ -1072,6 +1072,29 @@ function isVpsReadmeCommandRequiringTimeout(line: string): boolean {
   );
 }
 
+function isVpsRayHelperScriptRequiringTimeout(scriptName: string): boolean {
+  return (
+    scriptName === "doctor" ||
+    scriptName.startsWith("doctor:") ||
+    scriptName === "render:service" ||
+    scriptName.startsWith("render:service:") ||
+    scriptName === "model:stage" ||
+    scriptName.startsWith("model:stage:") ||
+    scriptName === "deploy:smoke" ||
+    scriptName === "deploy:scripts" ||
+    scriptName === "validate:config" ||
+    scriptName.startsWith("validate:config:") ||
+    scriptName.startsWith("benchmark:") ||
+    scriptName.startsWith("autotune:")
+  );
+}
+
+function isVpsRayHelperCommandRequiringTimeout(line: string): boolean {
+  return collectDocumentedBunRunScripts(line).some((scriptName) =>
+    isVpsRayHelperScriptRequiringTimeout(scriptName),
+  );
+}
+
 function referencesImplicitRaySystemdUnit(line: string): boolean {
   return /\b(?:journalctl|systemctl)\b.*\bray-(?:gateway|llama-cpp)(?!\.service)\b/.test(line);
 }
@@ -1208,6 +1231,21 @@ async function validateRuntimeDoc(
         line: index + 1,
         message:
           "VPS deployment docs must bound root, service-management, build, clone, and render commands with timeout so manual setup cannot hang indefinitely.",
+      });
+    }
+
+    if (
+      options.enforceVpsTimeouts &&
+      isVpsRayHelperCommandRequiringTimeout(line) &&
+      !line.includes("timeout ")
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "vps_readme_ray_helper_timeout_missing",
+        docPath,
+        line: index + 1,
+        message:
+          "VPS deployment docs must run Ray helper scripts under timeout so config, staging, doctor, benchmark, or autotune commands cannot hang indefinitely on small hosts.",
       });
     }
   }

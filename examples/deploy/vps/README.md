@@ -78,7 +78,7 @@ After `/etc/ray/ray.env` contains the final model overrides, print the exact
 staging commands from the same resolved config:
 
 ```bash
-bun run model:stage:1b:generic -- --ray-env-file /etc/ray/ray.env --binary-source ./llama-server --source ./local-1b-q4.gguf
+timeout 300s bun run model:stage:1b:generic -- --ray-env-file /etc/ray/ray.env --binary-source ./llama-server --source ./local-1b-q4.gguf
 ```
 
 Add `--sha256 <expected-hex-digest>` when the model publisher provides one, and
@@ -341,25 +341,25 @@ test "$caddy_status" -eq 0
 ### 8. Run the deployment checks
 
 ```bash
-RAY_API_KEYS=replace-with-real-key bun run validate:config:all
-bun run deploy:smoke
-bun run deploy:scripts
-bun run model:stage:smoke
-bun run model:stage:1b
-bun run model:stage:1b:8gb
-bun run model:stage:hetzner-email-ai
-RAY_API_KEYS=replace-with-real-key bun run validate:config:public
-RAY_API_KEYS=replace-with-real-key bun run validate:config:cax11:public
-RAY_API_KEYS=replace-with-real-key bun run validate:config:1b:generic:public
-RAY_API_KEYS=replace-with-real-key bun run validate:config:1b:public
-RAY_API_KEYS=replace-with-real-key bun run validate:config:hetzner:public
-bun run doctor:1b:generic
-bun run doctor:cax11
-bun run doctor:hetzner-email-ai
-bun run doctor
-bun run benchmark:assert:cx23
-bun run benchmark:assert:cax11
-bun run benchmark:assert:cx23:1b
+RAY_API_KEYS=replace-with-real-key timeout 300s bun run validate:config:all
+timeout 300s bun run deploy:smoke
+timeout 300s bun run deploy:scripts
+timeout 300s bun run model:stage:smoke
+timeout 300s bun run model:stage:1b
+timeout 300s bun run model:stage:1b:8gb
+timeout 300s bun run model:stage:hetzner-email-ai
+RAY_API_KEYS=replace-with-real-key timeout 300s bun run validate:config:public
+RAY_API_KEYS=replace-with-real-key timeout 300s bun run validate:config:cax11:public
+RAY_API_KEYS=replace-with-real-key timeout 300s bun run validate:config:1b:generic:public
+RAY_API_KEYS=replace-with-real-key timeout 300s bun run validate:config:1b:public
+RAY_API_KEYS=replace-with-real-key timeout 300s bun run validate:config:hetzner:public
+timeout 300s bun run doctor:1b:generic
+timeout 300s bun run doctor:cax11
+timeout 300s bun run doctor:hetzner-email-ai
+timeout 300s bun run doctor
+timeout 1800s bun run benchmark:assert:cx23
+timeout 1800s bun run benchmark:assert:cax11
+timeout 1800s bun run benchmark:assert:cx23:1b
 ```
 
 ### 9. Optional GitHub Actions deploy
