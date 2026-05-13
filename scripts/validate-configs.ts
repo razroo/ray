@@ -1300,6 +1300,10 @@ export async function validateConfigFiles(options: {
   env?: NodeJS.ProcessEnv;
   failOnWarn?: boolean;
 }): Promise<ConfigValidationSummary> {
+  if (options.configPaths.length > MAX_CONFIG_FILES) {
+    throw new Error(`Config validation can inspect at most ${MAX_CONFIG_FILES} config files`);
+  }
+
   const env = withSmokeAuthEnv(options.env ?? process.env);
   const results: ConfigValidationResult[] = [];
 

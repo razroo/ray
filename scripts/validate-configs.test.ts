@@ -76,6 +76,20 @@ test("collectConfigPaths rejects excessive configs while streaming", async (t) =
   );
 });
 
+test("validateConfigFiles rejects excessive config inputs before rendering", async () => {
+  await assert.rejects(
+    () =>
+      validateConfigFiles({
+        cwd: process.cwd(),
+        configPaths: Array.from(
+          { length: 129 },
+          (_value, index) => `/tmp/ray-config-${index}.json`,
+        ),
+      }),
+    /at most 128 config files/,
+  );
+});
+
 test("validateConfigFiles requires explicit public runtime guardrails", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-config-public-policy-"));
   t.after(async () => {
