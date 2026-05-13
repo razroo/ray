@@ -1870,6 +1870,38 @@ test("loadRayConfig rejects invalid adapter base URLs", async (t) => {
   );
 });
 
+test("loadRayConfig rejects gateway and llama.cpp launch port conflicts", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-config-port-conflict-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const configPath = join(tempDir, "ray.port-conflict.invalid.json");
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      profile: "1b",
+      server: {
+        port: 8081,
+      },
+      model: {
+        adapter: {
+          baseUrl: "http://127.0.0.1:8082",
+        },
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath,
+      env: {},
+    }),
+    /model\.adapter\.launchProfile\.port must not overlap server\.port/,
+  );
+});
+
 test("loadRayConfig accepts sub1b email classifier variant", async () => {
   const loaded = await loadRayConfig({
     cwd: process.cwd(),

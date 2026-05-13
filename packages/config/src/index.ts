@@ -1346,6 +1346,32 @@ function assertAdapterDoesNotTargetGateway(
   );
 }
 
+function assertLaunchProfileDoesNotConflictWithGateway(
+  config: RayConfig,
+  profile: LlamaCppLaunchProfile,
+): void {
+  if (
+    config.server.port !== profile.port ||
+    !localBindHostsOverlap(config.server.host, profile.host)
+  ) {
+    return;
+  }
+
+  throw new RayError(
+    "model.adapter.launchProfile.port must not overlap server.port on the same local bind address",
+    {
+      code: "config_validation_error",
+      status: 500,
+      details: {
+        serverHost: config.server.host,
+        serverPort: config.server.port,
+        launchHost: profile.host,
+        launchPort: profile.port,
+      },
+    },
+  );
+}
+
 function assertRequestBodyLimitBytes(value: number): void {
   assertPositiveInteger(value, "server.requestBodyLimitBytes");
 
@@ -2444,6 +2470,7 @@ function validateConfig(config: RayConfig): RayConfig {
       }
 
       assertTcpPort(profile.port, "model.adapter.launchProfile.port");
+      assertLaunchProfileDoesNotConflictWithGateway(config, profile);
       assertPositiveIntegerAtMost(
         profile.ctxSize,
         "model.adapter.launchProfile.ctxSize",
