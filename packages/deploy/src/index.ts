@@ -1526,6 +1526,7 @@ function resolveGatewayMemoryControls(config: RayConfig): {
 function resolveLlamaCppMemoryControls(
   launchProfile: LlamaCppLaunchProfile,
   preflight: Pick<DeploymentPreflight, "memoryBudgetMiB">,
+  gatewayControls: Pick<SystemdMemoryControls, "memoryMaxMiB">,
 ): {
   memoryHighMiB: number;
   memoryMaxMiB: number;
@@ -1537,7 +1538,7 @@ function resolveLlamaCppMemoryControls(
     MIN_SYSTEM_RESERVE_MIB,
     Math.ceil(memoryBudgetMiB * SYSTEM_RESERVE_RATIO),
   );
-  const memoryMaxMiB = Math.max(512, memoryBudgetMiB - reserveMiB - RAY_RUNTIME_RESERVE_MIB);
+  const memoryMaxMiB = Math.max(512, memoryBudgetMiB - reserveMiB - gatewayControls.memoryMaxMiB);
 
   return {
     memoryHighMiB: Math.max(1, Math.floor(memoryMaxMiB * LLAMA_CPP_MEMORY_HIGH_RATIO)),
@@ -1559,9 +1560,10 @@ function resolveGatewaySystemdControls(config: RayConfig): SystemdResourceContro
 function resolveLlamaCppSystemdControls(
   launchProfile: LlamaCppLaunchProfile,
   preflight: Pick<DeploymentPreflight, "memoryBudgetMiB">,
+  gatewayControls: Pick<SystemdMemoryControls, "memoryMaxMiB">,
 ): SystemdResourceControls {
   return {
-    ...resolveLlamaCppMemoryControls(launchProfile, preflight),
+    ...resolveLlamaCppMemoryControls(launchProfile, preflight, gatewayControls),
     cpuWeight: LLAMA_CPP_CPU_WEIGHT,
   };
 }
@@ -3552,7 +3554,11 @@ function renderDeploymentSystemdServices(
   const gatewaySystemdControls = resolveGatewaySystemdControls(config);
   const llamaCppSystemdControls =
     config.model.adapter.kind === "llama.cpp" && config.model.adapter.launchProfile
-      ? resolveLlamaCppSystemdControls(config.model.adapter.launchProfile, preflight)
+      ? resolveLlamaCppSystemdControls(
+          config.model.adapter.launchProfile,
+          preflight,
+          gatewaySystemdControls,
+        )
       : undefined;
   const service = renderSystemdService({
     workingDirectory: options.cwd,

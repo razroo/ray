@@ -890,7 +890,7 @@ test("runCli render writes deployment files when output-dir is provided", async 
   assert.match(service, /MemorySwapMax=128M/);
   assert.match(llamaService, /Description=llama\.cpp Server for Ray/);
   assert.doesNotMatch(llamaService, /EnvironmentFile=/);
-  assert.match(llamaService, /MemorySwapMax=771M/);
+  assert.match(llamaService, /MemorySwapMax=595M/);
   assert.match(caddyfile, /reverse_proxy 127\.0\.0\.1:3000/);
   assert.equal(summary.profile, "1b");
   assert.equal(summary.preflight.memoryBudgetMiB, 4096);
@@ -904,9 +904,9 @@ test("runCli render writes deployment files when output-dir is provided", async 
     cpuWeight: 200,
   });
   assert.deepEqual(summary.systemd.llamaCpp, {
-    memoryHighMiB: 2775,
-    memoryMaxMiB: 3084,
-    memorySwapMaxMiB: 771,
+    memoryHighMiB: 2142,
+    memoryMaxMiB: 2380,
+    memorySwapMaxMiB: 595,
     cpuWeight: 80,
   });
   assert.match(rendered, /ray-gateway\.service/);

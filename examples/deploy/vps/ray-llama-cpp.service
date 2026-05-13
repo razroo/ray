@@ -45,9 +45,9 @@ CPUWeight=80
 
 MemoryAccounting=true
 IOAccounting=true
-MemoryHigh=2775M
-MemoryMax=3084M
-MemorySwapMax=771M
+MemoryHigh=2142M
+MemoryMax=2380M
+MemorySwapMax=595M
 
 NoNewPrivileges=true
 CapabilityBoundingSet=

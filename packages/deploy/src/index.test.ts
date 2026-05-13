@@ -885,18 +885,18 @@ test("renderDeploymentBundle includes llama.cpp service for generic 1b profiles"
     cpuWeight: 200,
   });
   assert.deepEqual(bundle.summary.systemd.llamaCpp, {
-    memoryHighMiB: 2775,
-    memoryMaxMiB: 3084,
-    memorySwapMaxMiB: 771,
+    memoryHighMiB: 2142,
+    memoryMaxMiB: 2380,
+    memorySwapMaxMiB: 595,
     cpuWeight: 80,
   });
   assert.match(bundle.caddyfile, /response_header_timeout 37s/);
   assert.match(bundle.caddyfile, /read_timeout 37s/);
   assert.match(bundle.llamaCppService ?? "", /llama\.cpp Server for Ray/);
   assert.doesNotMatch(bundle.llamaCppService ?? "", /EnvironmentFile=\/etc\/ray\/ray.env/);
-  assert.match(bundle.llamaCppService ?? "", /MemoryHigh=2775M/);
-  assert.match(bundle.llamaCppService ?? "", /MemoryMax=3084M/);
-  assert.match(bundle.llamaCppService ?? "", /MemorySwapMax=771M/);
+  assert.match(bundle.llamaCppService ?? "", /MemoryHigh=2142M/);
+  assert.match(bundle.llamaCppService ?? "", /MemoryMax=2380M/);
+  assert.match(bundle.llamaCppService ?? "", /MemorySwapMax=595M/);
   assert.match(bundle.llamaCppService ?? "", /CPUWeight=80/);
   assert.match(
     bundle.llamaCppService ?? "",
