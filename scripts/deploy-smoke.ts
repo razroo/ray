@@ -19,6 +19,7 @@ const MAX_CONFIG_FILES = 128;
 const MAX_DEPLOY_SMOKE_CONFIGS = MAX_CONFIG_FILES + EXTRA_DEPLOY_CONFIG_FILES.length;
 const MAX_CLI_ARGS = 24;
 const MAX_CLI_ARG_BYTES = 4_096;
+const MAX_DEPLOY_SMOKE_PATH_BYTES = 4_096;
 const MAX_STATIC_EXAMPLE_BYTES = 256 * 1024;
 
 export interface DeploySmokeArgs {
@@ -112,6 +113,20 @@ function requireFlagValue(flag: string, value: string | undefined): string {
   return value;
 }
 
+function assertDeploySmokePathValue(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty path`);
+  }
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} must not contain control characters`);
+  }
+
+  if (Buffer.byteLength(value, "utf8") > MAX_DEPLOY_SMOKE_PATH_BYTES) {
+    throw new Error(`${label} must be at most ${MAX_DEPLOY_SMOKE_PATH_BYTES} bytes`);
+  }
+}
+
 export function parseArgs(argv: string[]): DeploySmokeArgs {
   assertArgv(argv);
 
@@ -192,6 +207,8 @@ export function parseArgs(argv: string[]): DeploySmokeArgs {
 }
 
 export async function collectPublicConfigPaths(cwd: string, configDir: string): Promise<string[]> {
+  assertDeploySmokePathValue(cwd, "cwd");
+  assertDeploySmokePathValue(configDir, "configDir");
   const absoluteConfigDir = path.resolve(cwd, configDir);
   const configPaths: string[] = [];
   let directory: Awaited<ReturnType<typeof opendir>> | undefined;
@@ -266,6 +283,13 @@ export async function smokeDeployConfigs(options: {
 }): Promise<DeploySmokeSummary> {
   if (options.configPaths.length > MAX_DEPLOY_SMOKE_CONFIGS) {
     throw new Error(`Deploy smoke can inspect at most ${MAX_DEPLOY_SMOKE_CONFIGS} config files`);
+  }
+
+  assertDeploySmokePathValue(options.cwd, "cwd");
+  assertDeploySmokePathValue(options.runtimeBinary, "runtimeBinary");
+  assertDeploySmokePathValue(options.systemdEnvFile, "systemdEnvFile");
+  for (const [index, configPath] of options.configPaths.entries()) {
+    assertDeploySmokePathValue(configPath, `configPaths[${index}]`);
   }
 
   const env = buildSmokeDeployEnv(options.env ?? process.env);
@@ -403,6 +427,17 @@ export async function validateStaticVpsExamples(options: {
   llamaCppServicePath?: string;
   caddyfilePath?: string;
 }): Promise<DeployStaticExampleResult> {
+  assertDeploySmokePathValue(options.cwd, "cwd");
+  if (options.servicePath !== undefined) {
+    assertDeploySmokePathValue(options.servicePath, "servicePath");
+  }
+  if (options.llamaCppServicePath !== undefined) {
+    assertDeploySmokePathValue(options.llamaCppServicePath, "llamaCppServicePath");
+  }
+  if (options.caddyfilePath !== undefined) {
+    assertDeploySmokePathValue(options.caddyfilePath, "caddyfilePath");
+  }
+
   const cwd = path.resolve(options.cwd);
   const configPath = path.join(cwd, STATIC_EXAMPLE_CONFIG);
   const servicePath = path.resolve(cwd, options.servicePath ?? STATIC_EXAMPLE_GATEWAY_SERVICE);

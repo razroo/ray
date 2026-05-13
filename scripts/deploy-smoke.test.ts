@@ -106,6 +106,21 @@ test("smokeDeployConfigs rejects excessive config inputs before rendering", asyn
   );
 });
 
+test("smokeDeployConfigs rejects oversized direct path inputs before rendering", async () => {
+  await assert.rejects(
+    () =>
+      smokeDeployConfigs({
+        cwd: process.cwd(),
+        configPaths: [`/${"a".repeat(4096)}`],
+        domain: "ray.example.com",
+        runtimeBinary: "/usr/local/bin/bun",
+        serviceUser: "ray",
+        systemdEnvFile: "/etc/ray/ray.env",
+      }),
+    /configPaths\[0\] must be at most 4096 bytes/,
+  );
+});
+
 test("smokeDeployConfigs renders every checked-in deploy smoke profile", async () => {
   const cwd = process.cwd();
   const configPaths = await collectDeploySmokeConfigPaths(cwd, "examples/config");
@@ -216,4 +231,15 @@ test("validateStaticVpsExamples reports drifted checked-in VPS examples", async 
 
   assert.equal(result.errorCount, 1);
   assert.equal(result.diagnostics[0]?.code, "static_vps_gateway_service_drift");
+});
+
+test("validateStaticVpsExamples rejects oversized direct paths before reading files", async () => {
+  await assert.rejects(
+    () =>
+      validateStaticVpsExamples({
+        cwd: process.cwd(),
+        servicePath: `/${"a".repeat(4096)}`,
+      }),
+    /servicePath must be at most 4096 bytes/,
+  );
 });
