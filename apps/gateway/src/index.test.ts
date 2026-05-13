@@ -10,7 +10,13 @@ import { createRayRuntime, type RayRuntime } from "@ray/runtime";
 import { RayError, type HealthSnapshot, type RuntimeMetricsSnapshot } from "@razroo/ray-core";
 import { Logger, type LogFields } from "@ray/telemetry";
 import { DurableInferenceQueue } from "./async-jobs.js";
-import { createGatewayServer, parseCliArgs, startGateway, stopGateway } from "./index.js";
+import {
+  createGatewayRequestHandler,
+  createGatewayServer,
+  parseCliArgs,
+  startGateway,
+  stopGateway,
+} from "./index.js";
 
 async function closeServer(server: Server): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -1310,6 +1316,7 @@ test("gateway readyz exposes minimal pressure reasons without protected health d
     memory: true,
     cpu: true,
     asyncQueue: false,
+    gatewayHttp: false,
   });
   assert.deepEqual(body.reasons, [
     "provider_degraded",
@@ -1318,6 +1325,72 @@ test("gateway readyz exposes minimal pressure reasons without protected health d
     "memory_pressure",
     "cpu_pressure",
   ]);
+});
+
+test("gateway readyz exposes HTTP socket pressure without protected metrics", async (t) => {
+  const config = createDefaultConfig("tiny");
+  const healthy: HealthSnapshot = {
+    status: "ok",
+    uptimeMs: 500,
+    queueDepth: 0,
+    inFlight: 0,
+    cacheEntries: 0,
+    profile: "tiny",
+    modelId: "private-model-id",
+    provider: {
+      status: "ready",
+      checkedAt: new Date().toISOString(),
+    },
+  };
+  const runtime = {
+    async health() {
+      return healthy;
+    },
+  } as unknown as RayRuntime;
+  const server = createServer(
+    createGatewayRequestHandler({
+      config,
+      runtime,
+      httpResourceSnapshot: () => ({
+        sockets: 231,
+        activeSockets: 231,
+        idleSockets: 0,
+        activeRequests: 231,
+        maxConnections: 256,
+        connectionRatio: 231 / 256,
+        maxHeaderBytes: 12_288,
+        maxHeadersCount: 64,
+        maxRequestsPerSocket: 1_000,
+        headersTimeoutMs: 15_000,
+        requestTimeoutMs: 30_000,
+        keepAliveTimeoutMs: 5_000,
+      }),
+    }),
+  );
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/readyz`);
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as {
+    status: string;
+    modelId?: string;
+    pressure?: Record<string, boolean>;
+    reasons?: string[];
+    gauges?: unknown;
+  };
+
+  assert.equal(body.status, "degraded");
+  assert.equal(body.modelId, undefined);
+  assert.equal(body.gauges, undefined);
+  assert.equal(body.pressure?.gatewayHttp, true);
+  assert.deepEqual(body.reasons, ["gateway_http_pressure"]);
 });
 
 test("startGateway exposes liveness while provider warmup fails in the background", async (t) => {

@@ -644,7 +644,8 @@ export type ReadinessReason =
   | "preparation_pressure"
   | "memory_pressure"
   | "cpu_pressure"
-  | "async_queue_pressure";
+  | "async_queue_pressure"
+  | "gateway_http_pressure";
 
 export interface ReadinessSnapshot {
   status: HealthSnapshot["status"];
@@ -658,6 +659,7 @@ export interface ReadinessSnapshot {
     memory: boolean;
     cpu: boolean;
     asyncQueue: boolean;
+    gatewayHttp: boolean;
   };
   reasons: ReadinessReason[];
 }

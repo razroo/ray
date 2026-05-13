@@ -42,6 +42,7 @@ const GATEWAY_MAX_REQUESTS_PER_SOCKET = 1_000;
 const GATEWAY_MAX_CONNECTIONS = 256;
 const GATEWAY_MAX_HEADER_BYTES = 12_288;
 const GATEWAY_MAX_HEADERS_COUNT = 64;
+const GATEWAY_HTTP_PRESSURE_RATIO = 0.9;
 const GATEWAY_SHUTDOWN_TIMEOUT_MS = 30_000;
 const GATEWAY_WARMUP_RETRY_INITIAL_MS = 2_000;
 const GATEWAY_WARMUP_RETRY_MAX_MS = 15_000;
@@ -249,12 +250,20 @@ function resolveReadyzStatusCode(health: HealthSnapshot): number {
   return 200;
 }
 
-function buildReadyzResponse(health: HealthSnapshot): ReadinessSnapshot {
+function isGatewayHttpPressure(snapshot: GatewayHttpResourceSnapshot | undefined): boolean {
+  return snapshot !== undefined && snapshot.connectionRatio >= GATEWAY_HTTP_PRESSURE_RATIO;
+}
+
+function buildReadyzResponse(
+  health: HealthSnapshot,
+  httpResources?: GatewayHttpResourceSnapshot,
+): ReadinessSnapshot {
   const queuePressure = health.runtime?.queue.degraded ?? false;
   const preparationPressure = health.runtime?.preparation.degraded ?? false;
   const memoryPressure = health.runtime?.memory.degraded ?? false;
   const cpuPressure = health.runtime?.cpu?.degraded ?? false;
   const asyncQueuePressure = health.asyncQueue?.degraded ?? false;
+  const gatewayHttpPressure = isGatewayHttpPressure(httpResources);
   const reasons: ReadinessReason[] = [];
 
   if (health.provider.status === "unavailable") {
@@ -285,8 +294,12 @@ function buildReadyzResponse(health: HealthSnapshot): ReadinessSnapshot {
     reasons.push("async_queue_pressure");
   }
 
+  if (gatewayHttpPressure) {
+    reasons.push("gateway_http_pressure");
+  }
+
   return {
-    status: health.status,
+    status: health.status === "ok" && gatewayHttpPressure ? "degraded" : health.status,
     service: "ray-gateway",
     providerStatus: health.provider.status,
     queueDepth: health.queueDepth,
@@ -297,6 +310,7 @@ function buildReadyzResponse(health: HealthSnapshot): ReadinessSnapshot {
       memory: memoryPressure,
       cpu: cpuPressure,
       asyncQueue: asyncQueuePressure,
+      gatewayHttp: gatewayHttpPressure,
     },
     reasons,
   };
@@ -1163,11 +1177,12 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
         if (jobQueue) {
           attachAsyncQueueHealth(health, await jobQueue.snapshotWithStorage());
         }
+        const httpResourceSnapshot = handlerOptions.httpResourceSnapshot?.();
         writeJsonWithoutReadingBody(
           request,
           response,
           resolveReadyzStatusCode(health),
-          buildReadyzResponse(health),
+          buildReadyzResponse(health, httpResourceSnapshot),
         );
         return;
       }
