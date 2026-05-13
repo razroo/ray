@@ -742,6 +742,42 @@ function validateDeployWorkflowMemoryEnvOverride(
   ];
 }
 
+function validateDeployWorkflowReadyTimeoutEnvOverride(
+  workflowPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  if (!contents.includes("RAY_DEPLOY_READY_TIMEOUT_SECONDS")) {
+    return [];
+  }
+
+  if (
+    contents.includes("envOverrides.RAY_DEPLOY_READY_TIMEOUT_SECONDS") &&
+    contents.includes("process.env.RAY_DEPLOY_READY_TIMEOUT_SECONDS") &&
+    contents.includes("parseDeployReadyTimeoutSeconds") &&
+    contents.includes("readyTimeoutSeconds") &&
+    contents.includes('echo "ready_timeout_seconds=$READY_TIMEOUT_SECONDS" >> "$GITHUB_OUTPUT"') &&
+    contents.includes("READY_TIMEOUT_SECONDS: ${{ steps.settings.outputs.ready_timeout_seconds }}")
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "workflow_ready_timeout_env_override_missing",
+      workflowPath,
+      line: workflowLineNumber(lines, "RAY_DEPLOY_READY_TIMEOUT_SECONDS"),
+      message:
+        "VPS deploy workflow must resolve RAY_DEPLOY_READY_TIMEOUT_SECONDS after parsing RAY_ENV_FILE_CONTENTS so env-file readiness windows can cover slow local model warmup and malformed values fail before SSH.",
+    },
+  ];
+}
+
 function validateDeployWorkflowCaddyBinaryGuards(
   workflowPath: string,
   contents: string,
@@ -1345,6 +1381,7 @@ async function validateWorkflow(
   diagnostics.push(...validateDeployWorkflowPublicCaddyDomainGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowCaddyEnvOverrides(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowMemoryEnvOverride(workflowPath, contents, lines));
+  diagnostics.push(...validateDeployWorkflowReadyTimeoutEnvOverride(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowCaddyBinaryGuards(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowServiceUserGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowNumericServiceUserGuard(workflowPath, contents, lines));

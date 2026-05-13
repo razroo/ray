@@ -300,10 +300,11 @@ env-file values. `RAY_DEPLOY_SERVICE_USER` accepts an account name or numeric
 UID; workflow deploys create missing named accounts, while numeric UIDs must
 already resolve to an account on the VPS.
 The GitHub VPS workflow also honors `RAY_DEPLOY_DOMAIN`,
-`RAY_DEPLOY_INSTALL_CADDY`, `RAY_DEPLOY_MEMORY_MIB`, `RAY_DEPLOY_SERVICE_USER`,
+`RAY_DEPLOY_INSTALL_CADDY`, `RAY_DEPLOY_MEMORY_MIB`,
+`RAY_DEPLOY_READY_TIMEOUT_SECONDS`, `RAY_DEPLOY_SERVICE_USER`,
 `RAY_GATEWAY_RUNTIME_BINARY`, and `RAY_DEPLOY_CADDY_BINARY` from
 `RAY_ENV_FILE_CONTENTS` before repository variables when wiring remote
-prerequisites, doctor, render, and generated service commands.
+prerequisites, doctor, render, readiness waits, and generated service commands.
 
 Create `/var/lib/ray/models` on the VPS and put the GGUF at `RAY_MODEL_PATH`
 before starting the generated llama.cpp service or running doctor.

@@ -88,29 +88,9 @@ jobs:
           set -euo pipefail
           CONFIG_SOURCE="repo"
           CONFIG_PATH="${CONFIG_INPUT:-${RAY_CONFIG_PATH_VAR:-./examples/config/ray.sub1b.public.json}}"
-          READY_TIMEOUT_SECONDS_INPUT="${RAY_DEPLOY_READY_TIMEOUT_SECONDS:-120}"
           SSH_PORT_INPUT="${RAY_DEPLOY_SSH_PORT:-22}"
           SSH_USER_INPUT="${RAY_DEPLOY_SSH_USER:-root}"
 
-          READY_TIMEOUT_SECONDS=$(READY_TIMEOUT_SECONDS="$READY_TIMEOUT_SECONDS_INPUT" bun --eval '
-          import { parseDeployReadyTimeoutSeconds } from "./packages/deploy/dist/cli.js";
-
-          try {
-            process.stdout.write(
-              String(
-                parseDeployReadyTimeoutSeconds(
-                  process.env.READY_TIMEOUT_SECONDS ?? "",
-                  "RAY_DEPLOY_READY_TIMEOUT_SECONDS",
-                ),
-              ),
-            );
-          } catch (error) {
-            process.stderr.write(
-              `::error::${error instanceof Error ? error.message : String(error)}\n`,
-            );
-            process.exit(1);
-          }
-          ')
           SSH_PORT=$(SSH_PORT="$SSH_PORT_INPUT" bun --eval '
           import { parseDeploySshPort } from "./packages/deploy/dist/cli.js";
 
@@ -171,6 +151,7 @@ jobs:
             normalizeCaddyBinaryPath,
             normalizeGatewayRuntimeBinaryPath,
             parseEnvironmentFile,
+            parseDeployReadyTimeoutSeconds,
           } from "./packages/deploy/dist/cli.js";
 
           const readNonEmpty = (value) =>
@@ -260,6 +241,19 @@ jobs:
               "RAY_DEPLOY_MEMORY_MIB",
             ) ??
             "";
+          const rawReadyTimeoutSeconds =
+            readNonEmpty(envOverrides.RAY_DEPLOY_READY_TIMEOUT_SECONDS) ??
+            readNonEmpty(process.env.RAY_DEPLOY_READY_TIMEOUT_SECONDS) ??
+            "120";
+          let readyTimeoutSeconds = 120;
+          try {
+            readyTimeoutSeconds = parseDeployReadyTimeoutSeconds(
+              rawReadyTimeoutSeconds,
+              "RAY_DEPLOY_READY_TIMEOUT_SECONDS",
+            );
+          } catch (error) {
+            fail(error instanceof Error ? error.message : String(error));
+          }
 
           if (/[\s{}]/.test(deployDomain)) {
             fail(
@@ -337,6 +331,7 @@ jobs:
             deployDomain,
             installCaddy,
             deployMemoryMiB,
+            readyTimeoutSeconds,
             gatewayRuntimeBinary,
             caddyBinary,
           }));
@@ -347,6 +342,7 @@ jobs:
           DEPLOY_DOMAIN=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).deployDomain')
           INSTALL_CADDY=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'String(JSON.parse(process.env.DEPLOY_SETTINGS).installCaddy)')
           DEPLOY_MEMORY_MIB=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).deployMemoryMiB ?? ""')
+          READY_TIMEOUT_SECONDS=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'String(JSON.parse(process.env.DEPLOY_SETTINGS).readyTimeoutSeconds)')
           GATEWAY_RUNTIME_BINARY=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).gatewayRuntimeBinary')
           CADDY_BINARY=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).caddyBinary ?? ""')
 

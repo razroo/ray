@@ -399,7 +399,7 @@ Optional repository variables:
 - `RAY_CONFIG_PATH` — repo-relative config path to install, defaults to `./examples/config/ray.sub1b.public.json`; the workflow rejects absolute paths, path traversal, and paths excluded from repo sync before opening SSH
 - `RAY_GATEWAY_RUNTIME_BINARY` — absolute JavaScript runtime path rendered into `ray-gateway.service`, defaults to `/usr/local/bin/bun`; the deploy CLI and workflow reject relative paths, paths under `/home`, `/root`, or `/run/user` because generated units use `ProtectHome=true`, and paths under `/tmp` or `/var/tmp` because generated units use `PrivateTmp=true`
 - `RAY_DEPLOY_CADDY_BINARY` — absolute Caddy runtime path for local render/doctor checks and GitHub Actions deploys when `caddy` is not on the deploy user's `PATH`; pass `--caddy-binary` to override it for one command
-- `RAY_DEPLOY_READY_TIMEOUT_SECONDS` — bounded wait for `/readyz` after service restart before reloading Caddy, defaults to `120`
+- `RAY_DEPLOY_READY_TIMEOUT_SECONDS` — bounded wait for `/readyz` after service restart before reloading Caddy, defaults to `120`; workflow deploys validate and honor it from `RAY_ENV_FILE_CONTENTS` before repository variables
 - `RAY_AUTO_DEPLOY` — set to `true` if pushes to `main` should auto-deploy
 
 Use `RAY_CONFIG_JSON` when the live deployment needs host-specific or private
@@ -410,11 +410,12 @@ sync, and writes the live config directly to `/etc/ray/ray.json`.
 
 `RAY_ENV_FILE_CONTENTS` is the right place for auth keys or env overrides. The
 workflow applies `RAY_DEPLOY_DOMAIN`, `RAY_DEPLOY_INSTALL_CADDY`,
-`RAY_DEPLOY_MEMORY_MIB`, `RAY_GATEWAY_RUNTIME_BINARY`,
-`RAY_DEPLOY_CADDY_BINARY`, and `RAY_DEPLOY_SERVICE_USER` from this env file
-before repository variables when it wires remote prerequisites, doctor, render,
-model staging, and generated service commands. It validates auth API keys before
-opening SSH, refuses
+`RAY_DEPLOY_MEMORY_MIB`, `RAY_DEPLOY_READY_TIMEOUT_SECONDS`,
+`RAY_GATEWAY_RUNTIME_BINARY`, `RAY_DEPLOY_CADDY_BINARY`, and
+`RAY_DEPLOY_SERVICE_USER` from this env file before repository variables when it
+wires remote prerequisites, doctor, render, model staging, readiness waits, and
+generated service commands. It validates auth API keys before opening SSH,
+refuses
 `RAY_DEPLOY_INSTALL_CADDY=true` when the resolved config still has
 `auth.enabled=false`, then applies those overrides when choosing the post-restart
 health check port. For example:
@@ -430,6 +431,7 @@ RAY_DEPLOY_SERVICE_USER=ray
 RAY_DEPLOY_DOMAIN=ray.example.com
 RAY_DEPLOY_INSTALL_CADDY=true
 RAY_DEPLOY_MEMORY_MIB=4096
+RAY_DEPLOY_READY_TIMEOUT_SECONDS=180
 RAY_GATEWAY_RUNTIME_BINARY=/usr/local/bin/bun
 RAY_DEPLOY_CADDY_BINARY=/usr/bin/caddy
 RAY_AUTH_ENABLED=true
