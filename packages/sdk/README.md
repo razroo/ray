@@ -34,10 +34,12 @@ const job = await client.createJob({
 });
 
 const finalJob = await client.job(job.id);
+
+const readiness = await client.readyz();
 ```
 
 Pass `callbackUrl` only when it points to an endpoint you operate.
 
-See the gateway routes under `apps/gateway` and shared types in `@razroo/ray-core` for request and response shapes.
+Use `readyz()` for the unauthenticated minimal readiness payload and `health()` for the detailed protected health snapshot. See the gateway routes under `apps/gateway` and shared types in `@razroo/ray-core` for request and response shapes.
 
 `timeoutMs` defaults to `60000`, and `responseBodyLimitBytes` defaults to `2097152`.

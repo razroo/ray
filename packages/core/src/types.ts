@@ -604,6 +604,30 @@ export interface HealthSnapshot {
   asyncQueue?: AsyncQueueSnapshot;
 }
 
+export type ReadinessReason =
+  | "provider_unavailable"
+  | "provider_warming"
+  | "provider_degraded"
+  | "queue_pressure"
+  | "memory_pressure"
+  | "cpu_pressure"
+  | "async_queue_pressure";
+
+export interface ReadinessSnapshot {
+  status: HealthSnapshot["status"];
+  service: "ray-gateway";
+  providerStatus: ProviderHealthSnapshot["status"];
+  queueDepth: number;
+  inFlight: number;
+  pressure: {
+    queue: boolean;
+    memory: boolean;
+    cpu: boolean;
+    asyncQueue: boolean;
+  };
+  reasons: ReadinessReason[];
+}
+
 export interface SchedulerSnapshot {
   queueDepth: number;
   shortQueueDepth: number;

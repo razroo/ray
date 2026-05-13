@@ -10,6 +10,8 @@ import {
   type HealthSnapshot,
   type InferenceRequest,
   type RayConfig,
+  type ReadinessReason,
+  type ReadinessSnapshot,
   type RuntimeMetricsSnapshot,
 } from "@razroo/ray-core";
 import { RayRuntime, createRayRuntime } from "@ray/runtime";
@@ -94,30 +96,6 @@ export interface StartGatewayOptions extends CreateGatewayHandlerOptions {
 export interface StopGatewayOptions {
   signal?: NodeJS.Signals;
   timeoutMs?: number;
-}
-
-type GatewayReadinessReason =
-  | "provider_unavailable"
-  | "provider_warming"
-  | "provider_degraded"
-  | "queue_pressure"
-  | "memory_pressure"
-  | "cpu_pressure"
-  | "async_queue_pressure";
-
-interface GatewayReadyzResponse {
-  status: HealthSnapshot["status"];
-  service: "ray-gateway";
-  providerStatus: HealthSnapshot["provider"]["status"];
-  queueDepth: number;
-  inFlight: number;
-  pressure: {
-    queue: boolean;
-    memory: boolean;
-    cpu: boolean;
-    asyncQueue: boolean;
-  };
-  reasons: GatewayReadinessReason[];
 }
 
 function assertCliArgv(argv: unknown): asserts argv is string[] {
@@ -212,12 +190,12 @@ function resolveReadyzStatusCode(health: HealthSnapshot): number {
   return 200;
 }
 
-function buildReadyzResponse(health: HealthSnapshot): GatewayReadyzResponse {
+function buildReadyzResponse(health: HealthSnapshot): ReadinessSnapshot {
   const queuePressure = health.runtime?.queue.degraded ?? false;
   const memoryPressure = health.runtime?.memory.degraded ?? false;
   const cpuPressure = health.runtime?.cpu?.degraded ?? false;
   const asyncQueuePressure = health.asyncQueue?.degraded ?? false;
-  const reasons: GatewayReadinessReason[] = [];
+  const reasons: ReadinessReason[] = [];
 
   if (health.provider.status === "unavailable") {
     reasons.push("provider_unavailable");

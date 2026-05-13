@@ -5,6 +5,7 @@ import type {
   InferenceJobRecord,
   InferenceRequest,
   InferenceResponse,
+  ReadinessSnapshot,
   RuntimeMetricsSnapshot,
 } from "@razroo/ray-core";
 
@@ -357,6 +358,10 @@ export class RayClient {
 
   health(): Promise<HealthSnapshot> {
     return this.request<HealthSnapshot>("/health");
+  }
+
+  readyz(): Promise<ReadinessSnapshot> {
+    return this.request<ReadinessSnapshot>("/readyz");
   }
 
   metrics(): Promise<RuntimeMetricsSnapshot> {

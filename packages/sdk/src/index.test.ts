@@ -111,6 +111,50 @@ test("RayClient snapshots direct options at construction", async (t) => {
   });
 });
 
+test("RayClient fetches unauthenticated readiness snapshots", async (t) => {
+  const seenPaths: string[] = [];
+  const server = createServer((request, response) => {
+    seenPaths.push(request.url ?? "");
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify({
+        status: "degraded",
+        service: "ray-gateway",
+        providerStatus: "ready",
+        queueDepth: 3,
+        inFlight: 1,
+        pressure: {
+          queue: true,
+          memory: false,
+          cpu: false,
+          asyncQueue: false,
+        },
+        reasons: ["queue_pressure"],
+      }),
+    );
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const client = new RayClient({
+    baseUrl: `http://127.0.0.1:${address.port}`,
+  });
+  const readiness = await client.readyz();
+
+  assert.deepEqual(seenPaths, ["/readyz"]);
+  assert.equal(readiness.status, "degraded");
+  assert.equal(readiness.providerStatus, "ready");
+  assert.equal(readiness.queueDepth, 3);
+  assert.equal(readiness.pressure.queue, true);
+  assert.deepEqual(readiness.reasons, ["queue_pressure"]);
+});
+
 test("RayClient times out stalled requests", async (t) => {
   const server = createServer((_request, response) => {
     setTimeout(() => {
