@@ -166,6 +166,34 @@ test("adapterRequest rejects invalid direct adapter config before dispatch", asy
         {
           baseUrl: "http://127.0.0.1:8080",
           timeoutMs: 500,
+          headers: { "x bad": "value" },
+        },
+        "/health",
+        {},
+      ),
+    /adapter\.headers names must be valid bounded HTTP token strings/,
+  );
+
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: "http://127.0.0.1:8080",
+          timeoutMs: 500,
+          headers: { "x-test": "good\r\nbad" },
+        },
+        "/health",
+        {},
+      ),
+    /adapter\.headers\.x-test must not contain NUL, CR, or LF characters/,
+  );
+
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: "http://127.0.0.1:8080",
+          timeoutMs: 500,
           headers: JSON.parse('{"__proto__":"polluted"}') as Record<string, string>,
         },
         "/health",

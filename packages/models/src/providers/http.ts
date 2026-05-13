@@ -54,6 +54,7 @@ const MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLES = 32;
 const MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLE_KEY_CHARS = 128;
 const MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLE_VALUE_CHARS = 16_384;
 const MAX_ASSISTANT_CONTENT_PARTS = 512;
+const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 const unsafeAdapterRecordKeys = new Set(["__proto__", "constructor", "prototype"]);
 
 interface LimitedResponseBody {
@@ -241,8 +242,20 @@ function assertHeaderRecord(value: Record<string, string> | undefined, label: st
   for (const [key, entry] of entries) {
     assertSafeRecordKey(key, label);
 
-    if (key.trim().length === 0 || typeof entry !== "string") {
+    if (typeof entry !== "string") {
       throw new TypeError(`${label} must be an object of string values`);
+    }
+
+    if (
+      key.length === 0 ||
+      key.length > MAX_ADAPTER_HEADER_KEY_CHARS ||
+      !HTTP_HEADER_NAME_PATTERN.test(key)
+    ) {
+      throw new TypeError(`${label} names must be valid bounded HTTP token strings`);
+    }
+
+    if (/[\0\r\n]/.test(entry)) {
+      throw new TypeError(`${label}.${key} must not contain NUL, CR, or LF characters`);
     }
 
     assertStringLength(key, `${label} keys`, MAX_ADAPTER_HEADER_KEY_CHARS);

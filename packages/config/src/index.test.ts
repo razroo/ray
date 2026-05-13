@@ -1268,6 +1268,54 @@ test("loadRayConfig rejects oversized structured config collections", async (t) 
     /model\.adapter\.headers must contain at most 64 entries/,
   );
 
+  const headerNameConfigPath = join(tempDir, "ray.header-name.invalid.json");
+  await writeFile(
+    headerNameConfigPath,
+    JSON.stringify({
+      profile: "vps",
+      model: {
+        adapter: {
+          headers: {
+            "x bad": "value",
+          },
+        },
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: headerNameConfigPath,
+      env: {},
+    }),
+    /model\.adapter\.headers names must be valid HTTP header token strings/,
+  );
+
+  const headerValueConfigPath = join(tempDir, "ray.header-value.invalid.json");
+  await writeFile(
+    headerValueConfigPath,
+    JSON.stringify({
+      profile: "vps",
+      model: {
+        adapter: {
+          headers: {
+            "x-test": "good\r\nbad",
+          },
+        },
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: headerValueConfigPath,
+      env: {},
+    }),
+    /model\.adapter\.headers\.x-test must not contain NUL, CR, or LF characters/,
+  );
+
   const warmupsConfigPath = join(tempDir, "ray.warmups.invalid.json");
   await writeFile(
     warmupsConfigPath,

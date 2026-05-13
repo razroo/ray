@@ -104,6 +104,7 @@ const MAX_AUTH_API_KEY_ENV_CHARS = 64 * 1024;
 const MAX_AUTH_API_KEYS = 128;
 const MAX_AUTH_API_KEY_CHARS = 1_024;
 const DNS_HOST_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const unsafeEnvironmentVariableNames = new Set(["__proto__", "constructor", "prototype"]);
 
@@ -1463,6 +1464,28 @@ function assertStringRecord(
   }
 }
 
+function assertHttpHeaderRecord(value: Record<string, string>, label: string): void {
+  assertStringRecord(value, label);
+
+  for (const [key, entry] of Object.entries(value)) {
+    if (!HTTP_HEADER_NAME_PATTERN.test(key)) {
+      throw new RayError(`${label} names must be valid HTTP header token strings`, {
+        code: "config_validation_error",
+        status: 500,
+        details: { key },
+      });
+    }
+
+    if (/[\0\r\n]/.test(entry)) {
+      throw new RayError(`${label}.${key} must not contain NUL, CR, or LF characters`, {
+        code: "config_validation_error",
+        status: 500,
+        details: { key },
+      });
+    }
+  }
+}
+
 function assertResponseFormat(value: { type: string } | undefined, label: string): void {
   if (value === undefined) {
     return;
@@ -2113,7 +2136,7 @@ function validateConfig(config: RayConfig): RayConfig {
       MAX_ADAPTER_TIMEOUT_MS,
     );
     if (config.model.adapter.headers !== undefined) {
-      assertStringRecord(config.model.adapter.headers, "model.adapter.headers");
+      assertHttpHeaderRecord(config.model.adapter.headers, "model.adapter.headers");
     }
 
     assertWarmupRequests(
@@ -2159,7 +2182,7 @@ function validateConfig(config: RayConfig): RayConfig {
       MAX_ADAPTER_TIMEOUT_MS,
     );
     if (config.model.adapter.headers !== undefined) {
-      assertStringRecord(config.model.adapter.headers, "model.adapter.headers");
+      assertHttpHeaderRecord(config.model.adapter.headers, "model.adapter.headers");
     }
 
     if (config.model.adapter.cachePrompt !== undefined) {
