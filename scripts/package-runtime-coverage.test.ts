@@ -282,6 +282,63 @@ test("validatePackageRuntimeCoverage requires guarded Bun installer copy cleanup
   );
 });
 
+test("validatePackageRuntimeCoverage requires bounded Bun installer temp setup in VPS docs", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-bun-temp-doc-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const vpsDocDir = path.join(tempDir, "examples", "deploy", "vps");
+  await mkdir(vpsDocDir, { recursive: true });
+  const rootPackageJson = path.join(tempDir, "package.json");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify(
+      {
+        name: "ray-test",
+        packageManager: "bun@1.3.9",
+        engines: {
+          bun: ">=1.3.0",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    path.join(vpsDocDir, "README.md"),
+    [
+      "# VPS deploy",
+      "",
+      "```bash",
+      'BUN_INSTALL="$(mktemp -d "${TMPDIR:-/tmp}/ray-bun-install.XXXXXX")"',
+      "export BUN_INSTALL",
+      'if ! curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 https://bun.sh/install | timeout 300s bash -s "bun-v1.3.9"; then',
+      '  timeout 60s rm -rf "$BUN_INSTALL"',
+      "  unset BUN_INSTALL",
+      "  exit 1",
+      "fi",
+      'timeout 60s rm -rf "$BUN_INSTALL"',
+      "unset BUN_INSTALL",
+      "```",
+      "",
+    ].join("\n"),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson],
+  });
+  const diagnostics = summary.results.flatMap((result) => result.diagnostics);
+
+  assert.equal(summary.ok, false);
+  assert.ok(
+    diagnostics.some(
+      (diagnostic) => diagnostic.code === "vps_readme_bun_installer_temp_timeout_missing",
+    ),
+  );
+});
+
 test("validatePackageRuntimeCoverage requires bounded render temp cleanup", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-render-temp-"));
   t.after(async () => {

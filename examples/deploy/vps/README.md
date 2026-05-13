@@ -31,7 +31,7 @@ sudo env DEBIAN_FRONTEND=noninteractive timeout 300s apt-get -o Acquire::Retries
 sudo env DEBIAN_FRONTEND=noninteractive timeout 300s apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=60 install -y --no-install-recommends ca-certificates curl unzip git build-essential caddy
 timeout 120s sudo apt-get clean
 timeout 60s sudo rm -rf /var/lib/apt/lists/*
-BUN_INSTALL="$(mktemp -d "${TMPDIR:-/tmp}/ray-bun-install.XXXXXX")"
+BUN_INSTALL="$(timeout 30s mktemp -d "${TMPDIR:-/tmp}/ray-bun-install.XXXXXX")"
 export BUN_INSTALL
 if ! curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 https://bun.sh/install | timeout 300s bash -s "bun-v1.3.9"; then
   timeout 60s rm -rf "$BUN_INSTALL"

@@ -2118,6 +2118,32 @@ function validateVpsAptCleanupDoc(
   ];
 }
 
+function validateVpsBunInstallerTempDoc(
+  docPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (
+    !contents.includes("BUN_INSTALL") ||
+    contents.includes(
+      'BUN_INSTALL="$(timeout 30s mktemp -d "${TMPDIR:-/tmp}/ray-bun-install.XXXXXX")"',
+    )
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "vps_readme_bun_installer_temp_timeout_missing",
+      docPath,
+      line: workflowLineNumber(lines, "BUN_INSTALL"),
+      message:
+        "VPS deployment docs must create the fallback Bun installer directory with timeout-bounded mktemp so manual setup cannot hang or leave ambiguous installer state on small hosts.",
+    },
+  ];
+}
+
 async function validateRuntimeDoc(
   docPath: string,
   options: {
@@ -2135,6 +2161,7 @@ async function validateRuntimeDoc(
   diagnostics.push(...validateDeployStoragePreflightDoc(docPath, contents, lines));
   if (options.enforceVpsTimeouts) {
     diagnostics.push(...validateVpsAptCleanupDoc(docPath, contents, lines));
+    diagnostics.push(...validateVpsBunInstallerTempDoc(docPath, contents, lines));
   }
 
   if (options.enforceReleaseGateSmokeDocs) {
