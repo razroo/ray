@@ -1962,6 +1962,7 @@ test("startGateway stops async queue work when the HTTP listener fails", async (
 
   let started = 0;
   let stopped = 0;
+  const stopTimeouts: number[] = [];
   const config = mergeConfig(createDefaultConfig("tiny"), {
     server: {
       port: address.port,
@@ -1971,8 +1972,9 @@ test("startGateway stops async queue work when the HTTP listener fails", async (
     async start() {
       started += 1;
     },
-    async stop() {
+    async stop(options?: { timeoutMs?: number }) {
       stopped += 1;
+      stopTimeouts.push(options?.timeoutMs ?? -1);
     },
   } as unknown as DurableInferenceQueue;
   const logger = {
@@ -1997,6 +1999,7 @@ test("startGateway stops async queue work when the HTTP listener fails", async (
 
   assert.equal(started, 1);
   assert.equal(stopped, 1);
+  assert.deepEqual(stopTimeouts, [5_000]);
 });
 
 test("gateway logs client request failures as warnings without stacks", async (t) => {

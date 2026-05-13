@@ -90,6 +90,18 @@ interface TextResponse {
   text: string;
 }
 
+interface AsyncQueueObservabilityRead extends GatewayAsyncQueueObservabilitySummary {
+  healthEnabled: boolean;
+  healthMaxJobs: number;
+  healthJobsPressure: boolean;
+  metricsEnabled: number;
+  metricsMaxJobs: number;
+  metricsJobsPressure: number;
+  metricsActiveInferenceJobs: number;
+  metricsActiveCallbackDeliveries: number;
+  metricsCallbackConcurrency: number;
+}
+
 const HELP = `Run a loopback Ray gateway smoke using the tiny mock-provider profile.
 
 Usage:
@@ -758,6 +770,105 @@ async function smokeAsyncQueueObservability(options: {
   timeoutMs: number;
   token?: string;
 }): Promise<GatewayAsyncQueueObservabilitySummary> {
+  const startedAt = Date.now();
+  let lastObservation: AsyncQueueObservabilityRead | undefined;
+
+  while (Date.now() - startedAt < options.timeoutMs) {
+    const remainingMs = Math.max(1, options.timeoutMs - (Date.now() - startedAt));
+    const observation = await readAsyncQueueObservability({
+      ...options,
+      timeoutMs: Math.min(1_000, remainingMs),
+    });
+    lastObservation = observation;
+
+    if (!observation.healthEnabled) {
+      throw new Error("/health asyncQueue.enabled was false during async queue smoke");
+    }
+
+    if (observation.healthTotalJobs < 1) {
+      throw new Error(
+        `/health asyncQueue.totalJobs was ${observation.healthTotalJobs}, expected at least 1`,
+      );
+    }
+
+    if (observation.healthMaxJobs !== 16) {
+      throw new Error(`/health asyncQueue.maxJobs was ${observation.healthMaxJobs}, expected 16`);
+    }
+
+    if (observation.healthJobsPressure) {
+      throw new Error("/health asyncQueue.jobsPressure was true after a single smoke job");
+    }
+
+    if (observation.metricsEnabled !== 1) {
+      throw new Error(`/metrics async_queue.enabled was ${observation.metricsEnabled}, expected 1`);
+    }
+
+    if (observation.metricsTotalJobs !== observation.healthTotalJobs) {
+      throw new Error(
+        `/metrics async_queue.total_jobs (${observation.metricsTotalJobs}) did not match /health totalJobs (${observation.healthTotalJobs})`,
+      );
+    }
+
+    if (observation.metricsMaxJobs !== observation.healthMaxJobs) {
+      throw new Error(
+        `/metrics async_queue.max_jobs (${observation.metricsMaxJobs}) did not match /health maxJobs (${observation.healthMaxJobs})`,
+      );
+    }
+
+    if (observation.metricsJobsPressure !== 0) {
+      throw new Error(
+        `/metrics async_queue.jobs_pressure was ${observation.metricsJobsPressure}, expected 0`,
+      );
+    }
+
+    if (observation.callbackConcurrency !== 1) {
+      throw new Error(
+        `/health asyncQueue.callbackConcurrency was ${observation.callbackConcurrency}, expected 1`,
+      );
+    }
+
+    if (observation.metricsCallbackConcurrency !== observation.callbackConcurrency) {
+      throw new Error("/metrics async callback concurrency did not match /health asyncQueue");
+    }
+
+    if (
+      observation.activeInferenceJobs === 0 &&
+      observation.activeCallbackDeliveries === 0 &&
+      observation.metricsActiveInferenceJobs === 0 &&
+      observation.metricsActiveCallbackDeliveries === 0
+    ) {
+      return {
+        healthStatus: observation.healthStatus,
+        metricsStatus: observation.metricsStatus,
+        healthTotalJobs: observation.healthTotalJobs,
+        metricsTotalJobs: observation.metricsTotalJobs,
+        callbackConcurrency: observation.callbackConcurrency,
+        activeInferenceJobs: observation.activeInferenceJobs,
+        activeCallbackDeliveries: observation.activeCallbackDeliveries,
+      };
+    }
+
+    await sleep(25);
+  }
+
+  throw new Error(
+    `/health asyncQueue active work did not drain: activeInferenceJobs=${
+      lastObservation?.activeInferenceJobs ?? "unknown"
+    }, activeCallbackDeliveries=${
+      lastObservation?.activeCallbackDeliveries ?? "unknown"
+    }, metricsActiveInferenceJobs=${
+      lastObservation?.metricsActiveInferenceJobs ?? "unknown"
+    }, metricsActiveCallbackDeliveries=${
+      lastObservation?.metricsActiveCallbackDeliveries ?? "unknown"
+    }`,
+  );
+}
+
+async function readAsyncQueueObservability(options: {
+  baseUrl: string;
+  timeoutMs: number;
+  token?: string;
+}): Promise<AsyncQueueObservabilityRead> {
   const headers: Record<string, string> = {};
 
   if (options.token) {
@@ -818,34 +929,6 @@ async function smokeAsyncQueueObservability(options: {
     "/health asyncQueue",
   );
 
-  if (!healthEnabled) {
-    throw new Error("/health asyncQueue.enabled was false during async queue smoke");
-  }
-
-  if (healthTotalJobs < 1) {
-    throw new Error(`/health asyncQueue.totalJobs was ${healthTotalJobs}, expected at least 1`);
-  }
-
-  if (healthMaxJobs !== 16) {
-    throw new Error(`/health asyncQueue.maxJobs was ${healthMaxJobs}, expected 16`);
-  }
-
-  if (healthJobsPressure) {
-    throw new Error("/health asyncQueue.jobsPressure was true after a single smoke job");
-  }
-
-  if (healthActiveInferenceJobs !== 0 || healthActiveCallbackDeliveries !== 0) {
-    throw new Error(
-      `/health asyncQueue active work did not drain: activeInferenceJobs=${healthActiveInferenceJobs}, activeCallbackDeliveries=${healthActiveCallbackDeliveries}`,
-    );
-  }
-
-  if (healthCallbackConcurrency !== 1) {
-    throw new Error(
-      `/health asyncQueue.callbackConcurrency was ${healthCallbackConcurrency}, expected 1`,
-    );
-  }
-
   const metricsEnabled = requireNumberField(
     metricsGauges,
     "async_queue.enabled",
@@ -882,42 +965,23 @@ async function smokeAsyncQueueObservability(options: {
     "/metrics gauges",
   );
 
-  if (metricsEnabled !== 1) {
-    throw new Error(`/metrics async_queue.enabled was ${metricsEnabled}, expected 1`);
-  }
-
-  if (metricsTotalJobs !== healthTotalJobs) {
-    throw new Error(
-      `/metrics async_queue.total_jobs (${metricsTotalJobs}) did not match /health totalJobs (${healthTotalJobs})`,
-    );
-  }
-
-  if (metricsMaxJobs !== healthMaxJobs) {
-    throw new Error(
-      `/metrics async_queue.max_jobs (${metricsMaxJobs}) did not match /health maxJobs (${healthMaxJobs})`,
-    );
-  }
-
-  if (metricsJobsPressure !== 0) {
-    throw new Error(`/metrics async_queue.jobs_pressure was ${metricsJobsPressure}, expected 0`);
-  }
-
-  if (
-    metricsActiveInferenceJobs !== healthActiveInferenceJobs ||
-    metricsActiveCallbackDeliveries !== healthActiveCallbackDeliveries ||
-    metricsCallbackConcurrency !== healthCallbackConcurrency
-  ) {
-    throw new Error("/metrics async active-work gauges did not match /health asyncQueue fields");
-  }
-
   return {
     healthStatus: healthResponse.status,
     metricsStatus: metricsResponse.status,
+    healthEnabled,
     healthTotalJobs,
+    healthMaxJobs,
+    healthJobsPressure,
     metricsTotalJobs,
+    metricsEnabled,
+    metricsMaxJobs,
+    metricsJobsPressure,
     callbackConcurrency: healthCallbackConcurrency,
     activeInferenceJobs: healthActiveInferenceJobs,
     activeCallbackDeliveries: healthActiveCallbackDeliveries,
+    metricsActiveInferenceJobs,
+    metricsActiveCallbackDeliveries,
+    metricsCallbackConcurrency,
   };
 }
 

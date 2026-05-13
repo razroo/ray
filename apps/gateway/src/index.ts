@@ -46,6 +46,7 @@ const GATEWAY_MAX_HEADER_BYTES = 12_288;
 const GATEWAY_MAX_HEADERS_COUNT = 64;
 const GATEWAY_HTTP_PRESSURE_RATIO = 0.9;
 const GATEWAY_SHUTDOWN_TIMEOUT_MS = 30_000;
+const GATEWAY_LISTEN_FAILURE_QUEUE_STOP_TIMEOUT_MS = 5_000;
 const GATEWAY_WARMUP_RETRY_INITIAL_MS = 2_000;
 const GATEWAY_WARMUP_RETRY_MAX_MS = 15_000;
 const GATEWAY_WARMUP_RETRY_DELAY_MAX_MS = 60_000;
@@ -1770,7 +1771,7 @@ async function stopGatewayJobQueueAfterListenFailure(
   listenError: unknown,
 ): Promise<void> {
   try {
-    await gateway.jobQueue?.stop();
+    await gateway.jobQueue?.stop({ timeoutMs: GATEWAY_LISTEN_FAILURE_QUEUE_STOP_TIMEOUT_MS });
   } catch (error) {
     gateway.logger.error("gateway async queue cleanup failed after listen error", {
       listenError: serializeError(listenError),
