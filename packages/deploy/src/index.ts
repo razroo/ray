@@ -4397,7 +4397,7 @@ async function collectLlamaCppBinaryPreflight(
       ? await verifyServiceUserPathAccess(binaryPath, serviceUserIdentity, 0o1, "execute")
       : undefined;
     const probePreflight = strictFilesystem
-      ? await collectLlamaCppBinaryProbePreflight(binaryPath, launchProfile)
+      ? await collectLlamaCppBinaryProbePreflight(binaryPath, launchProfile, serviceUserIdentity)
       : {};
 
     return {
@@ -4470,7 +4470,10 @@ async function collectGgufModelFileFormatPreflight(
 async function collectLlamaCppBinaryProbePreflight(
   binaryPath: string,
   launchProfile: LlamaCppLaunchProfile,
+  serviceUserIdentity: ServiceUserIdentity | undefined,
 ): Promise<Partial<DeploymentPreflight>> {
+  const serviceIdentity = resolveChildProcessServiceIdentity(serviceUserIdentity);
+
   return await new Promise<Partial<DeploymentPreflight>>((resolve) => {
     execFile(
       binaryPath,
@@ -4479,6 +4482,7 @@ async function collectLlamaCppBinaryProbePreflight(
         timeout: LLAMA_CPP_BINARY_PROBE_TIMEOUT_MS,
         maxBuffer: LLAMA_CPP_BINARY_PROBE_MAX_BUFFER_BYTES,
         windowsHide: true,
+        ...(serviceIdentity ? serviceIdentity : {}),
       },
       (error, stdout, stderr) => {
         const output = `${stdout}\n${stderr}`.trim();
