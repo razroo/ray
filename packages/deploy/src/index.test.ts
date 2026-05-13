@@ -1715,6 +1715,7 @@ test("diagnoseConfig reports adequate swap for a small VPS llama.cpp profile", (
       memoryBudgetSource: "preset",
       swapStatus: "available",
       swapTotalMiB: 2_048,
+      swapFreeMiB: 1_536,
     },
   });
 
@@ -1722,6 +1723,28 @@ test("diagnoseConfig reports adequate swap for a small VPS llama.cpp profile", (
   assert.ok(diagnostic);
   assert.equal(diagnostic.level, "info");
   assert.match(diagnostic.message, /2,048 MiB/);
+  assert.match(diagnostic.message, /1,536 MiB currently free/);
+});
+
+test("diagnoseConfig warns when small-VPS swap is almost exhausted", () => {
+  const config = createDefaultConfig("1b");
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      memoryBudgetMiB: 4_096,
+      memoryBudgetSource: "preset",
+      swapStatus: "available",
+      swapTotalMiB: 2_048,
+      swapFreeMiB: 128,
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "swap_free_low");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /128 MiB/);
+  assert.match(diagnostic.message, /256 MiB/);
 });
 
 test("diagnoseConfig warns when small-VPS swappiness is high", () => {
@@ -2979,6 +3002,39 @@ test("loadAndDiagnoseDeployment reports oversized host passwd as unreadable in s
   );
   assert.ok(diagnostic);
   assert.equal(diagnostic.level, "error");
+});
+
+test("loadAndDiagnoseDeployment records host swap free space", async (t) => {
+  const tempDir = await mkRayDeployTempDir("ray-deploy-host-swap-free-");
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  const meminfoPath = join(tempDir, "meminfo");
+  const swappinessPath = join(tempDir, "swappiness");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+  await writeFile(
+    meminfoPath,
+    "MemTotal:        4194304 kB\nSwapTotal:       2097152 kB\nSwapFree:        1572864 kB\n",
+    "utf8",
+  );
+  await writeFile(swappinessPath, "10\n", "utf8");
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    hostFiles: {
+      meminfo: meminfoPath,
+      swappiness: swappinessPath,
+    },
+  });
+
+  assert.equal(inspected.preflight.swapStatus, "available");
+  assert.equal(inspected.preflight.swapTotalMiB, 2_048);
+  assert.equal(inspected.preflight.swapFreeMiB, 1_536);
+  assert.equal(inspected.preflight.swappiness, 10);
 });
 
 test("loadAndDiagnoseDeployment bounds host swap preflight files", async (t) => {

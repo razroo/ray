@@ -184,6 +184,7 @@ export interface DeploymentPreflight {
   systemdUnitError?: string;
   swapStatus?: SwapStatus;
   swapTotalMiB?: number;
+  swapFreeMiB?: number;
   swapError?: string;
   swappinessStatus?: SwappinessStatus;
   swappiness?: number;
@@ -233,6 +234,7 @@ const GGUF_MAGIC = "GGUF";
 const MIN_SYSTEM_RESERVE_MIB = 768;
 const SYSTEM_RESERVE_RATIO = 0.2;
 const MIN_SMALL_VPS_SWAP_MIB = 1_024;
+const MIN_SMALL_VPS_SWAP_FREE_MIB = 256;
 const RECOMMENDED_SMALL_VPS_SWAPPINESS = 10;
 const MAX_SMALL_VPS_SWAPPINESS = 20;
 const SECRET_ENV_FILE_OPEN_MODE_MASK = 0o077;
@@ -1007,14 +1009,23 @@ async function readTextFileBounded(
   }
 }
 
-function parseSwapTotalMiB(meminfo: string): number | undefined {
-  const match = /^SwapTotal:\s+(\d+)\s+kB$/m.exec(meminfo);
+function parseMeminfoMiB(meminfo: string, fieldName: string): number | undefined {
+  const escapedFieldName = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`^${escapedFieldName}:\\s+(\\d+)\\s+kB$`, "m").exec(meminfo);
   if (!match) {
     return undefined;
   }
 
-  const swapKiB = Number(match[1]);
-  return Number.isSafeInteger(swapKiB) && swapKiB >= 0 ? Math.floor(swapKiB / 1024) : undefined;
+  const valueKiB = Number(match[1]);
+  return Number.isSafeInteger(valueKiB) && valueKiB >= 0 ? Math.floor(valueKiB / 1024) : undefined;
+}
+
+function parseSwapTotalMiB(meminfo: string): number | undefined {
+  return parseMeminfoMiB(meminfo, "SwapTotal");
+}
+
+function parseSwapFreeMiB(meminfo: string): number | undefined {
+  return parseMeminfoMiB(meminfo, "SwapFree");
 }
 
 function parseNonNegativeInteger(value: string): number | undefined {
@@ -3387,13 +3398,28 @@ export function diagnoseConfig(
               MIN_SMALL_VPS_SWAP_MIB,
             )} of swap as a last-resort OOM cushion; bun run swap:plan -- --size-mib ${MIN_SMALL_VPS_SWAP_MIB} prints guarded setup commands.`,
           });
+        } else if (
+          preflight?.swapFreeMiB !== undefined &&
+          preflight.swapFreeMiB < MIN_SMALL_VPS_SWAP_FREE_MIB
+        ) {
+          diagnostics.push({
+            level: "warn",
+            code: "swap_free_low",
+            message: `Only ${formatMiB(preflight.swapFreeMiB)} of ${formatMiB(
+              preflight.swapTotalMiB ?? 0,
+            )} swap is currently free. Small 4 GB llama.cpp VPS deployments should start sustained inference with at least ${formatMiB(
+              MIN_SMALL_VPS_SWAP_FREE_MIB,
+            )} of free swap cushion; stop memory-heavy services or add swap before rerunning doctor.`,
+          });
         } else if (preflight?.swapTotalMiB !== undefined) {
           diagnostics.push({
             level: "info",
             code: "swap_ok",
-            message: `Swap is configured with ${formatMiB(
-              preflight.swapTotalMiB,
-            )} available as a last-resort cushion for this small-VPS llama.cpp profile.`,
+            message: `Swap is configured with ${formatMiB(preflight.swapTotalMiB)}${
+              preflight.swapFreeMiB !== undefined
+                ? ` total and ${formatMiB(preflight.swapFreeMiB)} currently free`
+                : ""
+            } as a last-resort cushion for this small-VPS llama.cpp profile.`,
           });
         } else if (preflight?.swapStatus === "unreadable") {
           diagnostics.push({
@@ -4679,6 +4705,7 @@ async function collectSwapPreflight(
       "host meminfo",
     );
     const swapTotalMiB = parseSwapTotalMiB(meminfo);
+    const swapFreeMiB = parseSwapFreeMiB(meminfo);
 
     if (swapTotalMiB === undefined) {
       return {
@@ -4692,6 +4719,7 @@ async function collectSwapPreflight(
       ...swappinessPreflight,
       swapStatus: swapTotalMiB > 0 ? "available" : "missing",
       swapTotalMiB,
+      ...(swapFreeMiB !== undefined ? { swapFreeMiB } : {}),
     };
   } catch (error) {
     return {
