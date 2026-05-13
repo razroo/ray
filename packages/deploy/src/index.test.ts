@@ -559,6 +559,55 @@ test("diagnoseConfig flags unsafe public deployment defaults", () => {
   assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "rate_limit_disabled"));
 });
 
+test("diagnoseConfig warns when IP rate-limit proxy header posture is unsafe", () => {
+  const publicBindConfig = mergeConfig(createDefaultConfig("vps"), {
+    server: {
+      host: "0.0.0.0",
+    },
+    rateLimit: {
+      enabled: true,
+      keyStrategy: "ip+api-key",
+      trustProxyHeaders: true,
+    },
+  });
+  const publicBindDiagnostic = diagnoseConfig(publicBindConfig, process.env).find(
+    (entry) => entry.code === "rate_limit_proxy_headers_public_bind",
+  );
+  assert.ok(publicBindDiagnostic);
+  assert.equal(publicBindDiagnostic.level, "warn");
+  assert.match(publicBindDiagnostic.message, /X-Forwarded-For/);
+
+  const loopbackProxyConfig = mergeConfig(createDefaultConfig("vps"), {
+    server: {
+      host: "127.0.0.1",
+    },
+    rateLimit: {
+      enabled: true,
+      keyStrategy: "ip",
+      trustProxyHeaders: false,
+    },
+  });
+  const loopbackProxyDiagnostic = diagnoseConfig(loopbackProxyConfig, process.env).find(
+    (entry) => entry.code === "rate_limit_proxy_headers_disabled",
+  );
+  assert.ok(loopbackProxyDiagnostic);
+  assert.equal(loopbackProxyDiagnostic.level, "warn");
+  assert.match(loopbackProxyDiagnostic.message, /Caddy/);
+
+  const apiKeyOnlyConfig = mergeConfig(createDefaultConfig("vps"), {
+    rateLimit: {
+      enabled: true,
+      keyStrategy: "api-key",
+      trustProxyHeaders: false,
+    },
+  });
+  assert.ok(
+    !diagnoseConfig(apiKeyOnlyConfig, process.env).some((entry) =>
+      entry.code.startsWith("rate_limit_proxy_headers_"),
+    ),
+  );
+});
+
 test("diagnoseConfig surfaces invalid auth key material without retaining secrets", () => {
   const config = mergeConfig(createDefaultConfig("vps"), {
     auth: {
