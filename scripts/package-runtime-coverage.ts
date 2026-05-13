@@ -980,6 +980,12 @@ function validateDeployWorkflowResolvedEnvPersistence(
       'append_ray_env_default RAY_DEPLOY_MEMORY_MIB "${RAY_DEPLOY_MEMORY_MIB:-}"',
     ) &&
     contents.includes(
+      'append_ray_env_default RAY_DEPLOY_MIN_FREE_STORAGE_MIB "$DEPLOY_MIN_FREE_STORAGE_MIB"',
+    ) &&
+    contents.includes(
+      'append_ray_env_default RAY_DEPLOY_READY_TIMEOUT_SECONDS "$READY_TIMEOUT_SECONDS"',
+    ) &&
+    contents.includes(
       'append_ray_env_default RAY_GATEWAY_RUNTIME_BINARY "$GATEWAY_RUNTIME_BINARY"',
     ) &&
     contents.includes('append_ray_env_default RAY_DEPLOY_CADDY_BINARY "${CADDY_BINARY:-}"') &&
@@ -996,7 +1002,7 @@ function validateDeployWorkflowResolvedEnvPersistence(
       workflowPath,
       line: workflowLineNumber(lines, "/etc/ray/ray.env"),
       message:
-        "VPS deploy workflow must persist resolved non-secret deploy settings into /etc/ray/ray.env when absent so later doctor, render, and model-stage runs use the same service user, domain, memory target, and runtime paths.",
+        "VPS deploy workflow must persist resolved non-secret deploy settings into /etc/ray/ray.env when absent so later doctor, render, model-stage, storage-preflight, and readiness-window runs use the same service user, domain, memory target, storage cushion, readiness timeout, and runtime paths.",
     },
   ];
 }

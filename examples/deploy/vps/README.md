@@ -459,12 +459,14 @@ RAY_RATE_LIMIT_MAX_REQUESTS=75
 ```
 
 When `RAY_DEPLOY_SERVICE_USER`, `RAY_DEPLOY_DOMAIN`,
-`RAY_DEPLOY_MEMORY_MIB`, `RAY_GATEWAY_RUNTIME_BINARY`, or
+`RAY_DEPLOY_MEMORY_MIB`, `RAY_DEPLOY_MIN_FREE_STORAGE_MIB`,
+`RAY_DEPLOY_READY_TIMEOUT_SECONDS`, `RAY_GATEWAY_RUNTIME_BINARY`, or
 `RAY_DEPLOY_CADDY_BINARY` are supplied as repository variables instead of
 env-file lines, the workflow appends the resolved non-secret values to
 `/etc/ray/ray.env` when they are absent. That keeps follow-up manual
 `doctor`, `render`, and `model:stage` commands aligned with the deployed
-service user, domain, memory target, and runtime paths.
+service user, domain, memory target, storage cushion, readiness timeout, and
+runtime paths.
 
 The workflow validates the deploy SSH user and configured gateway runtime path
 after applying env-file overrides and before opening SSH, checks that

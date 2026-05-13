@@ -317,7 +317,8 @@ service commands.
 When those CLI-consumed settings come from repository variables instead, the
 workflow appends the resolved non-secret values to `/etc/ray/ray.env` when they
 are absent so later manual `doctor`, `render`, and `model:stage` runs read the
-same service user, domain, memory target, and runtime paths.
+same service user, domain, memory target, storage cushion, readiness timeout,
+and runtime paths.
 Set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` when the workflow should require more or
 less than the default 1024 MiB free on the root, checkout, Ray state, temp, and
 repo-scoped Bun install-cache volumes before package bootstrap, rsync follow-up,

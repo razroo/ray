@@ -889,6 +889,8 @@ jobs:
           append_ray_env_default RAY_DEPLOY_SERVICE_USER "$SERVICE_USER"
           append_ray_env_default RAY_DEPLOY_DOMAIN "$DEPLOY_DOMAIN"
           append_ray_env_default RAY_DEPLOY_MEMORY_MIB "${RAY_DEPLOY_MEMORY_MIB:-}"
+          append_ray_env_default RAY_DEPLOY_MIN_FREE_STORAGE_MIB "$DEPLOY_MIN_FREE_STORAGE_MIB"
+          append_ray_env_default RAY_DEPLOY_READY_TIMEOUT_SECONDS "$READY_TIMEOUT_SECONDS"
           append_ray_env_default RAY_GATEWAY_RUNTIME_BINARY "$GATEWAY_RUNTIME_BINARY"
           append_ray_env_default RAY_DEPLOY_CADDY_BINARY "${CADDY_BINARY:-}"
           timeout 60s $SUDO chmod 600 /etc/ray/ray.env
