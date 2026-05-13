@@ -76,7 +76,7 @@ test("validatePackageRuntimeCoverage accepts current Bun-first workspace manifes
   );
 });
 
-test("validatePackageRuntimeCoverage requires Bun cache storage preflight coverage", async (t) => {
+test("validatePackageRuntimeCoverage requires config and Bun cache storage preflight coverage", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-storage-"));
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
@@ -104,8 +104,11 @@ test("validatePackageRuntimeCoverage requires Bun cache storage preflight covera
   await writeFile(
     path.join(tempDir, "scripts", "deploy-storage-preflight.ts"),
     [
-      'const DEFAULT_STORAGE_PATHS = ["/srv/ray", "/var/lib/ray", "/tmp"] as const;',
-      'const HELP = "RAY_DEPLOY_MIN_FREE_STORAGE_MIB";',
+      'const DEFAULT_STORAGE_PATHS = ["/srv/ray", "/srv/ray/.ray/bun-install-cache", "/var/lib/ray", "/tmp", "/var/tmp"] as const;',
+      'const HELP = "--ray-env-file RAY_DEPLOY_MIN_FREE_STORAGE_MIB";',
+      "async function loadDeployStoragePreflightArgs() {}",
+      "async function readEnvironmentFileBounded() {}",
+      'const ENV_FILE_STORAGE_PATH_KEYS = ["RAY_MODEL_PATH", "RAY_LLAMA_CPP_MODEL_PATH", "RAY_ASYNC_QUEUE_STORAGE_DIR"] as const;',
       "",
     ].join("\n"),
   );

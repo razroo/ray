@@ -1734,6 +1734,9 @@ function validateDeployStoragePreflightScript(
   }
 
   if (
+    contents.includes('"/etc/ray"') &&
+    contents.includes('"/etc/systemd/system"') &&
+    contents.includes('"/etc/caddy"') &&
     contents.includes('"/srv/ray"') &&
     contents.includes('"/srv/ray/.ray/bun-install-cache"') &&
     contents.includes('"/var/lib/ray"') &&
@@ -1758,7 +1761,7 @@ function validateDeployStoragePreflightScript(
       scriptPath,
       line: workflowLineNumber(lines, "DEFAULT_STORAGE_PATHS"),
       message:
-        "Manual deploy storage preflight must check /srv/ray/.ray/bun-install-cache and /var/tmp by default, load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from --ray-env-file, and include custom env-file model plus async-queue storage paths so operator-run Bun installs use the same disk headroom guard as the VPS deploy workflow.",
+        "Manual deploy storage preflight must check /etc/ray, /etc/systemd/system, /etc/caddy, /srv/ray/.ray/bun-install-cache, and /var/tmp by default, load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from --ray-env-file, and include custom env-file model plus async-queue storage paths so operator-run config writes and Bun installs use the same disk headroom guard as the VPS deploy workflow.",
     },
   ];
 }
