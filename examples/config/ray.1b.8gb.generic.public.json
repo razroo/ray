@@ -9,6 +9,8 @@
     "id": "local-1b-q4",
     "family": "generic-1b",
     "quantization": "q4_k_m",
+    "contextWindow": 8192,
+    "warmOnBoot": true,
     "maxOutputTokens": 256,
     "operational": {
       "recommendedPromptFormat": "native-template",
@@ -20,14 +22,19 @@
     },
     "adapter": {
       "kind": "llama.cpp",
+      "baseUrl": "http://127.0.0.1:8081",
       "modelRef": "local-1b-q4",
       "timeoutMs": 24000,
+      "cachePrompt": true,
       "slotStateTtlMs": 250,
       "slotSnapshotTimeoutMs": 300,
       "promptScaffoldCacheEntries": 384,
       "launchProfile": {
         "preset": "single-vps-1b-8gb",
+        "binaryPath": "/usr/local/bin/llama-server",
         "modelPath": "/var/lib/ray/models/local-1b-q4.gguf",
+        "host": "127.0.0.1",
+        "port": 8081,
         "alias": "local-1b-q4",
         "ctxSize": 4096,
         "parallel": 2,
@@ -36,8 +43,16 @@
         "threadsHttp": 2,
         "batchSize": 256,
         "ubatchSize": 128,
+        "cachePrompt": true,
         "cacheReuse": 256,
-        "cacheRamMiB": 768
+        "cacheRamMiB": 768,
+        "continuousBatching": true,
+        "enableMetrics": true,
+        "exposeSlots": true,
+        "warmup": true,
+        "enableUnifiedKv": true,
+        "cacheIdleSlots": true,
+        "contextShift": true
       }
     }
   },

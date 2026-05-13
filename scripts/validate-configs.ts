@@ -11,11 +11,29 @@ const DEFAULT_SMOKE_API_KEY = "ray-config-smoke";
 const MAX_CONFIG_FILES = 128;
 const MAX_CLI_ARGS = 16;
 const MAX_CLI_ARG_BYTES = 4_096;
+const MAX_PUBLIC_MODEL_CONTEXT_WINDOW = 8_192;
+const MAX_PUBLIC_MODEL_OUTPUT_TOKENS = 256;
 const MAX_PUBLIC_REQUEST_BODY_LIMIT_BYTES = 64_000;
 const MAX_PUBLIC_RATE_LIMIT_WINDOW_MS = 3_600_000;
 const MAX_PUBLIC_RATE_LIMIT_REQUESTS = 300;
 const MAX_PUBLIC_RATE_LIMIT_KEYS = 8_192;
 const MAX_PUBLIC_SERVER_PORT = 65_535;
+const PUBLIC_LLAMA_CPP_BASE_URL = "http://127.0.0.1:8081";
+const PUBLIC_LLAMA_CPP_BINARY_PATH = "/usr/local/bin/llama-server";
+const PUBLIC_LLAMA_CPP_HOST = "127.0.0.1";
+const PUBLIC_LLAMA_CPP_PORT = 8_081;
+const MAX_PUBLIC_ADAPTER_TIMEOUT_MS = 32_000;
+const MAX_PUBLIC_ADAPTER_SLOT_STATE_TTL_MS = 250;
+const MAX_PUBLIC_ADAPTER_SLOT_SNAPSHOT_TIMEOUT_MS = 300;
+const MAX_PUBLIC_PROMPT_SCAFFOLD_CACHE_ENTRIES = 384;
+const MAX_PUBLIC_LLAMA_CTX_SIZE = 4_096;
+const MAX_PUBLIC_LLAMA_PARALLEL = 2;
+const MAX_PUBLIC_LLAMA_THREADS = 4;
+const MAX_PUBLIC_LLAMA_HTTP_THREADS = 2;
+const MAX_PUBLIC_LLAMA_BATCH_SIZE = 256;
+const MAX_PUBLIC_LLAMA_UBATCH_SIZE = 128;
+const MAX_PUBLIC_LLAMA_CACHE_REUSE = 256;
+const MAX_PUBLIC_LLAMA_CACHE_RAM_MIB = 768;
 const MAX_PUBLIC_TELEMETRY_SLOW_REQUEST_MS = 2_200;
 const MAX_PUBLIC_SCHEDULER_CONCURRENCY = 2;
 const MAX_PUBLIC_SCHEDULER_QUEUE_DEPTH = 96;
@@ -448,6 +466,247 @@ async function diagnosePublicConfigPolicy(configPath: string): Promise<Deploymen
     ["server", "requestBodyLimitBytes"],
     MAX_PUBLIC_REQUEST_BODY_LIMIT_BYTES,
     "public_config_request_body_limit_explicit",
+  );
+  expectPublicConfigString(diagnostics, parsed, ["model", "id"], "public_config_model_id_explicit");
+  expectPublicConfigString(
+    diagnostics,
+    parsed,
+    ["model", "family"],
+    "public_config_model_family_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["model", "quantization"],
+    "q4_k_m",
+    "public_config_model_quantization_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["model", "contextWindow"],
+    MAX_PUBLIC_MODEL_CONTEXT_WINDOW,
+    "public_config_model_context_window_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["model", "warmOnBoot"],
+    true,
+    "public_config_model_warm_on_boot_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["model", "maxOutputTokens"],
+    MAX_PUBLIC_MODEL_OUTPUT_TOKENS,
+    "public_config_model_output_tokens_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "kind"],
+    "llama.cpp",
+    "public_config_model_adapter_kind_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "baseUrl"],
+    PUBLIC_LLAMA_CPP_BASE_URL,
+    "public_config_model_adapter_base_url_explicit",
+  );
+  expectPublicConfigString(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "modelRef"],
+    "public_config_model_adapter_ref_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "timeoutMs"],
+    MAX_PUBLIC_ADAPTER_TIMEOUT_MS,
+    "public_config_model_adapter_timeout_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "cachePrompt"],
+    true,
+    "public_config_model_adapter_cache_prompt_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "slotStateTtlMs"],
+    MAX_PUBLIC_ADAPTER_SLOT_STATE_TTL_MS,
+    "public_config_model_adapter_slot_state_ttl_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "slotSnapshotTimeoutMs"],
+    MAX_PUBLIC_ADAPTER_SLOT_SNAPSHOT_TIMEOUT_MS,
+    "public_config_model_adapter_slot_snapshot_timeout_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "promptScaffoldCacheEntries"],
+    MAX_PUBLIC_PROMPT_SCAFFOLD_CACHE_ENTRIES,
+    "public_config_model_adapter_scaffold_cache_explicit",
+  );
+  expectPublicConfigString(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "preset"],
+    "public_config_model_launch_preset_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "binaryPath"],
+    PUBLIC_LLAMA_CPP_BINARY_PATH,
+    "public_config_model_launch_binary_explicit",
+  );
+  expectPublicConfigString(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "modelPath"],
+    "public_config_model_launch_model_path_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "host"],
+    PUBLIC_LLAMA_CPP_HOST,
+    "public_config_model_launch_host_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "port"],
+    PUBLIC_LLAMA_CPP_PORT,
+    "public_config_model_launch_port_explicit",
+  );
+  expectPublicConfigString(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "alias"],
+    "public_config_model_launch_alias_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "ctxSize"],
+    MAX_PUBLIC_LLAMA_CTX_SIZE,
+    "public_config_model_launch_ctx_size_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "parallel"],
+    MAX_PUBLIC_LLAMA_PARALLEL,
+    "public_config_model_launch_parallel_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "threads"],
+    MAX_PUBLIC_LLAMA_THREADS,
+    "public_config_model_launch_threads_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "threadsHttp"],
+    MAX_PUBLIC_LLAMA_HTTP_THREADS,
+    "public_config_model_launch_http_threads_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "batchSize"],
+    MAX_PUBLIC_LLAMA_BATCH_SIZE,
+    "public_config_model_launch_batch_size_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "ubatchSize"],
+    MAX_PUBLIC_LLAMA_UBATCH_SIZE,
+    "public_config_model_launch_ubatch_size_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "cachePrompt"],
+    true,
+    "public_config_model_launch_cache_prompt_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "cacheReuse"],
+    MAX_PUBLIC_LLAMA_CACHE_REUSE,
+    "public_config_model_launch_cache_reuse_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "cacheRamMiB"],
+    MAX_PUBLIC_LLAMA_CACHE_RAM_MIB,
+    "public_config_model_launch_cache_ram_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "continuousBatching"],
+    true,
+    "public_config_model_launch_continuous_batching_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "enableMetrics"],
+    true,
+    "public_config_model_launch_metrics_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "exposeSlots"],
+    true,
+    "public_config_model_launch_slots_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "warmup"],
+    true,
+    "public_config_model_launch_warmup_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "enableUnifiedKv"],
+    true,
+    "public_config_model_launch_unified_kv_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "cacheIdleSlots"],
+    true,
+    "public_config_model_launch_idle_slot_cache_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["model", "adapter", "launchProfile", "contextShift"],
+    true,
+    "public_config_model_launch_context_shift_explicit",
   );
   expectPublicConfigValue(
     diagnostics,

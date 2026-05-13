@@ -19,6 +19,7 @@
       "timeoutMs": 18000,
       "cachePrompt": true,
       "slotStateTtlMs": 200,
+      "slotSnapshotTimeoutMs": 250,
       "promptScaffoldCacheEntries": 256,
       "launchProfile": {
         "preset": "single-vps-sub1b-cax11",

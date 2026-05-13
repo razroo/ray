@@ -24,6 +24,11 @@
     "requestBodyLimitBytes": 64000
   },
   "model": {
+    "id": "qwen2.5-1.5b-instruct-q4_k_m",
+    "family": "qwen2.5",
+    "quantization": "q4_k_m",
+    "contextWindow": 8192,
+    "warmOnBoot": true,
     "maxOutputTokens": 256,
     "operational": {
       "recommendedPromptFormat": "native-template",
@@ -35,7 +40,10 @@
     },
     "adapter": {
       "kind": "llama.cpp",
+      "baseUrl": "http://127.0.0.1:8081",
+      "modelRef": "qwen2.5-1.5b-instruct-q4_k_m",
       "timeoutMs": 24000,
+      "cachePrompt": true,
       "slotStateTtlMs": 250,
       "slotSnapshotTimeoutMs": 300,
       "promptScaffoldCacheEntries": 384,
