@@ -134,6 +134,14 @@ test("parseArgs rejects malformed direct argv values", () => {
     /argv\[1\] must not contain NUL bytes/,
   );
   assert.throws(
+    () => parseArgs(["--workload", " examples/workload.jsonl"]),
+    /--workload must be a path without surrounding whitespace/,
+  );
+  assert.throws(
+    () => parseArgs(["--output", ".ray/benchmarks/latest.json\n"]),
+    /--output must not contain control characters/,
+  );
+  assert.throws(
     () => parseArgs(["--label", "x".repeat(4_097)]),
     /argv\[1\] must be at most 4096 bytes/,
   );
@@ -862,9 +870,30 @@ test("waitForBenchmarkChildHealth fails fast with bounded child output", async (
   );
 });
 
-test("benchmark file helpers reject oversized direct paths before filesystem work", async () => {
+test("benchmark file helpers reject malformed direct paths before filesystem work", async () => {
   const oversizedPath = `/${"a".repeat(4096)}`;
 
+  await assert.rejects(
+    () => loadWorkload(" examples/workload.jsonl"),
+    /Workload path must be a path without surrounding whitespace/,
+  );
+  await assert.rejects(
+    () => loadBaseline("examples/baseline.json\n"),
+    /Baseline path must not contain control characters/,
+  );
+  await assert.rejects(
+    () =>
+      writeStructuredOutput(
+        " .ray/benchmarks/latest.json",
+        minimalBenchmarkOutput("malformed-output-path"),
+      ),
+    /Benchmark output path must be a path without surrounding whitespace/,
+  );
+  await assert.rejects(
+    () =>
+      appendHistoryOutput(".ray/benchmarks\n", minimalBenchmarkOutput("malformed-history-path")),
+    /Benchmark history directory must not contain control characters/,
+  );
   await assert.rejects(
     () => loadWorkload(oversizedPath),
     /Workload path must be at most 4096 bytes/,

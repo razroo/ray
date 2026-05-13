@@ -467,8 +467,12 @@ function assertBenchmarkPathValue(value: unknown, label: string): asserts value 
     throw new Error(`${label} must be a non-empty path`);
   }
 
-  if (value.includes("\0")) {
-    throw new Error(`${label} must not contain NUL bytes`);
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} must not contain control characters`);
+  }
+
+  if (value.trim() !== value) {
+    throw new Error(`${label} must be a path without surrounding whitespace`);
   }
 
   if (Buffer.byteLength(value, "utf8") > MAX_BENCHMARK_PATH_BYTES) {
