@@ -2471,6 +2471,13 @@ export function diagnoseConfig(
       message:
         "Gateway caching is disabled. Repeated prompts will always hit the backend, which can waste CPU, memory bandwidth, and queue time on small VPS deployments.",
     });
+  } else if (config.cache.keyStrategy === "input") {
+    diagnostics.push({
+      level: "warn",
+      code: "cache_key_ignores_generation_params",
+      message:
+        "cache.keyStrategy is set to input, so cache hits can ignore generation controls such as maxTokens, temperature, and topP. Use RAY_CACHE_KEY_STRATEGY=input+params on VPS deployments unless the workload intentionally trades parameter-specific responses for broader reuse.",
+    });
   }
 
   if (!gatewayBindsLoopback) {

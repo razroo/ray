@@ -605,6 +605,32 @@ test("diagnoseConfig warns when VPS efficiency controls are disabled", () => {
   assert.equal(learnedCapsDiagnostic.level, "warn");
 });
 
+test("diagnoseConfig warns when cache keys ignore generation controls", () => {
+  const defaultConfig = createDefaultConfig("vps");
+  assert.ok(
+    !diagnoseConfig(defaultConfig, process.env).some(
+      (entry) => entry.code === "cache_key_ignores_generation_params",
+    ),
+  );
+
+  const config = mergeConfig(defaultConfig, {
+    cache: {
+      keyStrategy: "input",
+    },
+  });
+
+  const diagnostic = diagnoseConfig(config, process.env).find(
+    (entry) => entry.code === "cache_key_ignores_generation_params",
+  );
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /cache\.keyStrategy/);
+  assert.match(diagnostic.message, /maxTokens/);
+  assert.match(diagnostic.message, /temperature/);
+  assert.match(diagnostic.message, /RAY_CACHE_KEY_STRATEGY=input\+params/);
+});
+
 test("diagnoseConfig warns when VPS output clamps cannot reduce completions", () => {
   const tokenClampConfig = mergeConfig(createDefaultConfig("vps"), {
     gracefulDegradation: {
