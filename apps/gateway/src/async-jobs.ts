@@ -55,6 +55,7 @@ const MAX_CALLBACK_ALLOWED_HOSTS = 64;
 const MAX_CALLBACK_ALLOWED_HOST_CHARS = 253;
 const MAX_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB = 1_048_576;
 const MAX_ASYNC_ATTEMPTS = 100;
+const MAX_ASYNC_QUEUE_STORAGE_PATH_BYTES = 4_096;
 const BYTES_PER_MIB = 1024 * 1024;
 const DNS_HOST_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -321,13 +322,30 @@ function assertCallbackAllowedHosts(value: string[], label: string): void {
   }
 }
 
+function assertAsyncQueueStorageDir(value: unknown): asserts value is string {
+  if (!isNonEmptyString(value)) {
+    throw new TypeError("asyncQueue.storageDir must be a non-empty string");
+  }
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new TypeError("asyncQueue.storageDir must not contain control characters");
+  }
+
+  if (value.trim() !== value) {
+    throw new TypeError("asyncQueue.storageDir must be a path without surrounding whitespace");
+  }
+
+  if (Buffer.byteLength(value, "utf8") > MAX_ASYNC_QUEUE_STORAGE_PATH_BYTES) {
+    throw new TypeError(
+      `asyncQueue.storageDir must be at most ${MAX_ASYNC_QUEUE_STORAGE_PATH_BYTES} bytes`,
+    );
+  }
+}
+
 function snapshotAsyncQueueConfig(config: AsyncQueueConfig): AsyncQueueConfig {
   assertBoolean(config.enabled, "asyncQueue.enabled");
   assertBoolean(config.callbackAllowPrivateNetwork, "asyncQueue.callbackAllowPrivateNetwork");
-
-  if (!isNonEmptyString(config.storageDir)) {
-    throw new TypeError("asyncQueue.storageDir must be a non-empty string");
-  }
+  assertAsyncQueueStorageDir(config.storageDir);
 
   assertPositiveSafeIntegerAtMost(config.maxJobs, "asyncQueue.maxJobs", MAX_ASYNC_QUEUE_JOBS);
   assertPositiveSafeIntegerAtMost(

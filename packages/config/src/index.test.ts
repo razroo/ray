@@ -934,6 +934,53 @@ test("loadRayConfig rejects invalid async queue storage caps", async (t) => {
   );
 });
 
+test("loadRayConfig rejects malformed async queue storage paths", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-config-async-storage-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const whitespaceConfigPath = join(tempDir, "ray.async-storage-whitespace.json");
+  await writeFile(
+    whitespaceConfigPath,
+    JSON.stringify({
+      profile: "tiny",
+      asyncQueue: {
+        storageDir: " .ray/async-queue",
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: whitespaceConfigPath,
+      env: {},
+    }),
+    /asyncQueue\.storageDir must be a path without surrounding whitespace/,
+  );
+
+  const controlConfigPath = join(tempDir, "ray.async-storage-control.json");
+  await writeFile(
+    controlConfigPath,
+    JSON.stringify({
+      profile: "tiny",
+      asyncQueue: {
+        storageDir: ".ray/async-queue\n",
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: controlConfigPath,
+      env: {},
+    }),
+    /asyncQueue\.storageDir must not contain control characters/,
+  );
+});
+
 test("loadRayConfig rejects oversized mock adapter seeds", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-config-invalid-mock-"));
   t.after(async () => {

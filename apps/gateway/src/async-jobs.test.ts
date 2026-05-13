@@ -60,6 +60,54 @@ test("durable inference queue rejects invalid direct config", () => {
       new DurableInferenceQueue({
         config: {
           ...config,
+          storageDir: "",
+        },
+        runtime,
+        logger,
+      }),
+    /asyncQueue\.storageDir must be a non-empty string/,
+  );
+  assert.throws(
+    () =>
+      new DurableInferenceQueue({
+        config: {
+          ...config,
+          storageDir: " .ray/jobs",
+        },
+        runtime,
+        logger,
+      }),
+    /asyncQueue\.storageDir must be a path without surrounding whitespace/,
+  );
+  assert.throws(
+    () =>
+      new DurableInferenceQueue({
+        config: {
+          ...config,
+          storageDir: ".ray/jobs\n",
+        },
+        runtime,
+        logger,
+      }),
+    /asyncQueue\.storageDir must not contain control characters/,
+  );
+  assert.throws(
+    () =>
+      new DurableInferenceQueue({
+        config: {
+          ...config,
+          storageDir: "x".repeat(4_097),
+        },
+        runtime,
+        logger,
+      }),
+    /asyncQueue\.storageDir must be at most 4096 bytes/,
+  );
+  assert.throws(
+    () =>
+      new DurableInferenceQueue({
+        config: {
+          ...config,
           maxJobs: 0,
         },
         runtime,

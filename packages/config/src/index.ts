@@ -186,15 +186,15 @@ function assertConfigPathInput(value: unknown, label: string): asserts value is 
     });
   }
 
-  if (value.trim() !== value) {
-    throw new RayError(`${label} must be a path without surrounding whitespace`, {
+  if (/[\0\r\n]/.test(value)) {
+    throw new RayError(`${label} must not contain control characters`, {
       code: "config_validation_error",
       status: 500,
     });
   }
 
-  if (/[\0\r\n]/.test(value)) {
-    throw new RayError(`${label} must not contain control characters`, {
+  if (value.trim() !== value) {
+    throw new RayError(`${label} must be a path without surrounding whitespace`, {
       code: "config_validation_error",
       status: 500,
     });
@@ -1298,6 +1298,7 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
 
 function resolveConfigPaths(config: RayConfig, cwd: string): RayConfig {
   const next = structuredClone(config);
+  assertConfigPathInput(next.asyncQueue.storageDir, "asyncQueue.storageDir");
   next.asyncQueue.storageDir = path.resolve(cwd, next.asyncQueue.storageDir);
 
   if (next.model.adapter.kind === "llama.cpp" && next.model.adapter.launchProfile) {
@@ -2577,11 +2578,7 @@ function validateConfig(config: RayConfig): RayConfig {
     "model.adapter.kind",
   );
 
-  assertNonEmptyStringLength(
-    config.asyncQueue.storageDir,
-    "asyncQueue.storageDir",
-    MAX_CONFIG_PATH_CHARS,
-  );
+  assertConfigPathInput(config.asyncQueue.storageDir, "asyncQueue.storageDir");
 
   assertStringArray(
     config.promptCompiler.familyMetadataKeys,
