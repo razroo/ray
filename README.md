@@ -420,7 +420,7 @@ bun run release:gate
 bun run release:check-source -- <version>
 ```
 
-`release:gate` runs lint, Prettier `--check`, tests (`bun run test` builds, runs the compiled Tap suite, then runs script tests with Bun), all checked-in config validation, public deploy bundle smoke rendering, public model staging smoke rendering, public deploy package-script coverage, Bun-first package, workflow, runtime-doc coverage, Markdown local-link validation, and Bun pack smoke checks for the public packages. `release:check-source` verifies the linked publishable package manifests match the release tag before npm workflows publish.
+`release:gate` runs lint, Prettier `--check`, tests (`bun run test` builds, runs the compiled Tap suite, then runs script tests with Bun), all checked-in config validation, auth-backed public config validation, public deploy bundle smoke rendering, public model staging smoke rendering, public deploy package-script coverage, Bun-first package, workflow, runtime-doc coverage, Markdown local-link validation, and Bun pack smoke checks for the public packages. `release:check-source` verifies the linked publishable package manifests match the release tag before npm workflows publish.
 
 ## Example config profiles
 

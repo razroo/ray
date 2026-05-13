@@ -517,6 +517,21 @@ function validateScripts(
     }
   }
 
+  const releaseGate = scripts["release:gate"];
+  if (
+    releaseGate !== undefined &&
+    !releaseGate.includes("RAY_API_KEYS=smoke bun run validate:config:public")
+  ) {
+    diagnostics.push({
+      level: "error",
+      code: "release_gate_public_auth_validate_missing",
+      packagePath: packageJsonPath,
+      scriptName: "release:gate",
+      message:
+        'Script "release:gate" must run RAY_API_KEYS=smoke bun run validate:config:public so CI proves public configs have usable auth material.',
+    });
+  }
+
   return diagnostics;
 }
 

@@ -98,6 +98,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
           build: "npm run compile",
           dev: "yarn dev",
           docs: "bun ./scripts/docs.ts",
+          "release:gate": "bun run lint && bun run validate:config:all",
         },
       },
       null,
@@ -228,6 +229,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.equal(summary.ok, false);
   assert.ok(codes.includes("root_package_manager_not_bun"));
   assert.ok(codes.includes("root_bun_engine_missing"));
+  assert.ok(codes.includes("release_gate_public_auth_validate_missing"));
   assert.equal(codes.filter((code) => code === "non_bun_package_manager_script").length, 4);
   assert.equal(codes.filter((code) => code === "non_bun_workflow_package_manager").length, 2);
   assert.ok(codes.includes("workflow_bun_install_frozen_lockfile_missing"));

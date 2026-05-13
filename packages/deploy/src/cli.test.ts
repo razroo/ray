@@ -1185,7 +1185,7 @@ test("runCli validate prints deployment preflight details", async (t) => {
     console.log = originalLog;
   });
 
-  await runCli([
+  const exitCode = await runCli([
     "validate",
     "--cwd",
     ".",
@@ -1196,10 +1196,52 @@ test("runCli validate prints deployment preflight details", async (t) => {
   ]);
 
   const parsed = JSON.parse(output.join("\n"));
+  assert.equal(exitCode, 1);
   assert.equal(parsed.profile, "1b");
   assert.equal(parsed.preflight.memoryBudgetMiB, 4096);
   assert.equal(parsed.preflight.memoryBudgetSource, "override");
   assert.ok(Array.isArray(parsed.diagnostics));
+  assert.ok(
+    parsed.diagnostics.some(
+      (diagnostic: { code?: unknown }) => diagnostic.code === "auth_keys_missing",
+    ),
+  );
+});
+
+test("runCli validate succeeds when public config auth keys are supplied", async (t) => {
+  const tempDir = await mkRayDeployTempDir("ray-deploy-validate-public-auth-");
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(envFile, "RAY_API_KEYS=smoke\n", "utf8");
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  const exitCode = await runCli([
+    "validate",
+    "--cwd",
+    ".",
+    "--config",
+    "./examples/config/ray.sub1b.public.json",
+    "--ray-env-file",
+    envFile,
+  ]);
+
+  const parsed = JSON.parse(output.join("\n"));
+  assert.equal(exitCode, 0);
+  assert.ok(
+    !parsed.diagnostics.some(
+      (diagnostic: { code?: unknown }) => diagnostic.code === "auth_keys_missing",
+    ),
+  );
 });
 
 test("runCli validate applies env-file memory budget", async (t) => {

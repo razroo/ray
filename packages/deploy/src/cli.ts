@@ -656,11 +656,11 @@ export function parseCliArgs(argv: string[]): CliOptions {
   return options;
 }
 
-export async function runCli(argv: string[]): Promise<void> {
+export async function runCli(argv: string[]): Promise<number> {
   const options = parseCliArgs(argv);
   if (options.help) {
     console.log(DEPLOY_CLI_HELP.trimEnd());
-    return;
+    return 0;
   }
 
   const cwd = path.resolve(options.cwd);
@@ -727,7 +727,7 @@ export async function runCli(argv: string[]): Promise<void> {
     if (deploymentOptions.outputDir) {
       const files = await writeDeploymentBundleFiles(deploymentOptions.outputDir, bundle);
       console.log(JSON.stringify({ files }, null, 2));
-      return;
+      return 0;
     }
 
     console.log("# Ray systemd service\n");
@@ -742,6 +742,7 @@ export async function runCli(argv: string[]): Promise<void> {
     console.log(bundle.envFileExample);
     console.log("\n# Summary\n");
     console.log(JSON.stringify(bundle.summary, null, 2));
+    return 0;
   } else {
     const inspected = await loadAndDiagnoseDeployment({
       ...deploymentOptions,
@@ -764,15 +765,24 @@ export async function runCli(argv: string[]): Promise<void> {
       ),
     );
 
-    if (resolvedOptions.command === "doctor" && hasErrors) {
-      process.exit(1);
+    if (
+      (resolvedOptions.command === "validate" || resolvedOptions.command === "doctor") &&
+      hasErrors
+    ) {
+      return 1;
     }
+
+    return 0;
   }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runCli(process.argv.slice(2)).catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  });
+  runCli(process.argv.slice(2))
+    .then((exitCode) => {
+      process.exitCode = exitCode;
+    })
+    .catch((error: unknown) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    });
 }
