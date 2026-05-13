@@ -1,6 +1,8 @@
 {
   "profile": "1b-8gb",
   "server": {
+    "host": "127.0.0.1",
+    "port": 3000,
     "requestBodyLimitBytes": 64000
   },
   "model": {
@@ -80,8 +82,12 @@
     "apiKeyEnv": "RAY_API_KEYS"
   },
   "rateLimit": {
+    "enabled": true,
+    "windowMs": 60000,
     "maxRequests": 150,
-    "maxKeys": 8192
+    "maxKeys": 8192,
+    "keyStrategy": "ip+api-key",
+    "trustProxyHeaders": true
   },
   "tags": {
     "target": "1b",

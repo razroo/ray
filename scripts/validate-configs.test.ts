@@ -76,6 +76,52 @@ test("collectConfigPaths rejects excessive configs while streaming", async (t) =
   );
 });
 
+test("validateConfigFiles requires explicit public ingress controls", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-config-public-policy-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const configPath = path.join(tempDir, "ray.policy-missing.public.json");
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      profile: "1b",
+      auth: {
+        enabled: true,
+        apiKeyEnv: "RAY_API_KEYS",
+      },
+      rateLimit: {
+        enabled: true,
+        maxRequests: 75,
+      },
+      tags: {
+        exposure: "public",
+      },
+    }),
+    "utf8",
+  );
+
+  const summary = await validateConfigFiles({
+    cwd: process.cwd(),
+    configPaths: [configPath],
+    env: {
+      ...process.env,
+      RAY_API_KEYS: "smoke",
+    },
+  });
+  const codes = summary.results.flatMap((result) =>
+    result.diagnostics.map((diagnostic) => diagnostic.code),
+  );
+
+  assert.equal(summary.ok, false);
+  assert.ok(codes.includes("public_config_server_host_explicit"));
+  assert.ok(codes.includes("public_config_request_body_limit_explicit"));
+  assert.ok(codes.includes("public_config_rate_limit_window_explicit"));
+  assert.ok(codes.includes("public_config_rate_limit_key_strategy_explicit"));
+  assert.ok(codes.includes("public_config_rate_limit_proxy_headers_explicit"));
+});
+
 test("validateConfigFiles accepts every checked-in example config", async () => {
   const cwd = process.cwd();
   const configPaths = await collectConfigPaths(cwd, "examples/config");

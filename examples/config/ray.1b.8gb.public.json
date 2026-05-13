@@ -12,6 +12,8 @@
     "apiKeyEnv": "RAY_API_KEYS"
   },
   "server": {
+    "host": "127.0.0.1",
+    "port": 3000,
     "requestBodyLimitBytes": 64000
   },
   "model": {
@@ -87,8 +89,12 @@
     "minCompletionTokensPerSecond": 14
   },
   "rateLimit": {
+    "enabled": true,
+    "windowMs": 60000,
     "maxRequests": 150,
-    "maxKeys": 8192
+    "maxKeys": 8192,
+    "keyStrategy": "ip+api-key",
+    "trustProxyHeaders": true
   },
   "tags": {
     "hardware": "8gb-vps-class",

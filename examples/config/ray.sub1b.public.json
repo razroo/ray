@@ -104,6 +104,7 @@
     "enabled": true,
     "windowMs": 60000,
     "maxRequests": 120,
+    "maxKeys": 4096,
     "keyStrategy": "ip+api-key",
     "trustProxyHeaders": true
   },

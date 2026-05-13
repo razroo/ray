@@ -1,5 +1,10 @@
 {
   "profile": "1b",
+  "server": {
+    "host": "127.0.0.1",
+    "port": 3000,
+    "requestBodyLimitBytes": 48000
+  },
   "asyncQueue": {
     "enabled": true,
     "storageDir": "/var/lib/ray/async-queue",
@@ -10,6 +15,14 @@
   "auth": {
     "enabled": true,
     "apiKeyEnv": "RAY_API_KEYS"
+  },
+  "rateLimit": {
+    "enabled": true,
+    "windowMs": 60000,
+    "maxRequests": 75,
+    "maxKeys": 4096,
+    "keyStrategy": "ip+api-key",
+    "trustProxyHeaders": true
   },
   "tags": {
     "hardware": "hetzner-cx23-class",

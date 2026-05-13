@@ -1,4 +1,4 @@
-import { opendir } from "node:fs/promises";
+import { opendir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -11,6 +11,13 @@ const DEFAULT_SMOKE_API_KEY = "ray-config-smoke";
 const MAX_CONFIG_FILES = 128;
 const MAX_CLI_ARGS = 16;
 const MAX_CLI_ARG_BYTES = 4_096;
+const MAX_PUBLIC_REQUEST_BODY_LIMIT_BYTES = 64_000;
+const MAX_PUBLIC_RATE_LIMIT_WINDOW_MS = 3_600_000;
+const MAX_PUBLIC_RATE_LIMIT_REQUESTS = 300;
+const MAX_PUBLIC_RATE_LIMIT_KEYS = 8_192;
+const MAX_PUBLIC_SERVER_PORT = 65_535;
+
+type ConfigRecord = Record<string, unknown>;
 
 export interface ValidateConfigsArgs {
   cwd: string;
@@ -188,6 +195,214 @@ function withSmokeAuthEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   };
 }
 
+function isRecord(value: unknown): value is ConfigRecord {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function getConfigValue(config: ConfigRecord, keys: string[]): unknown {
+  let current: unknown = config;
+
+  for (const key of keys) {
+    if (!isRecord(current)) {
+      return undefined;
+    }
+    current = current[key];
+  }
+
+  return current;
+}
+
+function formatExpectedValue(value: string | number | boolean): string {
+  return typeof value === "string" ? JSON.stringify(value) : String(value);
+}
+
+function pushPublicConfigPolicyError(
+  diagnostics: DeploymentDiagnostic[],
+  code: string,
+  message: string,
+): void {
+  diagnostics.push({
+    level: "error",
+    code,
+    message,
+  });
+}
+
+function expectPublicConfigValue(
+  diagnostics: DeploymentDiagnostic[],
+  config: ConfigRecord,
+  keys: string[],
+  expected: string | number | boolean,
+  code: string,
+): void {
+  const actual = getConfigValue(config, keys);
+
+  if (actual === expected) {
+    return;
+  }
+
+  const label = keys.join(".");
+  pushPublicConfigPolicyError(
+    diagnostics,
+    code,
+    `Public example configs must explicitly declare ${label}=${formatExpectedValue(expected)}.`,
+  );
+}
+
+function expectPublicConfigString(
+  diagnostics: DeploymentDiagnostic[],
+  config: ConfigRecord,
+  keys: string[],
+  code: string,
+): void {
+  const actual = getConfigValue(config, keys);
+
+  if (typeof actual === "string" && actual.trim().length > 0) {
+    return;
+  }
+
+  pushPublicConfigPolicyError(
+    diagnostics,
+    code,
+    `Public example configs must explicitly declare a non-empty ${keys.join(".")}.`,
+  );
+}
+
+function expectPublicConfigPositiveIntegerAtMost(
+  diagnostics: DeploymentDiagnostic[],
+  config: ConfigRecord,
+  keys: string[],
+  max: number,
+  code: string,
+): void {
+  const actual = getConfigValue(config, keys);
+
+  if (typeof actual === "number" && Number.isSafeInteger(actual) && actual > 0 && actual <= max) {
+    return;
+  }
+
+  pushPublicConfigPolicyError(
+    diagnostics,
+    code,
+    `Public example configs must explicitly declare ${keys.join(".")} as a positive integer no greater than ${max}.`,
+  );
+}
+
+async function diagnosePublicConfigPolicy(configPath: string): Promise<DeploymentDiagnostic[]> {
+  const diagnostics: DeploymentDiagnostic[] = [];
+  const publicFile = path.basename(configPath).endsWith(".public.json");
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(await readFile(configPath, "utf8"));
+  } catch (error) {
+    if (publicFile) {
+      pushPublicConfigPolicyError(
+        diagnostics,
+        "public_config_policy_unreadable",
+        `Could not inspect public config policy: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    return diagnostics;
+  }
+
+  if (!isRecord(parsed)) {
+    if (publicFile) {
+      pushPublicConfigPolicyError(
+        diagnostics,
+        "public_config_policy_invalid",
+        "Public example configs must be JSON objects.",
+      );
+    }
+    return diagnostics;
+  }
+
+  const tags = getConfigValue(parsed, ["tags"]);
+  const publicExposure = isRecord(tags) && tags.exposure === "public";
+  if (!publicFile && !publicExposure) {
+    return diagnostics;
+  }
+
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["server", "host"],
+    "127.0.0.1",
+    "public_config_server_host_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["server", "port"],
+    MAX_PUBLIC_SERVER_PORT,
+    "public_config_server_port_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["server", "requestBodyLimitBytes"],
+    MAX_PUBLIC_REQUEST_BODY_LIMIT_BYTES,
+    "public_config_request_body_limit_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["auth", "enabled"],
+    true,
+    "public_config_auth_enabled_explicit",
+  );
+  expectPublicConfigString(
+    diagnostics,
+    parsed,
+    ["auth", "apiKeyEnv"],
+    "public_config_auth_key_env_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["rateLimit", "enabled"],
+    true,
+    "public_config_rate_limit_enabled_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["rateLimit", "windowMs"],
+    MAX_PUBLIC_RATE_LIMIT_WINDOW_MS,
+    "public_config_rate_limit_window_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["rateLimit", "maxRequests"],
+    MAX_PUBLIC_RATE_LIMIT_REQUESTS,
+    "public_config_rate_limit_requests_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["rateLimit", "maxKeys"],
+    MAX_PUBLIC_RATE_LIMIT_KEYS,
+    "public_config_rate_limit_keys_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["rateLimit", "keyStrategy"],
+    "ip+api-key",
+    "public_config_rate_limit_key_strategy_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["rateLimit", "trustProxyHeaders"],
+    true,
+    "public_config_rate_limit_proxy_headers_explicit",
+  );
+
+  return diagnostics;
+}
+
 export async function validateConfigFiles(options: {
   cwd: string;
   configPaths: string[];
@@ -205,17 +420,17 @@ export async function validateConfigFiles(options: {
         env,
         inspectHostStorage: false,
       });
-      const errorCount = inspected.diagnostics.filter(
-        (diagnostic) => diagnostic.level === "error",
-      ).length;
-      const warningCount = inspected.diagnostics.filter(
-        (diagnostic) => diagnostic.level === "warn",
-      ).length;
+      const diagnostics = [
+        ...inspected.diagnostics,
+        ...(await diagnosePublicConfigPolicy(configPath)),
+      ];
+      const errorCount = diagnostics.filter((diagnostic) => diagnostic.level === "error").length;
+      const warningCount = diagnostics.filter((diagnostic) => diagnostic.level === "warn").length;
 
       results.push({
         configPath,
         profile: inspected.config.profile,
-        diagnostics: inspected.diagnostics,
+        diagnostics,
         errorCount,
         warningCount,
       });
