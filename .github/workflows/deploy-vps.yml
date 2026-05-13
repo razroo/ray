@@ -896,6 +896,8 @@ jobs:
           append_ray_env_default RAY_GATEWAY_RUNTIME_BINARY "$GATEWAY_RUNTIME_BINARY"
           append_ray_env_default RAY_DEPLOY_CADDY_BINARY "${CADDY_BINARY:-}"
           timeout 60s $SUDO chmod 600 /etc/ray/ray.env
+          timeout 60s $SUDO /usr/local/bin/bun /srv/ray/scripts/deploy-storage-preflight.ts \
+            --ray-env-file /etc/ray/ray.env
 
           LLAMA_CONFIG_STATUS=0
           timeout 30s $SUDO /usr/local/bin/bun --eval '

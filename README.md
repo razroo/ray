@@ -319,8 +319,8 @@ The GitHub VPS workflow also honors `RAY_DEPLOY_DOMAIN`,
 `RAY_DEPLOY_SERVICE_USER`, `RAY_GATEWAY_RUNTIME_BINARY`, and
 `RAY_DEPLOY_CADDY_BINARY` from
 `RAY_ENV_FILE_CONTENTS` before repository variables when wiring remote
-prerequisites, storage preflight, doctor, render, readiness waits, and generated
-service commands.
+prerequisites, early and env-aware storage preflight, doctor, render, readiness
+waits, and generated service commands.
 When no explicit deploy memory override is set, render, doctor, and model
 staging use `model.operational.memoryClassMiB` before falling back to the
 launch-profile preset, while still clamping to lower detected host RAM.
