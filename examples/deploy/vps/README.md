@@ -33,8 +33,16 @@ timeout 120s sudo apt-get clean
 timeout 60s sudo rm -rf /var/lib/apt/lists/*
 BUN_INSTALL="$(mktemp -d "${TMPDIR:-/tmp}/ray-bun-install.XXXXXX")"
 export BUN_INSTALL
-curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 https://bun.sh/install | timeout 300s bash -s "bun-v1.3.9"
-timeout 60s sudo install -m 0755 "$BUN_INSTALL/bin/bun" /usr/local/bin/bun
+if ! curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 https://bun.sh/install | timeout 300s bash -s "bun-v1.3.9"; then
+  timeout 60s rm -rf "$BUN_INSTALL"
+  unset BUN_INSTALL
+  exit 1
+fi
+if ! timeout 60s sudo install -m 0755 "$BUN_INSTALL/bin/bun" /usr/local/bin/bun; then
+  timeout 60s rm -rf "$BUN_INSTALL"
+  unset BUN_INSTALL
+  exit 1
+fi
 timeout 60s rm -rf "$BUN_INSTALL"
 unset BUN_INSTALL
 SERVICE_USER="${RAY_DEPLOY_SERVICE_USER:-ray}"
@@ -510,8 +518,8 @@ for the Bun production install, generated systemd unit verification, and
 generated Caddyfile validation fail before systemd tries to start the generated units. The
 configured gateway runtime binary defaults to `/usr/local/bin/bun`. The workflow
 only changes ownership on the checkout root, sets service-readable checkout
-modes during rsync, removes stale `node_modules` under a timeout, stages
-fallback Bun installer output in a temporary directory, pins
+modes during rsync, removes stale `node_modules` under a timeout, stages and
+cleans fallback Bun installer output in a temporary directory, pins
 `BUN_INSTALL_CACHE_DIR` under `/srv/ray/.ray/bun-install-cache`, and runs the
 remote Bun production install with `umask 022` so old dev dependencies and
 home-directory runtime/cache growth do not accumulate even when ownership

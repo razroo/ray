@@ -217,6 +217,71 @@ test("validatePackageRuntimeCoverage requires VPS deploy trigger for storage pre
   );
 });
 
+test("validatePackageRuntimeCoverage requires guarded Bun installer copy cleanup", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-bun-copy-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const workflowDir = path.join(tempDir, ".github", "workflows");
+  await mkdir(workflowDir, { recursive: true });
+  const rootPackageJson = path.join(tempDir, "package.json");
+  const deployWorkflowPath = path.join(workflowDir, "deploy-vps.yml");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify(
+      {
+        name: "ray-test",
+        packageManager: "bun@1.3.9",
+        engines: {
+          bun: ">=1.3.0",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    deployWorkflowPath,
+    [
+      "name: Deploy VPS",
+      "env:",
+      "  RAY_GATEWAY_RUNTIME_BINARY: ${{ vars.RAY_GATEWAY_RUNTIME_BINARY }}",
+      "jobs:",
+      "  deploy:",
+      "    steps:",
+      "      - run: |",
+      "          basename \"${GATEWAY_RUNTIME_BINARY:-}\" | tr '[:upper:]' '[:lower:]'",
+      '          [ "${GATEWAY_RUNTIME_BINARY:-}" != "/usr/local/bin/bun" ]',
+      '          install -D -m 0755 /usr/local/bin/bun "$GATEWAY_RUNTIME_BINARY"',
+      '          bun_install_dir="$(timeout 30s mktemp -d "${TMPDIR:-/tmp}/ray-bun-install.XXXXXX")"',
+      '          export BUN_INSTALL="$bun_install_dir"',
+      "          https://bun.sh/install | timeout 300s bash -s",
+      '          [ ! -x "$bun_install_dir/bin/bun" ]',
+      '          bun_runtime_version "$bun_install_dir/bin/bun"',
+      '          timeout 60s $SUDO install -m 0755 "$bun_install_dir/bin/bun" /usr/local/bin/bun',
+      '          timeout 60s rm -rf "$bun_install_dir"',
+      "          unset BUN_INSTALL",
+      "",
+    ].join("\n"),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson],
+  });
+  const diagnostics = summary.results.flatMap((result) => result.diagnostics);
+
+  assert.equal(summary.ok, false);
+  assert.ok(
+    diagnostics.some(
+      (diagnostic) =>
+        diagnostic.code === "workflow_gateway_runtime_bun_install_missing" &&
+        diagnostic.workflowPath === deployWorkflowPath,
+    ),
+  );
+});
+
 test("validatePackageRuntimeCoverage requires deploy storage docs to mention binary path", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-storage-doc-"));
   t.after(async () => {
