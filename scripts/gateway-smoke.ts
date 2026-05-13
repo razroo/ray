@@ -441,7 +441,7 @@ async function fetchJson(
   }
 }
 
-async function fetchText(
+export async function fetchText(
   url: string,
   init: RequestInit,
   timeoutMs: number,
@@ -454,6 +454,7 @@ async function fetchText(
   try {
     const response = await fetch(url, {
       ...init,
+      redirect: "manual",
       signal: controller.signal,
     });
     const text = await response.text();

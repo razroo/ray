@@ -568,6 +568,7 @@ file, package metadata, and the llama.cpp staging helper used during deploy.
 - Return `application/json` or `application/*+json` from JSON-speaking backends; malformed JSON under those media types is treated as an invalid backend response, while other successful media types are passed through as text.
 - Send gateway JSON request bodies uncompressed or with `Content-Encoding: identity`; unsupported encodings are rejected before the gateway acknowledges `Expect: 100-continue` uploads or reads the body.
 - Benchmark helper requests do not follow redirects; fix Caddy or gateway routing before benchmarking instead of measuring a redirected target.
+- Gateway smoke helper requests do not follow redirects; fix gateway or proxy routing before trusting public/auth smoke output.
 - Let Ray be the public inference surface.
 - Keep the Ray gateway bound to localhost and expose it through Caddy or nginx.
 - Set `RAY_DEPLOY_DOMAIN` or pass `--domain` with the real public DNS name before installing the generated Caddyfile; render and doctor warn when the generated site address is still `ray.local`, `localhost`, loopback, or another `.local` placeholder.

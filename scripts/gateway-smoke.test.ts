@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import test from "node:test";
 import {
+  fetchText,
   formatTextSummary,
   parseArgs,
   runGatewaySmokeCli,
@@ -85,6 +87,59 @@ test("parseArgs rejects malformed gateway smoke argv", () => {
   );
   assert.throws(() => parseArgs(["--unknown"]), /Unknown option: --unknown/);
   assert.throws(() => parseArgs(["config.json"]), /Unexpected positional argument/);
+});
+
+test("fetchText refuses to follow smoke probe redirects", async (t) => {
+  let redirectedRequests = 0;
+  let redirectedAuthorization: string | undefined;
+  const redirectedServer = createServer((request, response) => {
+    redirectedRequests += 1;
+    redirectedAuthorization =
+      typeof request.headers.authorization === "string" ? request.headers.authorization : undefined;
+    response.writeHead(200, { "content-type": "text/plain" });
+    response.end("redirected");
+  });
+
+  await new Promise<void>((resolve) => redirectedServer.listen(0, "127.0.0.1", resolve));
+  t.after(() => redirectedServer.close());
+
+  const redirectedAddress = redirectedServer.address();
+  if (!redirectedAddress || typeof redirectedAddress === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const redirectingServer = createServer((_request, response) => {
+    response.writeHead(307, {
+      "content-type": "text/plain",
+      location: `http://127.0.0.1:${redirectedAddress.port}/readyz`,
+    });
+    response.end("manual redirect");
+  });
+
+  await new Promise<void>((resolve) => redirectingServer.listen(0, "127.0.0.1", resolve));
+  t.after(() => redirectingServer.close());
+
+  const redirectingAddress = redirectingServer.address();
+  if (!redirectingAddress || typeof redirectingAddress === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await fetchText(
+    `http://127.0.0.1:${redirectingAddress.port}/readyz`,
+    {
+      method: "GET",
+      headers: {
+        authorization: "Bearer smoke-secret",
+      },
+    },
+    1_000,
+    "/readyz redirect smoke",
+  );
+
+  assert.equal(response.status, 307);
+  assert.equal(response.text, "manual redirect");
+  assert.equal(redirectedRequests, 0);
+  assert.equal(redirectedAuthorization, undefined);
 });
 
 test("formatTextSummary reports the checked gateway endpoints", () => {
