@@ -1389,6 +1389,86 @@ function assertLaunchProfileHostIsLoopback(profile: LlamaCppLaunchProfile): void
   );
 }
 
+function launchHostRequiresExactBaseUrlHost(value: string): boolean {
+  return isIP(normalizeHostLiteral(value)) > 0;
+}
+
+function assertLaunchProfileBaseUrlMatches(
+  profile: LlamaCppLaunchProfile,
+  adapterBaseUrl: URL,
+): void {
+  if (adapterBaseUrl.protocol !== "http:") {
+    throw new RayError(
+      "model.adapter.baseUrl must use plain HTTP when model.adapter.launchProfile is configured",
+      {
+        code: "config_validation_error",
+        status: 500,
+        details: {
+          baseUrl: adapterBaseUrl.toString(),
+        },
+      },
+    );
+  }
+
+  if (!isLoopbackHost(adapterBaseUrl.hostname)) {
+    throw new RayError(
+      "model.adapter.baseUrl must be loopback when model.adapter.launchProfile is configured",
+      {
+        code: "config_validation_error",
+        status: 500,
+        details: {
+          baseUrl: adapterBaseUrl.toString(),
+          launchHost: profile.host,
+        },
+      },
+    );
+  }
+
+  if (
+    launchHostRequiresExactBaseUrlHost(profile.host) &&
+    normalizeHostLiteral(adapterBaseUrl.hostname) !== normalizeHostLiteral(profile.host)
+  ) {
+    throw new RayError(
+      "model.adapter.baseUrl host must match model.adapter.launchProfile.host when launchProfile.host is a literal IP",
+      {
+        code: "config_validation_error",
+        status: 500,
+        details: {
+          baseUrl: adapterBaseUrl.toString(),
+          launchHost: profile.host,
+        },
+      },
+    );
+  }
+
+  if (getUrlPort(adapterBaseUrl) !== profile.port) {
+    throw new RayError(
+      "model.adapter.baseUrl port must match model.adapter.launchProfile.port when launchProfile is configured",
+      {
+        code: "config_validation_error",
+        status: 500,
+        details: {
+          baseUrl: adapterBaseUrl.toString(),
+          launchPort: profile.port,
+        },
+      },
+    );
+  }
+
+  if (adapterBaseUrl.pathname !== "/") {
+    throw new RayError(
+      "model.adapter.baseUrl must point at the generated llama.cpp service root when launchProfile is configured",
+      {
+        code: "config_validation_error",
+        status: 500,
+        details: {
+          baseUrl: adapterBaseUrl.toString(),
+        },
+      },
+    );
+  }
+}
+
 function assertRequestBodyLimitBytes(value: number): void {
   assertPositiveInteger(value, "server.requestBodyLimitBytes");
 
@@ -2489,6 +2569,7 @@ function validateConfig(config: RayConfig): RayConfig {
       assertTcpPort(profile.port, "model.adapter.launchProfile.port");
       assertLaunchProfileHostIsLoopback(profile);
       assertLaunchProfileDoesNotConflictWithGateway(config, profile);
+      assertLaunchProfileBaseUrlMatches(profile, adapterBaseUrl);
       assertPositiveIntegerAtMost(
         profile.ctxSize,
         "model.adapter.launchProfile.ctxSize",

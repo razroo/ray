@@ -1915,6 +1915,44 @@ test("loadRayConfig rejects public llama.cpp launch hosts", async () => {
   );
 });
 
+test("loadRayConfig rejects llama.cpp launch base URLs that miss the generated backend", async () => {
+  const cases = [
+    {
+      baseUrl: "https://127.0.0.1:8081",
+      pattern: /model\.adapter\.baseUrl must use plain HTTP/,
+    },
+    {
+      baseUrl: "http://example.com:8081",
+      pattern: /model\.adapter\.baseUrl must be loopback/,
+    },
+    {
+      baseUrl: "http://127.0.0.2:8081",
+      pattern: /model\.adapter\.baseUrl host must match model\.adapter\.launchProfile\.host/,
+    },
+    {
+      baseUrl: "http://127.0.0.1:8082",
+      pattern: /model\.adapter\.baseUrl port must match model\.adapter\.launchProfile\.port/,
+    },
+    {
+      baseUrl: "http://127.0.0.1:8081/v1",
+      pattern: /model\.adapter\.baseUrl must point at the generated llama\.cpp service root/,
+    },
+  ];
+
+  for (const entry of cases) {
+    await assert.rejects(
+      loadRayConfig({
+        cwd: process.cwd(),
+        env: {
+          RAY_PROFILE: "1b",
+          RAY_MODEL_BASE_URL: entry.baseUrl,
+        },
+      }),
+      entry.pattern,
+    );
+  }
+});
+
 test("loadRayConfig accepts sub1b email classifier variant", async () => {
   const loaded = await loadRayConfig({
     cwd: process.cwd(),
