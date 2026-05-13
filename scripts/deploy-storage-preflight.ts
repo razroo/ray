@@ -19,9 +19,15 @@ const DEFAULT_STORAGE_PATHS = [
   "/tmp",
   "/var/tmp",
 ] as const;
+const ENV_FILE_STORAGE_PATH_KEYS = [
+  "RAY_MODEL_PATH",
+  "RAY_LLAMA_CPP_MODEL_PATH",
+  "RAY_ASYNC_QUEUE_STORAGE_DIR",
+] as const;
 
 export interface DeployStoragePreflightArgs {
   paths: string[];
+  pathsExplicit: boolean;
   minFreeStorageMiB: number;
   minFreeStorageMiBSource: "default" | "env" | "env-file" | "flag";
   envFile?: string;
@@ -43,13 +49,18 @@ export interface DeployStoragePreflightSummary {
   checks: DeployStorageCheck[];
 }
 
+interface DeployStorageEnvironmentFileValues {
+  minFreeStorageMiB?: number;
+  storagePaths: string[];
+}
+
 const HELP = `Check remote VPS storage headroom before Ray deploy work consumes disk.
 
 Usage:
   bun ./scripts/deploy-storage-preflight.ts [options]
 
 Options:
-  --path <path>          Absolute path to check. Repeatable. Defaults to /srv/ray, /srv/ray/.ray/bun-install-cache, /var/lib/ray, /tmp, and /var/tmp.
+  --path <path>          Absolute path to check. Repeatable. Defaults to /srv/ray, /srv/ray/.ray/bun-install-cache, /var/lib/ray, /tmp, /var/tmp, plus model and async-queue paths from --env-file when set.
   --min-free-mib <n>    Required free storage in MiB. Default: RAY_DEPLOY_MIN_FREE_STORAGE_MIB or ${DEFAULT_MIN_FREE_STORAGE_MIB}. Use 0 to skip the threshold.
   --env-file <path>      Load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from a bounded dotenv file unless --min-free-mib is set.
   --ray-env-file <path>  Alias for --env-file.
@@ -119,26 +130,44 @@ function normalizeOptionalPath(value: string, label: string): string {
   return value;
 }
 
-function normalizeStoragePath(value: string): string {
+function normalizeStoragePath(value: string, label = "storage path"): string {
   if (value.length === 0 || value.trim() !== value) {
-    throw new Error(
-      "storage path must be a non-empty absolute path without surrounding whitespace",
-    );
+    throw new Error(`${label} must be a non-empty absolute path without surrounding whitespace`);
   }
 
-  if (/[\0\r\n\s]/.test(value)) {
-    throw new Error("storage path must not contain whitespace or control characters");
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} must not contain control characters`);
   }
 
   if (Buffer.byteLength(value, "utf8") > MAX_STORAGE_PATH_BYTES) {
-    throw new Error(`storage path must be at most ${MAX_STORAGE_PATH_BYTES} bytes`);
+    throw new Error(`${label} must be at most ${MAX_STORAGE_PATH_BYTES} bytes`);
   }
 
   if (!path.posix.isAbsolute(value)) {
-    throw new Error("storage path must be absolute");
+    throw new Error(`${label} must be absolute`);
   }
 
   return path.posix.normalize(value);
+}
+
+function appendUniqueStoragePaths(paths: string[], extraPaths: string[]): string[] {
+  const seen = new Set(paths);
+  const merged = [...paths];
+
+  for (const extraPath of extraPaths) {
+    if (seen.has(extraPath)) {
+      continue;
+    }
+
+    merged.push(extraPath);
+    seen.add(extraPath);
+
+    if (merged.length > MAX_STORAGE_PATHS) {
+      throw new Error(`at most ${MAX_STORAGE_PATHS} storage paths can be checked`);
+    }
+  }
+
+  return merged;
 }
 
 export function parseArgs(
@@ -205,6 +234,7 @@ export function parseArgs(
 
   return {
     paths: paths.length > 0 ? paths : [...DEFAULT_STORAGE_PATHS],
+    pathsExplicit: paths.length > 0,
     minFreeStorageMiB,
     minFreeStorageMiBSource,
     ...(envFile ? { envFile } : {}),
@@ -266,7 +296,7 @@ async function readEnvironmentFileBounded(envFile: string): Promise<string> {
   }
 }
 
-function parseDeployMinFreeStorageFromEnvironmentFile(contents: string): number | undefined {
+function parseDeployStorageEnvironmentFile(contents: string): DeployStorageEnvironmentFileValues {
   if (typeof contents !== "string") {
     throw new Error("Env file contents must be a string");
   }
@@ -278,6 +308,7 @@ function parseDeployMinFreeStorageFromEnvironmentFile(contents: string): number 
   const lines = contents.split(/\r?\n/);
   let entries = 0;
   let minFreeStorageMiB: number | undefined;
+  const values = new Map<string, string>();
 
   for (const [index, rawLine] of lines.entries()) {
     const line = rawLine.trim();
@@ -334,9 +365,31 @@ function parseDeployMinFreeStorageFromEnvironmentFile(contents: string): number 
     if (key === "RAY_DEPLOY_MIN_FREE_STORAGE_MIB") {
       minFreeStorageMiB = parseNonNegativeInteger(value, key);
     }
+
+    if ((ENV_FILE_STORAGE_PATH_KEYS as readonly string[]).includes(key)) {
+      values.set(key, value);
+    }
   }
 
-  return minFreeStorageMiB;
+  const storagePaths: string[] = [];
+  const configuredModelPath = values.get("RAY_MODEL_PATH");
+  const fallbackModelPath = values.get("RAY_LLAMA_CPP_MODEL_PATH");
+  const modelPath = configuredModelPath ?? fallbackModelPath;
+  const modelPathLabel =
+    configuredModelPath === undefined ? "RAY_LLAMA_CPP_MODEL_PATH" : "RAY_MODEL_PATH";
+  if (modelPath !== undefined && modelPath.length > 0) {
+    storagePaths.push(normalizeStoragePath(modelPath, modelPathLabel));
+  }
+
+  const asyncQueueStorageDir = values.get("RAY_ASYNC_QUEUE_STORAGE_DIR");
+  if (asyncQueueStorageDir !== undefined && asyncQueueStorageDir.length > 0) {
+    storagePaths.push(normalizeStoragePath(asyncQueueStorageDir, "RAY_ASYNC_QUEUE_STORAGE_DIR"));
+  }
+
+  return {
+    ...(minFreeStorageMiB !== undefined ? { minFreeStorageMiB } : {}),
+    storagePaths,
+  };
 }
 
 export async function loadDeployStoragePreflightArgs(
@@ -345,22 +398,28 @@ export async function loadDeployStoragePreflightArgs(
 ): Promise<DeployStoragePreflightArgs> {
   const args = parseArgs(argv, env);
 
-  if (!args.envFile || args.help || args.minFreeStorageMiBSource === "flag") {
+  if (!args.envFile || args.help) {
     return args;
   }
 
-  const envFileMinFreeStorageMiB = parseDeployMinFreeStorageFromEnvironmentFile(
+  const envFileValues = parseDeployStorageEnvironmentFile(
     await readEnvironmentFileBounded(args.envFile),
   );
+  const useEnvFileThreshold =
+    args.minFreeStorageMiBSource !== "flag" && envFileValues.minFreeStorageMiB !== undefined;
 
-  if (envFileMinFreeStorageMiB === undefined) {
+  if (!useEnvFileThreshold && envFileValues.storagePaths.length === 0) {
     return args;
   }
 
   return {
     ...args,
-    minFreeStorageMiB: envFileMinFreeStorageMiB,
-    minFreeStorageMiBSource: "env-file",
+    paths: args.pathsExplicit
+      ? args.paths
+      : appendUniqueStoragePaths(args.paths, envFileValues.storagePaths),
+    ...(useEnvFileThreshold && envFileValues.minFreeStorageMiB !== undefined
+      ? { minFreeStorageMiB: envFileValues.minFreeStorageMiB, minFreeStorageMiBSource: "env-file" }
+      : {}),
   };
 }
 

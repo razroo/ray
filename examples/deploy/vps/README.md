@@ -136,7 +136,9 @@ The storage preflight checks `/srv/ray`, `/var/lib/ray`, `/tmp`, `/var/tmp`, and
 the repo-scoped Bun install cache at `/srv/ray/.ray/bun-install-cache` before the
 Bun install expands dependencies; set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` in the
 process env or pass `--ray-env-file /etc/ray/ray.env` to raise or lower the
-default 1024 MiB threshold without shell-sourcing the rest of the env file.
+default 1024 MiB threshold without shell-sourcing the rest of the env file. When
+that env file sets a custom `RAY_MODEL_PATH`, `RAY_LLAMA_CPP_MODEL_PATH`, or
+`RAY_ASYNC_QUEUE_STORAGE_DIR`, the preflight checks those volumes too.
 
 ### 4. Place the config
 
