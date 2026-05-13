@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 
 export const MAX_TEST_DISCOVERY_DIRECTORIES = 4_096;
@@ -10,6 +11,9 @@ export const MAX_TEST_DIRECTORY_ENTRIES = 4_096;
 export const MAX_BUILT_TEST_FILES = 512;
 export const MAX_SCRIPT_TEST_FILES = 256;
 export const MAX_TEST_PATH_BYTES = 4_096;
+export const DEFAULT_MIN_TEST_FREE_SPACE_MIB = 1_024;
+export const MAX_TEST_FREE_SPACE_MIB = 1_048_576;
+const BYTES_PER_MIB = 1024 * 1024;
 export const DEFAULT_SKIP_NAMES = new Set([
   ".git",
   ".playwright-mcp",
@@ -34,6 +38,31 @@ function assertPositiveInteger(value, label) {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${label} must be a positive safe integer`);
   }
+}
+
+function parseNonNegativeInteger(value, label) {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  const parsed = Number(normalized);
+  if (!/^\d+$/.test(normalized) || !Number.isSafeInteger(parsed)) {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
+
+  if (parsed > MAX_TEST_FREE_SPACE_MIB) {
+    throw new Error(`${label} must be less than or equal to ${MAX_TEST_FREE_SPACE_MIB}`);
+  }
+
+  return parsed;
+}
+
+export function resolveMinimumTestFreeSpaceMiB(env = process.env) {
+  return (
+    parseNonNegativeInteger(env.RAY_TEST_MIN_FREE_SPACE_MIB, "RAY_TEST_MIN_FREE_SPACE_MIB") ??
+    DEFAULT_MIN_TEST_FREE_SPACE_MIB
+  );
 }
 
 function assertDiscoveryLimits(limits) {
@@ -156,6 +185,52 @@ export async function collectTestFiles(root = process.cwd(), options = {}) {
   };
 }
 
+async function getAvailableSpaceMiB(targetPath, statfs) {
+  const stats = await statfs(targetPath);
+  const rawBlockSize = Number(stats.bsize);
+  const blockSize =
+    Number.isFinite(rawBlockSize) && rawBlockSize > 0 ? rawBlockSize : Number(stats.blocks);
+  const availableBlocks =
+    Number.isFinite(rawBlockSize) && rawBlockSize > 0
+      ? Number(stats.bavail)
+      : Number(stats.ffree ?? stats.bfree);
+
+  if (
+    !Number.isFinite(availableBlocks) ||
+    !Number.isFinite(blockSize) ||
+    availableBlocks < 0 ||
+    blockSize <= 0
+  ) {
+    throw new Error(`Could not inspect available disk space at ${targetPath}`);
+  }
+
+  return Math.floor((availableBlocks * blockSize) / BYTES_PER_MIB);
+}
+
+export async function assertTestDiskHeadroom(options = {}) {
+  const env = options.env ?? process.env;
+  const minFreeSpaceMiB = options.minFreeSpaceMiB ?? resolveMinimumTestFreeSpaceMiB(env);
+  const statfs = options.statfs ?? fs.statfs;
+
+  if (minFreeSpaceMiB === 0) {
+    return;
+  }
+
+  const targets = [
+    { label: "repository", path: path.resolve(options.root ?? process.cwd()) },
+    { label: "temporary directory", path: path.resolve(options.tmpDir ?? tmpdir()) },
+  ];
+
+  for (const target of targets) {
+    const availableMiB = await getAvailableSpaceMiB(target.path, statfs);
+    if (availableMiB < minFreeSpaceMiB) {
+      throw new Error(
+        `Test disk preflight requires at least ${minFreeSpaceMiB} MiB free on the ${target.label} volume at ${target.path}, but only ${availableMiB} MiB is available. Clear caches or lower RAY_TEST_MIN_FREE_SPACE_MIB for constrained machines.`,
+      );
+    }
+  }
+}
+
 export function runTestCommand(binary, args, options = {}) {
   return new Promise((resolve) => {
     const child = spawn(binary, args, {
@@ -179,8 +254,17 @@ export async function runTestCli(options = {}) {
   const env = options.env ?? process.env;
   const versions = options.versions ?? process.versions;
   const runCommand = options.runCommand ?? runTestCommand;
+  const diskPreflight = options.diskPreflight ?? assertTestDiskHeadroom;
   const bunBinary = env.RAY_BUN_BINARY ?? (versions.bun ? process.execPath : "bun");
   const nodeBinary = env.RAY_NODE_BINARY ?? "node";
+
+  try {
+    await diskPreflight({ root, env });
+  } catch (error) {
+    io.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+
   const discovered = await collectTestFiles(root, options.discovery ?? {});
 
   if (discovered.testFiles.length === 0) {

@@ -4,7 +4,12 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { collectTestFiles, runTestCli } from "./test.mjs";
+import {
+  assertTestDiskHeadroom,
+  collectTestFiles,
+  resolveMinimumTestFreeSpaceMiB,
+  runTestCli,
+} from "./test.mjs";
 
 function relativePaths(root: string, files: string[]): string[] {
   return files.map((file) => path.relative(root, file)).sort();
@@ -114,6 +119,7 @@ test("runTestCli dispatches bounded built tests before script tests", async (t) 
       RAY_BUN_BINARY: "/usr/local/bin/bun",
       RAY_NODE_BINARY: "/usr/local/bin/node",
     },
+    diskPreflight: async () => undefined,
     runCommand: async (binary: string, args: string[], options?: { cwd?: string }) => {
       commands.push({ binary, args, cwd: options?.cwd });
       return 0;
@@ -140,4 +146,73 @@ test("runTestCli dispatches bounded built tests before script tests", async (t) 
     path.join(tempDir, "scripts", "package-runtime-coverage.test.ts"),
   );
   assert.equal(commands[1]?.cwd, tempDir);
+});
+
+test("test disk preflight reports low repository or temp space before dispatch", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-test-runner-disk-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  await assert.rejects(
+    () =>
+      assertTestDiskHeadroom({
+        root: tempDir,
+        tmpDir: path.join(tempDir, "tmp"),
+        minFreeSpaceMiB: 1_024,
+        statfs: async (targetPath: string) => ({
+          bsize: 1024 * 1024,
+          bavail: targetPath === tempDir ? 512 : 2_048,
+        }),
+      }),
+    /requires at least 1024 MiB free on the repository volume/,
+  );
+
+  await assert.doesNotReject(() =>
+    assertTestDiskHeadroom({
+      root: tempDir,
+      tmpDir: path.join(tempDir, "tmp"),
+      minFreeSpaceMiB: 1_024,
+      statfs: async () => ({
+        bsize: 0,
+        blocks: 4096,
+        ffree: 300_000,
+      }),
+    }),
+  );
+
+  const stderr: string[] = [];
+  const commands: string[] = [];
+  const code = await runTestCli({
+    root: tempDir,
+    io: {
+      stderr: {
+        write: (message: string) => {
+          stderr.push(message);
+          return true;
+        },
+      },
+    },
+    diskPreflight: async () => {
+      throw new Error("disk preflight failed");
+    },
+    runCommand: async (binary: string) => {
+      commands.push(binary);
+      return 0;
+    },
+  });
+
+  assert.equal(code, 1);
+  assert.deepEqual(commands, []);
+  assert.match(stderr.join(""), /disk preflight failed/);
+});
+
+test("resolveMinimumTestFreeSpaceMiB accepts bounded overrides", () => {
+  assert.equal(resolveMinimumTestFreeSpaceMiB({}), 1024);
+  assert.equal(resolveMinimumTestFreeSpaceMiB({ RAY_TEST_MIN_FREE_SPACE_MIB: "0" }), 0);
+  assert.equal(resolveMinimumTestFreeSpaceMiB({ RAY_TEST_MIN_FREE_SPACE_MIB: "2048" }), 2048);
+  assert.throws(
+    () => resolveMinimumTestFreeSpaceMiB({ RAY_TEST_MIN_FREE_SPACE_MIB: "1.5" }),
+    /RAY_TEST_MIN_FREE_SPACE_MIB must be a non-negative integer/,
+  );
 });
