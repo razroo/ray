@@ -498,7 +498,31 @@ function adapterBaseUrlPathEndsWithOpenAiVersion(adapterBaseUrl: URL): boolean {
 
 function normalizeHostLiteral(value: string): string {
   const trimmed = value.trim().toLowerCase();
-  return trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+  const unbracketed =
+    trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+  return ipv4FromMappedIpv6(unbracketed) ?? unbracketed;
+}
+
+function ipv4FromMappedIpv6(value: string): string | undefined {
+  const dottedMapped = value.match(/^(?:::ffff:|0:0:0:0:0:ffff:)(\d+\.\d+\.\d+\.\d+)$/);
+  if (dottedMapped && isIP(dottedMapped[1] ?? "") === 4) {
+    return dottedMapped[1];
+  }
+
+  const mapped = value.match(/^(?:::ffff:|0:0:0:0:0:ffff:)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+
+  if (!mapped) {
+    return undefined;
+  }
+
+  const high = Number.parseInt(mapped[1] ?? "", 16);
+  const low = Number.parseInt(mapped[2] ?? "", 16);
+
+  if (!Number.isInteger(high) || !Number.isInteger(low)) {
+    return undefined;
+  }
+
+  return `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${low & 0xff}`;
 }
 
 function launchHostRequiresExactBaseUrlHost(value: string): boolean {

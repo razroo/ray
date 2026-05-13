@@ -542,6 +542,31 @@ test("loadRayConfig brackets IPv6 llama.cpp launch hosts when deriving base URLs
   assert.equal(loaded.config.model.adapter.baseUrl, "http://[::1]:8090");
 });
 
+test("loadRayConfig canonicalizes IPv4-mapped loopback launch hosts", async () => {
+  for (const host of ["::ffff:7f00:1", "::ffff:127.0.0.1"]) {
+    const loaded = await loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_LLAMA_CPP_HOST: host,
+        RAY_LLAMA_CPP_PORT: "8090",
+      },
+    });
+
+    assert.equal(loaded.config.model.adapter.kind, "llama.cpp");
+
+    if (
+      loaded.config.model.adapter.kind !== "llama.cpp" ||
+      !loaded.config.model.adapter.launchProfile
+    ) {
+      throw new Error("Expected a llama.cpp launch profile");
+    }
+
+    assert.equal(loaded.config.model.adapter.launchProfile.host, host);
+    assert.equal(loaded.config.model.adapter.baseUrl, "http://127.0.0.1:8090");
+  }
+});
+
 test("documented portable 1b dotenv examples resolve to single-slot budgets", async () => {
   const examples = [
     {
@@ -2280,6 +2305,19 @@ test("loadRayConfig rejects gateway and llama.cpp launch port conflicts", async 
       cwd: process.cwd(),
       configPath,
       env: {},
+    }),
+    /model\.adapter\.launchProfile\.port must not overlap server\.port/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      env: {
+        RAY_PROFILE: "1b",
+        RAY_PORT: "8081",
+        RAY_LLAMA_CPP_HOST: "::ffff:7f00:1",
+        RAY_MODEL_BASE_URL: "http://127.0.0.1:8082",
+      },
     }),
     /model\.adapter\.launchProfile\.port must not overlap server\.port/,
   );

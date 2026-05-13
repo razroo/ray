@@ -2822,6 +2822,21 @@ test("diagnoseConfig errors when generated gateway and llama.cpp ports conflict"
   assert.match(diagnostic.message, /ray-gateway\.service/);
   assert.match(diagnostic.message, /ray-llama-cpp\.service/);
   assert.match(diagnostic.message, /distinct local sockets/);
+
+  const mappedLoopbackConfig = createDefaultConfig("1b");
+  if (
+    mappedLoopbackConfig.model.adapter.kind !== "llama.cpp" ||
+    !mappedLoopbackConfig.model.adapter.launchProfile
+  ) {
+    throw new Error("Expected llama.cpp launch profile");
+  }
+
+  mappedLoopbackConfig.model.adapter.launchProfile.host = "::ffff:7f00:1";
+  mappedLoopbackConfig.server.port = mappedLoopbackConfig.model.adapter.launchProfile.port;
+
+  const mappedDiagnostics = diagnoseConfig(mappedLoopbackConfig, process.env);
+  assert.ok(mappedDiagnostics.some((entry) => entry.code === "gateway_llama_port_conflict"));
+  assert.ok(!mappedDiagnostics.some((entry) => entry.code === "llama_launch_host_public"));
 });
 
 test("diagnoseConfig errors when adapter baseUrl points at the gateway socket", () => {
@@ -2885,18 +2900,22 @@ test("diagnoseConfig warns when OpenAI-compatible baseUrl includes the appended 
 test("diagnoseConfig warns when single-node OpenAI-compatible profiles point off-node", () => {
   for (const profile of ["vps", "balanced"] as const) {
     const loopbackConfig = createDefaultConfig(profile);
+    const mappedLoopbackConfig = createDefaultConfig(profile);
     const remoteConfig = createDefaultConfig(profile);
 
     if (
       loopbackConfig.model.adapter.kind !== "openai-compatible" ||
+      mappedLoopbackConfig.model.adapter.kind !== "openai-compatible" ||
       remoteConfig.model.adapter.kind !== "openai-compatible"
     ) {
       throw new Error(`Expected ${profile} to use an OpenAI-compatible adapter`);
     }
 
+    mappedLoopbackConfig.model.adapter.baseUrl = "http://[::ffff:7f00:1]:8081";
     remoteConfig.model.adapter.baseUrl = "https://api.example.com/v1";
 
     const loopbackDiagnostics = diagnoseConfig(loopbackConfig, process.env);
+    const mappedLoopbackDiagnostics = diagnoseConfig(mappedLoopbackConfig, process.env);
     const remoteDiagnostics = diagnoseConfig(remoteConfig, process.env);
     const remoteDiagnostic = remoteDiagnostics.find(
       (entry) => entry.code === "openai_compatible_base_url_not_loopback",
@@ -2907,6 +2926,12 @@ test("diagnoseConfig warns when single-node OpenAI-compatible profiles point off
         (entry) => entry.code === "openai_compatible_base_url_not_loopback",
       ),
       `${profile} should not warn for its default loopback backend URL`,
+    );
+    assert.ok(
+      !mappedLoopbackDiagnostics.some(
+        (entry) => entry.code === "openai_compatible_base_url_not_loopback",
+      ),
+      `${profile} should not warn for an IPv4-mapped loopback backend URL`,
     );
     assert.ok(remoteDiagnostic);
     assert.equal(remoteDiagnostic.level, "warn");
@@ -2991,6 +3016,19 @@ test("diagnoseConfig warns when the generated Caddy site address is local", () =
   assert.ok(diagnostic);
   assert.equal(diagnostic.level, "warn");
   assert.match(diagnostic.message, /real public DNS name/);
+
+  for (const caddySiteAddress of ["[::ffff:7f00:1]:8443", "[::ffff:127.0.0.1]:8443"]) {
+    const mappedDiagnostics = diagnoseConfig(config, process.env, undefined, {
+      preflight: {
+        caddySiteAddress,
+      },
+    });
+
+    assert.ok(
+      mappedDiagnostics.some((entry) => entry.code === "caddy_site_address_local"),
+      `${caddySiteAddress} should be treated as a local Caddy site address`,
+    );
+  }
 });
 
 test("loadAndDiagnoseDeployment warns when EnvironmentFile permissions are open in strict mode", async (t) => {
