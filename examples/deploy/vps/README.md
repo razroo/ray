@@ -382,7 +382,7 @@ Optional repository variables:
 - `RAY_DEPLOY_SERVICE_USER` — generated non-root systemd service account, defaults to `ray`; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--user` is omitted
 - `RAY_DEPLOY_DOMAIN` — Caddy site address to render, defaults to `ray.local`; set it to the real public DNS name before installing Caddy because render/doctor warn on local placeholder addresses; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--domain` is omitted
 - `RAY_DEPLOY_MEMORY_MIB` — optional VPS memory class used by workflow doctor/render when `/etc/ray/ray.env` does not already set it; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--memory-mib` is omitted
-- `RAY_DEPLOY_INSTALL_CADDY` — set to `true` to install and reload the generated Caddyfile; requires `RAY_DEPLOY_DOMAIN`
+- `RAY_DEPLOY_INSTALL_CADDY` — set to `true` to install and reload the generated Caddyfile; requires `RAY_DEPLOY_DOMAIN` to be a real public DNS name, not `ray.local`, `localhost`, loopback, or another `.local` placeholder
 - `RAY_CONFIG_PATH` — repo-relative config path to install, defaults to `./examples/config/ray.sub1b.public.json`; the workflow rejects absolute paths, path traversal, and paths excluded from repo sync before opening SSH
 - `RAY_GATEWAY_RUNTIME_BINARY` — absolute JavaScript runtime path rendered into `ray-gateway.service`, defaults to `/usr/local/bin/bun`; the deploy CLI and workflow reject relative paths and paths under `/home`, `/root`, or `/run/user` because generated units use `ProtectHome=true`
 - `RAY_DEPLOY_READY_TIMEOUT_SECONDS` — bounded wait for `/readyz` after service restart before reloading Caddy, defaults to `120`

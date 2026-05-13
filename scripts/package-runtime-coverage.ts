@@ -525,6 +525,44 @@ function validateDeployWorkflowPublicCaddyAuthGuard(
   ];
 }
 
+function validateDeployWorkflowPublicCaddyDomainGuard(
+  workflowPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  if (
+    !contents.includes("RAY_DEPLOY_INSTALL_CADDY") ||
+    !contents.includes("systemctl reload caddy")
+  ) {
+    return [];
+  }
+
+  if (
+    contents.includes("DEPLOY_DOMAIN_HOST") &&
+    contents.includes("ray.local|localhost|*.local|127.*|::1") &&
+    contents.includes(
+      "RAY_DEPLOY_INSTALL_CADDY=true requires RAY_DEPLOY_DOMAIN to be a real public DNS name",
+    )
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "workflow_public_caddy_domain_guard_missing",
+      workflowPath,
+      line: workflowLineNumber(lines, "RAY_DEPLOY_INSTALL_CADDY"),
+      message:
+        "VPS deploy workflow must refuse RAY_DEPLOY_INSTALL_CADDY=true when RAY_DEPLOY_DOMAIN is still a local placeholder such as ray.local, localhost, loopback, or .local.",
+    },
+  ];
+}
+
 function validateDeployWorkflowSecretFileInstalls(
   workflowPath: string,
   lines: string[],
@@ -915,6 +953,7 @@ async function validateWorkflow(
   }
 
   diagnostics.push(...validateDeployWorkflowPublicCaddyAuthGuard(workflowPath, contents, lines));
+  diagnostics.push(...validateDeployWorkflowPublicCaddyDomainGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowSecretFileInstalls(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowStateOwnershipGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowAptGuards(workflowPath, lines));
