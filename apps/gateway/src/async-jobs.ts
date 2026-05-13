@@ -43,6 +43,7 @@ const MAX_JOB_ERROR_DETAIL_STRING_CHARS = 4_096;
 const MAX_JOB_ERROR_DETAIL_TOTAL_CHARS = 64 * 1024;
 const MAX_JOB_ERROR_DETAIL_NODES = 512;
 const MAX_ASYNC_QUEUE_JOBS = 2_000;
+const ASYNC_QUEUE_JOB_PRESSURE_RATIO = 0.9;
 const MAX_ASYNC_QUEUE_RECOVERY_ENTRIES = 4_096;
 const MAX_ASYNC_QUEUE_RECOVERY_TEMP_REMOVALS = 2_048;
 const MAX_ASYNC_DISPATCH_CONCURRENCY = 8;
@@ -1164,10 +1165,11 @@ export class DurableInferenceQueue {
     const jobsRatio = Number(
       (this.jobs.size / Math.max(1, this.options.config.maxJobs)).toFixed(4),
     );
+    const jobsPressure = jobsRatio >= ASYNC_QUEUE_JOB_PRESSURE_RATIO;
 
     return {
       enabled: true,
-      degraded: jobsRatio >= 1,
+      degraded: jobsPressure,
       queued: this.queuedJobIds.length,
       running,
       succeeded,
@@ -1181,6 +1183,8 @@ export class DurableInferenceQueue {
       totalJobs: this.jobs.size,
       maxJobs: this.options.config.maxJobs,
       jobsRatio,
+      jobsPressure,
+      pressureThreshold: ASYNC_QUEUE_JOB_PRESSURE_RATIO,
       minFreeStorageMiB: this.options.config.minFreeStorageMiB,
       completedTtlMs: this.options.config.completedTtlMs,
       pollIntervalMs: this.options.config.pollIntervalMs,

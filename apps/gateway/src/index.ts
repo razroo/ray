@@ -184,6 +184,8 @@ function attachAsyncQueueMetrics(
   metrics.gauges["async_queue.total_jobs"] = snapshot.totalJobs;
   metrics.gauges["async_queue.max_jobs"] = snapshot.maxJobs;
   metrics.gauges["async_queue.jobs_ratio"] = snapshot.jobsRatio;
+  metrics.gauges["async_queue.jobs_pressure"] = snapshot.jobsPressure ? 1 : 0;
+  metrics.gauges["async_queue.pressure_threshold"] = snapshot.pressureThreshold;
   if (snapshot.availableStorageMiB !== undefined) {
     metrics.gauges["async_queue.available_storage_mib"] = snapshot.availableStorageMiB;
   }

@@ -334,6 +334,8 @@ export interface AsyncQueueSnapshot {
   totalJobs: number;
   maxJobs: number;
   jobsRatio: number;
+  jobsPressure: boolean;
+  pressureThreshold: number;
   availableStorageMiB?: number;
   minFreeStorageMiB: number;
   storageReserveRatio?: number;

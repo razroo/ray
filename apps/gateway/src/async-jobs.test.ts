@@ -212,12 +212,56 @@ test("durable inference queue snapshots config at construction", async () => {
     const snapshot = queue.snapshot();
     assert.equal(snapshot.maxJobs, 1);
     assert.equal(snapshot.jobsRatio, 1);
+    assert.equal(snapshot.jobsPressure, true);
+    assert.equal(snapshot.pressureThreshold, 0.9);
     assert.equal(snapshot.degraded, true);
     assert.equal(snapshot.pollIntervalMs, 750);
     assert.equal(snapshot.dispatchConcurrency, 2);
     assert.equal(snapshot.maxAttempts, 4);
     assert.equal(snapshot.callbackTimeoutMs, 1_500);
     assert.equal(snapshot.maxCallbackAttempts, 3);
+  } finally {
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});
+
+test("durable inference queue reports job pressure before admission is full", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-pressure-"));
+
+  try {
+    const config = mergeConfig(createDefaultConfig("tiny"), {
+      asyncQueue: {
+        enabled: true,
+        storageDir,
+        maxJobs: 10,
+      },
+    });
+    const runtime = createRayRuntime(config);
+    const logger = new Logger("test", "error");
+    const queue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+    });
+
+    for (let index = 0; index < 9; index += 1) {
+      await queue.enqueue({
+        input: `pressure ${index}`,
+      });
+    }
+
+    const snapshot = queue.snapshot();
+    assert.equal(snapshot.totalJobs, 9);
+    assert.equal(snapshot.maxJobs, 10);
+    assert.equal(snapshot.jobsRatio, 0.9);
+    assert.equal(snapshot.jobsPressure, true);
+    assert.equal(snapshot.pressureThreshold, 0.9);
+    assert.equal(snapshot.degraded, true);
+
+    await queue.enqueue({
+      input: "still admitted at pressure threshold",
+    });
+    assert.equal(queue.snapshot().totalJobs, 10);
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }

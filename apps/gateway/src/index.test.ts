@@ -1164,6 +1164,8 @@ test("gateway metrics endpoint exposes async queue saturation", async (t) => {
   assert.equal(body.gauges["async_queue.total_jobs"], 0);
   assert.equal(body.gauges["async_queue.max_jobs"], 3);
   assert.equal(body.gauges["async_queue.jobs_ratio"], 0);
+  assert.equal(body.gauges["async_queue.jobs_pressure"], 0);
+  assert.equal(body.gauges["async_queue.pressure_threshold"], 0.9);
   assert.equal(body.gauges["async_queue.available_storage_mib"], 256);
   assert.equal(body.gauges["async_queue.min_free_storage_mib"], 64);
   assert.equal(body.gauges["async_queue.storage_reserve_ratio"], 4);
@@ -1183,6 +1185,8 @@ test("gateway metrics endpoint exposes async queue saturation", async (t) => {
   const health = (await healthResponse.json()) as HealthSnapshot;
   assert.equal(health.status, "ok");
   assert.equal(health.asyncQueue?.degraded, false);
+  assert.equal(health.asyncQueue?.jobsPressure, false);
+  assert.equal(health.asyncQueue?.pressureThreshold, 0.9);
   assert.equal(health.asyncQueue?.succeeded, 0);
   assert.equal(health.asyncQueue?.failed, 0);
   assert.equal(health.asyncQueue?.callbackDelivered, 0);
@@ -1252,6 +1256,68 @@ test("gateway detailed health degrades when async queue storage is low", async (
     reasons?: string[];
   };
   assert.equal(readyz.status, "degraded");
+  assert.equal(readyz.asyncQueue, undefined);
+  assert.equal(readyz.pressure?.asyncQueue, true);
+  assert.deepEqual(readyz.reasons, ["async_queue_pressure"]);
+});
+
+test("gateway readyz reports async queue pressure before the durable job cap is full", async (t) => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-gateway-health-queue-pressure-"));
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir,
+      maxJobs: 10,
+    },
+  });
+  const runtime = createRayRuntime(config);
+  const logger = new Logger("test", "error");
+  const jobQueue = new DurableInferenceQueue({
+    config: config.asyncQueue,
+    runtime,
+    logger,
+    statfsImpl: async () => ({
+      bavail: 256,
+      bsize: 1024 * 1024,
+    }),
+  });
+
+  for (let index = 0; index < 9; index += 1) {
+    await jobQueue.enqueue({
+      input: `queued ${index}`,
+    });
+  }
+
+  const gateway = createGatewayServer({ config, runtime, jobQueue, logger });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    await closeServer(gateway.server);
+    await rm(storageDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const healthResponse = await fetch(`http://127.0.0.1:${address.port}/health`);
+  assert.equal(healthResponse.status, 200);
+  const health = (await healthResponse.json()) as HealthSnapshot;
+  assert.equal(health.status, "degraded");
+  assert.equal(health.asyncQueue?.degraded, true);
+  assert.equal(health.asyncQueue?.jobsPressure, true);
+  assert.equal(health.asyncQueue?.jobsRatio, 0.9);
+  assert.equal(health.asyncQueue?.totalJobs, 9);
+  assert.equal(health.asyncQueue?.maxJobs, 10);
+
+  const readyzResponse = await fetch(`http://127.0.0.1:${address.port}/readyz`);
+  assert.equal(readyzResponse.status, 200);
+  const readyz = (await readyzResponse.json()) as {
+    asyncQueue?: unknown;
+    pressure?: { asyncQueue: boolean };
+    reasons?: string[];
+  };
   assert.equal(readyz.asyncQueue, undefined);
   assert.equal(readyz.pressure?.asyncQueue, true);
   assert.deepEqual(readyz.reasons, ["async_queue_pressure"]);
