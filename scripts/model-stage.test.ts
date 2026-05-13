@@ -32,6 +32,9 @@ import {
 
 const repoRoot = process.cwd();
 const MiB = 1024 * 1024;
+const ampleApplyStorage = {
+  resolveAvailableStorageMiB: () => 1024,
+};
 
 function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
@@ -583,7 +586,7 @@ test("applyModelStagePlan installs verified artifacts into the resolved target p
     sha256: sha256(modelContents),
   });
 
-  const result = await applyModelStagePlan(tempDir, plan);
+  const result = await applyModelStagePlan(tempDir, plan, ampleApplyStorage);
   assert.deepEqual(result, {
     applied: true,
     binaryPath: binaryTarget,
@@ -602,6 +605,52 @@ test("applyModelStagePlan installs verified artifacts into the resolved target p
   assert.equal(modelStats.mode & 0o777, 0o640);
   assert.equal(modelStats.uid, uid);
   assert.equal(modelStats.gid, gid);
+});
+
+test("applyModelStagePlan rejects low target storage before copying models", async (t) => {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) {
+    return;
+  }
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-low-storage-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const binaryPath = path.join(tempDir, "sources", "llama-server");
+  const modelPath = path.join(tempDir, "sources", "model.gguf");
+  const binaryTarget = path.join(tempDir, "target", "bin", "llama-server");
+  const modelTarget = path.join(tempDir, "target", "models", "model.gguf");
+
+  await mkdir(path.join(tempDir, "sources"), { recursive: true });
+  await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
+  await writeFile(modelPath, "GGUF", "utf8");
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o644);
+
+  const plan = await createModelStagePlan({
+    cwd: tempDir,
+    configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
+    env: {
+      RAY_LLAMA_CPP_BINARY_PATH: binaryTarget,
+      RAY_MODEL_PATH: modelTarget,
+    },
+    serviceUser: String(uid),
+    serviceGroup: String(gid),
+    binarySourcePath: "./sources/llama-server",
+    sourcePath: "./sources/model.gguf",
+  });
+
+  await assert.rejects(
+    () =>
+      applyModelStagePlan(tempDir, plan, {
+        resolveAvailableStorageMiB: () => 1,
+      }),
+    /Not enough free space/,
+  );
+  await assert.rejects(stat(modelTarget), /ENOENT/);
 });
 
 test("applyModelStagePlan atomically replaces GGUF target symlinks", async (t) => {
@@ -643,7 +692,7 @@ test("applyModelStagePlan atomically replaces GGUF target symlinks", async (t) =
     sourcePath: "./sources/model.gguf",
   });
 
-  await applyModelStagePlan(tempDir, plan);
+  await applyModelStagePlan(tempDir, plan, ampleApplyStorage);
 
   assert.equal(await readFile(linkedVictim, "utf8"), "GGUFexisting-model");
   assert.equal(await readFile(modelTarget, "utf8"), "GGUFnew-model");
@@ -695,7 +744,7 @@ test("applyModelStagePlan removes stale atomic stage temp files before copying",
     sourcePath: "./sources/model.gguf",
   });
 
-  await applyModelStagePlan(tempDir, plan);
+  await applyModelStagePlan(tempDir, plan, ampleApplyStorage);
 
   await assert.rejects(stat(staleTemp), /ENOENT/);
   assert.equal(await readFile(freshTemp, "utf8"), "fresh partial copy");
@@ -751,7 +800,7 @@ test("applyModelStagePlan rejects bloated model target directories before temp c
   });
 
   await assert.rejects(
-    () => applyModelStagePlan(tempDir, plan),
+    () => applyModelStagePlan(tempDir, plan, ampleApplyStorage),
     /Atomic stage temp cleanup visited more than 2048 entries/,
   );
   await assert.rejects(stat(modelTarget), /ENOENT/);
@@ -935,6 +984,9 @@ test("runModelStageCli can apply verified artifacts", async (t) => {
     {
       RAY_LLAMA_CPP_BINARY_PATH: path.join(tempDir, "target", "bin", "llama-server"),
       RAY_MODEL_PATH: path.join(tempDir, "target", "models", "model.gguf"),
+    },
+    {
+      applyOptions: ampleApplyStorage,
     },
   );
 

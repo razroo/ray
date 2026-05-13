@@ -138,6 +138,17 @@ export interface ModelStageStorageStats {
   ffree?: number | bigint;
 }
 
+export interface ModelStageApplyOptions {
+  resolveAvailableStorageMiB?: (
+    sourcePath: string,
+    targetDirectory: string,
+  ) => number | undefined | Promise<number | undefined>;
+}
+
+export interface ModelStageCliOptions {
+  applyOptions?: ModelStageApplyOptions;
+}
+
 export interface ModelStageMemoryFit {
   sourceMiB: number;
   nonModelWorkingSetMiB: number;
@@ -1065,9 +1076,13 @@ function assertModelStageMemoryFit(sourceBytes: number, plan: ModelStagePlan): v
 async function assertModelStageStorageHeadroom(
   sourcePath: string,
   targetDirectory: string,
+  options: ModelStageApplyOptions = {},
 ): Promise<void> {
-  const [sourceStats, targetStats] = await Promise.all([stat(sourcePath), statfs(targetDirectory)]);
-  const availableMiB = resolveModelStageAvailableStorageMiB(targetStats);
+  const sourceStats = await stat(sourcePath);
+  const availableMiB =
+    options.resolveAvailableStorageMiB !== undefined
+      ? await options.resolveAvailableStorageMiB(sourcePath, targetDirectory)
+      : resolveModelStageAvailableStorageMiB(await statfs(targetDirectory));
 
   if (availableMiB === undefined) {
     throw new Error(`Could not inspect free space for model target directory: ${targetDirectory}`);
@@ -1156,6 +1171,7 @@ async function assertModelReadableByServiceUser(
 export async function applyModelStagePlan(
   cwd: string,
   plan: ModelStagePlan,
+  options: ModelStageApplyOptions = {},
 ): Promise<ModelStageApplyResult> {
   await checkModelStageSources(cwd, plan);
 
@@ -1192,7 +1208,7 @@ export async function applyModelStagePlan(
 
   await mkdir(path.dirname(modelTargetPath), { recursive: true, mode: 0o755 });
   if (path.resolve(modelSourcePath) !== path.resolve(modelTargetPath)) {
-    await assertModelStageStorageHeadroom(modelSourcePath, path.dirname(modelTargetPath));
+    await assertModelStageStorageHeadroom(modelSourcePath, path.dirname(modelTargetPath), options);
     await copyFileAtomicUnlessSame(modelSourcePath, modelTargetPath, async (tempPath) => {
       await assertGgufMagicHeader(tempPath, "staged GGUF model");
       await chmod(tempPath, 0o640);
@@ -1240,6 +1256,7 @@ export async function runModelStageCli(
   argv = process.argv.slice(2),
   io: Pick<NodeJS.Process, "stdout" | "stderr"> = process,
   env: NodeJS.ProcessEnv = process.env,
+  options: ModelStageCliOptions = {},
 ): Promise<number> {
   try {
     const args = parseArgs(argv);
@@ -1266,7 +1283,7 @@ export async function runModelStageCli(
 
     let output: string;
     if (args.apply) {
-      const result = await applyModelStagePlan(cwd, plan);
+      const result = await applyModelStagePlan(cwd, plan, options.applyOptions);
       output = args.json
         ? JSON.stringify(
             {
