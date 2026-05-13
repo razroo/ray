@@ -301,14 +301,20 @@ UID; workflow deploys create missing named accounts, while numeric UIDs must
 already resolve to an account on the VPS.
 The GitHub VPS workflow also honors `RAY_DEPLOY_DOMAIN`,
 `RAY_DEPLOY_INSTALL_CADDY`, `RAY_DEPLOY_MEMORY_MIB`,
-`RAY_DEPLOY_READY_TIMEOUT_SECONDS`, `RAY_DEPLOY_SERVICE_USER`,
-`RAY_GATEWAY_RUNTIME_BINARY`, and `RAY_DEPLOY_CADDY_BINARY` from
+`RAY_DEPLOY_MIN_FREE_STORAGE_MIB`, `RAY_DEPLOY_READY_TIMEOUT_SECONDS`,
+`RAY_DEPLOY_SERVICE_USER`, `RAY_GATEWAY_RUNTIME_BINARY`, and
+`RAY_DEPLOY_CADDY_BINARY` from
 `RAY_ENV_FILE_CONTENTS` before repository variables when wiring remote
-prerequisites, doctor, render, readiness waits, and generated service commands.
+prerequisites, storage preflight, doctor, render, readiness waits, and generated
+service commands.
 When those CLI-consumed settings come from repository variables instead, the
 workflow appends the resolved non-secret values to `/etc/ray/ray.env` when they
 are absent so later manual `doctor`, `render`, and `model:stage` runs read the
 same service user, domain, memory target, and runtime paths.
+Set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` when the workflow should require more or
+less than the default 1024 MiB free on the root, checkout, Ray state, and temp
+volumes before package bootstrap, rsync follow-up, or the remote Bun production
+install. Set it to `0` only when you intentionally want to skip that preflight.
 
 Create `/var/lib/ray/models` on the VPS and put the GGUF at `RAY_MODEL_PATH`
 before starting the generated llama.cpp service or running doctor.

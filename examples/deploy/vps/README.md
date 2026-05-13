@@ -399,6 +399,7 @@ Optional repository variables:
 - `RAY_DEPLOY_SERVICE_USER` — generated non-root systemd service account name or numeric UID, defaults to `ray`; workflow deploys create missing named users, numeric UIDs must already resolve to an account on the VPS, and local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--user` is omitted
 - `RAY_DEPLOY_DOMAIN` — Caddy site address to render, defaults to `ray.local`; set it to the real public DNS name before installing Caddy because render/doctor warn on local placeholder addresses; local deploy CLI runs honor this value from the process env or `--ray-env-file` when `--domain` is omitted, and workflow deploys honor it from `RAY_ENV_FILE_CONTENTS` before repository variables
 - `RAY_DEPLOY_MEMORY_MIB` — optional VPS memory class used by workflow doctor/render and model staging when `/etc/ray/ray.env` does not already set it; local deploy CLI runs honor this value from the process env or `--ray-env-file` when `--memory-mib` is omitted, and workflow deploys validate and honor it from `RAY_ENV_FILE_CONTENTS` before repository variables
+- `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` — minimum free storage the workflow requires before remote package bootstrap, checkout sync follow-up, and Bun production install, defaults to `1024`; set to `0` only when intentionally skipping the deploy storage preflight
 - `RAY_DEPLOY_INSTALL_CADDY` — set to `true` to install and reload the generated Caddyfile; requires `RAY_DEPLOY_DOMAIN` to be a real public DNS name, not `ray.local`, `localhost`, loopback, or another `.local` placeholder; workflow deploys honor this value from `RAY_ENV_FILE_CONTENTS` before repository variables
 - `RAY_CONFIG_PATH` — repo-relative config path to install, defaults to `./examples/config/ray.sub1b.public.json`; the workflow rejects absolute paths, path traversal, and paths excluded from repo sync before opening SSH
 - `RAY_GATEWAY_RUNTIME_BINARY` — absolute JavaScript runtime path rendered into `ray-gateway.service`, defaults to `/usr/local/bin/bun`; the deploy CLI and workflow reject relative paths, paths under `/home`, `/root`, or `/run/user` because generated units use `ProtectHome=true`, and paths under `/tmp` or `/var/tmp` because generated units use `PrivateTmp=true`
@@ -414,11 +415,13 @@ sync, and writes the live config directly to `/etc/ray/ray.json`.
 
 `RAY_ENV_FILE_CONTENTS` is the right place for auth keys or env overrides. The
 workflow applies `RAY_DEPLOY_DOMAIN`, `RAY_DEPLOY_INSTALL_CADDY`,
-`RAY_DEPLOY_MEMORY_MIB`, `RAY_DEPLOY_READY_TIMEOUT_SECONDS`,
-`RAY_GATEWAY_RUNTIME_BINARY`, `RAY_DEPLOY_CADDY_BINARY`, and
+`RAY_DEPLOY_MEMORY_MIB`, `RAY_DEPLOY_MIN_FREE_STORAGE_MIB`,
+`RAY_DEPLOY_READY_TIMEOUT_SECONDS`, `RAY_GATEWAY_RUNTIME_BINARY`,
+`RAY_DEPLOY_CADDY_BINARY`, and
 `RAY_DEPLOY_SERVICE_USER` from this env file before repository variables when it
-wires remote prerequisites, doctor, render, model staging, readiness waits, and
-generated service commands. It validates auth API keys before opening SSH,
+wires remote prerequisites, storage preflight, doctor, render, model staging,
+readiness waits, and generated service commands. It validates auth API keys
+before opening SSH,
 refuses
 `RAY_DEPLOY_INSTALL_CADDY=true` when the resolved config still has
 `auth.enabled=false`, then applies those overrides when choosing the post-restart
@@ -453,6 +456,9 @@ service user, domain, memory target, and runtime paths.
 The workflow validates the deploy SSH user and configured gateway runtime path
 after applying env-file overrides and before opening SSH, checks that
 `RAY_DEPLOY_KNOWN_HOSTS` contains an entry for the configured host and SSH port,
+requires the resolved `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` headroom on the remote
+root, `/srv/ray`, `/var/lib/ray`, and `/tmp` volumes before bootstrap follow-up
+or Bun production install can consume more disk,
 installs missing remote deploy prerequisites such as `curl`, `ca-certificates`,
 `unzip`, and `rsync`, refreshes `/usr/local/bin/bun` when it is missing or older
 than the repo's supported Bun runtime, copies that refreshed Bun to custom

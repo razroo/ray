@@ -50,6 +50,7 @@ jobs:
       RAY_DEPLOY_SERVICE_USER: ${{ vars.RAY_DEPLOY_SERVICE_USER }}
       RAY_DEPLOY_DOMAIN: ${{ vars.RAY_DEPLOY_DOMAIN }}
       RAY_DEPLOY_MEMORY_MIB: ${{ vars.RAY_DEPLOY_MEMORY_MIB }}
+      RAY_DEPLOY_MIN_FREE_STORAGE_MIB: ${{ vars.RAY_DEPLOY_MIN_FREE_STORAGE_MIB }}
       RAY_DEPLOY_INSTALL_CADDY: ${{ vars.RAY_DEPLOY_INSTALL_CADDY }}
       RAY_CONFIG_PATH_VAR: ${{ vars.RAY_CONFIG_PATH }}
       RAY_GATEWAY_RUNTIME_BINARY: ${{ vars.RAY_GATEWAY_RUNTIME_BINARY }}
@@ -189,6 +190,19 @@ jobs:
 
             return String(parsed);
           };
+          const parseOptionalNonNegativeInteger = (value, label) => {
+            const raw = readNonEmpty(value);
+            if (raw === undefined) {
+              return undefined;
+            }
+
+            const parsed = Number(raw.trim());
+            if (!/^\d+$/.test(raw.trim()) || !Number.isSafeInteger(parsed)) {
+              fail(`${label} must be a non-negative integer`);
+            }
+
+            return String(parsed);
+          };
           const publicCaddyHost = (siteAddress) => {
             const withoutScheme = siteAddress
               .toLowerCase()
@@ -241,6 +255,16 @@ jobs:
               "RAY_DEPLOY_MEMORY_MIB",
             ) ??
             "";
+          const deployMinFreeStorageMiB =
+            parseOptionalNonNegativeInteger(
+              envOverrides.RAY_DEPLOY_MIN_FREE_STORAGE_MIB,
+              "RAY_DEPLOY_MIN_FREE_STORAGE_MIB",
+            ) ??
+            parseOptionalNonNegativeInteger(
+              process.env.RAY_DEPLOY_MIN_FREE_STORAGE_MIB,
+              "RAY_DEPLOY_MIN_FREE_STORAGE_MIB",
+            ) ??
+            "1024";
           const rawReadyTimeoutSeconds =
             readNonEmpty(envOverrides.RAY_DEPLOY_READY_TIMEOUT_SECONDS) ??
             readNonEmpty(process.env.RAY_DEPLOY_READY_TIMEOUT_SECONDS) ??
@@ -331,6 +355,7 @@ jobs:
             deployDomain,
             installCaddy,
             deployMemoryMiB,
+            deployMinFreeStorageMiB,
             readyTimeoutSeconds,
             gatewayRuntimeBinary,
             caddyBinary,
@@ -342,6 +367,7 @@ jobs:
           DEPLOY_DOMAIN=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).deployDomain')
           INSTALL_CADDY=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'String(JSON.parse(process.env.DEPLOY_SETTINGS).installCaddy)')
           DEPLOY_MEMORY_MIB=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).deployMemoryMiB ?? ""')
+          DEPLOY_MIN_FREE_STORAGE_MIB=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).deployMinFreeStorageMiB')
           READY_TIMEOUT_SECONDS=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'String(JSON.parse(process.env.DEPLOY_SETTINGS).readyTimeoutSeconds)')
           GATEWAY_RUNTIME_BINARY=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).gatewayRuntimeBinary')
           CADDY_BINARY=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).caddyBinary ?? ""')
@@ -379,6 +405,7 @@ jobs:
           echo "deploy_domain=$DEPLOY_DOMAIN" >> "$GITHUB_OUTPUT"
           echo "install_caddy=$INSTALL_CADDY" >> "$GITHUB_OUTPUT"
           echo "deploy_memory_mib=$DEPLOY_MEMORY_MIB" >> "$GITHUB_OUTPUT"
+          echo "deploy_min_free_storage_mib=$DEPLOY_MIN_FREE_STORAGE_MIB" >> "$GITHUB_OUTPUT"
           echo "ready_timeout_seconds=$READY_TIMEOUT_SECONDS" >> "$GITHUB_OUTPUT"
           echo "gateway_runtime_binary=$GATEWAY_RUNTIME_BINARY" >> "$GITHUB_OUTPUT"
           echo "caddy_binary=$CADDY_BINARY" >> "$GITHUB_OUTPUT"
@@ -427,6 +454,7 @@ jobs:
           SERVICE_USER: ${{ steps.settings.outputs.service_user }}
           INSTALL_CADDY: ${{ steps.settings.outputs.install_caddy }}
           CADDY_BINARY: ${{ steps.settings.outputs.caddy_binary }}
+          DEPLOY_MIN_FREE_STORAGE_MIB: ${{ steps.settings.outputs.deploy_min_free_storage_mib }}
         run: |
           set -euo pipefail
           SSH_USER="${SSH_USER:-root}"
@@ -434,6 +462,7 @@ jobs:
           SERVICE_USER="${SERVICE_USER:-ray}"
           INSTALL_CADDY="${INSTALL_CADDY:-false}"
           CADDY_BINARY="${CADDY_BINARY:-}"
+          DEPLOY_MIN_FREE_STORAGE_MIB="${DEPLOY_MIN_FREE_STORAGE_MIB:-1024}"
           TARGET="$SSH_USER@$RAY_DEPLOY_HOST"
           SSH_ARGS=(
             -i "$HOME/.ssh/deploy_key"
@@ -450,7 +479,7 @@ jobs:
             printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
           }
 
-          timeout 900s ssh "${SSH_ARGS[@]}" "$TARGET" "INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") SERVICE_USER=$(shell_quote "$SERVICE_USER") CADDY_BINARY=$(shell_quote "$CADDY_BINARY") bash -s" <<'ENDSSH'
+          timeout 900s ssh "${SSH_ARGS[@]}" "$TARGET" "INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") SERVICE_USER=$(shell_quote "$SERVICE_USER") CADDY_BINARY=$(shell_quote "$CADDY_BINARY") DEPLOY_MIN_FREE_STORAGE_MIB=$(shell_quote "$DEPLOY_MIN_FREE_STORAGE_MIB") bash -s" <<'ENDSSH'
           set -euo pipefail
 
           SUDO=""
@@ -467,6 +496,54 @@ jobs:
           fi
           DEPLOY_USER="$(id -un)"
           DEPLOY_GROUP="$(id -gn)"
+          DEPLOY_MIN_FREE_STORAGE_MIB="${DEPLOY_MIN_FREE_STORAGE_MIB:-1024}"
+
+          validate_min_free_storage_mib() {
+            case "${DEPLOY_MIN_FREE_STORAGE_MIB:-}" in
+              ""|*[!0-9]*)
+                echo "RAY_DEPLOY_MIN_FREE_STORAGE_MIB must be a non-negative integer."
+                exit 1
+                ;;
+            esac
+          }
+
+          check_free_storage() {
+            local target_path="$1"
+            local label="$2"
+            local check_path="$target_path"
+            local available_mib
+
+            if [ "$DEPLOY_MIN_FREE_STORAGE_MIB" = "0" ]; then
+              return 0
+            fi
+
+            while [ ! -e "$check_path" ]; do
+              local parent
+              parent="$(dirname "$check_path")"
+              if [ "$parent" = "$check_path" ]; then
+                break
+              fi
+              check_path="$parent"
+            done
+
+            if ! available_mib="$(timeout 30s df -Pm "$check_path" | awk 'NR==2 {print $4}')"; then
+              echo "Could not inspect free storage for $label at $target_path."
+              exit 1
+            fi
+            case "$available_mib" in
+              ""|*[!0-9]*)
+                echo "Could not parse free storage for $label at $target_path."
+                exit 1
+                ;;
+            esac
+            if [ "$((10#$available_mib))" -lt "$((10#$DEPLOY_MIN_FREE_STORAGE_MIB))" ]; then
+              echo "Remote deploy preflight requires at least ${DEPLOY_MIN_FREE_STORAGE_MIB} MiB free for $label at $target_path, but only ${available_mib} MiB is available on $check_path."
+              exit 1
+            fi
+          }
+
+          validate_min_free_storage_mib
+          check_free_storage "/" "root filesystem"
 
           missing_packages=""
           if ! command -v curl >/dev/null 2>&1; then
@@ -522,6 +599,9 @@ jobs:
           timeout 60s $SUDO install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
           timeout 60s $SUDO chown "$DEPLOY_USER:$DEPLOY_GROUP" /srv/ray
           timeout 60s $SUDO chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
+          check_free_storage /srv/ray "synced checkout"
+          check_free_storage /var/lib/ray "Ray state"
+          check_free_storage /tmp "temporary directory"
           ENDSSH
 
       - name: Sync repository to VPS
@@ -556,6 +636,7 @@ jobs:
           DEPLOY_DOMAIN: ${{ steps.settings.outputs.deploy_domain }}
           INSTALL_CADDY: ${{ steps.settings.outputs.install_caddy }}
           DEPLOY_MEMORY_MIB: ${{ steps.settings.outputs.deploy_memory_mib }}
+          DEPLOY_MIN_FREE_STORAGE_MIB: ${{ steps.settings.outputs.deploy_min_free_storage_mib }}
           SERVICE_USER: ${{ steps.settings.outputs.service_user }}
           READY_TIMEOUT_SECONDS: ${{ steps.settings.outputs.ready_timeout_seconds }}
           GATEWAY_RUNTIME_BINARY: ${{ steps.settings.outputs.gateway_runtime_binary }}
@@ -567,6 +648,7 @@ jobs:
           TARGET="$SSH_USER@$RAY_DEPLOY_HOST"
           SERVICE_USER="${SERVICE_USER:-ray}"
           CADDY_BINARY="${CADDY_BINARY:-}"
+          DEPLOY_MIN_FREE_STORAGE_MIB="${DEPLOY_MIN_FREE_STORAGE_MIB:-1024}"
           ENV_B64="$(printf '%s' "${RAY_ENV_FILE_CONTENTS:-}" | base64 -w 0)"
           CONFIG_B64="$(printf '%s' "${RAY_CONFIG_JSON:-}" | base64 -w 0)"
           SSH_ARGS=(
@@ -585,7 +667,7 @@ jobs:
           }
 
           timeout 4500s ssh "${SSH_ARGS[@]}" "$TARGET" \
-            "CONFIG_SOURCE=$(shell_quote "$CONFIG_SOURCE") CONFIG_REL=$(shell_quote "$CONFIG_REL") CONFIG_B64=$(shell_quote "$CONFIG_B64") HEALTH_PORT=$(shell_quote "$HEALTH_PORT") DEPLOY_DOMAIN=$(shell_quote "$DEPLOY_DOMAIN") INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") SERVICE_USER=$(shell_quote "$SERVICE_USER") READY_TIMEOUT_SECONDS=$(shell_quote "$READY_TIMEOUT_SECONDS") GATEWAY_RUNTIME_BINARY=$(shell_quote "$GATEWAY_RUNTIME_BINARY") CADDY_BINARY=$(shell_quote "$CADDY_BINARY") RAY_DEPLOY_MEMORY_MIB=$(shell_quote "${DEPLOY_MEMORY_MIB:-}") ENV_B64=$(shell_quote "$ENV_B64") bash -s" <<'ENDSSH'
+            "CONFIG_SOURCE=$(shell_quote "$CONFIG_SOURCE") CONFIG_REL=$(shell_quote "$CONFIG_REL") CONFIG_B64=$(shell_quote "$CONFIG_B64") HEALTH_PORT=$(shell_quote "$HEALTH_PORT") DEPLOY_DOMAIN=$(shell_quote "$DEPLOY_DOMAIN") INSTALL_CADDY=$(shell_quote "$INSTALL_CADDY") SERVICE_USER=$(shell_quote "$SERVICE_USER") READY_TIMEOUT_SECONDS=$(shell_quote "$READY_TIMEOUT_SECONDS") GATEWAY_RUNTIME_BINARY=$(shell_quote "$GATEWAY_RUNTIME_BINARY") CADDY_BINARY=$(shell_quote "$CADDY_BINARY") RAY_DEPLOY_MEMORY_MIB=$(shell_quote "${DEPLOY_MEMORY_MIB:-}") DEPLOY_MIN_FREE_STORAGE_MIB=$(shell_quote "$DEPLOY_MIN_FREE_STORAGE_MIB") ENV_B64=$(shell_quote "$ENV_B64") bash -s" <<'ENDSSH'
           set -euo pipefail
 
           SUDO=""
@@ -610,6 +692,7 @@ jobs:
           if [ -n "${CADDY_BINARY:-}" ]; then
             CADDY_ARGS=(--caddy-binary "$CADDY_BINARY")
           fi
+          DEPLOY_MIN_FREE_STORAGE_MIB="${DEPLOY_MIN_FREE_STORAGE_MIB:-1024}"
 
           dump_service_debug() {
             unit="$1"
@@ -669,6 +752,50 @@ jobs:
             fi
           }
 
+          validate_min_free_storage_mib() {
+            case "${DEPLOY_MIN_FREE_STORAGE_MIB:-}" in
+              ""|*[!0-9]*)
+                echo "RAY_DEPLOY_MIN_FREE_STORAGE_MIB must be a non-negative integer."
+                exit 1
+                ;;
+            esac
+          }
+
+          check_free_storage() {
+            local target_path="$1"
+            local label="$2"
+            local check_path="$target_path"
+            local available_mib
+
+            if [ "$DEPLOY_MIN_FREE_STORAGE_MIB" = "0" ]; then
+              return 0
+            fi
+
+            while [ ! -e "$check_path" ]; do
+              local parent
+              parent="$(dirname "$check_path")"
+              if [ "$parent" = "$check_path" ]; then
+                break
+              fi
+              check_path="$parent"
+            done
+
+            if ! available_mib="$(timeout 30s df -Pm "$check_path" | awk 'NR==2 {print $4}')"; then
+              echo "Could not inspect free storage for $label at $target_path."
+              exit 1
+            fi
+            case "$available_mib" in
+              ""|*[!0-9]*)
+                echo "Could not parse free storage for $label at $target_path."
+                exit 1
+                ;;
+            esac
+            if [ "$((10#$available_mib))" -lt "$((10#$DEPLOY_MIN_FREE_STORAGE_MIB))" ]; then
+              echo "Remote deploy preflight requires at least ${DEPLOY_MIN_FREE_STORAGE_MIB} MiB free for $label at $target_path, but only ${available_mib} MiB is available on $check_path."
+              exit 1
+            fi
+          }
+
           ensure_bun_runtime() {
             local minimum_bun_version="1.3.0"
             local install_bun_version="1.3.9"
@@ -716,6 +843,10 @@ jobs:
             esac
           }
 
+          validate_min_free_storage_mib
+          check_free_storage /srv/ray "synced checkout"
+          check_free_storage /var/lib/ray "Ray state"
+          check_free_storage /tmp "temporary directory"
           ensure_bun_runtime
 
           cd /srv/ray
@@ -723,6 +854,7 @@ jobs:
           if [ -d node_modules ]; then
             timeout 120s $SUDO rm -rf node_modules
           fi
+          check_free_storage /srv/ray "Bun production install"
           timeout 300s /usr/local/bin/bun install --production --frozen-lockfile --ignore-scripts
 
           if [ "${CONFIG_SOURCE:-repo}" = "secret" ] && [ -n "${CONFIG_B64:-}" ]; then

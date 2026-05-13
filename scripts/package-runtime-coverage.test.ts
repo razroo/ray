@@ -239,6 +239,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("workflow_public_caddy_domain_guard_missing"));
   assert.ok(codes.includes("workflow_caddy_env_override_missing"));
   assert.ok(codes.includes("workflow_memory_env_override_missing"));
+  assert.ok(codes.includes("workflow_remote_storage_preflight_missing"));
   assert.ok(codes.includes("workflow_ready_timeout_env_override_missing"));
   assert.ok(codes.includes("workflow_resolved_env_persistence_missing"));
   assert.ok(codes.includes("workflow_caddy_binary_guard_missing"));

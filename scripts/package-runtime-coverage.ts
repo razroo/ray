@@ -742,6 +742,59 @@ function validateDeployWorkflowMemoryEnvOverride(
   ];
 }
 
+function validateDeployWorkflowStoragePreflight(
+  workflowPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  if (
+    !contents.includes("rsync -az --delete") ||
+    !contents.includes("/usr/local/bin/bun install --production")
+  ) {
+    return [];
+  }
+
+  const remoteStorageSettingCount =
+    contents.split('DEPLOY_MIN_FREE_STORAGE_MIB=$(shell_quote "$DEPLOY_MIN_FREE_STORAGE_MIB")')
+      .length - 1;
+
+  if (
+    contents.includes(
+      "RAY_DEPLOY_MIN_FREE_STORAGE_MIB: ${{ vars.RAY_DEPLOY_MIN_FREE_STORAGE_MIB }}",
+    ) &&
+    contents.includes("envOverrides.RAY_DEPLOY_MIN_FREE_STORAGE_MIB") &&
+    contents.includes("process.env.RAY_DEPLOY_MIN_FREE_STORAGE_MIB") &&
+    contents.includes("parseOptionalNonNegativeInteger") &&
+    contents.includes(
+      'echo "deploy_min_free_storage_mib=$DEPLOY_MIN_FREE_STORAGE_MIB" >> "$GITHUB_OUTPUT"',
+    ) &&
+    remoteStorageSettingCount >= 2 &&
+    contents.includes("timeout 30s df -Pm") &&
+    contents.includes('check_free_storage /srv/ray "synced checkout"') &&
+    contents.includes('check_free_storage /var/lib/ray "Ray state"') &&
+    contents.includes('check_free_storage /tmp "temporary directory"') &&
+    contents.includes('check_free_storage /srv/ray "Bun production install"') &&
+    contents.includes("Remote deploy preflight requires at least")
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "workflow_remote_storage_preflight_missing",
+      workflowPath,
+      line: workflowLineNumber(lines, "RAY_DEPLOY_MIN_FREE_STORAGE_MIB"),
+      message:
+        "VPS deploy workflow must preflight remote free storage before package bootstrap, repository sync follow-up, and Bun production install so small VPS disks fail clearly before deploy work fills them.",
+    },
+  ];
+}
+
 function validateDeployWorkflowReadyTimeoutEnvOverride(
   workflowPath: string,
   contents: string,
@@ -1502,6 +1555,7 @@ async function validateWorkflow(
   diagnostics.push(...validateDeployWorkflowPublicCaddyDomainGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowCaddyEnvOverrides(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowMemoryEnvOverride(workflowPath, contents, lines));
+  diagnostics.push(...validateDeployWorkflowStoragePreflight(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowReadyTimeoutEnvOverride(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowResolvedEnvPersistence(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowCaddyBinaryGuards(workflowPath, contents, lines));
