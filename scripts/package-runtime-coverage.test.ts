@@ -162,6 +162,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
       "      - run: sudo chown -R ray:ray /srv/ray",
       "      - run: rsync -az --delete ./ ray@example:/srv/ray/",
       "      - run: ssh ray@example.com 'bash -s'",
+      "      - run: timeout 120s rm -rf node_modules",
       "      - run: /usr/local/bin/bun install --production --frozen-lockfile --ignore-scripts",
       "      - run: timeout 120s sudo chmod -R a+rX /srv/ray",
       "      - run: $SUDO /usr/local/bin/bun /srv/ray/packages/deploy/dist/cli.js doctor",

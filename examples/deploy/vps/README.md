@@ -473,10 +473,10 @@ configured gateway runtime binary defaults to `/usr/local/bin/bun`. The workflow
 only changes ownership on the checkout root, sets service-readable checkout
 modes during rsync, removes stale `node_modules` under a timeout, and runs the
 remote Bun production install with `umask 022` so old dev dependencies do not
-accumulate and deploys do not recursively chown or chmod the synced repository.
-Remote
-Bun helper commands for config inspection, staging-plan rendering, doctor, and
-service rendering run under explicit timeouts; deploy-time GGUF staging gets a
+accumulate even when ownership changed, and deploys do not recursively chown or
+chmod the synced repository. Remote Bun helper commands for config inspection,
+staging-plan rendering, doctor, and service rendering run under explicit
+timeouts; deploy-time GGUF staging gets a
 longer bounded copy window, and each remote SSH session has its own wall-clock
 timeout. All workflow SSH and rsync calls run in batch mode
 with `StrictHostKeyChecking=yes`,

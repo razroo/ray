@@ -1210,7 +1210,7 @@ function validateDeployWorkflowRemoteBunInstallGuards(
 
   if (
     contents.includes("/usr/local/bin/bun install --production") &&
-    !contents.includes("timeout 120s rm -rf node_modules")
+    !contents.includes("timeout 120s $SUDO rm -rf node_modules")
   ) {
     diagnostics.push({
       level: "error",
@@ -1218,7 +1218,7 @@ function validateDeployWorkflowRemoteBunInstallGuards(
       workflowPath,
       line: workflowLineNumber(lines, "/usr/local/bin/bun install --production"),
       message:
-        "VPS deploy workflow must remove stale node_modules under timeout before the remote Bun production install so old dev dependencies cannot accumulate on small VPS disks.",
+        "VPS deploy workflow must remove stale node_modules through the validated sudo path under timeout before the remote Bun production install so old dev dependencies cannot accumulate on small VPS disks even when ownership changed.",
     });
   }
 
