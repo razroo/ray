@@ -823,6 +823,55 @@ test("gateway rejects unsupported Expect-Continue content types before acknowled
   assert.match(response, /"code": "unsupported_media_type"/);
 });
 
+test("gateway rejects unsupported Expect headers with bounded JSON diagnostics", async (t) => {
+  const warnings: Array<{ message: string; fields: LogFields | undefined }> = [];
+  const logger = {
+    debug() {},
+    info() {},
+    warn(message: string, fields?: LogFields) {
+      warnings.push({ message, fields });
+    },
+    error() {},
+  } as unknown as Logger;
+  const gateway = createGatewayServer({
+    config: createDefaultConfig("tiny"),
+    logger,
+  });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await readRawUnfinishedRequestResponse(gateway.server, [
+    "POST /v1/infer HTTP/1.1",
+    `Host: 127.0.0.1:${address.port}`,
+    "Content-Type: application/json",
+    "Content-Length: 17",
+    "Expect: wait-for-budget",
+    "Connection: close",
+    "",
+    "",
+  ]);
+
+  assert.doesNotMatch(response, /^HTTP\/1\.1 100 Continue/m);
+  assert.match(response, /^HTTP\/1\.1 417 /);
+  assert.match(response, /\r\nconnection: close\r\n/i);
+  assert.match(response, /"code": "unsupported_expectation"/);
+  assert.match(response, /"supported": \[/);
+  assert.equal(warnings[0]?.message, "request rejected");
+  assert.equal(warnings[0]?.fields?.method, "POST");
+  assert.equal(warnings[0]?.fields?.path, "/v1/infer");
+
+  const error = warnings[0]?.fields?.error as Record<string, unknown> | undefined;
+  assert.equal(error?.code, "unsupported_expectation");
+  assert.equal(error?.status, 417);
+  assert.equal(error?.stack, undefined);
+});
+
 test("gateway rejects unsupported inference content types before reading bytes", async (t) => {
   const config = mergeConfig(createDefaultConfig("tiny"), {
     server: {

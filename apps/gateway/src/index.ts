@@ -528,6 +528,49 @@ function acknowledgeExpectContinue(
   acknowledgedExpectContinueRequests.add(request);
 }
 
+function createUnsupportedExpectationError(request: IncomingMessage): RayError {
+  const expectation = request.headers.expect;
+
+  return new RayError("Request Expect header must be 100-continue", {
+    code: "unsupported_expectation",
+    status: 417,
+    details: {
+      ...(typeof expectation === "string"
+        ? { expect: truncateResponseString(expectation, 128) }
+        : {}),
+      supported: ["100-continue"],
+    },
+  });
+}
+
+function handleUnsupportedExpectation(
+  request: IncomingMessage,
+  response: ServerResponse,
+  logger: Logger,
+): void {
+  const error = createUnsupportedExpectationError(request);
+  let path = "[invalid-url]";
+
+  try {
+    path = parseGatewayRequestUrl(request).pathname;
+  } catch {
+    // Unsupported Expect values are rejected before routing; path is best-effort for logs.
+  }
+
+  logger.warn("request rejected", {
+    method: request.method,
+    path,
+    error: serializeRequestError(error),
+  });
+  writeJsonWithoutReadingBody(request, response, error.status, {
+    error: {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+    },
+  });
+}
+
 function trackGatewayHttpRequest(
   activeRequestsBySocket: Map<Socket, number>,
   request: IncomingMessage,
@@ -1662,6 +1705,10 @@ export function createGatewayServer(options: CreateGatewayHandlerOptions): Gatew
     trackGatewayHttpRequest(activeRequestsBySocket, request, response);
 
     void handler(request, response);
+  });
+  server.on("checkExpectation", (request, response) => {
+    trackGatewayHttpRequest(activeRequestsBySocket, request, response);
+    handleUnsupportedExpectation(request, response, logger);
   });
 
   return {
