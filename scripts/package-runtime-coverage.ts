@@ -738,6 +738,44 @@ function validateDeployWorkflowServiceUserGuard(
   ];
 }
 
+function validateDeployWorkflowNumericServiceUserGuard(
+  workflowPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  if (!contents.includes("RAY_DEPLOY_SERVICE_USER")) {
+    return [];
+  }
+
+  const serviceGroupResolutionCount =
+    contents.split('SERVICE_GROUP="$(id -g "$SERVICE_USER")"').length - 1;
+
+  if (
+    contents.includes("*[!0-9]*)") &&
+    contents.includes("RAY_DEPLOY_SERVICE_USER numeric UID must already exist on the VPS") &&
+    contents.includes("Could not resolve primary GID for RAY_DEPLOY_SERVICE_USER=$SERVICE_USER.") &&
+    serviceGroupResolutionCount >= 2 &&
+    !contents.includes('SERVICE_GROUP="$(id -gn "$SERVICE_USER")"')
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "workflow_numeric_service_user_guard_missing",
+      workflowPath,
+      line: workflowLineNumber(lines, "RAY_DEPLOY_SERVICE_USER"),
+      message:
+        "VPS deploy workflow must keep numeric RAY_DEPLOY_SERVICE_USER values out of useradd and resolve ownership through the existing account primary GID.",
+    },
+  ];
+}
+
 function validateDeployWorkflowSecretFileInstalls(
   workflowPath: string,
   lines: string[],
@@ -1160,6 +1198,7 @@ async function validateWorkflow(
   diagnostics.push(...validateDeployWorkflowPublicCaddyDomainGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowCaddyBinaryGuards(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowServiceUserGuard(workflowPath, contents, lines));
+  diagnostics.push(...validateDeployWorkflowNumericServiceUserGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowSecretFileInstalls(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowStateOwnershipGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowAptGuards(workflowPath, lines));

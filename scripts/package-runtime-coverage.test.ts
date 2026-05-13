@@ -152,6 +152,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
       "    steps:",
       '      - run: echo "service_user=$SERVICE_USER" >> "$GITHUB_OUTPUT"',
       "      - run: printf secret | sudo tee /etc/ray/ray.env >/dev/null",
+      "      - run: sudo useradd ray",
       "      - run: sudo apt-get install -y curl",
       "      - run: sudo chown -R ray:ray /var/lib/ray",
       "      - run: rsync -az --delete ./ ray@example:/srv/ray/",
@@ -231,6 +232,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("workflow_public_caddy_domain_guard_missing"));
   assert.ok(codes.includes("workflow_caddy_binary_guard_missing"));
   assert.ok(codes.includes("workflow_service_user_parser_missing"));
+  assert.ok(codes.includes("workflow_numeric_service_user_guard_missing"));
   assert.ok(codes.includes("workflow_secret_file_install_mode_missing"));
   assert.ok(codes.includes("workflow_recursive_state_chown"));
   assert.ok(codes.includes("workflow_root_command_timeout_missing"));

@@ -296,7 +296,9 @@ RAY_RATE_LIMIT_KEY_STRATEGY=ip+api-key
 `RAY_DEPLOY_SERVICE_USER`, `RAY_DEPLOY_DOMAIN`, `RAY_DEPLOY_MEMORY_MIB`,
 `RAY_GATEWAY_RUNTIME_BINARY`, and `RAY_DEPLOY_CADDY_BINARY` are consumed by the
 deploy CLI while rendering units or running doctor. Explicit CLI flags win over
-env-file values.
+env-file values. `RAY_DEPLOY_SERVICE_USER` accepts an account name or numeric
+UID; workflow deploys create missing named accounts, while numeric UIDs must
+already resolve to an account on the VPS.
 
 Create `/var/lib/ray/models` on the VPS and put the GGUF at `RAY_MODEL_PATH`
 before starting the generated llama.cpp service or running doctor.

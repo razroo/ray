@@ -32,8 +32,15 @@ sudo env DEBIAN_FRONTEND=noninteractive timeout 300s apt-get -o Acquire::Retries
 curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 https://bun.sh/install | timeout 300s bash -s "bun-v1.3.9"
 timeout 60s sudo install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
 SERVICE_USER="${RAY_DEPLOY_SERVICE_USER:-ray}"
-id -u "$SERVICE_USER" >/dev/null 2>&1 || timeout 60s sudo useradd --system --home /srv/ray --shell /usr/sbin/nologin "$SERVICE_USER"
-SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
+case "$SERVICE_USER" in
+  *[!0-9]*)
+    id -u "$SERVICE_USER" >/dev/null 2>&1 || timeout 60s sudo useradd --system --home /srv/ray --shell /usr/sbin/nologin "$SERVICE_USER"
+    ;;
+  *)
+    id -u "$SERVICE_USER" >/dev/null 2>&1 || { echo "RAY_DEPLOY_SERVICE_USER numeric UID must already exist on the VPS."; exit 1; }
+    ;;
+esac
+SERVICE_GROUP="$(id -g "$SERVICE_USER")"
 timeout 60s sudo install -d -m 0755 /srv/ray /etc/ray
 timeout 60s sudo install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
 timeout 60s sudo chown "$(id -un):$(id -gn)" /srv/ray
@@ -114,7 +121,7 @@ cd /srv/ray
 timeout 300s bun install --frozen-lockfile
 timeout 300s bun run build
 SERVICE_USER="${RAY_DEPLOY_SERVICE_USER:-ray}"
-SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
+SERVICE_GROUP="$(id -g "$SERVICE_USER")"
 timeout 120s sudo chmod -R a+rX /srv/ray
 timeout 60s sudo chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
 ```
@@ -142,7 +149,7 @@ Put the final file somewhere stable, for example:
 ```bash
 timeout 60s sudo mkdir -p /etc/ray
 SERVICE_USER="${RAY_DEPLOY_SERVICE_USER:-ray}"
-SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
+SERVICE_GROUP="$(id -g "$SERVICE_USER")"
 timeout 60s sudo install -m 0640 -o root -g "$SERVICE_GROUP" examples/config/ray.1b.generic.public.json /etc/ray/ray.json
 ```
 
@@ -383,7 +390,7 @@ Optional repository variables:
 
 - `RAY_DEPLOY_SSH_USER` — SSH login user, defaults to `root`; the workflow validates it as a simple system account name or numeric UID before opening SSH, and non-root users must have passwordless sudo
 - `RAY_DEPLOY_SSH_PORT` — SSH port for deploy, defaults to `22`
-- `RAY_DEPLOY_SERVICE_USER` — generated non-root systemd service account, defaults to `ray`; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--user` is omitted
+- `RAY_DEPLOY_SERVICE_USER` — generated non-root systemd service account name or numeric UID, defaults to `ray`; workflow deploys create missing named users, numeric UIDs must already resolve to an account on the VPS, and local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--user` is omitted
 - `RAY_DEPLOY_DOMAIN` — Caddy site address to render, defaults to `ray.local`; set it to the real public DNS name before installing Caddy because render/doctor warn on local placeholder addresses; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--domain` is omitted
 - `RAY_DEPLOY_MEMORY_MIB` — optional VPS memory class used by workflow doctor/render when `/etc/ray/ray.env` does not already set it; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--memory-mib` is omitted
 - `RAY_DEPLOY_INSTALL_CADDY` — set to `true` to install and reload the generated Caddyfile; requires `RAY_DEPLOY_DOMAIN` to be a real public DNS name, not `ray.local`, `localhost`, loopback, or another `.local` placeholder
@@ -472,7 +479,7 @@ file, package metadata, and the llama.cpp staging helper used during deploy.
 - Set `RAY_DEPLOY_DOMAIN` or pass `--domain` with the real public DNS name before installing the generated Caddyfile; render and doctor warn when the generated site address is still `ray.local`, `localhost`, loopback, or another `.local` placeholder.
 - Enable `auth.enabled` before exposing Ray publicly; it also protects detailed `/health`, `/metrics`, and `/v1/config` responses.
 - Keep `/etc/ray/ray.env` private, for example with `sudo chmod 600 /etc/ray/ray.env`; doctor warns when the env file is group/world-readable.
-- Create the generated service user before manual render/restart steps, or set `RAY_DEPLOY_SERVICE_USER` in the deploy env file when not using the default `ray` account; use a dedicated non-root account because doctor warns when generated Ray services are configured to run as root.
+- Create the generated service user before manual render/restart steps, or set `RAY_DEPLOY_SERVICE_USER` in the deploy env file when not using the default `ray` account; named users are created by the workflow bootstrap when missing, while numeric UIDs must already resolve on the VPS. Use a dedicated non-root account because doctor warns when generated Ray services are configured to run as root.
 - Install Bun 1.3+ at `/usr/local/bin/bun`, set `RAY_GATEWAY_RUNTIME_BINARY`, or pass the same `--gateway-runtime-binary` used at render time; keep that runtime outside `/home`, `/root`, `/run/user`, `/tmp`, and `/var/tmp`. Doctor verifies the generated service user can execute the rendered gateway runtime and, for identifiable Bun/Node binaries, that its version satisfies Ray's engine requirements before systemd uses it. Node.js remains a compatibility fallback, and doctor warns when a generated VPS service is pointed at Node instead of Bun.
 - Install Caddy on `PATH`, set `RAY_DEPLOY_CADDY_BINARY`, or pass `--caddy-binary`; doctor runs that binary for `version` and `validate --config` before you install or reload the generated reverse proxy config.
 - Keep `/etc/ray/ray.json` readable by the generated service user, for example with `root:<service-user-primary-group>` ownership and mode `0640`; doctor verifies this before systemd uses it.

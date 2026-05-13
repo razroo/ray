@@ -143,6 +143,10 @@ RAY_RATE_LIMIT_KEY_STRATEGY=ip+api-key
 RAY_RATE_LIMIT_TRUST_PROXY_HEADERS=true
 ```
 
+`RAY_DEPLOY_SERVICE_USER` accepts an account name or numeric UID. Workflow
+deploys create missing named accounts, while numeric UIDs must already resolve
+to an account on the VPS.
+
 Create `/var/lib/ray/models` on the VPS and place the GGUF at `RAY_MODEL_PATH`
 before starting the generated llama.cpp service or running doctor.
 

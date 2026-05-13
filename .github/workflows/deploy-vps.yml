@@ -439,10 +439,23 @@ jobs:
           fi
 
           SERVICE_USER="${SERVICE_USER:-ray}"
-          if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
-            timeout 60s $SUDO useradd --system --home /srv/ray --shell /usr/sbin/nologin "$SERVICE_USER"
+          case "$SERVICE_USER" in
+            *[!0-9]*)
+              if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
+                timeout 60s $SUDO useradd --system --home /srv/ray --shell /usr/sbin/nologin "$SERVICE_USER"
+              fi
+              ;;
+            *)
+              if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
+                echo "RAY_DEPLOY_SERVICE_USER numeric UID must already exist on the VPS; create the account first or use a named service user."
+                exit 1
+              fi
+              ;;
+          esac
+          if ! SERVICE_GROUP="$(id -g "$SERVICE_USER")"; then
+            echo "Could not resolve primary GID for RAY_DEPLOY_SERVICE_USER=$SERVICE_USER."
+            exit 1
           fi
-          SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
 
           timeout 60s $SUDO install -d -m 0755 /srv/ray /etc/ray
           timeout 60s $SUDO install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
@@ -525,7 +538,10 @@ jobs:
             fi
           fi
           SERVICE_USER="${SERVICE_USER:-ray}"
-          SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
+          if ! SERVICE_GROUP="$(id -g "$SERVICE_USER")"; then
+            echo "Could not resolve primary GID for RAY_DEPLOY_SERVICE_USER=$SERVICE_USER."
+            exit 1
+          fi
           CADDY_RUNTIME="${CADDY_BINARY:-caddy}"
           CADDY_ARGS=()
           if [ -n "${CADDY_BINARY:-}" ]; then
