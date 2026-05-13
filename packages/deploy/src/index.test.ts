@@ -640,6 +640,36 @@ test("diagnoseConfig warns when VPS output clamps cannot reduce completions", ()
   assert.equal(adaptiveMinimumDiagnostic.level, "warn");
 });
 
+test("diagnoseConfig warns when slow-request logging cannot fire before timeouts", () => {
+  const defaultConfig = createDefaultConfig("vps");
+  const adapterTimeoutMs =
+    "timeoutMs" in defaultConfig.model.adapter
+      ? defaultConfig.model.adapter.timeoutMs
+      : defaultConfig.scheduler.requestTimeoutMs;
+  assert.ok(
+    !diagnoseConfig(defaultConfig, process.env).some(
+      (entry) => entry.code === "slow_request_threshold_masks_timeouts",
+    ),
+  );
+
+  const config = mergeConfig(defaultConfig, {
+    telemetry: {
+      slowRequestThresholdMs: adapterTimeoutMs,
+    },
+  });
+
+  const diagnostic = diagnoseConfig(config, process.env).find(
+    (entry) => entry.code === "slow_request_threshold_masks_timeouts",
+  );
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /telemetry\.slowRequestThresholdMs/);
+  assert.match(diagnostic.message, /scheduler\.requestTimeoutMs/);
+  assert.match(diagnostic.message, /model\.adapter\.timeoutMs/);
+  assert.match(diagnostic.message, /RAY_TELEMETRY_SLOW_REQUEST_THRESHOLD_MS/);
+});
+
 test("diagnoseConfig warns when IP rate-limit proxy header posture is unsafe", () => {
   const publicBindConfig = mergeConfig(createDefaultConfig("vps"), {
     server: {

@@ -3197,6 +3197,19 @@ export function diagnoseConfig(
       });
     }
 
+    const slowRequestTimeoutFloorMs = Math.min(
+      config.scheduler.requestTimeoutMs,
+      config.model.adapter.timeoutMs,
+    );
+    if (config.telemetry.slowRequestThresholdMs >= slowRequestTimeoutFloorMs) {
+      diagnostics.push({
+        level: "warn",
+        code: "slow_request_threshold_masks_timeouts",
+        message:
+          "telemetry.slowRequestThresholdMs is at or above the lower of scheduler.requestTimeoutMs and model.adapter.timeoutMs, so slow inference warnings cannot fire before timeout handling. Lower RAY_TELEMETRY_SLOW_REQUEST_THRESHOLD_MS to keep near-timeout requests visible in VPS logs.",
+      });
+    }
+
     if (!config.model.warmOnBoot) {
       diagnostics.push({
         level: "warn",

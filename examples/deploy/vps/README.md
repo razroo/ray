@@ -566,6 +566,7 @@ file, package metadata, and the llama.cpp staging helper used during deploy.
 - Tune `scheduler.concurrency` conservatively. Tiny hardware collapses faster from overcommit than underutilization, and doctor warns when scheduler concurrency is above the detected VPS vCPU count.
 - Keep `RAY_LLAMA_CPP_THREADS` and `RAY_LLAMA_CPP_THREADS_BATCH` at or below the VPS vCPU count. Doctor records detected host CPU count and warns when the launch profile overcommits compute threads.
 - Keep `scheduler.requestTimeoutMs` slightly above `model.adapter.timeoutMs` so provider timeouts remain visible.
+- Keep `RAY_TELEMETRY_SLOW_REQUEST_THRESHOLD_MS` below both `scheduler.requestTimeoutMs` and `model.adapter.timeoutMs`; doctor warns when the threshold is too high to log slow inference before timeout handling takes over.
 - Keep `RAY_SCHEDULER_DEDUPE_INFLIGHT=true` so duplicate requests share in-flight work instead of occupying scarce backend slots. Doctor warns when in-flight deduplication is disabled.
 - Keep `scheduler.maxQueuedTokens` and `scheduler.maxInflightTokens` sized for the gateway memory limit. Doctor warns when their estimated token buffer can consume too much of the generated gateway `MemoryMax`.
 - Keep `RAY_GRACEFUL_DEGRADATION_ENABLED=true` on cheap single-node VPS deployments. Doctor warns when it is disabled because queue, prompt, memory, CPU, and PSI clamps are part of the overload-shedding contract.
