@@ -622,6 +622,17 @@ test("diagnoseConfig surfaces invalid auth key material without retaining secret
   assert.ok(diagnostic);
   assert.match(diagnostic.message, /RAY_API_KEYS entries must be at most 1024 characters/);
   assert.doesNotMatch(diagnostic.message, /secret-secret/);
+
+  const whitespaceDiagnostic = diagnoseConfig(config, {
+    RAY_API_KEYS: "alpha beta",
+  }).find((entry) => entry.code === "auth_keys_missing");
+
+  assert.ok(whitespaceDiagnostic);
+  assert.match(
+    whitespaceDiagnostic.message,
+    /RAY_API_KEYS entries must be bearer-token-safe strings without whitespace/,
+  );
+  assert.doesNotMatch(whitespaceDiagnostic.message, /alpha beta/);
 });
 
 test("diagnoseConfig can defer auth key checks to rendered systemd env files", () => {

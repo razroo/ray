@@ -250,6 +250,14 @@ test("resolveAuthApiKeys bounds retained API key material", () => {
       }),
     /RAY_API_KEYS entries must be at most 1024 characters/,
   );
+
+  assert.throws(
+    () =>
+      resolveAuthApiKeys(config, {
+        RAY_API_KEYS: "alpha beta",
+      }),
+    /RAY_API_KEYS entries must be bearer-token-safe strings without whitespace/,
+  );
 });
 
 test("sanitizeConfig redacts upstream adapter headers", () => {
