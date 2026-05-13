@@ -934,7 +934,7 @@ jobs:
           live_deadline=$((SECONDS + 30))
           live_status=1
           while [ "$SECONDS" -lt "$live_deadline" ]; do
-            if curl -fsS --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/livez" >/dev/null; then
+            if curl -fsS --connect-timeout 2 --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/livez" >/dev/null; then
               live_status=0
               break
             fi
@@ -950,7 +950,7 @@ jobs:
           ready_deadline=$((SECONDS + READY_TIMEOUT_SECONDS))
           ready_status=1
           while [ "$SECONDS" -lt "$ready_deadline" ]; do
-            if curl -fsS --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/readyz" >/dev/null; then
+            if curl -fsS --connect-timeout 2 --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/readyz" >/dev/null; then
               ready_status=0
               break
             fi
@@ -960,9 +960,9 @@ jobs:
           if [ "$ready_status" -ne 0 ]; then
             echo "Ray gateway did not become backend-ready within ${READY_TIMEOUT_SECONDS}s."
             echo "::group::Ray health snapshots"
-            curl -sS --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/livez" || true
+            curl -sS --connect-timeout 2 --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/livez" || true
             echo
-            curl -sS --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/readyz" || true
+            curl -sS --connect-timeout 2 --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/readyz" || true
             echo
             echo "::endgroup::"
             dump_ray_debug

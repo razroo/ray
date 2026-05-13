@@ -1441,14 +1441,17 @@ async function validateWorkflow(
       });
     }
 
-    if (isLocalHealthCurl(line) && !line.includes("--max-time")) {
+    if (
+      isLocalHealthCurl(line) &&
+      (!line.includes("--connect-timeout") || !line.includes("--max-time"))
+    ) {
       diagnostics.push({
         level: "error",
         code: "unbounded_workflow_health_probe",
         workflowPath,
         line: index + 1,
         message:
-          "Workflow localhost health probes must pass curl --max-time so VPS deploy readiness loops honor their timeout windows.",
+          "Workflow localhost health probes must pass curl --connect-timeout and --max-time so VPS deploy readiness loops honor their timeout windows.",
       });
     }
 
