@@ -9,6 +9,7 @@ import {
   normalizeCaddyBinaryPath,
   normalizeGatewayRuntimeBinaryPath,
   normalizeRepoConfigPath,
+  parseDeployReadyTimeoutSeconds,
   parseDeploySshPort,
   parseDeploySshUser,
   parseCliArgs,
@@ -137,6 +138,20 @@ test("parseDeploySshPort rejects invalid deploy SSH ports", () => {
   assert.throws(() => parseDeploySshPort("65536"), /integer from 1 to 65535/);
   assert.throws(() => parseDeploySshPort("22/tcp"), /integer from 1 to 65535/);
   assert.throws(() => parseDeploySshPort("22.5"), /integer from 1 to 65535/);
+});
+
+test("parseDeployReadyTimeoutSeconds accepts bounded deploy readiness windows", () => {
+  assert.equal(parseDeployReadyTimeoutSeconds("1"), 1);
+  assert.equal(parseDeployReadyTimeoutSeconds("120"), 120);
+  assert.equal(parseDeployReadyTimeoutSeconds("999"), 999);
+});
+
+test("parseDeployReadyTimeoutSeconds rejects invalid deploy readiness windows", () => {
+  assert.throws(() => parseDeployReadyTimeoutSeconds(""), /integer from 1 to 999 seconds/);
+  assert.throws(() => parseDeployReadyTimeoutSeconds("0"), /integer from 1 to 999 seconds/);
+  assert.throws(() => parseDeployReadyTimeoutSeconds("1000"), /integer from 1 to 999 seconds/);
+  assert.throws(() => parseDeployReadyTimeoutSeconds("120s"), /integer from 1 to 999 seconds/);
+  assert.throws(() => parseDeployReadyTimeoutSeconds("1.5"), /integer from 1 to 999 seconds/);
 });
 
 test("parseDeploySshUser accepts safe deploy login users", () => {

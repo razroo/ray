@@ -251,6 +251,26 @@ export function parseDeploySshPort(value: string, label = "RAY_DEPLOY_SSH_PORT")
   return parsed;
 }
 
+export function parseDeployReadyTimeoutSeconds(
+  value: string,
+  label = "RAY_DEPLOY_READY_TIMEOUT_SECONDS",
+): number {
+  const normalized = value.trim();
+  const parsed = Number(normalized);
+
+  if (
+    normalized.length === 0 ||
+    !/^\d+$/.test(normalized) ||
+    !Number.isSafeInteger(parsed) ||
+    parsed <= 0 ||
+    parsed > 999
+  ) {
+    throw new Error(`${label} must be an integer from 1 to 999 seconds`);
+  }
+
+  return parsed;
+}
+
 export function parseDeploySshUser(value: string, label = "RAY_DEPLOY_SSH_USER"): string {
   if (typeof value !== "string") {
     throw new Error(`${label} must be a string`);

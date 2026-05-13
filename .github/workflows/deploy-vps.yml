@@ -89,7 +89,7 @@ jobs:
           CONFIG_PATH="${CONFIG_INPUT:-${RAY_CONFIG_PATH_VAR:-./examples/config/ray.sub1b.public.json}}"
           DEPLOY_DOMAIN="${RAY_DEPLOY_DOMAIN:-ray.local}"
           INSTALL_CADDY="${RAY_DEPLOY_INSTALL_CADDY:-false}"
-          READY_TIMEOUT_SECONDS="${RAY_DEPLOY_READY_TIMEOUT_SECONDS:-120}"
+          READY_TIMEOUT_SECONDS_INPUT="${RAY_DEPLOY_READY_TIMEOUT_SECONDS:-120}"
           GATEWAY_RUNTIME_BINARY_INPUT="${RAY_GATEWAY_RUNTIME_BINARY:-/usr/local/bin/bun}"
           SSH_PORT_INPUT="${RAY_DEPLOY_SSH_PORT:-22}"
           SSH_USER_INPUT="${RAY_DEPLOY_SSH_USER:-root}"
@@ -133,11 +133,6 @@ jobs:
             esac
           fi
 
-          if ! printf '%s' "$READY_TIMEOUT_SECONDS" | grep -Eq '^[1-9][0-9]{0,2}$'; then
-            echo "::error::RAY_DEPLOY_READY_TIMEOUT_SECONDS must be an integer from 1 to 999."
-            exit 1
-          fi
-
           GATEWAY_RUNTIME_BINARY=$(GATEWAY_RUNTIME_BINARY="$GATEWAY_RUNTIME_BINARY_INPUT" bun --eval '
           import { normalizeGatewayRuntimeBinaryPath } from "./packages/deploy/dist/cli.js";
 
@@ -146,6 +141,25 @@ jobs:
               normalizeGatewayRuntimeBinaryPath(
                 process.env.GATEWAY_RUNTIME_BINARY ?? "",
                 "RAY_GATEWAY_RUNTIME_BINARY",
+              ),
+            );
+          } catch (error) {
+            process.stderr.write(
+              `::error::${error instanceof Error ? error.message : String(error)}\n`,
+            );
+            process.exit(1);
+          }
+          ')
+          READY_TIMEOUT_SECONDS=$(READY_TIMEOUT_SECONDS="$READY_TIMEOUT_SECONDS_INPUT" bun --eval '
+          import { parseDeployReadyTimeoutSeconds } from "./packages/deploy/dist/cli.js";
+
+          try {
+            process.stdout.write(
+              String(
+                parseDeployReadyTimeoutSeconds(
+                  process.env.READY_TIMEOUT_SECONDS ?? "",
+                  "RAY_DEPLOY_READY_TIMEOUT_SECONDS",
+                ),
               ),
             );
           } catch (error) {
