@@ -106,7 +106,7 @@ const MAX_AUTH_API_KEY_CHARS = 1_024;
 const DNS_HOST_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const unsafeEnvironmentVariableNames = new Set(["__proto__", "constructor", "prototype"]);
+const unsafeConfigRecordKeys = new Set(["__proto__", "constructor", "prototype"]);
 const reservedAdapterHeaderNames = new Set([
   "connection",
   "content-length",
@@ -1389,7 +1389,7 @@ function assertEnvironmentVariableName(value: unknown, label: string): void {
   if (
     typeof value !== "string" ||
     !ENVIRONMENT_VARIABLE_NAME_PATTERN.test(value) ||
-    unsafeEnvironmentVariableNames.has(value)
+    unsafeConfigRecordKeys.has(value)
   ) {
     throw new RayError(`${label} must be a valid environment variable name`, {
       code: "config_validation_error",
@@ -1434,6 +1434,16 @@ function assertEnumValue<T extends string>(
   }
 }
 
+function assertSafeConfigRecordKey(key: string, label: string): void {
+  if (unsafeConfigRecordKeys.has(key)) {
+    throw new RayError(`${label} must not contain unsafe key "${key}"`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { key },
+    });
+  }
+}
+
 function assertStringRecord(
   value: Record<string, string>,
   label: string,
@@ -1471,6 +1481,7 @@ function assertStringRecord(
       });
     }
 
+    assertSafeConfigRecordKey(key, label);
     assertStringLength(key, `${label} keys`, maxKeyChars);
     assertStringLength(entry, `${label}.${key}`, maxValueChars);
   }
@@ -1592,6 +1603,7 @@ function assertTemplateVariables(value: Record<string, unknown> | undefined, lab
       });
     }
 
+    assertSafeConfigRecordKey(key, label);
     assertStringLength(key, `${label} keys`, MAX_WARMUP_TEMPLATE_VARIABLE_KEY_CHARS);
 
     if (typeof entry !== "string" && typeof entry !== "number" && typeof entry !== "boolean") {
@@ -1626,6 +1638,10 @@ function assertWarmupRequest(
       status: 500,
       details: request,
     });
+  }
+
+  for (const [key] of Object.entries(request)) {
+    assertSafeConfigRecordKey(key, label);
   }
 
   if (isNonEmptyString(request.templateId)) {

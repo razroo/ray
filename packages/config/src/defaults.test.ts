@@ -82,7 +82,7 @@ test("mergeConfig rejects invalid direct override shapes", () => {
 test("mergeConfig rejects unsafe override keys", () => {
   assert.throws(
     () => mergeConfig(createDefaultConfig("tiny"), JSON.parse('{"__proto__":{"polluted":true}}')),
-    /override key "__proto__" is not allowed/,
+    /override key "__proto__" is not allowed at __proto__/,
   );
   assert.throws(
     () =>
@@ -90,7 +90,7 @@ test("mergeConfig rejects unsafe override keys", () => {
         createDefaultConfig("tiny"),
         JSON.parse('{"model":{"adapter":{"constructor":{"polluted":true}}}}'),
       ),
-    /override key "constructor" is not allowed/,
+    /override key "constructor" is not allowed at model\.adapter\.constructor/,
   );
   assert.throws(
     () =>
@@ -98,7 +98,7 @@ test("mergeConfig rejects unsafe override keys", () => {
         createDefaultConfig("tiny"),
         JSON.parse('{"unknown":{"prototype":{"polluted":true}}}'),
       ),
-    /override key "prototype" is not allowed/,
+    /override key "prototype" is not allowed at unknown\.prototype/,
   );
   assert.equal(({} as { polluted?: boolean }).polluted, undefined);
 });

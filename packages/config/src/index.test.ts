@@ -1244,6 +1244,24 @@ test("loadRayConfig rejects oversized structured config collections", async (t) 
     /tags must contain at most 64 entries/,
   );
 
+  const unsafeTagsConfigPath = join(tempDir, "ray.tags-unsafe.invalid.json");
+  await writeFile(
+    unsafeTagsConfigPath,
+    JSON.stringify({
+      profile: "tiny",
+      tags: JSON.parse('{"__proto__":"polluted"}') as Record<string, string>,
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: unsafeTagsConfigPath,
+      env: {},
+    }),
+    /override key "__proto__" is not allowed at tags\.__proto__/,
+  );
+
   const headersConfigPath = join(tempDir, "ray.headers.invalid.json");
   await writeFile(
     headersConfigPath,
@@ -1266,6 +1284,30 @@ test("loadRayConfig rejects oversized structured config collections", async (t) 
       env: {},
     }),
     /model\.adapter\.headers must contain at most 64 entries/,
+  );
+
+  const unsafeHeaderConfigPath = join(tempDir, "ray.header-unsafe.invalid.json");
+  await writeFile(
+    unsafeHeaderConfigPath,
+    JSON.stringify({
+      profile: "vps",
+      model: {
+        adapter: {
+          headers: {
+            constructor: "polluted",
+          },
+        },
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: unsafeHeaderConfigPath,
+      env: {},
+    }),
+    /override key "constructor" is not allowed at model\.adapter\.headers\.constructor/,
   );
 
   const headerNameConfigPath = join(tempDir, "ray.header-name.invalid.json");
@@ -1338,6 +1380,65 @@ test("loadRayConfig rejects oversized structured config collections", async (t) 
       env: {},
     }),
     /model\.adapter\.headers\.x-test must not contain NUL, CR, or LF characters/,
+  );
+
+  const unsafeTemplateVariablesConfigPath = join(
+    tempDir,
+    "ray.warmup-template-variables-unsafe.invalid.json",
+  );
+  await writeFile(
+    unsafeTemplateVariablesConfigPath,
+    JSON.stringify({
+      profile: "vps",
+      model: {
+        adapter: {
+          warmupRequests: [
+            {
+              templateId: "email.reply_classification.v1",
+              templateVariables: {
+                prototype: "polluted",
+              },
+            },
+          ],
+        },
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: unsafeTemplateVariablesConfigPath,
+      env: {},
+    }),
+    /override key "prototype" is not allowed at model\.adapter\.warmupRequests\.0\.templateVariables\.prototype/,
+  );
+
+  const unsafeWarmupConfigPath = join(tempDir, "ray.warmup-unsafe.invalid.json");
+  await writeFile(
+    unsafeWarmupConfigPath,
+    JSON.stringify({
+      profile: "vps",
+      model: {
+        adapter: {
+          warmupRequests: [
+            {
+              constructor: "polluted",
+              input: "ping",
+            },
+          ],
+        },
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: unsafeWarmupConfigPath,
+      env: {},
+    }),
+    /override key "constructor" is not allowed at model\.adapter\.warmupRequests\.0\.constructor/,
   );
 
   const warmupsConfigPath = join(tempDir, "ray.warmups.invalid.json");

@@ -694,7 +694,11 @@ export function createDefaultConfig(profile: RayProfile): RayConfig {
   return structuredClone(profileDefaults[profile]);
 }
 
-function assertSafeOverrideKeys(value: unknown, seen = new WeakSet<object>()): void {
+function assertSafeOverrideKeys(
+  value: unknown,
+  seen = new WeakSet<object>(),
+  path: string[] = [],
+): void {
   if (value === null || typeof value !== "object") {
     return;
   }
@@ -706,11 +710,13 @@ function assertSafeOverrideKeys(value: unknown, seen = new WeakSet<object>()): v
   seen.add(value);
 
   for (const key of Object.keys(value)) {
+    const keyPath = [...path, key];
+
     if (unsafeMergeKeys.has(key)) {
-      throw new TypeError(`override key "${key}" is not allowed`);
+      throw new TypeError(`override key "${key}" is not allowed at ${keyPath.join(".")}`);
     }
 
-    assertSafeOverrideKeys((value as Record<string, unknown>)[key], seen);
+    assertSafeOverrideKeys((value as Record<string, unknown>)[key], seen, keyPath);
   }
 }
 
