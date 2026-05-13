@@ -61,6 +61,17 @@ test("validateDocsLinks accepts current checked-in local Markdown links", async 
   assert.equal(summary.errorCount, 0);
 });
 
+test("validateDocsLinks rejects excessive direct Markdown inputs before reading", async () => {
+  await assert.rejects(
+    () =>
+      validateDocsLinks({
+        cwd: repoRoot,
+        markdownPaths: Array.from({ length: 513 }, (_value, index) => `/tmp/ray-doc-${index}.md`),
+      }),
+    /at most 512 Markdown files/,
+  );
+});
+
 test("validateDocsLinks reports missing and escaping local links", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-doc-links-broken-"));
   t.after(async () => {

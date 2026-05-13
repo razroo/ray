@@ -447,6 +447,10 @@ export async function validateDocsLinks(options: {
   markdownPaths?: string[];
 }): Promise<DocsLinkCheckSummary> {
   const cwd = path.resolve(options.cwd);
+  if (options.markdownPaths && options.markdownPaths.length > MAX_MARKDOWN_FILES) {
+    throw new Error(`Markdown link check can inspect at most ${MAX_MARKDOWN_FILES} Markdown files`);
+  }
+
   const markdownPaths = options.markdownPaths
     ? options.markdownPaths.map((filePath) => path.resolve(cwd, filePath)).sort()
     : await collectMarkdownPaths(cwd);
