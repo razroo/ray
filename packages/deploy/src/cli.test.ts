@@ -9,6 +9,7 @@ import {
   normalizeGatewayRuntimeBinaryPath,
   normalizeRepoConfigPath,
   parseDeployReadyTimeoutSeconds,
+  parseDeployServiceUser,
   parseDeploySshPort,
   parseDeploySshUser,
   parseCliArgs,
@@ -201,6 +202,19 @@ test("parseDeploySshUser rejects malformed deploy login users", () => {
   assert.throws(() => parseDeploySshUser("-oProxyCommand=sh"), /system account name/);
 });
 
+test("parseDeployServiceUser accepts system users and numeric UIDs", () => {
+  assert.equal(parseDeployServiceUser("ray"), "ray");
+  assert.equal(parseDeployServiceUser("ray_gpu"), "ray_gpu");
+  assert.equal(parseDeployServiceUser("1001"), "1001");
+});
+
+test("parseDeployServiceUser rejects malformed systemd users", () => {
+  assert.throws(() => parseDeployServiceUser(""), /system account name or numeric UID/);
+  assert.throws(() => parseDeployServiceUser(" ray"), /system account name or numeric UID/);
+  assert.throws(() => parseDeployServiceUser("ray deploy"), /system account name or numeric UID/);
+  assert.throws(() => parseDeployServiceUser("ray@example"), /system account name or numeric UID/);
+});
+
 test("formatDeployKnownHostLookup formats default and custom SSH ports", () => {
   assert.equal(formatDeployKnownHostLookup("ray.example.com", 22), "ray.example.com");
   assert.equal(formatDeployKnownHostLookup("203.0.113.10", "22"), "203.0.113.10");
@@ -300,9 +314,11 @@ test("parseCliArgs accepts explicit deploy domains", () => {
 
 test("parseCliArgs accepts explicit service users", () => {
   const options = parseCliArgs(["render", "--user", "ray_gpu"]);
+  const uidOptions = parseCliArgs(["render", "--user", "1001"]);
 
   assert.equal(options.command, "render");
   assert.equal(options.user, "ray_gpu");
+  assert.equal(uidOptions.user, "1001");
 });
 
 test("parseCliArgs rejects malformed service users", () => {

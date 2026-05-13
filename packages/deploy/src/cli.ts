@@ -301,6 +301,14 @@ export function parseDeploySshUser(value: string, label = "RAY_DEPLOY_SSH_USER")
   return parseServiceUserValue(value, label);
 }
 
+export function parseDeployServiceUser(value: string, label = "RAY_DEPLOY_SERVICE_USER"): string {
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be a string`);
+  }
+
+  return parseServiceUserValue(value, label);
+}
+
 export function formatDeployKnownHostLookup(
   host: string,
   port: number | string,
@@ -330,9 +338,7 @@ function parseOptionalPositiveIntegerEnv(
 
 function parseOptionalServiceUserEnv(value: string | undefined): string | undefined {
   const normalized = readNonEmptyEnvValue(value);
-  return normalized === undefined
-    ? undefined
-    : parseServiceUserValue(normalized, "RAY_DEPLOY_SERVICE_USER");
+  return normalized === undefined ? undefined : parseDeployServiceUser(normalized);
 }
 
 function decodeDoubleQuotedEnvValue(value: string): string {
@@ -577,7 +583,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     }
 
     if (current === "--user") {
-      options.user = parseServiceUserValue(requireFlagValue(current, next), current);
+      options.user = parseDeployServiceUser(requireFlagValue(current, next), current);
       index += 1;
       continue;
     }

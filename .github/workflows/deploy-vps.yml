@@ -286,10 +286,20 @@ jobs:
           SERVICE_USER=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).serviceUser')
           CADDY_BINARY=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).caddyBinary ?? ""')
 
-          if ! printf '%s' "$SERVICE_USER" | grep -Eq '^[A-Za-z_][A-Za-z0-9_-]{0,30}$'; then
-            echo "::error::RAY_DEPLOY_SERVICE_USER must be a system account name using only letters, digits, underscores, or hyphens."
-            exit 1
-          fi
+          SERVICE_USER=$(SERVICE_USER="$SERVICE_USER" bun --eval '
+          import { parseDeployServiceUser } from "./packages/deploy/dist/cli.js";
+
+          try {
+            process.stdout.write(
+              parseDeployServiceUser(process.env.SERVICE_USER ?? "", "RAY_DEPLOY_SERVICE_USER"),
+            );
+          } catch (error) {
+            process.stderr.write(
+              `::error::${error instanceof Error ? error.message : String(error)}\n`,
+            );
+            process.exit(1);
+          }
+          ')
 
           if [ "$INSTALL_CADDY" = "true" ] && [ "$AUTH_ENABLED" != "true" ]; then
             echo "::error::RAY_DEPLOY_INSTALL_CADDY=true exposes Ray through Caddy, but the resolved config has auth.enabled=false. Use a public config or enable RAY_AUTH_ENABLED=true."

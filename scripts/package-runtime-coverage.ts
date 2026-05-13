@@ -700,6 +700,44 @@ function validateDeployWorkflowCaddyBinaryGuards(
   ];
 }
 
+function validateDeployWorkflowServiceUserGuard(
+  workflowPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  if (
+    !contents.includes("RAY_DEPLOY_SERVICE_USER") ||
+    !contents.includes('echo "service_user=$SERVICE_USER" >> "$GITHUB_OUTPUT"')
+  ) {
+    return [];
+  }
+
+  if (
+    contents.includes("parseDeployServiceUser") &&
+    contents.includes(
+      'parseDeployServiceUser(process.env.SERVICE_USER ?? "", "RAY_DEPLOY_SERVICE_USER")',
+    ) &&
+    !contents.includes("^[A-Za-z_][A-Za-z0-9_-]{0,30}$")
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "workflow_service_user_parser_missing",
+      workflowPath,
+      line: workflowLineNumber(lines, "RAY_DEPLOY_SERVICE_USER"),
+      message:
+        "VPS deploy workflow must validate RAY_DEPLOY_SERVICE_USER through the shared deploy parser so numeric UIDs and CLI --user behavior stay consistent.",
+    },
+  ];
+}
+
 function validateDeployWorkflowSecretFileInstalls(
   workflowPath: string,
   lines: string[],
@@ -1121,6 +1159,7 @@ async function validateWorkflow(
   diagnostics.push(...validateDeployWorkflowPublicCaddyAuthGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowPublicCaddyDomainGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowCaddyBinaryGuards(workflowPath, contents, lines));
+  diagnostics.push(...validateDeployWorkflowServiceUserGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowSecretFileInstalls(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowStateOwnershipGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowAptGuards(workflowPath, lines));

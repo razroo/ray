@@ -146,9 +146,11 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
       "name: Deploy VPS",
       "env:",
       "  RAY_DEPLOY_INSTALL_CADDY: ${{ vars.RAY_DEPLOY_INSTALL_CADDY }}",
+      "  RAY_DEPLOY_SERVICE_USER: ${{ vars.RAY_DEPLOY_SERVICE_USER }}",
       "jobs:",
       "  deploy:",
       "    steps:",
+      '      - run: echo "service_user=$SERVICE_USER" >> "$GITHUB_OUTPUT"',
       "      - run: printf secret | sudo tee /etc/ray/ray.env >/dev/null",
       "      - run: sudo apt-get install -y curl",
       "      - run: sudo chown -R ray:ray /var/lib/ray",
@@ -228,6 +230,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("workflow_public_caddy_auth_guard_missing"));
   assert.ok(codes.includes("workflow_public_caddy_domain_guard_missing"));
   assert.ok(codes.includes("workflow_caddy_binary_guard_missing"));
+  assert.ok(codes.includes("workflow_service_user_parser_missing"));
   assert.ok(codes.includes("workflow_secret_file_install_mode_missing"));
   assert.ok(codes.includes("workflow_recursive_state_chown"));
   assert.ok(codes.includes("workflow_root_command_timeout_missing"));
