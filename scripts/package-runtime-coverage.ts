@@ -4,7 +4,12 @@ import { pathToFileURL } from "node:url";
 
 const DEFAULT_ROOT_PACKAGE_JSON = "package.json";
 const DEFAULT_WORKFLOW_DIR = ".github/workflows";
-const DEFAULT_DEPLOYMENT_DOCS = ["examples/deploy/vps/README.md", "docs/portable-1b.md"] as const;
+const DEFAULT_RUNTIME_DOCS = [
+  "README.md",
+  "examples/deploy/vps/README.md",
+  "docs/portable-1b.md",
+] as const;
+const VPS_TIMEOUT_DOCS = new Set(["examples/deploy/vps/README.md", "docs/portable-1b.md"]);
 const MAX_CLI_ARGS = 8;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_PACKAGE_JSON_BYTES = 512 * 1024;
@@ -15,7 +20,7 @@ const MAX_DISCOVERY_PATH_BYTES = 4_096;
 const MAX_WORKFLOW_BYTES = 512 * 1024;
 const MAX_WORKFLOW_FILES = 64;
 const MAX_WORKFLOW_DIRECTORY_ENTRIES = 1_024;
-const MAX_DEPLOY_DOC_BYTES = 512 * 1024;
+const MAX_RUNTIME_DOC_BYTES = 512 * 1024;
 const skipDirectoryNames = new Set([".git", ".ray", "dist", "node_modules"]);
 const forbiddenLockfiles = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"] as const;
 const forbiddenPackageManagerPattern =
@@ -63,7 +68,7 @@ export interface PackageRuntimeCoverageSummary {
   results: PackageRuntimeCoverageResult[];
 }
 
-const HELP = `Validate Bun-first package, workflow, and deployment-doc runtime coverage.
+const HELP = `Validate Bun-first package, workflow, and runtime-doc coverage.
 
 Usage:
   bun ./scripts/package-runtime-coverage.ts [options]
@@ -328,9 +333,9 @@ async function collectWorkflowPaths(cwd: string): Promise<string[]> {
   }
 }
 
-async function collectDeploymentDocPaths(cwd: string): Promise<string[]> {
+async function collectRuntimeDocPaths(cwd: string): Promise<string[]> {
   const docPaths: string[] = [];
-  for (const docRel of DEFAULT_DEPLOYMENT_DOCS) {
+  for (const docRel of DEFAULT_RUNTIME_DOCS) {
     const docPath = path.join(cwd, docRel);
     if (await pathExists(docPath)) {
       docPaths.push(docPath);
@@ -996,10 +1001,13 @@ function isVpsReadmeCommandRequiringTimeout(line: string): boolean {
   );
 }
 
-async function validateDeploymentDoc(
+async function validateRuntimeDoc(
   docPath: string,
+  options: {
+    enforceVpsTimeouts: boolean;
+  },
 ): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
-  const contents = await readTextFileBounded(docPath, MAX_DEPLOY_DOC_BYTES, "Deployment doc");
+  const contents = await readTextFileBounded(docPath, MAX_RUNTIME_DOC_BYTES, "Runtime doc");
   const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
   const lines = contents.split(/\r?\n/);
   let inShellBlock = false;
@@ -1027,15 +1035,15 @@ async function validateDeploymentDoc(
     if (forbiddenWorkflowPackageManagerPattern.test(line)) {
       diagnostics.push({
         level: "error",
-        code: "non_bun_vps_readme_command",
+        code: "non_bun_runtime_doc_command",
         docPath,
         line: index + 1,
         message:
-          "VPS deployment docs must not tell operators to use pnpm/yarn/npx or npm install/run/test. Use bun, bunx, or a direct binary instead.",
+          "Runtime docs must not tell operators to use pnpm/yarn/npx or npm install/run/test. Use bun, bunx, or a direct binary instead.",
       });
     }
 
-    if (isPipedShellCurl(line) && !hasPipedShellTimeout(line)) {
+    if (options.enforceVpsTimeouts && isPipedShellCurl(line) && !hasPipedShellTimeout(line)) {
       diagnostics.push({
         level: "error",
         code: "vps_readme_curl_install_unbounded",
@@ -1047,6 +1055,7 @@ async function validateDeploymentDoc(
     }
 
     if (
+      options.enforceVpsTimeouts &&
       /\bbun\s+install\b/.test(line) &&
       (!line.includes("timeout ") || !line.includes("--frozen-lockfile"))
     ) {
@@ -1060,7 +1069,11 @@ async function validateDeploymentDoc(
       });
     }
 
-    if (/\bapt-get\s+(?:update|install)\b/.test(line) && !line.includes("timeout ")) {
+    if (
+      options.enforceVpsTimeouts &&
+      /\bapt-get\s+(?:update|install)\b/.test(line) &&
+      !line.includes("timeout ")
+    ) {
       diagnostics.push({
         level: "error",
         code: "vps_readme_apt_get_unbounded",
@@ -1071,7 +1084,11 @@ async function validateDeploymentDoc(
       });
     }
 
-    if (isVpsReadmeCommandRequiringTimeout(line) && !line.includes("timeout ")) {
+    if (
+      options.enforceVpsTimeouts &&
+      isVpsReadmeCommandRequiringTimeout(line) &&
+      !line.includes("timeout ")
+    ) {
       diagnostics.push({
         level: "error",
         code: "vps_readme_command_timeout_missing",
@@ -1096,7 +1113,7 @@ export async function validatePackageRuntimeCoverage(options: {
   const cwd = path.resolve(options.cwd);
   const results: PackageRuntimeCoverageResult[] = [];
   const workflowPaths = await collectWorkflowPaths(cwd);
-  const deploymentDocPaths = await collectDeploymentDocPaths(cwd);
+  const runtimeDocPaths = await collectRuntimeDocPaths(cwd);
 
   for (const packageJsonPath of options.packageJsonPaths.map((filePath) =>
     path.resolve(filePath),
@@ -1168,9 +1185,12 @@ export async function validatePackageRuntimeCoverage(options: {
     }
   }
 
-  for (const docPath of deploymentDocPaths) {
+  for (const docPath of runtimeDocPaths) {
     try {
-      const { lineCount, diagnostics } = await validateDeploymentDoc(docPath);
+      const docRelPath = displayPath(cwd, docPath);
+      const { lineCount, diagnostics } = await validateRuntimeDoc(docPath, {
+        enforceVpsTimeouts: VPS_TIMEOUT_DOCS.has(docRelPath),
+      });
       results.push({
         kind: "doc",
         packagePath: docPath,
@@ -1187,7 +1207,7 @@ export async function validatePackageRuntimeCoverage(options: {
         diagnostics: [
           {
             level: "error",
-            code: "deployment_doc_invalid",
+            code: "runtime_doc_invalid",
             docPath,
             message: error instanceof Error ? error.message : String(error),
           },
@@ -1229,7 +1249,7 @@ export async function validatePackageRuntimeCoverage(options: {
     ok: errorCount === 0,
     packageCount: options.packageJsonPaths.length,
     workflowCount: workflowPaths.length,
-    docCount: deploymentDocPaths.length,
+    docCount: runtimeDocPaths.length,
     scriptCount,
     errorCount,
     forbiddenLockfiles: foundForbiddenLockfiles,
@@ -1239,7 +1259,7 @@ export async function validatePackageRuntimeCoverage(options: {
 
 export function formatTextSummary(cwd: string, summary: PackageRuntimeCoverageSummary): string {
   const lines = [
-    `Checked ${summary.packageCount} package manifest${summary.packageCount === 1 ? "" : "s"}, ${summary.workflowCount} GitHub workflow${summary.workflowCount === 1 ? "" : "s"}, and ${summary.docCount} deployment doc${summary.docCount === 1 ? "" : "s"} for Bun-first runtime coverage:`,
+    `Checked ${summary.packageCount} package manifest${summary.packageCount === 1 ? "" : "s"}, ${summary.workflowCount} GitHub workflow${summary.workflowCount === 1 ? "" : "s"}, and ${summary.docCount} runtime doc${summary.docCount === 1 ? "" : "s"} for Bun-first runtime coverage:`,
   ];
 
   for (const result of summary.results) {

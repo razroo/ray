@@ -41,7 +41,7 @@ test("validatePackageRuntimeCoverage accepts current Bun-first workspace manifes
   assert.equal(summary.ok, true);
   assert.ok(summary.packageCount >= 10);
   assert.ok(summary.workflowCount >= 1);
-  assert.ok(summary.docCount >= 2);
+  assert.ok(summary.docCount >= 3);
   assert.ok(summary.scriptCount > 0);
   assert.equal(summary.forbiddenLockfiles.length, 0);
   assert.ok(
@@ -99,6 +99,10 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
     ),
   );
   await writeFile(path.join(tempDir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+  await writeFile(
+    path.join(tempDir, "README.md"),
+    ["# Ray test", "", "```bash", "pnpm install", "```", ""].join("\n"),
+  );
   await writeFile(
     path.join(workflowDir, "quality.yml"),
     [
@@ -193,7 +197,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("vps_readme_apt_get_unbounded"));
   assert.ok(codes.includes("vps_readme_command_timeout_missing"));
   assert.ok(codes.includes("vps_readme_bun_install_unbounded"));
-  assert.ok(codes.includes("non_bun_vps_readme_command"));
+  assert.equal(codes.filter((code) => code === "non_bun_runtime_doc_command").length, 2);
   assert.ok(codes.includes("non_bun_lockfile_present"));
 });
 
@@ -237,8 +241,8 @@ test("validatePackageRuntimeCoverage rejects oversized runtime coverage inputs",
   assert.ok(
     diagnostics.some(
       (diagnostic) =>
-        diagnostic.code === "deployment_doc_invalid" &&
-        /Deployment doc must be at most 524288 bytes/.test(diagnostic.message),
+        diagnostic.code === "runtime_doc_invalid" &&
+        /Runtime doc must be at most 524288 bytes/.test(diagnostic.message),
     ),
   );
 });
@@ -294,7 +298,7 @@ test("formatTextSummary prints operator-readable runtime coverage results", asyn
 
   assert.match(text, /Checked 1 package manifest/);
   assert.match(text, /GitHub workflow/);
-  assert.match(text, /deployment doc/);
+  assert.match(text, /runtime doc/);
   assert.match(text, /package\.json/);
   assert.match(text, /packageManager=bun@/);
   assert.match(text, /Summary: packages=1/);
@@ -319,5 +323,5 @@ test("runPackageRuntimeCoverageCli prints JSON coverage", async () => {
   assert.equal(parsed.ok, true);
   assert.ok((parsed.packageCount ?? 0) >= 10);
   assert.ok((parsed.workflowCount ?? 0) >= 1);
-  assert.ok((parsed.docCount ?? 0) >= 2);
+  assert.ok((parsed.docCount ?? 0) >= 3);
 });
