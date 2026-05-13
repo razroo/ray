@@ -730,12 +730,7 @@ export class LlamaCppProvider implements ModelProvider {
     )) as OpenAICompatibleResponse;
     const output = extractAssistantText(payload);
 
-    try {
-      JSON.parse(output);
-      return true;
-    } catch {
-      return false;
-    }
+    return isValidJsonObject(output);
   }
 
   async prepare(

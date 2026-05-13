@@ -1008,6 +1008,102 @@ test("llama.cpp provider falls back to chat completions for json_object requests
   assert.ok(!seenPaths.includes("/completion"));
 });
 
+test("llama.cpp provider requires JSON-mode probes to return objects", async (t) => {
+  let chatCompletionCalls = 0;
+
+  const server = createServer((request, response) => {
+    if (request.url === "/health?include_slots=1") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ status: "ok" }));
+      return;
+    }
+
+    if (request.url === "/props") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          total_slots: 1,
+          chat_template: "{{ messages }}",
+          default_generation_settings: {
+            n_ctx: 4096,
+            model: "test-model-ref",
+          },
+        }),
+      );
+      return;
+    }
+
+    if (request.url === "/apply-template") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ prompt: "<s>json mode probe</s>" }));
+      return;
+    }
+
+    if (request.url === "/slots") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify([]));
+      return;
+    }
+
+    if (request.url === "/tokenize") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ tokens: [1, 2, 3] }));
+      return;
+    }
+
+    if (request.url === "/completion") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          content: "warm",
+          timings: {
+            prompt_n: 3,
+            predicted_n: 1,
+          },
+        }),
+      );
+      return;
+    }
+
+    if (request.url === "/v1/chat/completions") {
+      chatCompletionCalls += 1;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: "true",
+              },
+            },
+          ],
+        }),
+      );
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const model = createModel(`http://127.0.0.1:${address.port}`, 500);
+  const provider = new LlamaCppProvider(model, model.adapter as LlamaCppProviderConfig);
+
+  await provider.warm();
+  const health = await provider.health();
+
+  assert.equal(chatCompletionCalls, 1);
+  assert.equal(health.detectedCapabilities?.jsonMode, "unavailable");
+});
+
 test("llama.cpp provider sanitizes chat-completion token usage", async (t) => {
   const server = createServer((request, response) => {
     if (request.url === "/apply-template") {
