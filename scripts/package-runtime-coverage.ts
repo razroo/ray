@@ -642,8 +642,13 @@ function validateDeployWorkflowPublicCaddyDomainGuard(
   }
 
   if (
-    contents.includes("DEPLOY_DOMAIN_HOST") &&
-    contents.includes("ray.local|localhost|*.local|127.*|::1") &&
+    (contents.includes("DEPLOY_DOMAIN_HOST") || contents.includes("deployDomainHost")) &&
+    (contents.includes("ray.local|localhost|*.local|127.*|::1") ||
+      (contents.includes('deployDomainHost === "ray.local"') &&
+        contents.includes('deployDomainHost === "localhost"') &&
+        contents.includes('deployDomainHost.endsWith(".local")') &&
+        contents.includes('deployDomainHost.startsWith("127.")') &&
+        contents.includes('deployDomainHost === "::1"'))) &&
     contents.includes(
       "RAY_DEPLOY_INSTALL_CADDY=true requires RAY_DEPLOY_DOMAIN to be a real public DNS name",
     )
@@ -659,6 +664,44 @@ function validateDeployWorkflowPublicCaddyDomainGuard(
       line: workflowLineNumber(lines, "RAY_DEPLOY_INSTALL_CADDY"),
       message:
         "VPS deploy workflow must refuse RAY_DEPLOY_INSTALL_CADDY=true when RAY_DEPLOY_DOMAIN is still a local placeholder such as ray.local, localhost, loopback, or .local.",
+    },
+  ];
+}
+
+function validateDeployWorkflowCaddyEnvOverrides(
+  workflowPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  if (!contents.includes("RAY_DEPLOY_INSTALL_CADDY") || !contents.includes("RAY_DEPLOY_DOMAIN")) {
+    return [];
+  }
+
+  if (
+    contents.includes("envOverrides.RAY_DEPLOY_DOMAIN") &&
+    contents.includes("envOverrides.RAY_DEPLOY_INSTALL_CADDY") &&
+    contents.includes("process.env.RAY_DEPLOY_DOMAIN") &&
+    contents.includes("process.env.RAY_DEPLOY_INSTALL_CADDY") &&
+    contents.includes("deployDomain") &&
+    contents.includes("installCaddy") &&
+    contents.includes('echo "deploy_domain=$DEPLOY_DOMAIN" >> "$GITHUB_OUTPUT"') &&
+    contents.includes('echo "install_caddy=$INSTALL_CADDY" >> "$GITHUB_OUTPUT"')
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "workflow_caddy_env_override_missing",
+      workflowPath,
+      line: workflowLineNumber(lines, "RAY_DEPLOY_INSTALL_CADDY"),
+      message:
+        "VPS deploy workflow must resolve RAY_DEPLOY_DOMAIN and RAY_DEPLOY_INSTALL_CADDY after parsing RAY_ENV_FILE_CONTENTS so env-file Caddy deploy settings feed remote prerequisites, doctor, render, and reload decisions.",
     },
   ];
 }
@@ -1264,6 +1307,7 @@ async function validateWorkflow(
 
   diagnostics.push(...validateDeployWorkflowPublicCaddyAuthGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowPublicCaddyDomainGuard(workflowPath, contents, lines));
+  diagnostics.push(...validateDeployWorkflowCaddyEnvOverrides(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowCaddyBinaryGuards(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowServiceUserGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowNumericServiceUserGuard(workflowPath, contents, lines));

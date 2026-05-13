@@ -393,9 +393,9 @@ Optional repository variables:
 - `RAY_DEPLOY_SSH_USER` — SSH login user, defaults to `root`; the workflow validates it as a simple system account name or numeric UID before opening SSH, and non-root users must have passwordless sudo
 - `RAY_DEPLOY_SSH_PORT` — SSH port for deploy, defaults to `22`
 - `RAY_DEPLOY_SERVICE_USER` — generated non-root systemd service account name or numeric UID, defaults to `ray`; workflow deploys create missing named users, numeric UIDs must already resolve to an account on the VPS, and local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--user` is omitted
-- `RAY_DEPLOY_DOMAIN` — Caddy site address to render, defaults to `ray.local`; set it to the real public DNS name before installing Caddy because render/doctor warn on local placeholder addresses; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--domain` is omitted
+- `RAY_DEPLOY_DOMAIN` — Caddy site address to render, defaults to `ray.local`; set it to the real public DNS name before installing Caddy because render/doctor warn on local placeholder addresses; local deploy CLI runs honor this value from the process env or `--ray-env-file` when `--domain` is omitted, and workflow deploys honor it from `RAY_ENV_FILE_CONTENTS` before repository variables
 - `RAY_DEPLOY_MEMORY_MIB` — optional VPS memory class used by workflow doctor/render when `/etc/ray/ray.env` does not already set it; local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--memory-mib` is omitted
-- `RAY_DEPLOY_INSTALL_CADDY` — set to `true` to install and reload the generated Caddyfile; requires `RAY_DEPLOY_DOMAIN` to be a real public DNS name, not `ray.local`, `localhost`, loopback, or another `.local` placeholder
+- `RAY_DEPLOY_INSTALL_CADDY` — set to `true` to install and reload the generated Caddyfile; requires `RAY_DEPLOY_DOMAIN` to be a real public DNS name, not `ray.local`, `localhost`, loopback, or another `.local` placeholder; workflow deploys honor this value from `RAY_ENV_FILE_CONTENTS` before repository variables
 - `RAY_CONFIG_PATH` — repo-relative config path to install, defaults to `./examples/config/ray.sub1b.public.json`; the workflow rejects absolute paths, path traversal, and paths excluded from repo sync before opening SSH
 - `RAY_GATEWAY_RUNTIME_BINARY` — absolute JavaScript runtime path rendered into `ray-gateway.service`, defaults to `/usr/local/bin/bun`; the deploy CLI and workflow reject relative paths, paths under `/home`, `/root`, or `/run/user` because generated units use `ProtectHome=true`, and paths under `/tmp` or `/var/tmp` because generated units use `PrivateTmp=true`
 - `RAY_DEPLOY_CADDY_BINARY` — absolute Caddy runtime path for local render/doctor checks and GitHub Actions deploys when `caddy` is not on the deploy user's `PATH`; pass `--caddy-binary` to override it for one command
@@ -409,10 +409,11 @@ long enough to resolve deployment settings, excludes `.ray-deploy-*` from repo
 sync, and writes the live config directly to `/etc/ray/ray.json`.
 
 `RAY_ENV_FILE_CONTENTS` is the right place for auth keys or env overrides. The
-workflow applies `RAY_GATEWAY_RUNTIME_BINARY`, `RAY_DEPLOY_CADDY_BINARY`, and
+workflow applies `RAY_DEPLOY_DOMAIN`, `RAY_DEPLOY_INSTALL_CADDY`,
+`RAY_GATEWAY_RUNTIME_BINARY`, `RAY_DEPLOY_CADDY_BINARY`, and
 `RAY_DEPLOY_SERVICE_USER` from this env file before repository variables when it
-wires remote doctor, render, and generated service commands. It validates auth
-API keys before opening SSH, refuses
+wires remote prerequisites, doctor, render, and generated service commands. It
+validates auth API keys before opening SSH, refuses
 `RAY_DEPLOY_INSTALL_CADDY=true` when the resolved config still has
 `auth.enabled=false`, then applies those overrides when choosing the post-restart
 health check port. For example:
@@ -425,6 +426,8 @@ RAY_MODEL_WARM_ON_BOOT=false
 RAY_ASYNC_QUEUE_ENABLED=true
 RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS=callback.example
 RAY_DEPLOY_SERVICE_USER=ray
+RAY_DEPLOY_DOMAIN=ray.example.com
+RAY_DEPLOY_INSTALL_CADDY=true
 RAY_DEPLOY_MEMORY_MIB=4096
 RAY_GATEWAY_RUNTIME_BINARY=/usr/local/bin/bun
 RAY_DEPLOY_CADDY_BINARY=/usr/bin/caddy

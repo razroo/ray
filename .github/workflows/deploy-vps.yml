@@ -88,49 +88,13 @@ jobs:
           set -euo pipefail
           CONFIG_SOURCE="repo"
           CONFIG_PATH="${CONFIG_INPUT:-${RAY_CONFIG_PATH_VAR:-./examples/config/ray.sub1b.public.json}}"
-          DEPLOY_DOMAIN="${RAY_DEPLOY_DOMAIN:-ray.local}"
-          INSTALL_CADDY="${RAY_DEPLOY_INSTALL_CADDY:-false}"
           READY_TIMEOUT_SECONDS_INPUT="${RAY_DEPLOY_READY_TIMEOUT_SECONDS:-120}"
           SSH_PORT_INPUT="${RAY_DEPLOY_SSH_PORT:-22}"
           SSH_USER_INPUT="${RAY_DEPLOY_SSH_USER:-root}"
 
-          if [ -z "$DEPLOY_DOMAIN" ] || printf '%s' "$DEPLOY_DOMAIN" | grep -q '[[:space:]{}]'; then
-            echo "::error::RAY_DEPLOY_DOMAIN must be a non-empty Caddy site address without whitespace or braces."
-            exit 1
-          fi
-
           if [ -n "${RAY_DEPLOY_MEMORY_MIB:-}" ] && ! printf '%s' "$RAY_DEPLOY_MEMORY_MIB" | grep -Eq '^[1-9][0-9]*$'; then
             echo "::error::RAY_DEPLOY_MEMORY_MIB must be a positive integer MiB value."
             exit 1
-          fi
-
-          case "$INSTALL_CADDY" in
-            true|false) ;;
-            *)
-              echo "::error::RAY_DEPLOY_INSTALL_CADDY must be true or false."
-              exit 1
-              ;;
-          esac
-
-          if [ "$INSTALL_CADDY" = "true" ] && [ -z "${RAY_DEPLOY_DOMAIN:-}" ]; then
-            echo "::error::RAY_DEPLOY_DOMAIN is required when RAY_DEPLOY_INSTALL_CADDY=true."
-            exit 1
-          fi
-
-          if [ "$INSTALL_CADDY" = "true" ]; then
-            DEPLOY_DOMAIN_NORMALIZED="$(printf '%s' "$DEPLOY_DOMAIN" | tr '[:upper:]' '[:lower:]')"
-            DEPLOY_DOMAIN_HOST="${DEPLOY_DOMAIN_NORMALIZED#http://}"
-            DEPLOY_DOMAIN_HOST="${DEPLOY_DOMAIN_HOST#https://}"
-            DEPLOY_DOMAIN_HOST="${DEPLOY_DOMAIN_HOST%%/*}"
-            DEPLOY_DOMAIN_HOST="${DEPLOY_DOMAIN_HOST%:*}"
-            DEPLOY_DOMAIN_HOST="${DEPLOY_DOMAIN_HOST#[}"
-            DEPLOY_DOMAIN_HOST="${DEPLOY_DOMAIN_HOST%]}"
-            case "$DEPLOY_DOMAIN_HOST" in
-              ""|ray.local|localhost|*.local|127.*|::1|0:0:0:0:0:0:0:1)
-                echo "::error::RAY_DEPLOY_INSTALL_CADDY=true requires RAY_DEPLOY_DOMAIN to be a real public DNS name, not a local placeholder."
-                exit 1
-                ;;
-            esac
           fi
 
           READY_TIMEOUT_SECONDS=$(READY_TIMEOUT_SECONDS="$READY_TIMEOUT_SECONDS_INPUT" bun --eval '
@@ -216,6 +180,39 @@ jobs:
 
           const readNonEmpty = (value) =>
             typeof value === "string" && value.trim().length > 0 ? value : undefined;
+          const fail = (message) => {
+            process.stderr.write(`::error::${message}\n`);
+            process.exit(1);
+          };
+          const parseOptionalBoolean = (value, label) => {
+            const raw = readNonEmpty(value);
+            if (raw === undefined) {
+              return undefined;
+            }
+
+            if (raw === "true") {
+              return true;
+            }
+
+            if (raw === "false") {
+              return false;
+            }
+
+            fail(`${label} must be true or false.`);
+          };
+          const publicCaddyHost = (siteAddress) => {
+            const withoutScheme = siteAddress
+              .toLowerCase()
+              .replace(/^http:\/\//, "")
+              .replace(/^https:\/\//, "");
+            const authority = withoutScheme.split("/")[0] ?? "";
+            if (authority.startsWith("[") && authority.includes("]")) {
+              return authority.slice(1, authority.indexOf("]"));
+            }
+
+            const colonCount = (authority.match(/:/g) ?? []).length;
+            return colonCount === 1 ? authority.slice(0, authority.indexOf(":")) : authority;
+          };
 
           const envOverrides = process.env.RAY_ENV_FILE_CONTENTS
             ? parseEnvironmentFile(process.env.RAY_ENV_FILE_CONTENTS)
@@ -231,6 +228,44 @@ jobs:
             readNonEmpty(envOverrides.RAY_GATEWAY_RUNTIME_BINARY) ??
             readNonEmpty(process.env.RAY_GATEWAY_RUNTIME_BINARY) ??
             "/usr/local/bin/bun";
+          const deployDomain =
+            readNonEmpty(envOverrides.RAY_DEPLOY_DOMAIN) ??
+            readNonEmpty(process.env.RAY_DEPLOY_DOMAIN) ??
+            "ray.local";
+          const installCaddy =
+            parseOptionalBoolean(
+              envOverrides.RAY_DEPLOY_INSTALL_CADDY,
+              "RAY_DEPLOY_INSTALL_CADDY",
+            ) ??
+            parseOptionalBoolean(
+              process.env.RAY_DEPLOY_INSTALL_CADDY,
+              "RAY_DEPLOY_INSTALL_CADDY",
+            ) ??
+            false;
+
+          if (/[\s{}]/.test(deployDomain)) {
+            fail(
+              "RAY_DEPLOY_DOMAIN must be a non-empty Caddy site address without whitespace or braces.",
+            );
+          }
+
+          if (installCaddy) {
+            const deployDomainHost = publicCaddyHost(deployDomain);
+            if (
+              deployDomainHost === "" ||
+              deployDomainHost === "ray.local" ||
+              deployDomainHost === "localhost" ||
+              deployDomainHost.endsWith(".local") ||
+              deployDomainHost.startsWith("127.") ||
+              deployDomainHost === "::1" ||
+              deployDomainHost === "0:0:0:0:0:0:0:1"
+            ) {
+              fail(
+                "RAY_DEPLOY_INSTALL_CADDY=true requires RAY_DEPLOY_DOMAIN to be a real public DNS name, not a local placeholder.",
+              );
+            }
+          }
+
           let gatewayRuntimeBinary = "";
           try {
             gatewayRuntimeBinary = normalizeGatewayRuntimeBinaryPath(
@@ -281,6 +316,8 @@ jobs:
               readNonEmpty(envOverrides.RAY_DEPLOY_SERVICE_USER) ??
               readNonEmpty(process.env.RAY_DEPLOY_SERVICE_USER) ??
               "ray",
+            deployDomain,
+            installCaddy,
             gatewayRuntimeBinary,
             caddyBinary,
           }));
@@ -288,6 +325,8 @@ jobs:
           HEALTH_PORT=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).healthPort')
           AUTH_ENABLED=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'String(JSON.parse(process.env.DEPLOY_SETTINGS).authEnabled)')
           SERVICE_USER=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).serviceUser')
+          DEPLOY_DOMAIN=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).deployDomain')
+          INSTALL_CADDY=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'String(JSON.parse(process.env.DEPLOY_SETTINGS).installCaddy)')
           GATEWAY_RUNTIME_BINARY=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).gatewayRuntimeBinary')
           CADDY_BINARY=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).caddyBinary ?? ""')
 
