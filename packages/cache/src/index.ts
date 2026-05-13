@@ -4,6 +4,11 @@ interface CacheEntry<T> {
   sizeBytes: number;
 }
 
+const MAX_CACHE_ENTRIES = 4_096;
+const MAX_CACHE_TTL_MS = 86_400_000;
+const DEFAULT_CACHE_MAX_BYTES = 2 * 1024 * 1024;
+const MAX_CACHE_BYTES = 256 * 1024 * 1024;
+
 export interface TtlCacheOptions<T = unknown> {
   maxEntries: number;
   ttlMs: number;
@@ -33,25 +38,16 @@ export class TtlCache<T> {
   private droppedUnmeasurableEntries = 0;
 
   constructor(options: TtlCacheOptions<T>) {
-    if (!Number.isSafeInteger(options.maxEntries) || options.maxEntries <= 0) {
-      throw new RangeError("maxEntries must be a positive safe integer");
-    }
+    assertPositiveSafeIntegerAtMost(options.maxEntries, "maxEntries", MAX_CACHE_ENTRIES);
+    assertPositiveSafeIntegerAtMost(options.ttlMs, "ttlMs", MAX_CACHE_TTL_MS);
 
-    if (!Number.isSafeInteger(options.ttlMs) || options.ttlMs <= 0) {
-      throw new RangeError("ttlMs must be a positive safe integer");
-    }
-
-    if (
-      options.maxBytes !== undefined &&
-      (!Number.isSafeInteger(options.maxBytes) || options.maxBytes <= 0)
-    ) {
-      throw new RangeError("maxBytes must be a positive safe integer when provided");
-    }
+    const maxBytes = options.maxBytes ?? DEFAULT_CACHE_MAX_BYTES;
+    assertPositiveSafeIntegerAtMost(maxBytes, "maxBytes", MAX_CACHE_BYTES);
 
     this.options = {
       maxEntries: options.maxEntries,
       ttlMs: options.ttlMs,
-      ...(options.maxBytes !== undefined ? { maxBytes: options.maxBytes } : {}),
+      maxBytes,
       ...(options.sizeOf ? { sizeOf: options.sizeOf } : {}),
     };
   }
@@ -197,6 +193,16 @@ export class TtlCache<T> {
     }
 
     return sizeBytes;
+  }
+}
+
+function assertPositiveSafeIntegerAtMost(value: number, label: string, maximum: number): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError(`${label} must be a positive safe integer`);
+  }
+
+  if (value > maximum) {
+    throw new RangeError(`${label} must be less than or equal to ${maximum}`);
   }
 }
 

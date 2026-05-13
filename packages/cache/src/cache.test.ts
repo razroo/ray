@@ -87,6 +87,22 @@ test("ttl cache counts expired entries during snapshots", async () => {
   assert.equal(snapshot.droppedUnmeasurableEntries, 0);
 });
 
+test("ttl cache applies a default byte budget", () => {
+  const cache = new TtlCache<string>({
+    maxEntries: 10,
+    ttlMs: 10_000,
+  });
+
+  cache.set("small", "cached");
+  cache.set("too-large", "x".repeat(2 * 1024 * 1024 + 1));
+
+  const snapshot = cache.snapshot();
+  assert.equal(cache.get("small"), "cached");
+  assert.equal(cache.get("too-large"), undefined);
+  assert.equal(snapshot.maxBytes, 2 * 1024 * 1024);
+  assert.equal(snapshot.droppedOversizedEntries, 1);
+});
+
 test("ttl cache does not retain single entries above byte budget", () => {
   const cache = new TtlCache<string>({
     maxEntries: 10,
@@ -125,13 +141,19 @@ test("ttl cache does not retain unmeasurable entries with a byte budget", () => 
 test("ttl cache rejects invalid capacity and ttl options", () => {
   assert.throws(() => new TtlCache<string>({ maxEntries: 0, ttlMs: 10_000 }), /maxEntries/);
   assert.throws(() => new TtlCache<string>({ maxEntries: 2.5, ttlMs: 10_000 }), /maxEntries/);
+  assert.throws(() => new TtlCache<string>({ maxEntries: 4_097, ttlMs: 10_000 }), /maxEntries/);
   assert.throws(() => new TtlCache<string>({ maxEntries: 2, ttlMs: 0 }), /ttlMs/);
   assert.throws(
     () => new TtlCache<string>({ maxEntries: 2, ttlMs: Number.POSITIVE_INFINITY }),
     /ttlMs/,
   );
+  assert.throws(() => new TtlCache<string>({ maxEntries: 2, ttlMs: 86_400_001 }), /ttlMs/);
   assert.throws(
     () => new TtlCache<string>({ maxEntries: 2, ttlMs: 10_000, maxBytes: 0 }),
+    /maxBytes/,
+  );
+  assert.throws(
+    () => new TtlCache<string>({ maxEntries: 2, ttlMs: 10_000, maxBytes: 256 * 1024 * 1024 + 1 }),
     /maxBytes/,
   );
   assert.throws(
