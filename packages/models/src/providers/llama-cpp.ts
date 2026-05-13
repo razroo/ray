@@ -342,6 +342,43 @@ function parseSlotSnapshots(payload: unknown): SchedulerSlotSnapshot[] {
   return snapshots;
 }
 
+function createLlamaCppHealthInvalidResponseError(options: {
+  contentType: string;
+  body: string;
+  error: unknown;
+}): RayError {
+  return new RayError("The llama.cpp health endpoint returned invalid JSON", {
+    code: "provider_invalid_response",
+    status: 502,
+    details: {
+      pathname: "/health?include_slots=1",
+      contentType: options.contentType,
+      bodyBytes: Buffer.byteLength(options.body, "utf8"),
+      error: toErrorMessage(options.error),
+    },
+  });
+}
+
+function parseLlamaCppHealthPayload(body: string, contentType: string): LlamaCppHealthResponse {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(body) as unknown;
+  } catch (error) {
+    throw createLlamaCppHealthInvalidResponseError({ body, contentType, error });
+  }
+
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw createLlamaCppHealthInvalidResponseError({
+      body,
+      contentType,
+      error: "health payload must be a JSON object",
+    });
+  }
+
+  return parsed as LlamaCppHealthResponse;
+}
+
 function assertOptionalBoolean(value: boolean | undefined, label: string): void {
   if (value !== undefined && typeof value !== "boolean") {
     throw new TypeError(`${label} must be a boolean when provided`);
@@ -1519,20 +1556,27 @@ export class LlamaCppProvider implements ModelProvider {
   }> {
     const controller = new AbortController();
     const timeoutMs = Math.min(this.adapter.timeoutMs, 5_000);
+    const pathname = "/health?include_slots=1";
     const timeout = setTimeout(() => {
-      controller.abort();
+      controller.abort(
+        new RayError(`The llama.cpp health probe did not respond within ${timeoutMs}ms`, {
+          code: "provider_timeout",
+          status: 504,
+          details: {
+            pathname,
+            timeoutMs,
+          },
+        }),
+      );
     }, timeoutMs);
 
     try {
-      const response = await fetch(
-        `${normalizeBaseUrl(this.adapter.baseUrl)}/health?include_slots=1`,
-        {
-          method: "GET",
-          headers: buildAdapterHeaders(this.adapter),
-          redirect: "manual",
-          signal: controller.signal,
-        },
-      );
+      const response = await fetch(`${normalizeBaseUrl(this.adapter.baseUrl)}${pathname}`, {
+        method: "GET",
+        headers: buildAdapterHeaders(this.adapter),
+        redirect: "manual",
+        signal: controller.signal,
+      });
 
       if (response.status >= 300 && response.status < 400) {
         await response.body?.cancel().catch(() => undefined);
@@ -1540,7 +1584,7 @@ export class LlamaCppProvider implements ModelProvider {
           code: "provider_upstream_error",
           status: 502,
           details: {
-            pathname: "/health?include_slots=1",
+            pathname,
             upstreamStatus: response.status,
           },
         });
@@ -1554,11 +1598,17 @@ export class LlamaCppProvider implements ModelProvider {
       );
       const body = await readResponseBodyLimited(response, BACKEND_RESPONSE_BODY_LIMIT_BYTES);
       assertResponseBodyWithinLimit(body, contentType);
-      const payload = JSON.parse(body.body) as LlamaCppHealthResponse;
+      const payload = parseLlamaCppHealthPayload(body.body, contentType);
       return {
         statusCode: response.status,
         payload,
       };
+    } catch (error) {
+      if (controller.signal.aborted && controller.signal.reason instanceof RayError) {
+        throw controller.signal.reason;
+      }
+
+      throw error;
     } finally {
       clearTimeout(timeout);
     }

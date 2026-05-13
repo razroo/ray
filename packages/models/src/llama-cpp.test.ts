@@ -527,6 +527,103 @@ test("llama.cpp provider rejects declared oversized health responses before read
   assert.equal(health.detectedCapabilities?.totalSlots, 1);
 });
 
+test("llama.cpp provider reports malformed health JSON with provider diagnostics", async (t) => {
+  const server = createServer((request, response) => {
+    if (request.url === "/health?include_slots=1") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{");
+      return;
+    }
+
+    if (request.url === "/props") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          total_slots: 1,
+          default_generation_settings: {
+            n_ctx: 8192,
+            model: "qwen2.5-0.6b-q4",
+          },
+        }),
+      );
+      return;
+    }
+
+    if (request.url === "/slots") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ slots: [] }));
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const model = createModel(`http://127.0.0.1:${address.port}`, 500);
+  const provider = new LlamaCppProvider(model, model.adapter as LlamaCppProviderConfig);
+  const health = await provider.health();
+
+  assert.equal(health.status, "ready");
+  assert.match(String(health.details?.healthError ?? ""), /health endpoint returned invalid JSON/);
+  assert.equal(health.detectedCapabilities?.totalSlots, 1);
+});
+
+test("llama.cpp provider reports health probe timeouts with provider diagnostics", async (t) => {
+  const server = createServer((request, response) => {
+    if (request.url === "/health?include_slots=1") {
+      request.on("close", () => response.destroy());
+      return;
+    }
+
+    if (request.url === "/props") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          total_slots: 1,
+          default_generation_settings: {
+            n_ctx: 8192,
+            model: "qwen2.5-0.6b-q4",
+          },
+        }),
+      );
+      return;
+    }
+
+    if (request.url === "/slots") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ slots: [] }));
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const model = createModel(`http://127.0.0.1:${address.port}`, 25);
+  const provider = new LlamaCppProvider(model, model.adapter as LlamaCppProviderConfig);
+  const health = await provider.health();
+
+  assert.equal(health.status, "ready");
+  assert.match(String(health.details?.healthError ?? ""), /did not respond within 25ms/);
+  assert.equal(health.detectedCapabilities?.totalSlots, 1);
+});
+
 test("llama.cpp provider refuses to follow backend health redirects", async (t) => {
   const envName = "RAY_LLAMA_CPP_HEALTH_REDIRECT_TEST_KEY";
   const previousEnvValue = process.env[envName];
