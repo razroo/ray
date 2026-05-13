@@ -58,7 +58,11 @@ test("collectTestFiles rejects excessive discovered test files", async (t) => {
   );
 });
 
-test("collectTestFiles rejects oversized direct roots before discovery", async () => {
+test("collectTestFiles rejects malformed direct roots before discovery", async () => {
+  await assert.rejects(
+    () => collectTestFiles(" /srv/ray"),
+    /root must be a path without surrounding whitespace/,
+  );
   await assert.rejects(
     () => collectTestFiles(`/${"a".repeat(4096)}`),
     /root must be at most 4096 bytes/,
@@ -244,8 +248,35 @@ test("test disk preflight reports low repository or temp space before dispatch",
   assert.match(stderr.join(""), /disk preflight failed/);
 });
 
-test("test disk preflight rejects oversized direct paths before probing", async () => {
+test("test disk preflight rejects malformed direct paths before probing", async () => {
   let statfsCalls = 0;
+
+  await assert.rejects(
+    () =>
+      assertTestDiskHeadroom({
+        root: " /srv/ray",
+        minFreeSpaceMiB: 1,
+        statfs: async () => {
+          statfsCalls += 1;
+          return { bsize: 1024 * 1024, bavail: 2_048 };
+        },
+      }),
+    /root must be a path without surrounding whitespace/,
+  );
+
+  await assert.rejects(
+    () =>
+      assertTestDiskHeadroom({
+        root: process.cwd(),
+        tmpDir: " /tmp",
+        minFreeSpaceMiB: 1,
+        statfs: async () => {
+          statfsCalls += 1;
+          return { bsize: 1024 * 1024, bavail: 2_048 };
+        },
+      }),
+    /tmpDir must be a path without surrounding whitespace/,
+  );
 
   await assert.rejects(
     () =>

@@ -68,7 +68,11 @@ test("cleanWorkspace rejects non-Ray roots before walking", async (t) => {
   assert.equal(await pathExists(path.join(tempDir, "dist")), true);
 });
 
-test("cleanWorkspace rejects oversized direct roots before walking", async () => {
+test("cleanWorkspace rejects malformed direct roots before walking", async () => {
+  await assert.rejects(
+    () => cleanWorkspace(" /srv/ray"),
+    /root must be a path without surrounding whitespace/,
+  );
   await assert.rejects(
     () => cleanWorkspace(`/${"a".repeat(4096)}`),
     /root must be at most 4096 bytes/,
