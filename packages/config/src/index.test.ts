@@ -1088,6 +1088,32 @@ test("loadRayConfig rejects oversized scheduler admission budgets", async (t) =>
     /scheduler\.maxInflightTokens must be less than or equal to llama\.cpp launch context capacity/,
   );
 
+  const queueDepthThresholdConfigPath = join(
+    tempDir,
+    "ray.degradation-queue-threshold.invalid.json",
+  );
+  await writeFile(
+    queueDepthThresholdConfigPath,
+    JSON.stringify({
+      profile: "tiny",
+      scheduler: {
+        maxQueue: 8,
+      },
+      gracefulDegradation: {
+        queueDepthThreshold: 8,
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: queueDepthThresholdConfigPath,
+      env: {},
+    }),
+    /gracefulDegradation\.queueDepthThreshold must be less than scheduler\.maxQueue/,
+  );
+
   const dispatchConfigPath = join(tempDir, "ray.async-dispatch.invalid.json");
   await writeFile(
     dispatchConfigPath,

@@ -54,7 +54,7 @@ test("runtime snapshots config at construction", async () => {
     gracefulDegradation: {
       enabled: true,
       maxPromptChars: 8,
-      queueDepthThreshold: 1_000,
+      queueDepthThreshold: 31,
     },
   });
   const runtime = createRayRuntime(config, { provider });
@@ -827,6 +827,9 @@ test("runtime health exposes queue saturation ratios", async () => {
       maxInflightTokens: 100,
       requestTimeoutMs: 2_000,
       affinityLookahead: 4,
+    },
+    gracefulDegradation: {
+      queueDepthThreshold: 3,
     },
   });
   const runtime = createRayRuntime(config, { provider });
@@ -2078,7 +2081,7 @@ test("runtime rejects oversized provider preparation requests before scheduling"
     gracefulDegradation: {
       enabled: true,
       maxPromptChars: 32,
-      queueDepthThreshold: 1_000,
+      queueDepthThreshold: 31,
     },
   });
   const provider: ModelProvider = {
@@ -2597,7 +2600,7 @@ test("runtime trims oversized prompts before prompt compilation", async () => {
       gracefulDegradation: {
         enabled: true,
         maxPromptChars: 32,
-        queueDepthThreshold: 1_000,
+        queueDepthThreshold: 31,
       },
     }),
     { provider },
@@ -2636,7 +2639,7 @@ test("runtime applies prompt length degradation to system and input together", a
       gracefulDegradation: {
         enabled: true,
         maxPromptChars: 32,
-        queueDepthThreshold: 1_000,
+        queueDepthThreshold: 31,
       },
     }),
     { provider },
@@ -2773,6 +2776,9 @@ test("runtime bounds concurrent provider preparation before scheduling inference
         maxQueue: 1,
         affinityLookahead: 1,
         requestTimeoutMs: 2_000,
+      },
+      gracefulDegradation: {
+        enabled: false,
       },
     }),
     { provider },

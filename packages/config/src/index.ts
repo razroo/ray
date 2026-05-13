@@ -2427,6 +2427,22 @@ function validateConfig(config: RayConfig): RayConfig {
       },
     );
   }
+  if (
+    config.gracefulDegradation.enabled &&
+    config.gracefulDegradation.queueDepthThreshold >= config.scheduler.maxQueue
+  ) {
+    throw new RayError(
+      "gracefulDegradation.queueDepthThreshold must be less than scheduler.maxQueue",
+      {
+        code: "config_validation_error",
+        status: 500,
+        details: {
+          queueDepthThreshold: config.gracefulDegradation.queueDepthThreshold,
+          maxQueue: config.scheduler.maxQueue,
+        },
+      },
+    );
+  }
   assertPositiveIntegerAtMost(
     config.adaptiveTuning.sampleSize,
     "adaptiveTuning.sampleSize",
