@@ -2047,9 +2047,10 @@ function validateConfig(config: RayConfig): RayConfig {
     "adaptiveTuning.familyHistorySize",
     MAX_ADAPTIVE_FAMILY_HISTORY_SIZE,
   );
-  assertPositiveInteger(
+  assertPositiveIntegerAtMost(
     config.adaptiveTuning.learnedCapMinSamples,
     "adaptiveTuning.learnedCapMinSamples",
+    config.adaptiveTuning.familyHistorySize,
   );
   assertPositiveIntegerAtMost(
     config.adaptiveTuning.queueLatencyThresholdMs,

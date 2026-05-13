@@ -644,6 +644,18 @@ test("loadRayConfig rejects malformed environment overrides", async () => {
     }),
     /Expected RAY_ADAPTIVE_MAX_OUTPUT_REDUCTION_RATIO to be between 0 and 1/,
   );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_ADAPTIVE_FAMILY_HISTORY_SIZE: "4",
+        RAY_ADAPTIVE_LEARNED_CAP_MIN_SAMPLES: "8",
+      },
+    }),
+    /adaptiveTuning\.learnedCapMinSamples must be less than or equal to 4/,
+  );
 });
 
 test("loadRayConfig rejects non-boolean JSON config switches", async (t) => {
