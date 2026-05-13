@@ -41,7 +41,7 @@ test("validatePackageRuntimeCoverage accepts current Bun-first workspace manifes
   assert.equal(summary.ok, true);
   assert.ok(summary.packageCount >= 10);
   assert.ok(summary.workflowCount >= 1);
-  assert.ok(summary.docCount >= 1);
+  assert.ok(summary.docCount >= 2);
   assert.ok(summary.scriptCount > 0);
   assert.equal(summary.forbiddenLockfiles.length, 0);
   assert.ok(
@@ -319,5 +319,5 @@ test("runPackageRuntimeCoverageCli prints JSON coverage", async () => {
   assert.equal(parsed.ok, true);
   assert.ok((parsed.packageCount ?? 0) >= 10);
   assert.ok((parsed.workflowCount ?? 0) >= 1);
-  assert.ok((parsed.docCount ?? 0) >= 1);
+  assert.ok((parsed.docCount ?? 0) >= 2);
 });

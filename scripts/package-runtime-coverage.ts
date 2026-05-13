@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 
 const DEFAULT_ROOT_PACKAGE_JSON = "package.json";
 const DEFAULT_WORKFLOW_DIR = ".github/workflows";
-const DEFAULT_VPS_README = "examples/deploy/vps/README.md";
+const DEFAULT_DEPLOYMENT_DOCS = ["examples/deploy/vps/README.md", "docs/portable-1b.md"] as const;
 const MAX_CLI_ARGS = 8;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_PACKAGE_JSON_BYTES = 512 * 1024;
@@ -329,8 +329,15 @@ async function collectWorkflowPaths(cwd: string): Promise<string[]> {
 }
 
 async function collectDeploymentDocPaths(cwd: string): Promise<string[]> {
-  const docPath = path.join(cwd, DEFAULT_VPS_README);
-  return (await pathExists(docPath)) ? [docPath] : [];
+  const docPaths: string[] = [];
+  for (const docRel of DEFAULT_DEPLOYMENT_DOCS) {
+    const docPath = path.join(cwd, docRel);
+    if (await pathExists(docPath)) {
+      docPaths.push(docPath);
+    }
+  }
+
+  return docPaths;
 }
 
 async function readPackageJson(packageJsonPath: string): Promise<Record<string, unknown>> {
