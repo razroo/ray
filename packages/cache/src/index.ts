@@ -11,10 +11,26 @@ export interface TtlCacheOptions<T = unknown> {
   sizeOf?: (value: T, key: string) => number;
 }
 
+export interface TtlCacheStats {
+  entries: number;
+  bytes: number;
+  maxEntries: number;
+  maxBytes?: number;
+  ttlMs: number;
+  evictions: number;
+  expirations: number;
+  droppedOversizedEntries: number;
+  droppedUnmeasurableEntries: number;
+}
+
 export class TtlCache<T> {
   private readonly store = new Map<string, CacheEntry<T>>();
   private readonly options: TtlCacheOptions<T>;
   private totalBytes = 0;
+  private evictions = 0;
+  private expirations = 0;
+  private droppedOversizedEntries = 0;
+  private droppedUnmeasurableEntries = 0;
 
   constructor(options: TtlCacheOptions<T>) {
     if (!Number.isSafeInteger(options.maxEntries) || options.maxEntries <= 0) {
@@ -48,7 +64,7 @@ export class TtlCache<T> {
     }
 
     if (entry.expiresAt <= Date.now()) {
-      this.deleteEntry(key);
+      this.deleteEntry(key, "expired");
       return undefined;
     }
 
@@ -68,10 +84,12 @@ export class TtlCache<T> {
     }
 
     if (sizeBytes === undefined) {
+      this.droppedUnmeasurableEntries += 1;
       return;
     }
 
     if (this.options.maxBytes !== undefined && sizeBytes > this.options.maxBytes) {
+      this.droppedOversizedEntries += 1;
       return;
     }
 
@@ -85,7 +103,7 @@ export class TtlCache<T> {
         break;
       }
 
-      this.deleteEntry(oldestKey);
+      this.deleteEntry(oldestKey, "evicted");
     }
 
     this.store.set(key, {
@@ -111,17 +129,32 @@ export class TtlCache<T> {
     this.totalBytes = 0;
   }
 
+  snapshot(): TtlCacheStats {
+    this.purgeExpired();
+    return {
+      entries: this.store.size,
+      bytes: this.totalBytes,
+      maxEntries: this.options.maxEntries,
+      ...(this.options.maxBytes !== undefined ? { maxBytes: this.options.maxBytes } : {}),
+      ttlMs: this.options.ttlMs,
+      evictions: this.evictions,
+      expirations: this.expirations,
+      droppedOversizedEntries: this.droppedOversizedEntries,
+      droppedUnmeasurableEntries: this.droppedUnmeasurableEntries,
+    };
+  }
+
   purgeExpired(): void {
     const now = Date.now();
 
     for (const [key, entry] of this.store.entries()) {
       if (entry.expiresAt <= now) {
-        this.deleteEntry(key);
+        this.deleteEntry(key, "expired");
       }
     }
   }
 
-  private deleteEntry(key: string): boolean {
+  private deleteEntry(key: string, reason?: "evicted" | "expired"): boolean {
     const entry = this.store.get(key);
 
     if (!entry) {
@@ -130,6 +163,11 @@ export class TtlCache<T> {
 
     this.totalBytes -= entry.sizeBytes;
     this.store.delete(key);
+    if (reason === "evicted") {
+      this.evictions += 1;
+    } else if (reason === "expired") {
+      this.expirations += 1;
+    }
     return true;
   }
 

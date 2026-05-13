@@ -39,6 +39,54 @@ test("ttl cache evicts the oldest entries to stay within byte budget", () => {
   assert.equal(cache.sizeBytes(), 10);
 });
 
+test("ttl cache snapshots retained size and churn counters", () => {
+  const cache = new TtlCache<unknown>({
+    maxEntries: 2,
+    ttlMs: 10_000,
+    maxBytes: 12,
+  });
+  const circular: Record<string, unknown> = {
+    value: "cached",
+  };
+  circular.self = circular;
+
+  cache.set("a", "12345");
+  cache.set("b", "12345");
+  cache.set("c", "12345");
+  cache.set("oversized", "x".repeat(20));
+  cache.set("unmeasurable", circular);
+
+  const snapshot = cache.snapshot();
+  assert.equal(snapshot.entries, 2);
+  assert.equal(snapshot.bytes, 12);
+  assert.equal(snapshot.maxEntries, 2);
+  assert.equal(snapshot.maxBytes, 12);
+  assert.equal(snapshot.ttlMs, 10_000);
+  assert.equal(snapshot.evictions, 1);
+  assert.equal(snapshot.expirations, 0);
+  assert.equal(snapshot.droppedOversizedEntries, 1);
+  assert.equal(snapshot.droppedUnmeasurableEntries, 1);
+});
+
+test("ttl cache counts expired entries during snapshots", async () => {
+  const cache = new TtlCache<string>({
+    maxEntries: 2,
+    ttlMs: 5,
+  });
+
+  cache.set("a", "one");
+  cache.set("b", "two");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  const snapshot = cache.snapshot();
+  assert.equal(snapshot.entries, 0);
+  assert.equal(snapshot.bytes, 0);
+  assert.equal(snapshot.evictions, 0);
+  assert.equal(snapshot.expirations, 2);
+  assert.equal(snapshot.droppedOversizedEntries, 0);
+  assert.equal(snapshot.droppedUnmeasurableEntries, 0);
+});
+
 test("ttl cache does not retain single entries above byte budget", () => {
   const cache = new TtlCache<string>({
     maxEntries: 10,

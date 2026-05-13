@@ -952,6 +952,10 @@ test("gateway metrics endpoint refreshes live runtime gauges", async (t) => {
   assert.equal(body.gauges["cache.bytes"], 0);
   assert.equal(body.gauges["cache.max_bytes"], config.cache.maxBytes);
   assert.equal(body.gauges["cache.bytes_ratio"], 0);
+  assert.equal(body.gauges["cache.evictions_total"], 0);
+  assert.equal(body.gauges["cache.expirations_total"], 0);
+  assert.equal(body.gauges["cache.dropped_oversized_entries_total"], 0);
+  assert.equal(body.gauges["cache.dropped_unmeasurable_entries_total"], 0);
   assert.equal(body.gauges["gateway.http.sockets"], 1);
   assert.equal(body.gauges["gateway.http.active_sockets"], 1);
   assert.equal(body.gauges["gateway.http.idle_sockets"], 0);

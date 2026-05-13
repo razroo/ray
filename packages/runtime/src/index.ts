@@ -1,7 +1,7 @@
 import { open } from "node:fs/promises";
 import * as path from "node:path";
 import { sanitizeConfig, snapshotRayConfig } from "@ray/config";
-import { TtlCache } from "@ray/cache";
+import { TtlCache, type TtlCacheStats } from "@ray/cache";
 import { createModelProvider } from "@ray/models";
 import { resolvePromptTemplateRequest } from "@ray/prompts";
 import { RequestScheduler, type ScheduledTaskResult } from "@ray/scheduler";
@@ -1139,18 +1139,23 @@ function buildDegradationDiagnostics(options: {
 
 function buildCacheHealthDiagnostics(
   config: RayConfig,
-  entries: number,
-  bytes: number,
+  snapshot: TtlCacheStats,
 ): RuntimeCacheHealthSnapshot {
+  const maxBytes = snapshot.maxBytes ?? config.cache.maxBytes;
+
   return {
     enabled: config.cache.enabled,
-    entries,
-    maxEntries: config.cache.maxEntries,
-    entriesRatio: resolveSaturationRatio(entries, config.cache.maxEntries),
-    bytes,
-    maxBytes: config.cache.maxBytes,
-    bytesRatio: resolveSaturationRatio(bytes, config.cache.maxBytes),
-    ttlMs: config.cache.ttlMs,
+    entries: snapshot.entries,
+    maxEntries: snapshot.maxEntries,
+    entriesRatio: resolveSaturationRatio(snapshot.entries, snapshot.maxEntries),
+    bytes: snapshot.bytes,
+    maxBytes,
+    bytesRatio: resolveSaturationRatio(snapshot.bytes, maxBytes),
+    ttlMs: snapshot.ttlMs,
+    evictions: snapshot.evictions,
+    expirations: snapshot.expirations,
+    droppedOversizedEntries: snapshot.droppedOversizedEntries,
+    droppedUnmeasurableEntries: snapshot.droppedUnmeasurableEntries,
   };
 }
 
@@ -4116,14 +4121,14 @@ export class RayRuntime {
     const preparationDegraded = preparationSnapshot.degraded;
     const memoryDegraded = memoryPressureSources.length > 0;
     const cpuDegraded = resolveCpuPressure(this.config, cgroupCpu, linuxPressure);
-    const cacheEntries = this.cache.size();
-    const cacheBytes = this.cache.sizeBytes();
+    const cacheSnapshot = this.cache.snapshot();
+    const cacheEntries = cacheSnapshot.entries;
     const runtimeHealth = buildRuntimeHealthDiagnostics({
       queueDegraded,
       queueSnapshot: snapshot,
       queueDepthThreshold: this.config.gracefulDegradation.queueDepthThreshold,
       preparationSnapshot,
-      cacheSnapshot: buildCacheHealthDiagnostics(this.config, cacheEntries, cacheBytes),
+      cacheSnapshot: buildCacheHealthDiagnostics(this.config, cacheSnapshot),
       memoryPressureSources,
       memoryPressure,
       memoryRssThresholdMiB: this.config.gracefulDegradation.memoryRssThresholdMiB,
@@ -4579,10 +4584,11 @@ export class RayRuntime {
   }
 
   private recordCacheMetrics(): void {
-    const entries = this.cache.size();
-    const bytes = this.cache.sizeBytes();
-    const maxEntries = this.config.cache.maxEntries;
-    const maxBytes = this.config.cache.maxBytes;
+    const snapshot = this.cache.snapshot();
+    const entries = snapshot.entries;
+    const bytes = snapshot.bytes;
+    const maxEntries = snapshot.maxEntries;
+    const maxBytes = snapshot.maxBytes ?? this.config.cache.maxBytes;
 
     this.metrics.gauge("cache.entries", entries);
     this.metrics.gauge("cache.max_entries", maxEntries);
@@ -4590,6 +4596,13 @@ export class RayRuntime {
     this.metrics.gauge("cache.bytes", bytes);
     this.metrics.gauge("cache.max_bytes", maxBytes);
     this.metrics.gauge("cache.bytes_ratio", bytes / Math.max(1, maxBytes));
+    this.metrics.gauge("cache.evictions_total", snapshot.evictions);
+    this.metrics.gauge("cache.expirations_total", snapshot.expirations);
+    this.metrics.gauge("cache.dropped_oversized_entries_total", snapshot.droppedOversizedEntries);
+    this.metrics.gauge(
+      "cache.dropped_unmeasurable_entries_total",
+      snapshot.droppedUnmeasurableEntries,
+    );
   }
 
   private getProcessRssMiB(): number {

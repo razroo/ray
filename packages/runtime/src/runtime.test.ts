@@ -1511,11 +1511,50 @@ test("runtime bounds retained provider model identifiers", async () => {
   assert.equal(health.runtime?.cache?.maxBytes, config.cache.maxBytes);
   assert.ok((health.runtime?.cache?.bytesRatio ?? 0) > 0);
   assert.equal(health.runtime?.cache?.ttlMs, config.cache.ttlMs);
+  assert.equal(health.runtime?.cache?.evictions, 0);
+  assert.equal(health.runtime?.cache?.expirations, 0);
+  assert.equal(health.runtime?.cache?.droppedOversizedEntries, 0);
+  assert.equal(health.runtime?.cache?.droppedUnmeasurableEntries, 0);
   assert.equal(first.model.length, 512);
   assert.equal(second.model, first.model);
   assert.equal(health.modelId, first.model);
   assert.notEqual(first.model, oversizedModelId);
   assert.match(first.model, /\[truncated \d+ chars\]$/);
+});
+
+test("runtime health and metrics expose cache churn counters", async () => {
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    cache: {
+      maxEntries: 1,
+    },
+  });
+  const runtime = createRayRuntime(config);
+
+  await runtime.infer({
+    input: "first cache entry",
+  });
+  await runtime.infer({
+    input: "second cache entry",
+  });
+
+  const health = await runtime.health();
+  assert.equal(health.cacheEntries, 1);
+  assert.equal(health.runtime?.cache?.entries, 1);
+  assert.equal(health.runtime?.cache?.maxEntries, 1);
+  assert.equal(health.runtime?.cache?.entriesRatio, 1);
+  assert.equal(health.runtime?.cache?.evictions, 1);
+  assert.equal(health.runtime?.cache?.expirations, 0);
+  assert.equal(health.runtime?.cache?.droppedOversizedEntries, 0);
+  assert.equal(health.runtime?.cache?.droppedUnmeasurableEntries, 0);
+
+  const metrics = await runtime.collectMetricsSnapshot();
+  assert.equal(metrics.gauges["cache.entries"], 1);
+  assert.equal(metrics.gauges["cache.max_entries"], 1);
+  assert.equal(metrics.gauges["cache.entries_ratio"], 1);
+  assert.equal(metrics.gauges["cache.evictions_total"], 1);
+  assert.equal(metrics.gauges["cache.expirations_total"], 0);
+  assert.equal(metrics.gauges["cache.dropped_oversized_entries_total"], 0);
+  assert.equal(metrics.gauges["cache.dropped_unmeasurable_entries_total"], 0);
 });
 
 test("runtime health reports upstream unavailability", async () => {

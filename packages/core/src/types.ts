@@ -387,6 +387,10 @@ export interface RuntimeCacheHealthSnapshot {
   maxBytes: number;
   bytesRatio: number;
   ttlMs: number;
+  evictions: number;
+  expirations: number;
+  droppedOversizedEntries: number;
+  droppedUnmeasurableEntries: number;
 }
 
 export interface ProviderTimings {
