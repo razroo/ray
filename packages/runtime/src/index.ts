@@ -31,6 +31,7 @@ import {
   type ProviderRequestPreparation,
   type ProviderResult,
   type RayConfig,
+  type RuntimeCacheHealthSnapshot,
   type RuntimeMetricsSnapshot,
   type RuntimeHealthDiagnostics,
   type ScheduleLane,
@@ -1136,11 +1137,29 @@ function buildDegradationDiagnostics(options: {
   };
 }
 
+function buildCacheHealthDiagnostics(
+  config: RayConfig,
+  entries: number,
+  bytes: number,
+): RuntimeCacheHealthSnapshot {
+  return {
+    enabled: config.cache.enabled,
+    entries,
+    maxEntries: config.cache.maxEntries,
+    entriesRatio: resolveSaturationRatio(entries, config.cache.maxEntries),
+    bytes,
+    maxBytes: config.cache.maxBytes,
+    bytesRatio: resolveSaturationRatio(bytes, config.cache.maxBytes),
+    ttlMs: config.cache.ttlMs,
+  };
+}
+
 function buildRuntimeHealthDiagnostics(options: {
   queueDegraded: boolean;
   queueSnapshot: SchedulerSnapshot;
   queueDepthThreshold: number;
   preparationSnapshot: PreparationSnapshot;
+  cacheSnapshot: RuntimeCacheHealthSnapshot;
   memoryPressureSources: MemoryPressureSource[];
   memoryPressure: MemoryPressureSnapshot;
   memoryRssThresholdMiB: number;
@@ -1186,6 +1205,7 @@ function buildRuntimeHealthDiagnostics(options: {
       maxInflightTokens: options.queueSnapshot.maxInflightTokens,
     },
     preparation: options.preparationSnapshot,
+    cache: options.cacheSnapshot,
     memory: {
       degraded: options.memoryPressureSources.length > 0,
       sources: options.memoryPressureSources,
@@ -4096,11 +4116,14 @@ export class RayRuntime {
     const preparationDegraded = preparationSnapshot.degraded;
     const memoryDegraded = memoryPressureSources.length > 0;
     const cpuDegraded = resolveCpuPressure(this.config, cgroupCpu, linuxPressure);
+    const cacheEntries = this.cache.size();
+    const cacheBytes = this.cache.sizeBytes();
     const runtimeHealth = buildRuntimeHealthDiagnostics({
       queueDegraded,
       queueSnapshot: snapshot,
       queueDepthThreshold: this.config.gracefulDegradation.queueDepthThreshold,
       preparationSnapshot,
+      cacheSnapshot: buildCacheHealthDiagnostics(this.config, cacheEntries, cacheBytes),
       memoryPressureSources,
       memoryPressure,
       memoryRssThresholdMiB: this.config.gracefulDegradation.memoryRssThresholdMiB,
@@ -4134,7 +4157,7 @@ export class RayRuntime {
       uptimeMs: Date.now() - this.startedAt,
       queueDepth: snapshot.queueDepth,
       inFlight: snapshot.inFlight,
-      cacheEntries: this.cache.size(),
+      cacheEntries,
       profile: this.config.profile,
       modelId: this.providerModelId,
       provider,

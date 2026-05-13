@@ -378,6 +378,17 @@ export interface ProviderDetectedCapabilities {
   errors?: Record<string, string>;
 }
 
+export interface RuntimeCacheHealthSnapshot {
+  enabled: boolean;
+  entries: number;
+  maxEntries: number;
+  entriesRatio: number;
+  bytes: number;
+  maxBytes: number;
+  bytesRatio: number;
+  ttlMs: number;
+}
+
 export interface ProviderTimings {
   ttftMs?: number;
   totalMs?: number;
@@ -592,6 +603,7 @@ export interface RuntimeHealthDiagnostics {
     maxQueue: number;
     queuedRatio: number;
   };
+  cache?: RuntimeCacheHealthSnapshot;
   memory: {
     degraded: boolean;
     sources: MemoryPressureSource[];

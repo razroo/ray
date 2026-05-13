@@ -1486,7 +1486,8 @@ test("runtime bounds retained provider model identifiers", async () => {
     },
   };
 
-  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+  const config = createDefaultConfig("tiny");
+  const runtime = createRayRuntime(config, { provider });
   const first = await runtime.infer({
     input: "hello world",
   });
@@ -1498,6 +1499,18 @@ test("runtime bounds retained provider model identifiers", async () => {
   assert.equal(first.cached, false);
   assert.equal(second.cached, true);
   assert.equal(inferCalls, 1);
+  assert.equal(health.cacheEntries, 1);
+  assert.equal(health.runtime?.cache?.enabled, true);
+  assert.equal(health.runtime?.cache?.entries, 1);
+  assert.equal(health.runtime?.cache?.maxEntries, config.cache.maxEntries);
+  assert.equal(
+    health.runtime?.cache?.entriesRatio,
+    Number((1 / config.cache.maxEntries).toFixed(4)),
+  );
+  assert.ok((health.runtime?.cache?.bytes ?? 0) > 0);
+  assert.equal(health.runtime?.cache?.maxBytes, config.cache.maxBytes);
+  assert.ok((health.runtime?.cache?.bytesRatio ?? 0) > 0);
+  assert.equal(health.runtime?.cache?.ttlMs, config.cache.ttlMs);
   assert.equal(first.model.length, 512);
   assert.equal(second.model, first.model);
   assert.equal(health.modelId, first.model);
