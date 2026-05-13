@@ -84,6 +84,9 @@ export interface CgroupMemorySnapshot {
   highMiB?: number;
   limitMiB?: number;
   pressureRatio?: number;
+  swapCurrentMiB?: number;
+  swapLimitMiB?: number;
+  swapPressureRatio?: number;
   highEvents?: number;
   maxEvents?: number;
   oomEvents?: number;
@@ -126,6 +129,8 @@ interface CgroupMemoryCandidate {
   highPath?: string;
   limitPath: string;
   eventsPath?: string;
+  swapCurrentPath?: string;
+  swapLimitPath?: string;
 }
 
 interface CgroupCpuCandidate {
@@ -142,6 +147,9 @@ interface MemoryPressureSnapshot {
   cgroupMemoryHighMiB?: number;
   cgroupMemoryLimitMiB?: number;
   cgroupMemoryPressureRatio?: number;
+  cgroupMemorySwapCurrentMiB?: number;
+  cgroupMemorySwapLimitMiB?: number;
+  cgroupMemorySwapPressureRatio?: number;
   cgroupMemoryHighEvents?: number;
   cgroupMemoryMaxEvents?: number;
   cgroupMemoryOomEvents?: number;
@@ -949,6 +957,15 @@ function buildDegradationDiagnostics(options: {
     ...(options.memoryPressure.cgroupMemoryPressureRatio !== undefined
       ? { cgroupMemoryPressureRatio: options.memoryPressure.cgroupMemoryPressureRatio }
       : {}),
+    ...(options.memoryPressure.cgroupMemorySwapCurrentMiB !== undefined
+      ? { cgroupMemorySwapCurrentMiB: options.memoryPressure.cgroupMemorySwapCurrentMiB }
+      : {}),
+    ...(options.memoryPressure.cgroupMemorySwapLimitMiB !== undefined
+      ? { cgroupMemorySwapLimitMiB: options.memoryPressure.cgroupMemorySwapLimitMiB }
+      : {}),
+    ...(options.memoryPressure.cgroupMemorySwapPressureRatio !== undefined
+      ? { cgroupMemorySwapPressureRatio: options.memoryPressure.cgroupMemorySwapPressureRatio }
+      : {}),
     ...(options.memoryPressure.cgroupMemoryHighEvents !== undefined
       ? { cgroupMemoryHighEvents: options.memoryPressure.cgroupMemoryHighEvents }
       : {}),
@@ -1048,6 +1065,15 @@ function buildRuntimeHealthDiagnostics(options: {
         : {}),
       ...(options.memoryPressure.cgroupMemoryPressureRatio !== undefined
         ? { cgroupMemoryPressureRatio: options.memoryPressure.cgroupMemoryPressureRatio }
+        : {}),
+      ...(options.memoryPressure.cgroupMemorySwapCurrentMiB !== undefined
+        ? { cgroupMemorySwapCurrentMiB: options.memoryPressure.cgroupMemorySwapCurrentMiB }
+        : {}),
+      ...(options.memoryPressure.cgroupMemorySwapLimitMiB !== undefined
+        ? { cgroupMemorySwapLimitMiB: options.memoryPressure.cgroupMemorySwapLimitMiB }
+        : {}),
+      ...(options.memoryPressure.cgroupMemorySwapPressureRatio !== undefined
+        ? { cgroupMemorySwapPressureRatio: options.memoryPressure.cgroupMemorySwapPressureRatio }
         : {}),
       ...(options.memoryPressure.cgroupMemoryHighEvents !== undefined
         ? { cgroupMemoryHighEvents: options.memoryPressure.cgroupMemoryHighEvents }
@@ -1379,12 +1405,20 @@ function resolveCgroupMemoryCandidates(
     const eventsPath = isUnifiedCgroup
       ? resolveCgroupFile(root, cgroupPath, "memory.events")
       : undefined;
+    const swapCurrentPath = isUnifiedCgroup
+      ? resolveCgroupFile(root, cgroupPath, "memory.swap.current")
+      : undefined;
+    const swapLimitPath = isUnifiedCgroup
+      ? resolveCgroupFile(root, cgroupPath, "memory.swap.max")
+      : undefined;
 
     if (!currentPath || !limitPath) {
       continue;
     }
 
-    const key = `${currentPath}\n${highPath ?? ""}\n${limitPath}\n${eventsPath ?? ""}`;
+    const key = `${currentPath}\n${highPath ?? ""}\n${limitPath}\n${eventsPath ?? ""}\n${swapCurrentPath ?? ""}\n${
+      swapLimitPath ?? ""
+    }`;
 
     if (seen.has(key)) {
       continue;
@@ -1396,6 +1430,8 @@ function resolveCgroupMemoryCandidates(
       ...(highPath ? { highPath } : {}),
       limitPath,
       ...(eventsPath ? { eventsPath } : {}),
+      ...(swapCurrentPath ? { swapCurrentPath } : {}),
+      ...(swapLimitPath ? { swapLimitPath } : {}),
     });
   }
 
@@ -1499,6 +1535,20 @@ export async function readCgroupMemorySnapshot(
         ? await readTextFile(candidate.eventsPath).catch(() => undefined)
         : undefined;
       const events = eventsRaw === undefined ? undefined : parseCgroupMemoryEvents(eventsRaw);
+      const swapCurrentRaw = candidate.swapCurrentPath
+        ? await readTextFile(candidate.swapCurrentPath).catch(() => undefined)
+        : undefined;
+      const swapCurrentBytes =
+        swapCurrentRaw === undefined
+          ? undefined
+          : parseCgroupByteValue(swapCurrentRaw, { allowMax: false });
+      const swapLimitRaw = candidate.swapLimitPath
+        ? await readTextFile(candidate.swapLimitPath).catch(() => undefined)
+        : undefined;
+      const swapLimitBytes =
+        swapLimitRaw === undefined
+          ? undefined
+          : parseCgroupByteValue(swapLimitRaw, { allowMax: true });
       const snapshot: CgroupMemorySnapshot = {
         currentMiB: bytesToMiB(currentBytes),
       };
@@ -1514,6 +1564,18 @@ export async function readCgroupMemorySnapshot(
       const pressureLimitBytes = highBytes !== undefined && highBytes > 0 ? highBytes : limitBytes;
       if (pressureLimitBytes !== undefined && pressureLimitBytes > 0) {
         snapshot.pressureRatio = Number((currentBytes / pressureLimitBytes).toFixed(4));
+      }
+
+      if (swapCurrentBytes !== undefined) {
+        snapshot.swapCurrentMiB = bytesToMiB(swapCurrentBytes);
+      }
+
+      if (swapLimitBytes !== undefined && swapLimitBytes > 0) {
+        snapshot.swapLimitMiB = bytesToMiB(swapLimitBytes);
+      }
+
+      if (swapCurrentBytes !== undefined && swapLimitBytes !== undefined && swapLimitBytes > 0) {
+        snapshot.swapPressureRatio = Number((swapCurrentBytes / swapLimitBytes).toFixed(4));
       }
 
       if (events?.highEvents !== undefined) {
@@ -4176,6 +4238,15 @@ export class RayRuntime {
             ...(cgroupMemory.pressureRatio !== undefined
               ? { cgroupMemoryPressureRatio: cgroupMemory.pressureRatio }
               : {}),
+            ...(cgroupMemory.swapCurrentMiB !== undefined
+              ? { cgroupMemorySwapCurrentMiB: cgroupMemory.swapCurrentMiB }
+              : {}),
+            ...(cgroupMemory.swapLimitMiB !== undefined
+              ? { cgroupMemorySwapLimitMiB: cgroupMemory.swapLimitMiB }
+              : {}),
+            ...(cgroupMemory.swapPressureRatio !== undefined
+              ? { cgroupMemorySwapPressureRatio: cgroupMemory.swapPressureRatio }
+              : {}),
             ...(cgroupMemory.highEvents !== undefined
               ? { cgroupMemoryHighEvents: cgroupMemory.highEvents }
               : {}),
@@ -4349,6 +4420,24 @@ export class RayRuntime {
       this.metrics.gauge(
         "process.memory.cgroup_pressure",
         memoryPressure.cgroupMemoryPressureRatio >= CGROUP_MEMORY_PRESSURE_RATIO ? 1 : 0,
+      );
+    }
+    if (memoryPressure.cgroupMemorySwapCurrentMiB !== undefined) {
+      this.metrics.gauge(
+        "process.memory.cgroup_swap_current_mib",
+        memoryPressure.cgroupMemorySwapCurrentMiB,
+      );
+    }
+    if (memoryPressure.cgroupMemorySwapLimitMiB !== undefined) {
+      this.metrics.gauge(
+        "process.memory.cgroup_swap_limit_mib",
+        memoryPressure.cgroupMemorySwapLimitMiB,
+      );
+    }
+    if (memoryPressure.cgroupMemorySwapPressureRatio !== undefined) {
+      this.metrics.gauge(
+        "process.memory.cgroup_swap_pressure_ratio",
+        memoryPressure.cgroupMemorySwapPressureRatio,
       );
     }
     if (memoryPressure.cgroupMemoryHighEvents !== undefined) {

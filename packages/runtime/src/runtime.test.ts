@@ -314,6 +314,9 @@ test("runtime clamps output under cgroup memory pressure", async () => {
       highMiB: 900,
       limitMiB: 1_000,
       pressureRatio: 0.95,
+      swapCurrentMiB: 128,
+      swapLimitMiB: 256,
+      swapPressureRatio: 0.5,
       highEvents: 3,
       maxEvents: 2,
       oomEvents: 1,
@@ -340,6 +343,9 @@ test("runtime clamps output under cgroup memory pressure", async () => {
   assert.equal(result.diagnostics?.degradation?.cgroupMemoryHighMiB, 900);
   assert.equal(result.diagnostics?.degradation?.cgroupMemoryLimitMiB, 1_000);
   assert.equal(result.diagnostics?.degradation?.cgroupMemoryPressureRatio, 0.95);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemorySwapCurrentMiB, 128);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemorySwapLimitMiB, 256);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemorySwapPressureRatio, 0.5);
   assert.equal(result.diagnostics?.degradation?.cgroupMemoryHighEvents, 3);
   assert.equal(result.diagnostics?.degradation?.cgroupMemoryMaxEvents, 2);
   assert.equal(result.diagnostics?.degradation?.cgroupMemoryOomEvents, 1);
@@ -369,6 +375,9 @@ test("runtime clamps output under cgroup memory pressure", async () => {
   assert.equal(health.runtime?.memory.cgroupMemoryHighMiB, 900);
   assert.equal(health.runtime?.memory.cgroupMemoryLimitMiB, 1_000);
   assert.equal(health.runtime?.memory.cgroupMemoryPressureRatio, 0.95);
+  assert.equal(health.runtime?.memory.cgroupMemorySwapCurrentMiB, 128);
+  assert.equal(health.runtime?.memory.cgroupMemorySwapLimitMiB, 256);
+  assert.equal(health.runtime?.memory.cgroupMemorySwapPressureRatio, 0.5);
   assert.equal(health.runtime?.memory.cgroupMemoryHighEvents, 3);
   assert.equal(health.runtime?.memory.cgroupMemoryMaxEvents, 2);
   assert.equal(health.runtime?.memory.cgroupMemoryOomEvents, 1);
@@ -378,6 +387,9 @@ test("runtime clamps output under cgroup memory pressure", async () => {
   assert.equal(metrics.gauges["process.memory.cgroup_limit_mib"], 1_000);
   assert.equal(metrics.gauges["process.memory.cgroup_pressure_ratio"], 0.95);
   assert.equal(metrics.gauges["process.memory.cgroup_pressure"], 1);
+  assert.equal(metrics.gauges["process.memory.cgroup_swap_current_mib"], 128);
+  assert.equal(metrics.gauges["process.memory.cgroup_swap_limit_mib"], 256);
+  assert.equal(metrics.gauges["process.memory.cgroup_swap_pressure_ratio"], 0.5);
   assert.equal(metrics.gauges["process.memory.cgroup_high_events"], 3);
   assert.equal(metrics.gauges["process.memory.cgroup_max_events"], 2);
   assert.equal(metrics.gauges["process.memory.cgroup_oom_events"], 1);
@@ -630,6 +642,8 @@ test("readCgroupMemorySnapshot reads unified cgroup memory files", async (t) => 
   await writeFile(join(cgroupDir, "memory.current"), String(760 * 1024 * 1024), "utf8");
   await writeFile(join(cgroupDir, "memory.high"), String(800 * 1024 * 1024), "utf8");
   await writeFile(join(cgroupDir, "memory.max"), String(1_000 * 1024 * 1024), "utf8");
+  await writeFile(join(cgroupDir, "memory.swap.current"), String(128 * 1024 * 1024), "utf8");
+  await writeFile(join(cgroupDir, "memory.swap.max"), String(512 * 1024 * 1024), "utf8");
   await writeFile(
     join(cgroupDir, "memory.events"),
     "low 0\nhigh 7\nmax 2\noom 1\noom_kill 0\noom_group_kill 0\n",
@@ -645,6 +659,9 @@ test("readCgroupMemorySnapshot reads unified cgroup memory files", async (t) => 
   assert.equal(snapshot?.highMiB, 800);
   assert.equal(snapshot?.limitMiB, 1_000);
   assert.equal(snapshot?.pressureRatio, 0.95);
+  assert.equal(snapshot?.swapCurrentMiB, 128);
+  assert.equal(snapshot?.swapLimitMiB, 512);
+  assert.equal(snapshot?.swapPressureRatio, 0.25);
   assert.equal(snapshot?.highEvents, 7);
   assert.equal(snapshot?.maxEvents, 2);
   assert.equal(snapshot?.oomEvents, 1);
@@ -804,6 +821,9 @@ test("runtime collected metrics refresh live queue and cgroup pressure gauges", 
       highMiB: 800,
       limitMiB: 1_000,
       pressureRatio: 0.875,
+      swapCurrentMiB: 64,
+      swapLimitMiB: 512,
+      swapPressureRatio: 0.125,
       highEvents: 2,
       maxEvents: 0,
       oomEvents: 0,
@@ -847,6 +867,9 @@ test("runtime collected metrics refresh live queue and cgroup pressure gauges", 
   assert.equal(metrics.gauges["process.memory.cgroup_limit_mib"], 1_000);
   assert.equal(metrics.gauges["process.memory.cgroup_pressure_ratio"], 0.875);
   assert.equal(metrics.gauges["process.memory.cgroup_pressure"], 0);
+  assert.equal(metrics.gauges["process.memory.cgroup_swap_current_mib"], 64);
+  assert.equal(metrics.gauges["process.memory.cgroup_swap_limit_mib"], 512);
+  assert.equal(metrics.gauges["process.memory.cgroup_swap_pressure_ratio"], 0.125);
   assert.equal(metrics.gauges["process.memory.rss_pressure_ratio"], 0.125);
   assert.equal(metrics.gauges["process.memory.cgroup_high_events"], 2);
   assert.equal(metrics.gauges["process.memory.cgroup_max_events"], 0);
