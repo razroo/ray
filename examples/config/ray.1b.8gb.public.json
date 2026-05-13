@@ -78,9 +78,11 @@
     "shortJobMaxTokens": 96
   },
   "cache": {
+    "enabled": true,
     "maxEntries": 512,
     "maxBytes": 4194304,
-    "ttlMs": 120000
+    "ttlMs": 120000,
+    "keyStrategy": "input+params"
   },
   "telemetry": {
     "slowRequestThresholdMs": 1800

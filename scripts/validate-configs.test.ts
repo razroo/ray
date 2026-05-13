@@ -76,7 +76,7 @@ test("collectConfigPaths rejects excessive configs while streaming", async (t) =
   );
 });
 
-test("validateConfigFiles requires explicit public ingress controls", async (t) => {
+test("validateConfigFiles requires explicit public runtime guardrails", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-config-public-policy-"));
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
@@ -132,6 +132,11 @@ test("validateConfigFiles requires explicit public ingress controls", async (t) 
   assert.ok(codes.includes("public_config_async_queue_callback_attempts_explicit"));
   assert.ok(codes.includes("public_config_async_queue_private_callbacks_explicit"));
   assert.ok(codes.includes("public_config_async_queue_callback_hosts_explicit"));
+  assert.ok(codes.includes("public_config_cache_enabled_explicit"));
+  assert.ok(codes.includes("public_config_cache_entries_explicit"));
+  assert.ok(codes.includes("public_config_cache_bytes_explicit"));
+  assert.ok(codes.includes("public_config_cache_ttl_explicit"));
+  assert.ok(codes.includes("public_config_cache_key_strategy_explicit"));
 });
 
 test("validateConfigFiles accepts every checked-in example config", async () => {

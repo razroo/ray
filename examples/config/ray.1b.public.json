@@ -31,6 +31,13 @@
     "keyStrategy": "ip+api-key",
     "trustProxyHeaders": true
   },
+  "cache": {
+    "enabled": true,
+    "maxEntries": 256,
+    "maxBytes": 2097152,
+    "ttlMs": 120000,
+    "keyStrategy": "input+params"
+  },
   "tags": {
     "hardware": "hetzner-cx23-class",
     "engine": "llama.cpp",

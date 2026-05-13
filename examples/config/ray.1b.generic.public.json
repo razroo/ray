@@ -44,6 +44,13 @@
     "keyStrategy": "ip+api-key",
     "trustProxyHeaders": true
   },
+  "cache": {
+    "enabled": true,
+    "maxEntries": 256,
+    "maxBytes": 2097152,
+    "ttlMs": 120000,
+    "keyStrategy": "input+params"
+  },
   "tags": {
     "target": "1b",
     "hardware": "generic-4gb-vps-class",

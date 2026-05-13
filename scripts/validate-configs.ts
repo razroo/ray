@@ -25,6 +25,9 @@ const MAX_PUBLIC_ASYNC_QUEUE_DISPATCH_CONCURRENCY = 1;
 const MAX_PUBLIC_ASYNC_QUEUE_ATTEMPTS = 5;
 const MAX_PUBLIC_ASYNC_QUEUE_CALLBACK_TIMEOUT_MS = 10_000;
 const MAX_PUBLIC_ASYNC_QUEUE_CALLBACK_ATTEMPTS = 5;
+const MAX_PUBLIC_CACHE_ENTRIES = 512;
+const MAX_PUBLIC_CACHE_BYTES = 4_194_304;
+const MAX_PUBLIC_CACHE_TTL_MS = 120_000;
 
 type ConfigRecord = Record<string, unknown>;
 
@@ -509,6 +512,41 @@ async function diagnosePublicConfigPolicy(configPath: string): Promise<Deploymen
     parsed,
     ["asyncQueue", "callbackAllowedHosts"],
     "public_config_async_queue_callback_hosts_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["cache", "enabled"],
+    true,
+    "public_config_cache_enabled_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["cache", "maxEntries"],
+    MAX_PUBLIC_CACHE_ENTRIES,
+    "public_config_cache_entries_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["cache", "maxBytes"],
+    MAX_PUBLIC_CACHE_BYTES,
+    "public_config_cache_bytes_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["cache", "ttlMs"],
+    MAX_PUBLIC_CACHE_TTL_MS,
+    "public_config_cache_ttl_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["cache", "keyStrategy"],
+    "input+params",
+    "public_config_cache_key_strategy_explicit",
   );
 
   return diagnostics;
