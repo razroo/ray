@@ -100,7 +100,16 @@ export class FixedWindowRateLimiter {
     }
 
     if (!existing) {
-      this.ensureCapacity(now);
+      const capacityResetAt = this.resolveCapacityResetAt(now);
+      if (capacityResetAt !== undefined) {
+        return {
+          allowed: false,
+          limit: this.config.maxRequests,
+          remaining: 0,
+          resetAt: capacityResetAt,
+        };
+      }
+
       const resetAt = now + this.config.windowMs;
       this.entries.set(key, {
         count: 1,
@@ -146,22 +155,25 @@ export class FixedWindowRateLimiter {
     };
   }
 
-  private ensureCapacity(now: number): void {
+  private resolveCapacityResetAt(now: number): number | undefined {
     if (this.entries.size < this.config.maxKeys) {
-      return;
+      return undefined;
     }
 
     this.pruneExpired(now);
 
-    while (this.entries.size >= this.config.maxKeys) {
-      const oldestKey = this.entries.keys().next().value;
-
-      if (oldestKey === undefined) {
-        break;
-      }
-
-      this.entries.delete(oldestKey);
+    if (this.entries.size < this.config.maxKeys) {
+      return undefined;
     }
+
+    let earliestResetAt: number | undefined;
+    for (const entry of this.entries.values()) {
+      if (earliestResetAt === undefined || entry.resetAt < earliestResetAt) {
+        earliestResetAt = entry.resetAt;
+      }
+    }
+
+    return earliestResetAt ?? now + this.config.windowMs;
   }
 
   private pruneExpired(now: number): void {

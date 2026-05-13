@@ -18,7 +18,7 @@ function fakeRequest(remoteAddress: string, forwardedFor?: string | string[]): I
   } as unknown as IncomingMessage;
 }
 
-test("fixed-window rate limiter evicts the oldest key when capped", () => {
+test("fixed-window rate limiter rejects new keys when capped", () => {
   const limiter = new FixedWindowRateLimiter({
     enabled: true,
     windowMs: 60_000,
@@ -30,8 +30,14 @@ test("fixed-window rate limiter evicts the oldest key when capped", () => {
 
   assert.equal(limiter.take("client-a", 0).allowed, true);
   assert.equal(limiter.take("client-b", 0).allowed, true);
-  assert.equal(limiter.take("client-c", 0).allowed, true);
-  assert.equal(limiter.take("client-a", 0).allowed, true);
+
+  const rejected = limiter.take("client-c", 0);
+  assert.equal(rejected.allowed, false);
+  assert.equal(rejected.remaining, 0);
+  assert.equal(rejected.resetAt, 60_000);
+
+  assert.equal(limiter.take("client-a", 0).allowed, false);
+  assert.equal(limiter.take("client-c", 60_000).allowed, true);
 });
 
 test("fixed-window rate limiter rejects invalid direct config", () => {

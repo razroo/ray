@@ -1512,6 +1512,22 @@ test("gateway health and metrics expose rate-limit key pressure", async (t) => {
     await response.arrayBuffer();
   }
 
+  const saturatedKeyResponse = await fetch(inferUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-forwarded-for": "198.51.100.3",
+    },
+    body: JSON.stringify({
+      input: "request from a new key after the table is full",
+    }),
+  });
+  assert.equal(saturatedKeyResponse.status, 429);
+  const saturatedKeyBody = (await saturatedKeyResponse.json()) as {
+    error: { code: string };
+  };
+  assert.equal(saturatedKeyBody.error.code, "rate_limited");
+
   const metricsResponse = await fetch(`http://127.0.0.1:${address.port}/metrics`);
   assert.equal(metricsResponse.status, 200);
   const metrics = (await metricsResponse.json()) as RuntimeMetricsSnapshot;
