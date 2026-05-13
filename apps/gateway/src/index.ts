@@ -49,6 +49,12 @@ const MAX_RESPONSE_STRING_CHARS = 65_536;
 const QUEUE_BACKPRESSURE_RETRY_AFTER_SECONDS = 1;
 const STORAGE_BACKPRESSURE_RETRY_AFTER_SECONDS = 30;
 const GATEWAY_HOST_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const expectedRequestRejectionCodes = new Set([
+  "queue_full",
+  "request_timeout",
+  "async_queue_full",
+  "async_queue_storage_low",
+]);
 
 export interface CreateGatewayHandlerOptions {
   config: RayConfig;
@@ -843,7 +849,7 @@ function serializeRequestError(error: RayError): Record<string, unknown> {
     name: error.name,
   };
 
-  if (error.status < 500) {
+  if (isExpectedRequestRejection(error)) {
     return base;
   }
 
@@ -851,6 +857,10 @@ function serializeRequestError(error: RayError): Record<string, unknown> {
     ...base,
     ...serializeError(error),
   };
+}
+
+function isExpectedRequestRejection(error: RayError): boolean {
+  return error.status < 500 || expectedRequestRejectionCodes.has(error.code);
 }
 
 function shouldCloseRequestAfterReject(request: IncomingMessage, error: RayError): boolean {
@@ -1180,10 +1190,10 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
         error: serializeRequestError(normalized),
       };
 
-      if (normalized.status >= 500) {
-        logger.error("request failed", logFields);
-      } else {
+      if (isExpectedRequestRejection(normalized)) {
         logger.warn("request rejected", logFields);
+      } else {
+        logger.error("request failed", logFields);
       }
 
       const closeRequest = shouldCloseRequestAfterReject(request, normalized);

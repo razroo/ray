@@ -1601,6 +1601,18 @@ test("gateway returns Retry-After on transient backpressure rejects", async (t) 
 
   for (const scenario of scenarios) {
     const config = createDefaultConfig("tiny");
+    const warnings: Array<{ message: string; fields: LogFields | undefined }> = [];
+    const errors: Array<{ message: string; fields: LogFields | undefined }> = [];
+    const logger = {
+      debug() {},
+      info() {},
+      warn(message: string, fields?: LogFields) {
+        warnings.push({ message, fields });
+      },
+      error(message: string, fields?: LogFields) {
+        errors.push({ message, fields });
+      },
+    } as unknown as Logger;
     const runtime = {
       async infer() {
         throw new RayError("The VPS is under backpressure", {
@@ -1612,6 +1624,7 @@ test("gateway returns Retry-After on transient backpressure rejects", async (t) 
     const gateway = createGatewayServer({
       config,
       runtime,
+      logger,
     });
 
     await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
@@ -1636,6 +1649,12 @@ test("gateway returns Retry-After on transient backpressure rejects", async (t) 
     assert.equal(response.headers.get("retry-after"), scenario.retryAfter);
     const body = (await response.json()) as { error: { code: string } };
     assert.equal(body.error.code, scenario.code);
+    assert.equal(errors.length, 0);
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0]?.message, "request rejected");
+    const loggedError = warnings[0]?.fields?.error as { code?: string; stack?: string };
+    assert.equal(loggedError.code, scenario.code);
+    assert.equal(loggedError.stack, undefined);
   }
 });
 
