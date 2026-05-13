@@ -201,12 +201,16 @@ test("runGatewaySmokeCli verifies public auth guards and rate limiting", async (
   assert.equal(summary.publicSafety?.rateLimitStatus, 429);
   assert.deepEqual(summary.publicSafety?.protectedMissingStatuses, {
     "/v1/infer": 401,
+    "/v1/jobs": 401,
+    "/v1/jobs/job_missing": 401,
     "/health": 401,
     "/metrics": 401,
     "/v1/config": 401,
   });
   assert.deepEqual(summary.publicSafety?.protectedInvalidStatuses, {
     "/v1/infer": 401,
+    "/v1/jobs": 401,
+    "/v1/jobs/job_missing": 401,
     "/health": 401,
     "/metrics": 401,
     "/v1/config": 401,

@@ -21,7 +21,7 @@ Aligned with [roadmap Phase 1 exit criteria](roadmap.md) and day-one operator ex
    bun run smoke:tiny:async
    ```
 
-   These start the tiny mock-provider gateway on ephemeral loopback ports and verify `/livez`, `/readyz`, `/v1/infer`, public auth guards, rate limiting, and `/v1/jobs` async submission/status completion without an external model server.
+   These start the tiny mock-provider gateway on ephemeral loopback ports and verify `/livez`, `/readyz`, `/v1/infer`, protected `/v1/jobs` auth guards, rate limiting, and `/v1/jobs` async submission/status completion without an external model server.
 
 3. **Tests**
 

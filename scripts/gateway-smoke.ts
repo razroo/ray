@@ -462,8 +462,16 @@ function assertTextStatus(result: TextResponse, label: string, expected: number)
   }
 }
 
+type ProtectedEndpoint =
+  | "/v1/infer"
+  | "/v1/jobs"
+  | "/v1/jobs/job_missing"
+  | "/health"
+  | "/metrics"
+  | "/v1/config";
+
 function protectedEndpointRequest(
-  pathName: string,
+  pathName: ProtectedEndpoint,
   token?: string,
 ): { path: string; init: RequestInit } {
   const headers: Record<string, string> = {};
@@ -487,6 +495,21 @@ function protectedEndpointRequest(
     };
   }
 
+  if (pathName === "/v1/jobs") {
+    headers["content-type"] = "application/json";
+    return {
+      path: pathName,
+      init: {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          input: "Public async auth smoke.",
+          maxTokens: 16,
+        }),
+      },
+    };
+  }
+
   return {
     path: pathName,
     init: {
@@ -501,7 +524,14 @@ async function smokePublicSafety(options: { baseUrl: string; timeoutMs: number }
   inferStatus: number;
   outputChars: number;
 }> {
-  const protectedPaths = ["/v1/infer", "/health", "/metrics", "/v1/config"];
+  const protectedPaths: ProtectedEndpoint[] = [
+    "/v1/infer",
+    "/v1/jobs",
+    "/v1/jobs/job_missing",
+    "/health",
+    "/metrics",
+    "/v1/config",
+  ];
   const protectedMissingStatuses: Record<string, number> = {};
   const protectedInvalidStatuses: Record<string, number> = {};
   const protectedValidStatuses: Record<string, number> = {};
