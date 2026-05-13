@@ -158,6 +158,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
       "npm run build",
       "sudo install -m 0644 Caddyfile /etc/caddy/Caddyfile",
       "sudo systemctl reload caddy",
+      "timeout 60s sudo systemctl restart ray-gateway",
       "```",
       "",
     ].join("\n"),
@@ -207,6 +208,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("vps_readme_apt_get_unbounded"));
   assert.ok(codes.includes("vps_readme_command_timeout_missing"));
   assert.ok(codes.includes("vps_readme_bun_install_unbounded"));
+  assert.ok(codes.includes("vps_readme_ray_service_suffix_missing"));
   assert.equal(codes.filter((code) => code === "non_bun_runtime_doc_command").length, 4);
   assert.ok(codes.includes("non_bun_lockfile_present"));
 });

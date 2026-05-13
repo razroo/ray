@@ -310,15 +310,15 @@ if [ -f /tmp/ray-rendered/ray-llama-cpp.service ]; then
   timeout 60s sudo cp /tmp/ray-rendered/ray-llama-cpp.service /etc/systemd/system/ray-llama-cpp.service
 else
   if [ -f /etc/systemd/system/ray-llama-cpp.service ]; then
-    timeout 120s sudo systemctl disable --now ray-llama-cpp || true
+    timeout 120s sudo systemctl disable --now ray-llama-cpp.service || true
   fi
   timeout 60s sudo rm -f /etc/systemd/system/ray-llama-cpp.service
 fi
 timeout 60s sudo systemctl daemon-reload
 if [ -f /etc/systemd/system/ray-llama-cpp.service ]; then
-  timeout 120s sudo systemctl enable --now ray-llama-cpp
+  timeout 120s sudo systemctl enable --now ray-llama-cpp.service
 fi
-timeout 120s sudo systemctl enable --now ray-gateway
+timeout 120s sudo systemctl enable --now ray-gateway.service
 ```
 
 ### 7. Install the reverse proxy
@@ -475,7 +475,7 @@ file, package metadata, and the llama.cpp staging helper used during deploy.
 - Run `bun run build` before rendering or restarting services; doctor verifies the built gateway entrypoint exists under the generated `WorkingDirectory` and is readable by the generated service user.
 - Use `/livez` for reverse-proxy liveness checks, and `/readyz` when a dependent app needs a minimal backend-aware readiness check; the gateway binds before provider warmup finishes, so a slow local model backend should not make systemd treat the gateway process itself as dead.
 - Let the generated Caddy upstream timeouts track `scheduler.requestTimeoutMs`; public proxy sockets should not outlive Ray's own request budget for long.
-- The generated systemd units enable CPU, memory, and IO accounting, so `systemctl show ray-gateway -p CPUUsageNSec -p MemoryCurrent -p IOReadBytes -p IOWriteBytes` can confirm pressure without extra agents.
+- The generated systemd units enable CPU, memory, and IO accounting, so `systemctl show ray-gateway.service -p CPUUsageNSec -p MemoryCurrent -p IOReadBytes -p IOWriteBytes` can confirm pressure without extra agents.
 - The generated systemd units rate-limit journal output so crash loops or verbose local backends cannot quickly fill a small VPS disk.
 - The generated systemd units set `CPUWeight` so the lightweight gateway gets a larger CPU share than the local model backend when both contend on a small node.
 - The generated systemd units also set `MemoryHigh`, `MemoryMax`, and `MemorySwapMax` cgroup ceilings from the gateway profile and llama.cpp memory budget so backend and gateway memory pressure stays bounded on one-node VPS hosts without letting one service consume the whole swap cushion.

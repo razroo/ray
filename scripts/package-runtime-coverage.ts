@@ -1003,9 +1003,14 @@ function isVpsReadmeCommandRequiringTimeout(line: string): boolean {
   );
 }
 
+function referencesImplicitRaySystemdUnit(line: string): boolean {
+  return /\b(?:journalctl|systemctl)\b.*\bray-(?:gateway|llama-cpp)(?!\.service)\b/.test(line);
+}
+
 async function validateRuntimeDoc(
   docPath: string,
   options: {
+    enforceExplicitRayServiceUnits: boolean;
     enforceVpsTimeouts: boolean;
   },
 ): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
@@ -1025,11 +1030,28 @@ async function validateRuntimeDoc(
       continue;
     }
 
+    const line = rawLine.trim();
+
+    if (
+      options.enforceExplicitRayServiceUnits &&
+      line.length > 0 &&
+      !line.startsWith("#") &&
+      referencesImplicitRaySystemdUnit(line)
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "vps_readme_ray_service_suffix_missing",
+        docPath,
+        line: index + 1,
+        message:
+          "VPS deployment docs must reference generated Ray systemd units with their explicit .service suffix so manual commands match the rendered unit files.",
+      });
+    }
+
     if (!inShellBlock) {
       continue;
     }
 
-    const line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#")) {
       continue;
     }
@@ -1191,6 +1213,7 @@ export async function validatePackageRuntimeCoverage(options: {
     try {
       const docRelPath = displayPath(cwd, docPath);
       const { lineCount, diagnostics } = await validateRuntimeDoc(docPath, {
+        enforceExplicitRayServiceUnits: VPS_TIMEOUT_DOCS.has(docRelPath),
         enforceVpsTimeouts: VPS_TIMEOUT_DOCS.has(docRelPath),
       });
       results.push({
