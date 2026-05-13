@@ -229,13 +229,31 @@ export function createApiKeyVerifier(
   };
 }
 
+function ipv4FromMappedIpv6(address: string): string | undefined {
+  const mapped = address.match(/^(?:::ffff:|0:0:0:0:0:ffff:)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+
+  if (!mapped) {
+    return undefined;
+  }
+
+  const high = Number.parseInt(mapped[1] ?? "", 16);
+  const low = Number.parseInt(mapped[2] ?? "", 16);
+
+  if (!Number.isInteger(high) || !Number.isInteger(low)) {
+    return undefined;
+  }
+
+  return `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${low & 0xff}`;
+}
+
 function normalizeIpAddress(address: string | undefined): string {
-  return (address ?? "")
+  const normalized = (address ?? "")
     .trim()
     .toLowerCase()
     .replace(/^\[(.*)\]$/, "$1")
-    .replace(/^::ffff:/, "")
     .replace(/\.$/, "");
+
+  return ipv4FromMappedIpv6(normalized) ?? normalized.replace(/^::ffff:/, "");
 }
 
 function isPrivateOrLocalIpv4(address: string): boolean {
