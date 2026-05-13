@@ -18,6 +18,7 @@ export interface CliOptions {
   memoryBudgetMiB?: number;
   runtimeBinary?: string;
   nodeBinary?: string;
+  caddyBinary?: string;
   strictFilesystem?: boolean;
 }
 
@@ -70,13 +71,14 @@ Options:
   --user <name|uid>               systemd service user. Default: ray or RAY_DEPLOY_SERVICE_USER.
   --gateway-runtime-binary <path> Gateway runtime path. Default: /usr/local/bin/bun.
   --node-binary <path>            Compatibility alias for the gateway runtime path.
+  --caddy-binary <path>           Caddy binary for strict doctor/render checks. Default: caddy on PATH.
   --memory-mib <number>           VPS memory budget for llama.cpp sizing.
   --strict-filesystem             Check service-user, binary, config, model, and storage paths.
   -h, --help                      Show this help.
 
 Deploy env values loaded by --env-file include RAY_API_KEYS, RAY_DEPLOY_SERVICE_USER,
-RAY_DEPLOY_DOMAIN, RAY_DEPLOY_MEMORY_MIB, RAY_GATEWAY_RUNTIME_BINARY, and portable
-RAY_MODEL_* / RAY_LLAMA_CPP_* model overrides.
+RAY_DEPLOY_DOMAIN, RAY_DEPLOY_MEMORY_MIB, RAY_GATEWAY_RUNTIME_BINARY,
+RAY_DEPLOY_CADDY_BINARY, and portable RAY_MODEL_* / RAY_LLAMA_CPP_* model overrides.
 `;
 
 function assertCliArgv(argv: unknown): asserts argv is string[] {
@@ -226,6 +228,10 @@ export function normalizeGatewayRuntimeBinaryPath(
   }
 
   return normalized;
+}
+
+export function normalizeCaddyBinaryPath(value: string, label = "RAY_DEPLOY_CADDY_BINARY"): string {
+  return normalizeGatewayRuntimeBinaryPath(value, label);
 }
 
 export function parseDeploySshPort(value: string, label = "RAY_DEPLOY_SSH_PORT"): number {
@@ -574,6 +580,12 @@ export function parseCliArgs(argv: string[]): CliOptions {
       continue;
     }
 
+    if (current === "--caddy-binary") {
+      options.caddyBinary = normalizeCaddyBinaryPath(requireFlagValue(current, next), current);
+      index += 1;
+      continue;
+    }
+
     if (current === "--output-dir") {
       options.outputDir = requireFlagValue(current, next);
       index += 1;
@@ -624,6 +636,7 @@ export async function runCli(argv: string[]): Promise<void> {
 
   const env = await loadEnvironment(resolvedOptions);
   const envRuntimeBinary = readNonEmptyEnvValue(env.RAY_GATEWAY_RUNTIME_BINARY);
+  const envCaddyBinary = readNonEmptyEnvValue(env.RAY_DEPLOY_CADDY_BINARY);
   const envServiceUser =
     resolvedOptions.user === undefined
       ? parseOptionalServiceUserEnv(env.RAY_DEPLOY_SERVICE_USER)
@@ -648,6 +661,11 @@ export async function runCli(argv: string[]): Promise<void> {
             envRuntimeBinary,
             "RAY_GATEWAY_RUNTIME_BINARY",
           ),
+        }
+      : {}),
+    ...(resolvedOptions.caddyBinary === undefined && envCaddyBinary !== undefined
+      ? {
+          caddyBinary: normalizeCaddyBinaryPath(envCaddyBinary, "RAY_DEPLOY_CADDY_BINARY"),
         }
       : {}),
   };

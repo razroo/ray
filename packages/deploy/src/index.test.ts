@@ -2132,9 +2132,7 @@ test("diagnoseConfig reports a valid generated Caddyfile in strict mode", () => 
 
 test("loadAndDiagnoseDeployment validates the generated Caddyfile in strict mode", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-caddyfile-ok-"));
-  const previousPath = process.env.PATH;
   t.after(async () => {
-    process.env.PATH = previousPath;
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -2164,16 +2162,17 @@ exit 5
 `,
   );
   await chmod(caddyPath, 0o755);
-  process.env.PATH = `${binDir}:${previousPath ?? ""}`;
 
   const inspected = await loadAndDiagnoseDeployment({
     cwd: tempDir,
     configPath,
     domain: "example.com",
+    caddyBinary: caddyPath,
     strictFilesystem: true,
   });
 
   assert.equal(inspected.preflight.caddyStatus, "available");
+  assert.equal(inspected.preflight.caddyBinaryPath, caddyPath);
   assert.equal(inspected.preflight.caddyConfigStatus, "valid");
   assert.match(await readFile(caddyArgsPath, "utf8"), /^validate\n--config\n/m);
   const diagnostic = inspected.diagnostics.find((entry) => entry.code === "caddy_config_ok");

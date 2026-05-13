@@ -152,6 +152,7 @@ RAY_API_KEYS=replace-with-comma-separated-client-api-keys
 RAY_DEPLOY_SERVICE_USER=ray
 RAY_DEPLOY_MEMORY_MIB=4096
 RAY_GATEWAY_RUNTIME_BINARY=/usr/local/bin/bun
+RAY_DEPLOY_CADDY_BINARY=/usr/bin/caddy
 RAY_PROFILE=1b
 RAY_HOST=127.0.0.1
 RAY_PORT=3000
@@ -385,6 +386,7 @@ Optional repository variables:
 - `RAY_DEPLOY_INSTALL_CADDY` — set to `true` to install and reload the generated Caddyfile; requires `RAY_DEPLOY_DOMAIN` to be a real public DNS name, not `ray.local`, `localhost`, loopback, or another `.local` placeholder
 - `RAY_CONFIG_PATH` — repo-relative config path to install, defaults to `./examples/config/ray.sub1b.public.json`; the workflow rejects absolute paths, path traversal, and paths excluded from repo sync before opening SSH
 - `RAY_GATEWAY_RUNTIME_BINARY` — absolute JavaScript runtime path rendered into `ray-gateway.service`, defaults to `/usr/local/bin/bun`; the deploy CLI and workflow reject relative paths and paths under `/home`, `/root`, or `/run/user` because generated units use `ProtectHome=true`
+- `RAY_DEPLOY_CADDY_BINARY` — absolute Caddy runtime path for local render/doctor checks when `caddy` is not on the deploy user's `PATH`; pass `--caddy-binary` to override it for one command
 - `RAY_DEPLOY_READY_TIMEOUT_SECONDS` — bounded wait for `/readyz` after service restart before reloading Caddy, defaults to `120`
 - `RAY_AUTO_DEPLOY` — set to `true` if pushes to `main` should auto-deploy
 
@@ -466,6 +468,7 @@ file, package metadata, and the llama.cpp staging helper used during deploy.
 - Keep `/etc/ray/ray.env` private, for example with `sudo chmod 600 /etc/ray/ray.env`; doctor warns when the env file is group/world-readable.
 - Create the generated service user before manual render/restart steps, or set `RAY_DEPLOY_SERVICE_USER` in the deploy env file when not using the default `ray` account; use a dedicated non-root account because doctor warns when generated Ray services are configured to run as root.
 - Install Bun 1.3+ at `/usr/local/bin/bun`, set `RAY_GATEWAY_RUNTIME_BINARY`, or pass the same `--gateway-runtime-binary` used at render time; doctor verifies the generated service user can execute the rendered gateway runtime and, for identifiable Bun/Node binaries, that its version satisfies Ray's engine requirements before systemd uses it. Node.js remains a compatibility fallback, and doctor warns when a generated VPS service is pointed at Node instead of Bun.
+- Install Caddy on `PATH`, set `RAY_DEPLOY_CADDY_BINARY`, or pass `--caddy-binary`; doctor runs that binary for `version` and `validate --config` before you install or reload the generated reverse proxy config.
 - Keep `/etc/ray/ray.json` readable by the generated service user, for example with `root:<service-user-primary-group>` ownership and mode `0640`; doctor verifies this before systemd uses it.
 - Keep the Ray checkout at the generated `WorkingDirectory` such as `/srv/ray`, not under `/home`, `/root`, or `/run/user`; doctor verifies the directory exists, is not hidden by `ProtectHome=true`, and has read/execute mode bits for the generated service user before systemd uses it.
 - Run `bun run build` before rendering or restarting services; doctor verifies the built gateway entrypoint exists under the generated `WorkingDirectory` and is readable by the generated service user.

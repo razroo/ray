@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
 import {
   formatDeployKnownHostLookup,
+  normalizeCaddyBinaryPath,
   normalizeGatewayRuntimeBinaryPath,
   normalizeRepoConfigPath,
   parseDeploySshPort,
@@ -91,6 +92,10 @@ test("normalizeGatewayRuntimeBinaryPath resolves deploy runtime paths", () => {
     "/usr/local/bin/bun",
   );
   assert.equal(normalizeGatewayRuntimeBinaryPath("/opt/ray runtimes/bun"), "/opt/ray runtimes/bun");
+});
+
+test("normalizeCaddyBinaryPath resolves strict Caddy runtime paths", () => {
+  assert.equal(normalizeCaddyBinaryPath("/usr/bin/../bin/caddy"), "/usr/bin/caddy");
 });
 
 test("normalizeGatewayRuntimeBinaryPath rejects paths hidden from systemd services", () => {
@@ -282,10 +287,21 @@ test("parseCliArgs accepts explicit gateway runtime binaries", () => {
   assert.equal(options.runtimeBinary, "/usr/local/bin/bun");
 });
 
+test("parseCliArgs accepts explicit Caddy binaries", () => {
+  const options = parseCliArgs(["doctor", "--caddy-binary", "/usr/bin/caddy"]);
+
+  assert.equal(options.command, "doctor");
+  assert.equal(options.caddyBinary, "/usr/bin/caddy");
+});
+
 test("parseCliArgs rejects relative gateway runtime binaries", () => {
   assert.throws(
     () => parseCliArgs(["render", "--gateway-runtime-binary", "bun"]),
     /--gateway-runtime-binary must be an absolute path/,
+  );
+  assert.throws(
+    () => parseCliArgs(["doctor", "--caddy-binary", "caddy"]),
+    /--caddy-binary must be an absolute path/,
   );
 });
 
@@ -511,6 +527,35 @@ test("runCli rejects malformed env-file gateway runtime paths", async (t) => {
         "4096",
       ]),
     /RAY_GATEWAY_RUNTIME_BINARY must be an absolute path/,
+  );
+});
+
+test("runCli rejects malformed env-file Caddy binary paths", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-caddy-invalid-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(
+    envFile,
+    ["RAY_API_KEYS=test-key", "RAY_DEPLOY_CADDY_BINARY=./caddy", ""].join("\n"),
+    "utf8",
+  );
+
+  await assert.rejects(
+    () =>
+      runCli([
+        "render",
+        "--cwd",
+        ".",
+        "--config",
+        "./examples/config/ray.1b.generic.public.json",
+        "--ray-env-file",
+        envFile,
+        "--memory-mib",
+        "4096",
+      ]),
+    /RAY_DEPLOY_CADDY_BINARY must be an absolute path/,
   );
 });
 

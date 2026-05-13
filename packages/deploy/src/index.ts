@@ -123,6 +123,7 @@ export interface DeploymentPreflight {
   gatewayRuntimeVersionStatus?: GatewayRuntimeVersionStatus;
   gatewayRuntimeVersionError?: string;
   caddyStatus?: CaddyRuntimeStatus;
+  caddyBinaryPath?: string;
   caddyVersion?: string;
   caddyError?: string;
   caddyConfigStatus?: CaddyConfigStatus;
@@ -3001,6 +3002,7 @@ export async function loadAndDiagnoseDeployment(options: {
   allowMissingAuthKeys?: boolean;
   hostFiles?: DeploymentHostFilePaths;
   inspectHostStorage?: boolean;
+  caddyBinary?: string;
 }): Promise<{
   config: RayConfig;
   configPath?: string;
@@ -3021,6 +3023,7 @@ export async function loadAndDiagnoseDeployment(options: {
     ...(options.envFile !== undefined ? { envFile: options.envFile } : {}),
     ...(options.user !== undefined ? { user: options.user } : {}),
     ...(options.domain !== undefined ? { domain: options.domain } : {}),
+    ...(options.caddyBinary !== undefined ? { caddyBinary: options.caddyBinary } : {}),
     ...(options.strictFilesystem !== undefined
       ? { strictFilesystem: options.strictFilesystem }
       : {}),
@@ -3059,6 +3062,7 @@ export async function renderDeploymentBundle(options: {
   nodeBinary?: string;
   strictFilesystem?: boolean;
   inspectHostStorage?: boolean;
+  caddyBinary?: string;
 }): Promise<{
   service: string;
   caddyfile: string;
@@ -3081,6 +3085,7 @@ export async function renderDeploymentBundle(options: {
     ...(options.memoryBudgetMiB !== undefined ? { memoryBudgetMiB: options.memoryBudgetMiB } : {}),
     ...(options.runtimeBinary !== undefined ? { runtimeBinary: options.runtimeBinary } : {}),
     ...(options.nodeBinary !== undefined ? { nodeBinary: options.nodeBinary } : {}),
+    ...(options.caddyBinary !== undefined ? { caddyBinary: options.caddyBinary } : {}),
     ...(options.user !== undefined ? { user: options.user } : {}),
     ...(options.strictFilesystem !== undefined
       ? { strictFilesystem: options.strictFilesystem }
@@ -3545,6 +3550,7 @@ async function collectSystemdUnitPreflight(
 
 async function collectCaddyPreflight(
   strictFilesystem: boolean,
+  caddyBinary = "caddy",
 ): Promise<Partial<DeploymentPreflight>> {
   if (!strictFilesystem) {
     return {};
@@ -3552,7 +3558,7 @@ async function collectCaddyPreflight(
 
   return await new Promise<Partial<DeploymentPreflight>>((resolve) => {
     execFile(
-      "caddy",
+      caddyBinary,
       ["version"],
       {
         timeout: CADDY_VERSION_TIMEOUT_MS,
@@ -3570,6 +3576,7 @@ async function collectCaddyPreflight(
 
           resolve({
             caddyStatus: code === "ENOENT" ? "missing" : "unreadable",
+            caddyBinaryPath: caddyBinary,
             caddyError: output
               ? `${toErrorMessage(error)}; output: ${truncateRuntimeVersionOutput(output)}`
               : toErrorMessage(error),
@@ -3580,6 +3587,7 @@ async function collectCaddyPreflight(
         const caddyVersion = parseCommandVersionOutput(output);
         resolve({
           caddyStatus: "available",
+          caddyBinaryPath: caddyBinary,
           ...(caddyVersion ? { caddyVersion } : {}),
         });
       },
@@ -3587,10 +3595,13 @@ async function collectCaddyPreflight(
   });
 }
 
-async function runCaddyValidate(configPath: string): Promise<Partial<DeploymentPreflight>> {
+async function runCaddyValidate(
+  configPath: string,
+  caddyBinary: string,
+): Promise<Partial<DeploymentPreflight>> {
   return await new Promise<Partial<DeploymentPreflight>>((resolve) => {
     execFile(
-      "caddy",
+      caddyBinary,
       ["validate", "--config", configPath],
       {
         timeout: CADDY_VALIDATE_TIMEOUT_MS,
@@ -3626,6 +3637,7 @@ async function collectCaddyConfigPreflight(
   domain: string,
   strictFilesystem: boolean,
   caddyStatus: CaddyRuntimeStatus | undefined,
+  caddyBinary = "caddy",
 ): Promise<Partial<DeploymentPreflight>> {
   if (!strictFilesystem || caddyStatus !== "available") {
     return {};
@@ -3650,7 +3662,7 @@ async function collectCaddyConfigPreflight(
   try {
     const caddyfilePath = path.join(tempDirectory, "Caddyfile");
     await writeFile(caddyfilePath, caddyfile, "utf8");
-    return await runCaddyValidate(caddyfilePath);
+    return await runCaddyValidate(caddyfilePath, caddyBinary);
   } catch (error) {
     return {
       caddyConfigStatus: "unreadable",
@@ -4155,13 +4167,18 @@ async function collectDeploymentPreflight(
     nodeBinary?: string;
     hostFiles?: DeploymentHostFilePaths;
     inspectHostStorage?: boolean;
+    caddyBinary?: string;
   },
 ): Promise<DeploymentPreflight> {
   const hostMemoryMiB = Math.max(1, Math.floor(totalmem() / BYTES_PER_MIB));
   const hostCpuCount = collectHostCpuCount();
   const hostArchitecture = process.arch;
   const systemdPreflight = await collectSystemdPreflight(options.strictFilesystem === true);
-  const caddyPreflight = await collectCaddyPreflight(options.strictFilesystem === true);
+  const caddyBinary = options.caddyBinary ?? "caddy";
+  const caddyPreflight = await collectCaddyPreflight(
+    options.strictFilesystem === true,
+    caddyBinary,
+  );
   const caddySiteAddressPreflight =
     options.domain !== undefined ? { caddySiteAddress: options.domain } : {};
   const caddyConfigPreflight = await collectCaddyConfigPreflight(
@@ -4169,6 +4186,7 @@ async function collectDeploymentPreflight(
     options.domain ?? "ray.local",
     options.strictFilesystem === true,
     caddyPreflight.caddyStatus,
+    caddyBinary,
   );
   const envFilePreflight = await collectEnvFilePreflight(options.envFile);
   const serviceUserPreflight = await collectServiceUserPreflight(
