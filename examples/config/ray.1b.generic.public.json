@@ -70,6 +70,20 @@
     "memoryRssThresholdMiB": 512,
     "cpuThrottledRatioThreshold": 0.2
   },
+  "adaptiveTuning": {
+    "enabled": true,
+    "sampleSize": 32,
+    "queueLatencyThresholdMs": 600,
+    "minCompletionTokensPerSecond": 8,
+    "maxOutputReductionRatio": 0.5,
+    "minOutputTokens": 64,
+    "learnedFamilyCapEnabled": true,
+    "familyHistorySize": 64,
+    "learnedCapMinSamples": 8,
+    "draftPercentile": 0.95,
+    "shortPercentile": 0.9,
+    "learnedCapHeadroomTokens": 24
+  },
   "tags": {
     "target": "1b",
     "hardware": "generic-4gb-vps-class",

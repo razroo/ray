@@ -152,6 +152,18 @@ test("validateConfigFiles requires explicit public runtime guardrails", async (t
   assert.ok(codes.includes("public_config_degradation_tokens_explicit"));
   assert.ok(codes.includes("public_config_degradation_memory_rss_explicit"));
   assert.ok(codes.includes("public_config_degradation_cpu_throttled_ratio_explicit"));
+  assert.ok(codes.includes("public_config_adaptive_enabled_explicit"));
+  assert.ok(codes.includes("public_config_adaptive_sample_size_explicit"));
+  assert.ok(codes.includes("public_config_adaptive_queue_latency_explicit"));
+  assert.ok(codes.includes("public_config_adaptive_min_tps_explicit"));
+  assert.ok(codes.includes("public_config_adaptive_reduction_ratio_explicit"));
+  assert.ok(codes.includes("public_config_adaptive_min_output_tokens_explicit"));
+  assert.ok(codes.includes("public_config_adaptive_learned_cap_explicit"));
+  assert.ok(codes.includes("public_config_adaptive_family_history_explicit"));
+  assert.ok(codes.includes("public_config_adaptive_learned_cap_samples_explicit"));
+  assert.ok(codes.includes("public_config_adaptive_draft_percentile_explicit"));
+  assert.ok(codes.includes("public_config_adaptive_short_percentile_explicit"));
+  assert.ok(codes.includes("public_config_adaptive_headroom_tokens_explicit"));
 });
 
 test("validateConfigFiles accepts every checked-in example config", async () => {

@@ -41,6 +41,16 @@ const MAX_PUBLIC_DEGRADATION_PROMPT_CHARS = 8_000;
 const MAX_PUBLIC_DEGRADATION_TOKENS = 160;
 const MAX_PUBLIC_DEGRADATION_MEMORY_RSS_MIB = 768;
 const MAX_PUBLIC_DEGRADATION_CPU_THROTTLED_RATIO = 0.2;
+const MAX_PUBLIC_ADAPTIVE_SAMPLE_SIZE = 32;
+const MAX_PUBLIC_ADAPTIVE_QUEUE_LATENCY_MS = 600;
+const MAX_PUBLIC_ADAPTIVE_MIN_TOKENS_PER_SECOND = 14;
+const MAX_PUBLIC_ADAPTIVE_OUTPUT_REDUCTION_RATIO = 0.5;
+const MAX_PUBLIC_ADAPTIVE_MIN_OUTPUT_TOKENS = 64;
+const MAX_PUBLIC_ADAPTIVE_FAMILY_HISTORY_SIZE = 64;
+const MAX_PUBLIC_ADAPTIVE_LEARNED_CAP_MIN_SAMPLES = 8;
+const MAX_PUBLIC_ADAPTIVE_DRAFT_PERCENTILE = 0.95;
+const MAX_PUBLIC_ADAPTIVE_SHORT_PERCENTILE = 0.9;
+const MAX_PUBLIC_ADAPTIVE_LEARNED_CAP_HEADROOM_TOKENS = 24;
 
 type ConfigRecord = Record<string, unknown>;
 
@@ -685,6 +695,90 @@ async function diagnosePublicConfigPolicy(configPath: string): Promise<Deploymen
     ["gracefulDegradation", "cpuThrottledRatioThreshold"],
     MAX_PUBLIC_DEGRADATION_CPU_THROTTLED_RATIO,
     "public_config_degradation_cpu_throttled_ratio_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["adaptiveTuning", "enabled"],
+    true,
+    "public_config_adaptive_enabled_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["adaptiveTuning", "sampleSize"],
+    MAX_PUBLIC_ADAPTIVE_SAMPLE_SIZE,
+    "public_config_adaptive_sample_size_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["adaptiveTuning", "queueLatencyThresholdMs"],
+    MAX_PUBLIC_ADAPTIVE_QUEUE_LATENCY_MS,
+    "public_config_adaptive_queue_latency_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["adaptiveTuning", "minCompletionTokensPerSecond"],
+    MAX_PUBLIC_ADAPTIVE_MIN_TOKENS_PER_SECOND,
+    "public_config_adaptive_min_tps_explicit",
+  );
+  expectPublicConfigPositiveNumberAtMost(
+    diagnostics,
+    parsed,
+    ["adaptiveTuning", "maxOutputReductionRatio"],
+    MAX_PUBLIC_ADAPTIVE_OUTPUT_REDUCTION_RATIO,
+    "public_config_adaptive_reduction_ratio_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["adaptiveTuning", "minOutputTokens"],
+    MAX_PUBLIC_ADAPTIVE_MIN_OUTPUT_TOKENS,
+    "public_config_adaptive_min_output_tokens_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["adaptiveTuning", "learnedFamilyCapEnabled"],
+    true,
+    "public_config_adaptive_learned_cap_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["adaptiveTuning", "familyHistorySize"],
+    MAX_PUBLIC_ADAPTIVE_FAMILY_HISTORY_SIZE,
+    "public_config_adaptive_family_history_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["adaptiveTuning", "learnedCapMinSamples"],
+    MAX_PUBLIC_ADAPTIVE_LEARNED_CAP_MIN_SAMPLES,
+    "public_config_adaptive_learned_cap_samples_explicit",
+  );
+  expectPublicConfigPositiveNumberAtMost(
+    diagnostics,
+    parsed,
+    ["adaptiveTuning", "draftPercentile"],
+    MAX_PUBLIC_ADAPTIVE_DRAFT_PERCENTILE,
+    "public_config_adaptive_draft_percentile_explicit",
+  );
+  expectPublicConfigPositiveNumberAtMost(
+    diagnostics,
+    parsed,
+    ["adaptiveTuning", "shortPercentile"],
+    MAX_PUBLIC_ADAPTIVE_SHORT_PERCENTILE,
+    "public_config_adaptive_short_percentile_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["adaptiveTuning", "learnedCapHeadroomTokens"],
+    MAX_PUBLIC_ADAPTIVE_LEARNED_CAP_HEADROOM_TOKENS,
+    "public_config_adaptive_headroom_tokens_explicit",
   );
 
   return diagnostics;
