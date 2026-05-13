@@ -2004,6 +2004,25 @@ test("diagnoseConfig errors when generated gateway service binds publicly", () =
   assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "gateway_bind_host_public"));
 });
 
+test("diagnoseConfig errors when generated gateway and llama.cpp ports conflict", () => {
+  const config = createDefaultConfig("1b");
+
+  if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
+    throw new Error("Expected llama.cpp launch profile");
+  }
+
+  config.server.port = config.model.adapter.launchProfile.port;
+
+  const diagnostics = diagnoseConfig(config, process.env);
+  const diagnostic = diagnostics.find((entry) => entry.code === "gateway_llama_port_conflict");
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /ray-gateway\.service/);
+  assert.match(diagnostic.message, /ray-llama-cpp\.service/);
+  assert.match(diagnostic.message, /distinct local sockets/);
+});
+
 test("diagnoseConfig errors when Ray points away from the generated llama.cpp service", () => {
   const publicBaseUrlConfig = createDefaultConfig("1b");
   const portMismatchConfig = createDefaultConfig("1b");

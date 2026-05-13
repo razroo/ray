@@ -403,6 +403,30 @@ function isLoopbackHost(value: string): boolean {
   return false;
 }
 
+function isWildcardBindHost(value: string): boolean {
+  const host = normalizeHostLiteral(value);
+  return host === "0.0.0.0" || host === "::" || host === "0:0:0:0:0:0:0:0";
+}
+
+function localBindHostsOverlap(left: string, right: string): boolean {
+  const leftHost = normalizeHostLiteral(left);
+  const rightHost = normalizeHostLiteral(right);
+
+  if (isWildcardBindHost(leftHost) || isWildcardBindHost(rightHost)) {
+    return true;
+  }
+
+  if (leftHost === rightHost) {
+    return true;
+  }
+
+  return (
+    (leftHost === "localhost" || rightHost === "localhost") &&
+    isLoopbackHost(leftHost) &&
+    isLoopbackHost(rightHost)
+  );
+}
+
 function normalizeHostLiteral(value: string): string {
   const trimmed = value.trim().toLowerCase();
   return trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
@@ -2659,6 +2683,17 @@ export function diagnoseConfig(
           code: "llama_launch_host_public",
           message:
             "model.adapter.launchProfile.host is not loopback. Generated llama.cpp services should bind to 127.0.0.1 or localhost so Ray remains the public inference surface.",
+        });
+      }
+
+      if (
+        config.server.port === launchProfile.port &&
+        localBindHostsOverlap(config.server.host, launchProfile.host)
+      ) {
+        diagnostics.push({
+          level: "error",
+          code: "gateway_llama_port_conflict",
+          message: `server.host/server.port (${config.server.host}:${config.server.port}) overlaps model.adapter.launchProfile.host/port (${launchProfile.host}:${launchProfile.port}). The generated ray-gateway.service and ray-llama-cpp.service must listen on distinct local sockets before systemd restarts them.`,
         });
       }
 
