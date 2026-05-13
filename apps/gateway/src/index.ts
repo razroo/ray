@@ -929,6 +929,23 @@ function getDeclaredContentLength(request: IncomingMessage): number | undefined 
   return /^\d+$/.test(normalized) && Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
+function hasExpectContinue(request: IncomingMessage): boolean {
+  const expectation = request.headers.expect;
+
+  return typeof expectation === "string" && expectation.toLowerCase() === "100-continue";
+}
+
+function assertExpectContinueDeclaredContentLength(request: IncomingMessage): void {
+  if (!hasExpectContinue(request) || getDeclaredContentLength(request) !== undefined) {
+    return;
+  }
+
+  throw new RayError("Expect: 100-continue requests must declare Content-Length", {
+    code: "length_required",
+    status: 411,
+  });
+}
+
 function createUnsupportedJsonContentTypeError(contentType: string | undefined): RayError {
   return new RayError("Request content type must be application/json", {
     code: "unsupported_media_type",
@@ -1338,6 +1355,7 @@ function shouldCloseRequestAfterReject(request: IncomingMessage, error: RayError
     !request.complete &&
     (error.code === "body_too_large" ||
       error.code === "invalid_request" ||
+      error.code === "length_required" ||
       error.code === "request_target_too_large" ||
       error.code === "unsupported_content_encoding" ||
       error.code === "unsupported_media_type")
@@ -1546,6 +1564,7 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
 
         assertJsonContentType(request);
         assertIdentityContentEncoding(request);
+        assertExpectContinueDeclaredContentLength(request);
         acknowledgeExpectContinue(request, response, config.server.requestBodyLimitBytes);
         const body = (await readJsonBody(
           request,
@@ -1592,6 +1611,7 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
 
         assertJsonContentType(request);
         assertIdentityContentEncoding(request);
+        assertExpectContinueDeclaredContentLength(request);
         acknowledgeExpectContinue(request, response, config.server.requestBodyLimitBytes);
         const body = (await readJsonBody(
           request,

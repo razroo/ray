@@ -648,6 +648,36 @@ test("gateway rejects oversized Expect-Continue bodies before acknowledging uplo
   assert.match(response, /"code": "body_too_large"/);
 });
 
+test("gateway rejects chunked Expect-Continue uploads before acknowledgement", async (t) => {
+  const gateway = createGatewayServer({
+    config: createDefaultConfig("tiny"),
+  });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await readRawUnfinishedRequestResponse(gateway.server, [
+    "POST /v1/infer HTTP/1.1",
+    `Host: 127.0.0.1:${address.port}`,
+    "Content-Type: application/json",
+    "Transfer-Encoding: chunked",
+    "Expect: 100-continue",
+    "Connection: close",
+    "",
+    "",
+  ]);
+
+  assert.doesNotMatch(response, /^HTTP\/1\.1 100 Continue/m);
+  assert.match(response, /^HTTP\/1\.1 411 /);
+  assert.match(response, /\r\nconnection: close\r\n/i);
+  assert.match(response, /"code": "length_required"/);
+});
+
 test("gateway accepts bounded Expect-Continue uploads after acknowledgement", async (t) => {
   const config = mergeConfig(createDefaultConfig("tiny"), {
     server: {
