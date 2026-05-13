@@ -1569,6 +1569,24 @@ test("durable inference queue rejects private and non-global callbacks by defaul
       /private, local, or non-global/,
     );
 
+    await assert.rejects(
+      () =>
+        queue.enqueue({
+          input: "Do not call hexadecimal IPv4-mapped loopback callback",
+          callbackUrl: "http://[::ffff:7f00:1]/ray-callback",
+        }),
+      /private, local, or non-global/,
+    );
+
+    await assert.rejects(
+      () =>
+        queue.enqueue({
+          input: "Do not call hexadecimal IPv4-mapped private callback",
+          callbackUrl: "http://[::ffff:c0a8:1]/ray-callback",
+        }),
+      /private, local, or non-global/,
+    );
+
     const dnsQueue = new DurableInferenceQueue({
       config: config.asyncQueue,
       runtime,
@@ -1581,6 +1599,22 @@ test("durable inference queue rejects private and non-global callbacks by defaul
         dnsQueue.enqueue({
           input: "Do not call non-global DNS callback",
           callbackUrl: "https://callback.example/ray-callback",
+        }),
+      /private, local, or non-global/,
+    );
+
+    const mappedDnsQueue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+      lookupImpl: async () => [{ address: "::ffff:0a00:1" }],
+    });
+
+    await assert.rejects(
+      () =>
+        mappedDnsQueue.enqueue({
+          input: "Do not call IPv4-mapped private DNS callback",
+          callbackUrl: "https://mapped-private.example/ray-callback",
         }),
       /private, local, or non-global/,
     );

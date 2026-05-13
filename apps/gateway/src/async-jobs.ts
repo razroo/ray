@@ -780,12 +780,85 @@ function isNonGlobalIpv4(address: string): boolean {
   );
 }
 
+function expandIpv6Hextets(address: string): number[] | undefined {
+  const normalized = normalizeHostname(address);
+
+  if (normalized.includes(".")) {
+    return undefined;
+  }
+
+  const compressedParts = normalized.split("::");
+  if (compressedParts.length > 2) {
+    return undefined;
+  }
+
+  const parseSide = (value: string): number[] | undefined => {
+    if (value.length === 0) {
+      return [];
+    }
+
+    const hextets: number[] = [];
+    for (const segment of value.split(":")) {
+      if (!/^[0-9a-f]{1,4}$/.test(segment)) {
+        return undefined;
+      }
+
+      hextets.push(Number.parseInt(segment, 16));
+    }
+
+    return hextets;
+  };
+
+  const left = parseSide(compressedParts[0] ?? "");
+  const right = parseSide(compressedParts[1] ?? "");
+
+  if (!left || !right) {
+    return undefined;
+  }
+
+  if (compressedParts.length === 1) {
+    return left.length === 8 ? left : undefined;
+  }
+
+  const zeroFill = 8 - left.length - right.length;
+  if (zeroFill < 1) {
+    return undefined;
+  }
+
+  return [...left, ...Array.from({ length: zeroFill }, () => 0), ...right];
+}
+
+function embeddedIpv4FromIpv6(address: string): string | undefined {
+  const hextets = expandIpv6Hextets(address);
+
+  if (!hextets) {
+    return undefined;
+  }
+
+  const embedsIpv4 =
+    (hextets.slice(0, 5).every((part) => part === 0) && hextets[5] === 0xffff) ||
+    hextets.slice(0, 6).every((part) => part === 0);
+
+  if (!embedsIpv4) {
+    return undefined;
+  }
+
+  const high = hextets[6] ?? 0;
+  const low = hextets[7] ?? 0;
+  return `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${low & 0xff}`;
+}
+
 function isNonGlobalIpv6(address: string): boolean {
   const normalized = normalizeHostname(address);
   const mappedIpv4 = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
 
   if (mappedIpv4?.[1]) {
     return isNonGlobalIpv4(mappedIpv4[1]);
+  }
+
+  const embeddedIpv4 = embeddedIpv4FromIpv6(normalized);
+  if (embeddedIpv4) {
+    return isNonGlobalIpv4(embeddedIpv4);
   }
 
   const segments = normalized.split(":");
