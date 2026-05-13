@@ -3891,7 +3891,10 @@ test("loadAndDiagnoseDeployment errors when the configured model file is missing
   assert.ok(diagnostic);
   assert.match(diagnostic.message, /was not found/);
   assert.match(diagnostic.message, /RAY_LLAMA_CPP_BINARY_SOURCE_PATH/);
-  assert.match(diagnostic.message, /bun run model:stage -- --config <same-config>/);
+  assert.match(
+    diagnostic.message,
+    /sudo \/usr\/local\/bin\/bun run model:stage -- --config <same-config>/,
+  );
   assert.match(diagnostic.message, /--apply/);
 });
 
@@ -3971,7 +3974,10 @@ test("loadAndDiagnoseDeployment errors when the configured llama.cpp binary is m
   assert.ok(diagnostic);
   assert.equal(diagnostic.level, "error");
   assert.match(diagnostic.message, /RAY_MODEL_SOURCE_PATH/);
-  assert.match(diagnostic.message, /bun run model:stage -- --config <same-config>/);
+  assert.match(
+    diagnostic.message,
+    /sudo \/usr\/local\/bin\/bun run model:stage -- --config <same-config>/,
+  );
   assert.match(diagnostic.message, /--apply/);
 });
 

@@ -584,7 +584,7 @@ function formatModelStageApplyHint(env: NodeJS.ProcessEnv): string {
   const hasBinarySource = readNonEmptyEnvValue(env[BINARY_SOURCE_ENV]) !== undefined;
   const hasModelSource = readNonEmptyEnvValue(env[MODEL_SOURCE_ENV]) !== undefined;
   const command =
-    "bun run model:stage -- --config <same-config> --ray-env-file /etc/ray/ray.env --apply";
+    "sudo /usr/local/bin/bun run model:stage -- --config <same-config> --ray-env-file /etc/ray/ray.env --apply";
 
   if (hasBinarySource && hasModelSource) {
     return ` The deploy env already includes ${BINARY_SOURCE_ENV} and ${MODEL_SOURCE_ENV}; run \`${command}\` before rerunning doctor.`;
