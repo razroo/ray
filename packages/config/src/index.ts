@@ -2379,6 +2379,22 @@ function validateConfig(config: RayConfig): RayConfig {
         "model.adapter.launchProfile.parallel",
         MAX_LLAMA_PARALLEL,
       );
+      const launchContextCapacity = profile.ctxSize * profile.parallel;
+      if (config.scheduler.maxInflightTokens > launchContextCapacity) {
+        throw new RayError(
+          "scheduler.maxInflightTokens must be less than or equal to llama.cpp launch context capacity",
+          {
+            code: "config_validation_error",
+            status: 500,
+            details: {
+              maxInflightTokens: config.scheduler.maxInflightTokens,
+              ctxSize: profile.ctxSize,
+              parallel: profile.parallel,
+              launchContextCapacity,
+            },
+          },
+        );
+      }
       assertPositiveIntegerAtMost(
         profile.threads,
         "model.adapter.launchProfile.threads",

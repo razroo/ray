@@ -166,6 +166,7 @@ test("1b profile defaults to a conservative llama.cpp launch profile", () => {
   assert.equal(config.model.adapter.launchProfile.threadsBatch, 2);
   assert.equal(config.model.adapter.launchProfile.cacheRamMiB, 384);
   assert.equal(config.scheduler.concurrency, 1);
+  assert.equal(config.scheduler.maxInflightTokens, 2048);
   assert.equal(config.asyncQueue.minFreeStorageMiB, 256);
   assert.equal(config.cache.maxBytes, 2 * 1024 * 1024);
   assert.equal(config.gracefulDegradation.memoryRssThresholdMiB, 512);

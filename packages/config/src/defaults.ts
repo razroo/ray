@@ -282,7 +282,7 @@ function create1bDefaults(machineClass: OneBMachineClass): RayConfig {
       concurrency: is8gb ? 2 : 1,
       maxQueue: is8gb ? 96 : 40,
       maxQueuedTokens: is8gb ? 48_000 : 18_000,
-      maxInflightTokens: is8gb ? 6_144 : 2_560,
+      maxInflightTokens: is8gb ? 6_144 : 2_048,
       requestTimeoutMs: is8gb ? 28_000 : 32_000,
       dedupeInflight: true,
       batchWindowMs: is8gb ? 10 : 5,

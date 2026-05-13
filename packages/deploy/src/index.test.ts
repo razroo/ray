@@ -2700,6 +2700,9 @@ test("loadAndDiagnoseDeployment errors when the projected memory fit exceeds a 4
         },
       },
     },
+    scheduler: {
+      maxInflightTokens: 4_096,
+    },
   });
   const configPath = join(tempDir, "ray.json");
   await writeFile(configPath, JSON.stringify(config, null, 2));
@@ -2754,6 +2757,9 @@ test("loadAndDiagnoseDeployment errors when the configured model file is missing
           contextShift: true,
         },
       },
+    },
+    scheduler: {
+      maxInflightTokens: 4_096,
     },
   });
   const configPath = join(tempDir, "ray.json");

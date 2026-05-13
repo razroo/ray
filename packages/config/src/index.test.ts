@@ -253,7 +253,7 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
       RAY_SCHEDULER_BATCH_WINDOW_MS: "12",
       RAY_SCHEDULER_AFFINITY_LOOKAHEAD: "8",
       RAY_SCHEDULER_SHORT_JOB_MAX_TOKENS: "48",
-      RAY_SCHEDULER_MAX_INFLIGHT_TOKENS: "2048",
+      RAY_SCHEDULER_MAX_INFLIGHT_TOKENS: "1536",
       RAY_ASYNC_QUEUE_ENABLED: "yes",
       RAY_ASYNC_QUEUE_STORAGE_DIR: ".ray/test-async-queue",
       RAY_ASYNC_QUEUE_MAX_JOBS: "250",
@@ -342,7 +342,7 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
   assert.equal(loaded.config.model.adapter.launchProfile.cacheIdleSlots, false);
   assert.equal(loaded.config.model.adapter.launchProfile.contextShift, false);
   assert.equal(loaded.config.model.operational?.preferredCtxSize, 1536);
-  assert.equal(loaded.config.scheduler.maxInflightTokens, 2048);
+  assert.equal(loaded.config.scheduler.maxInflightTokens, 1536);
   assert.equal(loaded.config.scheduler.dedupeInflight, false);
   assert.equal(loaded.config.scheduler.batchWindowMs, 12);
   assert.equal(loaded.config.scheduler.affinityLookahead, 8);
@@ -912,6 +912,26 @@ test("loadRayConfig rejects oversized scheduler admission budgets", async (t) =>
       env: {},
     }),
     /scheduler\.maxInflightTokens must be less than or equal to 65536/,
+  );
+
+  const launchCapacityConfigPath = join(tempDir, "ray.scheduler-launch-capacity.invalid.json");
+  await writeFile(
+    launchCapacityConfigPath,
+    JSON.stringify({
+      profile: "1b",
+      scheduler: {
+        maxInflightTokens: 2_049,
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: launchCapacityConfigPath,
+      env: {},
+    }),
+    /scheduler\.maxInflightTokens must be less than or equal to llama\.cpp launch context capacity/,
   );
 
   const dispatchConfigPath = join(tempDir, "ray.async-dispatch.invalid.json");

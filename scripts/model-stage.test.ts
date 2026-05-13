@@ -201,7 +201,7 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
   assert.equal(plan.memoryBudgetMiB, 4096);
   assert.equal(plan.memoryBudgetSource, "config");
   assert.equal(plan.safeMemoryBudgetMiB, 3276);
-  assert.equal(plan.nonModelWorkingSetMiB, 1136);
+  assert.equal(plan.nonModelWorkingSetMiB, 1135);
   assert.deepEqual(plan.commands, [
     "timeout 60s sudo install -d -m 0755 '/usr/local/bin'",
     `binary_source_bytes="$(timeout 30s stat -c %s -- './bin/llama-server')" || exit "$?"; test "\${binary_source_bytes:-0}" -le 536870912 || { printf '%s\\n' 'llama-server source must be at most 512 MiB before copying to /usr/local/bin/llama-server.' >&2; exit 1; }`,
@@ -210,7 +210,7 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
     "timeout 30s sudo -u 'rayops' test -x '/usr/local/bin/llama-server'",
     "timeout 15s sudo -u 'rayops' timeout 5s '/usr/local/bin/llama-server' --help >/dev/null",
     "timeout 60s sudo install -d -m 0755 '/var/lib/ray/models'",
-    `source_bytes="$(timeout 30s stat -c %s -- './models/portable-1b.gguf')" || exit "$?"; source_mib="$(((\${source_bytes:-0} + 1048575) / 1048576))"; test "$source_mib" -ge 1 || source_mib=1; projected_mib="$((source_mib + 1136))"; test "$projected_mib" -le 3276 || { printf '%s\\n' "Projected llama.cpp working set would be \${projected_mib} MiB, above the safe budget of 3276 MiB on the 4096 MiB config memory target. Use a smaller GGUF or reduce cache/context before staging." >&2; exit 1; }`,
+    `source_bytes="$(timeout 30s stat -c %s -- './models/portable-1b.gguf')" || exit "$?"; source_mib="$(((\${source_bytes:-0} + 1048575) / 1048576))"; test "$source_mib" -ge 1 || source_mib=1; projected_mib="$((source_mib + 1135))"; test "$projected_mib" -le 3276 || { printf '%s\\n' "Projected llama.cpp working set would be \${projected_mib} MiB, above the safe budget of 3276 MiB on the 4096 MiB config memory target. Use a smaller GGUF or reduce cache/context before staging." >&2; exit 1; }`,
     `source_bytes="$(timeout 30s stat -c %s -- './models/portable-1b.gguf')" || exit "$?"; df_output="$(timeout 30s df -Pm '/var/lib/ray/models')" || exit "$?"; source_mib="$(((\${source_bytes:-0} + 1048575) / 1048576))"; test "$source_mib" -ge 1 || source_mib=1; required_mib="$((source_mib + 256))"; available_mib="$(printf '%s\\n' "$df_output" | awk 'NR==2 {print $4}')"; test "\${available_mib:-0}" -ge "\${required_mib:-0}" || { printf '%s\\n' 'Not enough free space in /var/lib/ray/models: keep at least 256 MiB free after copying the GGUF.' >&2; exit 1; }`,
     `magic="$(timeout 30s head -c 4 -- './models/portable-1b.gguf')" || exit "$?"; test "$magic" = 'GGUF' || { printf '%s\\n' 'GGUF source does not start with the GGUF header: ./models/portable-1b.gguf' >&2; exit 1; }`,
     "printf '%s  %s\\n' 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' './models/portable-1b.gguf' | timeout 1800s sha256sum -c -",
