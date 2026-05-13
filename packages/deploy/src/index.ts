@@ -3415,7 +3415,7 @@ export function diagnoseConfig(
               diagnostics.push({
                 level: "warn",
                 code: "swap_swappiness_high",
-                message: `vm.swappiness is ${preflight.swappiness}. Small 4 GB llama.cpp VPS deployments should avoid eager swapping; bun run swap:plan -- --swappiness ${RECOMMENDED_SMALL_VPS_SWAPPINESS} prints guarded sysctl commands.`,
+                message: `vm.swappiness is ${preflight.swappiness}. Small 4 GB llama.cpp VPS deployments should avoid eager swapping; bun run swap:plan -- --sysctl-only --swappiness ${RECOMMENDED_SMALL_VPS_SWAPPINESS} prints guarded sysctl commands without touching existing swap files.`,
               });
             } else {
               diagnostics.push({
@@ -3430,7 +3430,7 @@ export function diagnoseConfig(
               code: "swap_swappiness_unreadable",
               message: `Doctor could not inspect vm.swappiness from /proc/sys/vm/swappiness${
                 preflight.swappinessError ? ` (${preflight.swappinessError})` : ""
-              }. Verify it manually or run bun run swap:plan -- --swappiness ${RECOMMENDED_SMALL_VPS_SWAPPINESS} before sustained inference on a 4 GB VPS.`,
+              }. Verify it manually or run bun run swap:plan -- --sysctl-only --swappiness ${RECOMMENDED_SMALL_VPS_SWAPPINESS} before sustained inference on a 4 GB VPS.`,
             });
           }
         }

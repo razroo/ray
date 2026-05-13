@@ -16,7 +16,12 @@ test("parseArgs accepts strict swap plan options", () => {
   assert.equal(args.path, "/var/lib/ray/swapfile");
   assert.equal(args.sizeMiB, 2_048);
   assert.equal(args.swappiness, 5);
+  assert.equal(args.sysctlOnly, false);
   assert.equal(args.json, true);
+
+  const sysctlOnlyArgs = parseArgs(["--sysctl-only", "--swappiness", "10"]);
+  assert.equal(sysctlOnlyArgs.sysctlOnly, true);
+  assert.equal(sysctlOnlyArgs.swappiness, 10);
 });
 
 test("parseArgs rejects malformed swap plan argv", () => {
@@ -29,6 +34,8 @@ test("parseArgs rejects malformed swap plan argv", () => {
   assert.throws(() => parseArgs(["--size-mib", "65537"]), /integer from 1/);
   assert.throws(() => parseArgs(["--swappiness", "-1"]), /integer from 0/);
   assert.throws(() => parseArgs(["--swappiness", "201"]), /integer from 0/);
+  assert.throws(() => parseArgs(["--sysctl-only", "--path", "/swapfile"]), /--path cannot/);
+  assert.throws(() => parseArgs(["--sysctl-only", "--size-mib", "1024"]), /--size-mib cannot/);
   assert.throws(() => parseArgs(["--unknown"]), /Unknown option: --unknown/);
   assert.throws(() => parseArgs(["/swapfile"]), /Unexpected positional argument/);
 });
@@ -62,7 +69,28 @@ test("createSwapPlan prints guarded swap-file commands", () => {
     /timeout 60s sudo tee \/etc\/sysctl\.d\/99-ray-swap\.conf/,
   );
   assert.match(plan.commands.join("\n"), /timeout 60s sudo sysctl 'vm\.swappiness=5'/);
+  assert.match(plan.commands.join("\n"), /cat \/proc\/sys\/vm\/swappiness/);
   assert.match(plan.commands.join("\n"), /timeout 30s swapon --show/);
+});
+
+test("createSwapPlan can print swappiness-only commands without touching swap files", () => {
+  const plan = createSwapPlan({
+    swappiness: 10,
+    sysctlOnly: true,
+  });
+
+  assert.equal(plan.sysctlOnly, true);
+  assert.equal(plan.swappiness, 10);
+  assert.equal(plan.commands.length, 3);
+  assert.doesNotMatch(plan.commands.join("\n"), /fallocate|mkswap|swapon --show|\/etc\/fstab/);
+  assert.match(
+    plan.commands.join("\n"),
+    /timeout 60s sudo tee \/etc\/sysctl\.d\/99-ray-swap\.conf/,
+  );
+  assert.match(plan.commands.join("\n"), /timeout 60s sudo sysctl 'vm\.swappiness=10'/);
+  assert.match(plan.commands.join("\n"), /cat \/proc\/sys\/vm\/swappiness/);
+  assert.throws(() => createSwapPlan({ path: "/swapfile", sysctlOnly: true }), /path cannot/);
+  assert.throws(() => createSwapPlan({ sizeMiB: 1024, sysctlOnly: true }), /sizeMiB cannot/);
 });
 
 test("createSwapPlan scales creation timeout for large swap files", () => {
@@ -79,6 +107,16 @@ test("formatTextPlan prints operator-ready swap instructions", () => {
   assert.match(text, /Ray small-VPS swap file plan:/);
   assert.match(text, /swap file: \/swapfile/);
   assert.match(text, /size: 1024 MiB/);
+  assert.match(text, /vm\.swappiness: 10/);
+  assert.match(text, /Run on the VPS:/);
+  assert.match(text, /Then run doctor again/);
+});
+
+test("formatTextPlan prints operator-ready swappiness-only instructions", () => {
+  const text = formatTextPlan(createSwapPlan({ sysctlOnly: true, swappiness: 10 }));
+
+  assert.match(text, /Ray small-VPS swappiness plan:/);
+  assert.doesNotMatch(text, /swap file:/);
   assert.match(text, /vm\.swappiness: 10/);
   assert.match(text, /Run on the VPS:/);
   assert.match(text, /Then run doctor again/);
@@ -101,4 +139,20 @@ test("runSwapPlanCli prints JSON output", async () => {
   assert.equal(parsed.path, "/var/lib/ray/swapfile");
   assert.equal(parsed.sizeMiB, 1_536);
   assert.equal(parsed.swappiness, 1);
+});
+
+test("runSwapPlanCli prints JSON sysctl-only output", async () => {
+  let stdout = "";
+  let stderr = "";
+  const exitCode = await runSwapPlanCli(["--sysctl-only", "--swappiness", "10", "--json"], {
+    stdout: { write: (chunk: string) => (stdout += chunk) },
+    stderr: { write: (chunk: string) => (stderr += chunk) },
+  });
+
+  assert.equal(exitCode, 0);
+  assert.equal(stderr, "");
+  const parsed = JSON.parse(stdout) as { sysctlOnly: boolean; commands: string[] };
+  assert.equal(parsed.sysctlOnly, true);
+  assert.equal(parsed.commands.length, 3);
+  assert.doesNotMatch(parsed.commands.join("\n"), /fallocate|mkswap|swapon --show/);
 });

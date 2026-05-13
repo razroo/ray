@@ -212,6 +212,9 @@ Doctor checks auth/env readiness, env-file permissions, systemd host readiness a
 If doctor reports a missing swap cushion on a 4 GB VPS, run `bun run swap:plan`
 to print guarded commands for creating the default 1 GiB swap file and
 persisting `vm.swappiness=10`, then rerun doctor before sustained inference.
+If swap already exists and doctor only reports eager host swapping, run
+`bun run swap:plan -- --sysctl-only --swappiness 10` to print only the
+guarded sysctl persistence and apply commands.
 
 ## Benchmark The Actual Workload
 

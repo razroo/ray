@@ -1742,7 +1742,29 @@ test("diagnoseConfig warns when small-VPS swappiness is high", () => {
   const diagnostic = diagnostics.find((entry) => entry.code === "swap_swappiness_high");
   assert.ok(diagnostic);
   assert.equal(diagnostic.level, "warn");
-  assert.match(diagnostic.message, /--swappiness 10/);
+  assert.match(diagnostic.message, /--sysctl-only --swappiness 10/);
+});
+
+test("diagnoseConfig points unreadable small-VPS swappiness at sysctl-only swap helper", () => {
+  const config = createDefaultConfig("1b");
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      memoryBudgetMiB: 4_096,
+      memoryBudgetSource: "preset",
+      swapStatus: "available",
+      swapTotalMiB: 2_048,
+      swappinessStatus: "unreadable",
+      swappinessError: "permission denied",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "swap_swappiness_unreadable");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /--sysctl-only --swappiness 10/);
+  assert.match(diagnostic.message, /permission denied/);
 });
 
 test("diagnoseConfig reports conservative small-VPS swappiness", () => {

@@ -18,6 +18,7 @@ export interface SwapPlanArgs {
   path: string;
   sizeMiB: number;
   swappiness: number;
+  sysctlOnly: boolean;
   json: boolean;
   help: boolean;
 }
@@ -26,6 +27,7 @@ export interface SwapPlan {
   path: string;
   sizeMiB: number;
   swappiness: number;
+  sysctlOnly: boolean;
   commands: string[];
 }
 
@@ -38,6 +40,7 @@ Options:
   --path <path>       Absolute swap file path. Default: ${DEFAULT_SWAP_PATH}
   --size-mib <n>      Swap file size in MiB. Default: ${DEFAULT_SWAP_SIZE_MIB}
   --swappiness <n>    Linux vm.swappiness value from 0 to ${MAX_SWAPPINESS}. Default: ${DEFAULT_SWAPPINESS}
+  --sysctl-only       Print only vm.swappiness persistence/apply commands; do not touch swap files.
   --json              Print machine-readable plan JSON.
   -h, --help          Show this help.
 `;
@@ -132,15 +135,19 @@ export function parseArgs(argv: string[]): SwapPlanArgs {
     path: DEFAULT_SWAP_PATH,
     sizeMiB: DEFAULT_SWAP_SIZE_MIB,
     swappiness: DEFAULT_SWAPPINESS,
+    sysctlOnly: false,
     json: false,
     help: false,
   };
+  let pathProvided = false;
+  let sizeMiBProvided = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const current = argv[index];
 
     if (current === "--path") {
       args.path = normalizeSwapPath(requireFlagValue(current, argv[index + 1]));
+      pathProvided = true;
       index += 1;
       continue;
     }
@@ -153,7 +160,13 @@ export function parseArgs(argv: string[]): SwapPlanArgs {
 
     if (current === "--size-mib") {
       args.sizeMiB = parseSwapSizeMiB(requireFlagValue(current, argv[index + 1]));
+      sizeMiBProvided = true;
       index += 1;
+      continue;
+    }
+
+    if (current === "--sysctl-only") {
+      args.sysctlOnly = true;
       continue;
     }
 
@@ -174,6 +187,14 @@ export function parseArgs(argv: string[]): SwapPlanArgs {
     throw new Error(`Unexpected positional argument: ${current ?? ""}`);
   }
 
+  if (args.sysctlOnly && pathProvided) {
+    throw new Error("--path cannot be used with --sysctl-only");
+  }
+
+  if (args.sysctlOnly && sizeMiBProvided) {
+    throw new Error("--size-mib cannot be used with --sysctl-only");
+  }
+
   return args;
 }
 
@@ -189,8 +210,16 @@ function calculateCreateTimeoutSeconds(sizeMiB: number): number {
 }
 
 export function createSwapPlan(
-  options: { path?: string; sizeMiB?: number; swappiness?: number } = {},
+  options: { path?: string; sizeMiB?: number; swappiness?: number; sysctlOnly?: boolean } = {},
 ): SwapPlan {
+  const sysctlOnly = options.sysctlOnly ?? false;
+  if (sysctlOnly && options.path !== undefined) {
+    throw new Error("path cannot be used with sysctlOnly");
+  }
+  if (sysctlOnly && options.sizeMiB !== undefined) {
+    throw new Error("sizeMiB cannot be used with sysctlOnly");
+  }
+
   const swapPath = normalizeSwapPath(options.path ?? DEFAULT_SWAP_PATH);
   const sizeMiB =
     options.sizeMiB === undefined
@@ -204,37 +233,56 @@ export function createSwapPlan(
   const fstabLine = `${swapPath} none swap sw 0 0`;
   const sysctlLine = `vm.swappiness=${swappiness}`;
   const createTimeoutSeconds = calculateCreateTimeoutSeconds(sizeMiB);
+  const sysctlCommands = [
+    `printf '%s\\n' ${shellQuote(sysctlLine)} | timeout ${QUICK_TIMEOUT_SECONDS}s sudo tee /etc/sysctl.d/99-ray-swap.conf >/dev/null`,
+    `timeout ${QUICK_TIMEOUT_SECONDS}s sudo sysctl ${shellQuote(sysctlLine)}`,
+    `timeout ${INSPECT_TIMEOUT_SECONDS}s sh -c ${shellQuote(
+      `test "$(cat /proc/sys/vm/swappiness)" = "${swappiness}"`,
+    )}`,
+  ];
 
   return {
     path: swapPath,
     sizeMiB,
     swappiness,
-    commands: [
-      `timeout ${INSPECT_TIMEOUT_SECONDS}s sudo test ! -e ${quotedPath}; status=$?; if [ "$status" -eq 1 ]; then echo 'Swap file already exists: ${swapPath}' >&2; exit 1; elif [ "$status" -ne 0 ]; then exit "$status"; fi`,
-      `if command -v fallocate >/dev/null 2>&1; then timeout ${createTimeoutSeconds}s sudo fallocate -l ${sizeMiB}M ${quotedPath}; else timeout ${createTimeoutSeconds}s sudo dd if=/dev/zero of=${quotedPath} bs=1M count=${sizeMiB} status=progress; fi`,
-      `timeout ${QUICK_TIMEOUT_SECONDS}s sudo chmod 600 ${quotedPath}`,
-      `timeout ${QUICK_TIMEOUT_SECONDS}s sudo mkswap ${quotedPath}`,
-      `timeout ${QUICK_TIMEOUT_SECONDS}s sudo swapon ${quotedPath}`,
-      `timeout ${INSPECT_TIMEOUT_SECONDS}s sudo grep -Fq ${shellQuote(fstabLine)} /etc/fstab; status=$?; if [ "$status" -eq 0 ]; then :; elif [ "$status" -eq 1 ]; then printf '%s\\n' ${shellQuote(fstabLine)} | timeout ${QUICK_TIMEOUT_SECONDS}s sudo tee -a /etc/fstab >/dev/null; else exit "$status"; fi`,
-      `printf '%s\\n' ${shellQuote(sysctlLine)} | timeout ${QUICK_TIMEOUT_SECONDS}s sudo tee /etc/sysctl.d/99-ray-swap.conf >/dev/null`,
-      `timeout ${QUICK_TIMEOUT_SECONDS}s sudo sysctl ${shellQuote(sysctlLine)}`,
-      `timeout ${INSPECT_TIMEOUT_SECONDS}s swapon --show`,
-    ],
+    sysctlOnly,
+    commands: sysctlOnly
+      ? sysctlCommands
+      : [
+          `timeout ${INSPECT_TIMEOUT_SECONDS}s sudo test ! -e ${quotedPath}; status=$?; if [ "$status" -eq 1 ]; then echo 'Swap file already exists: ${swapPath}' >&2; exit 1; elif [ "$status" -ne 0 ]; then exit "$status"; fi`,
+          `if command -v fallocate >/dev/null 2>&1; then timeout ${createTimeoutSeconds}s sudo fallocate -l ${sizeMiB}M ${quotedPath}; else timeout ${createTimeoutSeconds}s sudo dd if=/dev/zero of=${quotedPath} bs=1M count=${sizeMiB} status=progress; fi`,
+          `timeout ${QUICK_TIMEOUT_SECONDS}s sudo chmod 600 ${quotedPath}`,
+          `timeout ${QUICK_TIMEOUT_SECONDS}s sudo mkswap ${quotedPath}`,
+          `timeout ${QUICK_TIMEOUT_SECONDS}s sudo swapon ${quotedPath}`,
+          `timeout ${INSPECT_TIMEOUT_SECONDS}s sudo grep -Fq ${shellQuote(fstabLine)} /etc/fstab; status=$?; if [ "$status" -eq 0 ]; then :; elif [ "$status" -eq 1 ]; then printf '%s\\n' ${shellQuote(fstabLine)} | timeout ${QUICK_TIMEOUT_SECONDS}s sudo tee -a /etc/fstab >/dev/null; else exit "$status"; fi`,
+          ...sysctlCommands,
+          `timeout ${INSPECT_TIMEOUT_SECONDS}s swapon --show`,
+        ],
   };
 }
 
 export function formatTextPlan(plan: SwapPlan): string {
-  const lines = [
-    "Ray small-VPS swap file plan:",
-    `- swap file: ${plan.path}`,
-    `- size: ${plan.sizeMiB} MiB`,
-    `- vm.swappiness: ${plan.swappiness}`,
-    "",
-    "Run on the VPS:",
-    ...plan.commands,
-    "",
-    "Then run doctor again before sustained llama.cpp inference.",
-  ];
+  const lines = plan.sysctlOnly
+    ? [
+        "Ray small-VPS swappiness plan:",
+        `- vm.swappiness: ${plan.swappiness}`,
+        "",
+        "Run on the VPS:",
+        ...plan.commands,
+        "",
+        "Then run doctor again before sustained llama.cpp inference.",
+      ]
+    : [
+        "Ray small-VPS swap file plan:",
+        `- swap file: ${plan.path}`,
+        `- size: ${plan.sizeMiB} MiB`,
+        `- vm.swappiness: ${plan.swappiness}`,
+        "",
+        "Run on the VPS:",
+        ...plan.commands,
+        "",
+        "Then run doctor again before sustained llama.cpp inference.",
+      ];
 
   return lines.join("\n");
 }
@@ -251,11 +299,18 @@ export async function runSwapPlanCli(
       return 0;
     }
 
-    const plan = createSwapPlan({
-      path: args.path,
-      sizeMiB: args.sizeMiB,
-      swappiness: args.swappiness,
-    });
+    const plan = createSwapPlan(
+      args.sysctlOnly
+        ? {
+            swappiness: args.swappiness,
+            sysctlOnly: true,
+          }
+        : {
+            path: args.path,
+            sizeMiB: args.sizeMiB,
+            swappiness: args.swappiness,
+          },
+    );
     const output = args.json ? JSON.stringify(plan, null, 2) : formatTextPlan(plan);
     io.stdout.write(`${output}\n`);
     return 0;
