@@ -738,6 +738,9 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
 
       if (request.method === "GET" && url.pathname === "/readyz") {
         const health = await runtime.health();
+        if (jobQueue) {
+          attachAsyncQueueHealth(health, await jobQueue.snapshotWithStorage());
+        }
         writeJsonWithoutReadingBody(
           request,
           response,

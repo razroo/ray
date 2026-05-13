@@ -717,6 +717,12 @@ test("gateway detailed health degrades when async queue storage is low", async (
   assert.equal(health.asyncQueue?.minFreeStorageMiB, 128);
   assert.equal(health.asyncQueue?.storageReserveRatio, 0.5);
   assert.equal(health.asyncQueue?.storageLow, true);
+
+  const readyzResponse = await fetch(`http://127.0.0.1:${address.port}/readyz`);
+  assert.equal(readyzResponse.status, 200);
+  const readyz = (await readyzResponse.json()) as { status: string; asyncQueue?: unknown };
+  assert.equal(readyz.status, "degraded");
+  assert.equal(readyz.asyncQueue, undefined);
 });
 
 test("gateway returns service unavailable when detailed health is unavailable", async (t) => {

@@ -191,7 +191,7 @@ curl -fsS --connect-timeout 2 --max-time 30 http://127.0.0.1:3000/v1/jobs \
 
 The durable queue caps retained job records with `asyncQueue.maxJobs`, rejects new jobs when free queue storage falls below `asyncQueue.minFreeStorageMiB`, and prunes completed jobs after `asyncQueue.completedTtlMs`, while pending callbacks remain protected until delivery succeeds or callback attempts are exhausted. Add `callbackUrl` only for an endpoint you control. Job and callback retry counts are capped at 100, crash-recovered callbacks with exhausted attempts are marked failed, callback failure text is truncated before persistence so a bad endpoint cannot bloat the on-disk job store, and malformed recovered records are pruned after logging so restart scans do not keep paying for corrupted files.
 
-Gateway startup binds the HTTP listener before provider warmup finishes, so `/livez` can keep systemd and reverse proxies pointed at the running process while `/readyz` reports backend-aware readiness.
+Gateway startup binds the HTTP listener before provider warmup finishes, so `/livez` can keep systemd and reverse proxies pointed at the running process while `/readyz` reports backend-aware readiness plus minimal async-queue degradation.
 
 ### Build
 
