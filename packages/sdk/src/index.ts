@@ -31,6 +31,20 @@ const MAX_RAY_CLIENT_HEADER_VALUE_CHARS = 8_192;
 const MAX_RAY_CLIENT_API_KEY_CHARS = 1_024;
 const MAX_JOB_ID_CHARS = 128;
 const unsafeHeaderNames = new Set(["__proto__", "constructor", "prototype"]);
+const reservedClientHeaderNames = new Set([
+  "connection",
+  "content-encoding",
+  "content-length",
+  "content-type",
+  "host",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
 
 interface LimitedResponseBody {
   text: string;
@@ -130,17 +144,23 @@ function snapshotHeaders(headers?: Record<string, string>): Record<string, strin
   }
 
   for (const [name, value] of entries) {
-    if (unsafeHeaderNames.has(name.toLowerCase())) {
+    const normalizedName = name.toLowerCase();
+
+    if (unsafeHeaderNames.has(normalizedName)) {
       throw new TypeError(`headers names must not contain unsafe key "${name}"`);
     }
 
     assertHeaderName(name);
+    if (reservedClientHeaderNames.has(normalizedName)) {
+      throw new TypeError(`headers must not override reserved HTTP header "${name}"`);
+    }
+
     if (typeof value !== "string") {
       throw new TypeError("headers values must be bounded strings without control characters");
     }
 
     assertHeaderValue(value);
-    snapshot[name.toLowerCase()] = value;
+    snapshot[normalizedName] = value;
   }
 
   return snapshot;

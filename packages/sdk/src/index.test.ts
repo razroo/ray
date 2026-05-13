@@ -52,6 +52,30 @@ test("RayClient rejects invalid direct options", () => {
       }),
     /headers names must not contain unsafe key "__proto__"/,
   );
+  assert.throws(
+    () =>
+      new RayClient({
+        baseUrl: "http://127.0.0.1",
+        headers: { "content-length": "999999" },
+      }),
+    /reserved HTTP header "content-length"/,
+  );
+  assert.throws(
+    () =>
+      new RayClient({
+        baseUrl: "http://127.0.0.1",
+        headers: { "content-encoding": "gzip" },
+      }),
+    /reserved HTTP header "content-encoding"/,
+  );
+  assert.throws(
+    () =>
+      new RayClient({
+        baseUrl: "http://127.0.0.1",
+        headers: { host: "example.com" },
+      }),
+    /reserved HTTP header "host"/,
+  );
 
   const headers = {};
   Object.defineProperty(headers, "x-ray-test", {

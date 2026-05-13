@@ -42,4 +42,4 @@ Pass `callbackUrl` only when it points to an endpoint you operate.
 
 Use `readyz()` for the unauthenticated minimal readiness payload and `health()` for the detailed protected health snapshot. See the gateway routes under `apps/gateway` and shared types in `@razroo/ray-core` for request and response shapes.
 
-`timeoutMs` defaults to `60000`, and `responseBodyLimitBytes` defaults to `2097152`. SDK requests do not follow redirects, successful responses must use `application/json` or `application/*+json`, and oversized bodies are rejected before parsing.
+`timeoutMs` defaults to `60000`, and `responseBodyLimitBytes` defaults to `2097152`. SDK requests do not follow redirects, custom headers cannot override request framing or encoding headers, successful responses must use `application/json` or `application/*+json`, and oversized bodies are rejected before parsing.
