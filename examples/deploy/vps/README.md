@@ -146,7 +146,7 @@ timeout 60s sudo chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/
 The `umask 022` keeps the checkout, built files, and Bun-installed dependencies
 readable by the generated service user without a recursive permission walk over
 `node_modules`.
-The storage preflight checks APT cache/state, `/etc/ray`,
+The storage preflight checks the root filesystem, APT cache/state, `/etc/ray`,
 `/etc/systemd/system`, `/etc/caddy`, `/srv/ray`, `/var/lib/ray`, `/tmp`,
 `/var/tmp`, and the repo-scoped Bun install cache at
 `/srv/ray/.ray/bun-install-cache` before package bootstrap, the Bun install

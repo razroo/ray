@@ -161,8 +161,8 @@ storage preflight:
 timeout 60s sudo /usr/local/bin/bun run deploy:storage -- --ray-env-file /etc/ray/ray.env
 ```
 
-It checks APT cache/state, the checkout, repo-scoped Bun install cache, Ray
-state, `/tmp`, and `/var/tmp` volumes with the same
+It checks the root filesystem, APT cache/state, the checkout, repo-scoped Bun
+install cache, Ray state, `/tmp`, and `/var/tmp` volumes with the same
 `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` threshold used by the deploy workflow without
 shell-sourcing the rest of the env file.
 When the env file sets a custom `RAY_MODEL_PATH`, `RAY_LLAMA_CPP_MODEL_PATH`,
