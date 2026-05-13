@@ -152,6 +152,17 @@ RAY_RATE_LIMIT_TRUST_PROXY_HEADERS=true
 deploys create missing named accounts, while numeric UIDs must already resolve
 to an account on the VPS.
 
+Before building or installing production dependencies on the VPS, run the manual
+storage preflight:
+
+```bash
+timeout 60s bun run deploy:storage
+```
+
+It checks the checkout, repo-scoped Bun install cache, Ray state, and temp
+volumes with the same `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` threshold used by the
+deploy workflow.
+
 Create `/var/lib/ray/models` on the VPS and place the GGUF at `RAY_MODEL_PATH`
 before starting the generated llama.cpp service or running doctor.
 
