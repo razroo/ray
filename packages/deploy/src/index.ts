@@ -279,6 +279,7 @@ const MAX_HOST_MEMINFO_FILE_BYTES = 64 * 1024;
 const MAX_HOST_SWAPPINESS_FILE_BYTES = 1_024;
 const MAX_SYSTEMD_DEPENDENCY_UNITS = 32;
 const MAX_SYSTEMD_DEPENDENCY_UNIT_CHARS = 256;
+const MAX_DEPLOY_PATH_BYTES = 4_096;
 const MAX_SYSTEMD_MEMORY_MIB = 1_048_576;
 const MAX_SYSTEMD_CPU_WEIGHT = 10_000;
 const MAX_LLAMA_CPP_EXTRA_ARGS = 64;
@@ -631,6 +632,31 @@ function assertSystemdScalar(value: unknown, label: string): asserts value is st
   }
 }
 
+function assertDeploymentPathValue(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty path`);
+  }
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} must not contain control characters`);
+  }
+
+  if (Buffer.byteLength(value, "utf8") > MAX_DEPLOY_PATH_BYTES) {
+    throw new Error(`${label} must be at most ${MAX_DEPLOY_PATH_BYTES} bytes`);
+  }
+}
+
+function assertOptionalDeploymentPathValue(
+  value: unknown,
+  label: string,
+): asserts value is string | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  assertDeploymentPathValue(value, label);
+}
+
 function assertOptionalSystemdText(
   value: unknown,
   label: string,
@@ -801,6 +827,8 @@ function formatSystemdExecStart(args: string[]): string {
 }
 
 function assertAbsolutePath(value: string, label: string): void {
+  assertDeploymentPathValue(value, label);
+
   if (!path.isAbsolute(value)) {
     throw new Error(`${label} must be an absolute path`);
   }
@@ -1877,6 +1905,7 @@ export function renderSystemdService(options: SystemdServiceOptions): string {
   assertSystemdScalar(runtimeBinary, "runtimeBinary");
   assertSystemdScalar(options.workingDirectory, "workingDirectory");
   assertSystemdScalar(options.configPath, "configPath");
+  assertDeploymentPathValue(options.configPath, "configPath");
   assertAbsolutePath(runtimeBinary, "runtimeBinary");
   assertAbsolutePath(options.workingDirectory, "workingDirectory");
   if (isSystemdProtectHomePath(runtimeBinary)) {
@@ -3916,6 +3945,13 @@ export async function loadAndDiagnoseDeployment(options: {
   diagnostics: DeploymentDiagnostic[];
   preflight: DeploymentPreflight;
 }> {
+  assertDeploymentPathValue(options.cwd, "cwd");
+  assertDeploymentPathValue(options.configPath, "configPath");
+  assertOptionalDeploymentPathValue(options.envFile, "envFile");
+  assertOptionalDeploymentPathValue(options.runtimeBinary, "runtimeBinary");
+  assertOptionalDeploymentPathValue(options.nodeBinary, "nodeBinary");
+  assertOptionalDeploymentPathValue(options.caddyBinary, "caddyBinary");
+
   const loaded = await loadRayConfig({
     cwd: options.cwd,
     configPath: options.configPath,
@@ -3977,6 +4013,14 @@ export async function renderDeploymentBundle(options: {
   llamaCppService?: string;
   summary: DeploymentBundleSummary;
 }> {
+  assertDeploymentPathValue(options.cwd, "cwd");
+  assertDeploymentPathValue(options.configPath, "configPath");
+  assertOptionalDeploymentPathValue(options.envFile, "envFile");
+  assertOptionalDeploymentPathValue(options.systemdEnvFile, "systemdEnvFile");
+  assertOptionalDeploymentPathValue(options.runtimeBinary, "runtimeBinary");
+  assertOptionalDeploymentPathValue(options.nodeBinary, "nodeBinary");
+  assertOptionalDeploymentPathValue(options.caddyBinary, "caddyBinary");
+
   const cwd = path.resolve(options.cwd);
   const envFile = options.envFile ? path.resolve(cwd, options.envFile) : undefined;
   const systemdEnvFile = options.systemdEnvFile

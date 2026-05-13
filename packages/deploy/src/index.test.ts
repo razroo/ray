@@ -357,6 +357,26 @@ test("renderSystemdService rejects unsafe systemd execution directives", () => {
   assert.throws(
     () =>
       renderSystemdService({
+        workingDirectory: `/${"a".repeat(4096)}`,
+        configPath: "/etc/ray/ray.json",
+        user: "ray",
+      }),
+    /workingDirectory must be at most 4096 bytes/,
+  );
+
+  assert.throws(
+    () =>
+      renderSystemdService({
+        workingDirectory: "/srv/ray",
+        configPath: `/${"a".repeat(4096)}`,
+        user: "ray",
+      }),
+    /configPath must be at most 4096 bytes/,
+  );
+
+  assert.throws(
+    () =>
+      renderSystemdService({
         workingDirectory: "/srv/ray",
         configPath: "/etc/ray/ray.json",
         user: "ray",
@@ -1184,6 +1204,31 @@ test("renderEnvironmentFileExample documents async queue retention overrides", (
   );
 });
 
+test("renderDeploymentBundle rejects oversized direct paths before loading config", async () => {
+  await assert.rejects(
+    () =>
+      renderDeploymentBundle({
+        cwd: `/${"a".repeat(4096)}`,
+        configPath: "./examples/config/ray.1b.generic.public.json",
+        user: "ray",
+        domain: "ray.example.com",
+      }),
+    /cwd must be at most 4096 bytes/,
+  );
+
+  await assert.rejects(
+    () =>
+      renderDeploymentBundle({
+        cwd: process.cwd(),
+        configPath: "./examples/config/ray.1b.generic.public.json",
+        user: "ray",
+        domain: "ray.example.com",
+        envFile: `/${"a".repeat(4096)}`,
+      }),
+    /envFile must be at most 4096 bytes/,
+  );
+});
+
 test("renderDeploymentBundle includes llama.cpp service for generic 1b profiles", async () => {
   const bundle = await renderDeploymentBundle({
     cwd: ".",
@@ -1263,6 +1308,27 @@ test("loadAndDiagnoseDeployment uses the config memory class without deploy over
 
   assert.equal(inspected.preflight.memoryBudgetMiB, 1_536);
   assert.equal(inspected.preflight.memoryBudgetSource, "config");
+});
+
+test("loadAndDiagnoseDeployment rejects oversized direct paths before loading config", async () => {
+  await assert.rejects(
+    () =>
+      loadAndDiagnoseDeployment({
+        cwd: process.cwd(),
+        configPath: `/${"a".repeat(4096)}`,
+      }),
+    /configPath must be at most 4096 bytes/,
+  );
+
+  await assert.rejects(
+    () =>
+      loadAndDiagnoseDeployment({
+        cwd: process.cwd(),
+        configPath: "./examples/config/ray.sub1b.public.json",
+        runtimeBinary: `/${"a".repeat(4096)}`,
+      }),
+    /runtimeBinary must be at most 4096 bytes/,
+  );
 });
 
 test("renderDeploymentBundle accepts every public example deployment profile", async () => {
