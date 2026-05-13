@@ -1656,6 +1656,48 @@ function estimateRequestTokens(request: NormalizedInferenceRequest): number {
   return promptTokensEstimate + request.maxTokens;
 }
 
+function resolveRequestContextWindow(
+  config: RayConfig,
+  preparation: ProviderRequestPreparation | undefined,
+): number {
+  const preparedContextWindow = preparation?.diagnostics?.contextWindow;
+  if (
+    typeof preparedContextWindow === "number" &&
+    Number.isSafeInteger(preparedContextWindow) &&
+    preparedContextWindow > 0
+  ) {
+    return preparedContextWindow;
+  }
+
+  if (config.model.adapter.kind === "llama.cpp" && config.model.adapter.launchProfile) {
+    return config.model.adapter.launchProfile.ctxSize;
+  }
+
+  return config.model.operational?.preferredCtxSize ?? config.model.contextWindow;
+}
+
+function assertRequestFitsContextWindow(
+  request: NormalizedInferenceRequest,
+  promptTokens: number,
+  contextWindow: number,
+): number {
+  const totalTokens = promptTokens + request.maxTokens;
+  if (totalTokens > contextWindow) {
+    throw new RayError("The request exceeds the model context window", {
+      code: "request_context_window_exceeded",
+      status: 413,
+      details: {
+        promptTokens,
+        maxTokens: request.maxTokens,
+        totalTokens,
+        contextWindow,
+      },
+    });
+  }
+
+  return totalTokens;
+}
+
 function applyAdaptiveTuning(
   config: RayConfig,
   request: NormalizedInferenceRequest,
@@ -3511,7 +3553,11 @@ export class RayRuntime {
       const promptTokens =
         preparation?.promptTokens ??
         Math.max(1, estimateRequestTokens(requestForProvider) - requestForProvider.maxTokens);
-      const requestCostTokens = promptTokens + requestForProvider.maxTokens;
+      const requestCostTokens = assertRequestFitsContextWindow(
+        requestForProvider,
+        promptTokens,
+        resolveRequestContextWindow(this.config, preparation),
+      );
       const dedupeKey = requestForProvider.dedupeKey ?? cacheKey;
       const scheduled = await this.scheduler.schedule(
         dedupeKey

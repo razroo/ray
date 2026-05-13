@@ -1415,6 +1415,46 @@ test("runtime uses provider token preparation and exposes compiler diagnostics",
   assert.equal(result.diagnostics?.taskRouting?.recommendedModelRole, "drafter");
 });
 
+test("runtime rejects prepared requests that exceed a llama.cpp slot context", async () => {
+  let inferCalled = false;
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "oversized-prepared-context-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async prepare(request) {
+      return {
+        request,
+        promptTokens: 3_000,
+      };
+    },
+    async infer() {
+      inferCalled = true;
+      return {
+        output: "should not run",
+      };
+    },
+  };
+  const runtime = createRayRuntime(createDefaultConfig("sub1b"), { provider });
+
+  await assert.rejects(
+    runtime.infer({
+      input: "large prepared prompt",
+      maxTokens: 128,
+      cache: false,
+    }),
+    (error: unknown) =>
+      error instanceof Error &&
+      /model context window/.test(error.message) &&
+      (error as { code?: string }).code === "request_context_window_exceeded",
+  );
+
+  assert.equal(inferCalled, false);
+});
+
 test("runtime passes sanitized provider preparation requests to inference", async () => {
   let observedRequest:
     | (Parameters<ModelProvider["infer"]>[0] & {
