@@ -1155,6 +1155,66 @@ test("startGateway retries provider warmup after startup failure", async (t) => 
   );
 });
 
+test("gateway metrics expose provider warmup retry state", async (t) => {
+  const port = await getAvailablePort();
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    server: {
+      port,
+    },
+  });
+  let warmCalls = 0;
+  let stopped = false;
+  const runtime = {
+    async warm() {
+      warmCalls += 1;
+      throw new Error("backend socket not open yet");
+    },
+    async collectMetricsSnapshot() {
+      return {
+        counters: {},
+        gauges: {},
+      } satisfies RuntimeMetricsSnapshot;
+    },
+  } as unknown as RayRuntime;
+  const logger = {
+    debug() {},
+    info() {},
+    warn() {},
+    error() {},
+  } as unknown as Logger;
+
+  const gateway = await startGateway({
+    config,
+    runtime,
+    logger,
+    warmupRetry: {
+      initialDelayMs: 250,
+      maxDelayMs: 250,
+    },
+  });
+  t.after(async () => {
+    if (!stopped) {
+      await stopGateway(gateway, { timeoutMs: 20 });
+    }
+  });
+  await waitForCondition(() => warmCalls === 1);
+
+  const response = await fetch(`http://127.0.0.1:${port}/metrics`);
+  assert.equal(response.status, 200);
+  const metrics = (await response.json()) as RuntimeMetricsSnapshot;
+
+  assert.equal(metrics.gauges["gateway.warmup.attempts"], 1);
+  assert.equal(metrics.gauges["gateway.warmup.failures"], 1);
+  assert.equal(metrics.gauges["gateway.warmup.in_flight"], 0);
+  assert.equal(metrics.gauges["gateway.warmup.retry_scheduled"], 1);
+  assert.equal(metrics.gauges["gateway.warmup.retry_delay_ms"], 250);
+  assert.equal(metrics.gauges["gateway.warmup.succeeded"], 0);
+  assert.equal(metrics.gauges["gateway.warmup.stopped"], 0);
+
+  await stopGateway(gateway, { timeoutMs: 20 });
+  stopped = true;
+});
+
 test("stopGateway cancels pending provider warmup retries", async () => {
   const port = await getAvailablePort();
   const config = mergeConfig(createDefaultConfig("tiny"), {

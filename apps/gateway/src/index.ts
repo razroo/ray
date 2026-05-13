@@ -53,6 +53,7 @@ export interface CreateGatewayHandlerOptions {
   logger?: Logger;
   env?: NodeJS.ProcessEnv;
   rateLimiter?: FixedWindowRateLimiter;
+  warmupSnapshot?: () => GatewayWarmupSnapshot | undefined;
 }
 
 export interface GatewayServer {
@@ -60,7 +61,7 @@ export interface GatewayServer {
   runtime: RayRuntime;
   jobQueue?: DurableInferenceQueue;
   logger: Logger;
-  warmup?: GatewayWarmupController;
+  warmup?: GatewayWarmupController | undefined;
   sockets?: Set<Socket>;
   activeRequestsBySocket?: Map<Socket, number>;
 }
@@ -70,8 +71,19 @@ export interface GatewayWarmupRetryOptions {
   maxDelayMs?: number;
 }
 
-interface GatewayWarmupController {
+export interface GatewayWarmupSnapshot {
+  attempts: number;
+  failures: number;
+  inFlight: boolean;
+  retryScheduled: boolean;
+  retryInMs: number;
+  succeeded: boolean;
+  stopped: boolean;
+}
+
+export interface GatewayWarmupController {
   stop(): void;
+  snapshot(): GatewayWarmupSnapshot;
 }
 
 export interface StartGatewayOptions extends CreateGatewayHandlerOptions {
@@ -132,6 +144,21 @@ function attachAsyncQueueMetrics(
   }
   metrics.gauges["async_queue.completed_ttl_ms"] = snapshot.completedTtlMs;
   metrics.gauges["async_queue.dispatch_concurrency"] = snapshot.dispatchConcurrency;
+
+  return metrics;
+}
+
+function attachGatewayWarmupMetrics(
+  metrics: RuntimeMetricsSnapshot,
+  snapshot: GatewayWarmupSnapshot,
+): RuntimeMetricsSnapshot {
+  metrics.gauges["gateway.warmup.attempts"] = snapshot.attempts;
+  metrics.gauges["gateway.warmup.failures"] = snapshot.failures;
+  metrics.gauges["gateway.warmup.in_flight"] = snapshot.inFlight ? 1 : 0;
+  metrics.gauges["gateway.warmup.retry_scheduled"] = snapshot.retryScheduled ? 1 : 0;
+  metrics.gauges["gateway.warmup.retry_delay_ms"] = snapshot.retryInMs;
+  metrics.gauges["gateway.warmup.succeeded"] = snapshot.succeeded ? 1 : 0;
+  metrics.gauges["gateway.warmup.stopped"] = snapshot.stopped ? 1 : 0;
 
   return metrics;
 }
@@ -880,6 +907,10 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
         }
 
         const metrics = await runtime.collectMetricsSnapshot();
+        const warmupSnapshot = handlerOptions.warmupSnapshot?.();
+        if (warmupSnapshot) {
+          attachGatewayWarmupMetrics(metrics, warmupSnapshot);
+        }
         writeJsonWithoutReadingBody(
           request,
           response,
@@ -1107,12 +1138,14 @@ export function createGatewayServer(options: CreateGatewayHandlerOptions): Gatew
           logger,
         })
       : undefined);
+  let warmup: GatewayWarmupController | undefined;
   const handler = createGatewayRequestHandler({
     ...options,
     config,
     runtime,
     logger,
     ...(jobQueue ? { jobQueue } : {}),
+    warmupSnapshot: () => warmup?.snapshot(),
   });
   const server = createServer(handler);
   const sockets = new Set<Socket>();
@@ -1152,6 +1185,12 @@ export function createGatewayServer(options: CreateGatewayHandlerOptions): Gatew
     server,
     runtime,
     logger,
+    get warmup() {
+      return warmup;
+    },
+    set warmup(next: GatewayWarmupController | undefined) {
+      warmup = next;
+    },
     sockets,
     activeRequestsBySocket,
     ...(jobQueue ? { jobQueue } : {}),
@@ -1194,6 +1233,10 @@ function startGatewayWarmup(
 ): GatewayWarmupController {
   let stopped = false;
   let attempts = 0;
+  let failures = 0;
+  let inFlight = false;
+  let retryInMs = 0;
+  let succeeded = false;
   let retryTimer: NodeJS.Timeout | undefined;
 
   const run = () => {
@@ -1201,21 +1244,28 @@ function startGatewayWarmup(
       return;
     }
 
+    retryTimer = undefined;
+    retryInMs = 0;
     attempts += 1;
+    inFlight = true;
 
     void gateway.runtime
       .warm()
       .then(() => {
+        inFlight = false;
+        succeeded = true;
         if (!stopped && attempts > 1) {
           gateway.logger.info("provider warmup recovered", { attempts });
         }
       })
       .catch((error) => {
+        inFlight = false;
         if (stopped) {
           return;
         }
 
-        const retryInMs = resolveWarmupRetryDelayMs(attempts, retry);
+        failures += 1;
+        retryInMs = resolveWarmupRetryDelayMs(attempts, retry);
         const fields = {
           attempt: attempts,
           retryInMs,
@@ -1242,6 +1292,18 @@ function startGatewayWarmup(
         clearTimeout(retryTimer);
         retryTimer = undefined;
       }
+      retryInMs = 0;
+    },
+    snapshot() {
+      return {
+        attempts,
+        failures,
+        inFlight,
+        retryScheduled: retryTimer !== undefined,
+        retryInMs,
+        succeeded,
+        stopped,
+      };
     },
   };
 }

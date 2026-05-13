@@ -489,6 +489,7 @@ file, package metadata, and the llama.cpp staging helper used during deploy.
 - Gateway shutdown is bounded for unattended VPS restarts: SIGTERM stops new HTTP sockets, closes idle keep-alives, and force-closes active connections after 30 seconds so the generated `TimeoutStopSec=35` unit does not hang on a stuck client.
 - Let the generated Caddy upstream timeouts track `scheduler.requestTimeoutMs`; public proxy sockets should not outlive Ray's own request budget for long.
 - The generated systemd units enable CPU, memory, and IO accounting, so `systemctl show ray-gateway.service -p CPUUsageNSec -p MemoryCurrent -p IOReadBytes -p IOWriteBytes` can confirm pressure without extra agents.
+- `/metrics` exposes gateway warmup attempts, failures, retry scheduling, and recovery state, so repeated backend startup races are visible without scraping logs.
 - The generated systemd units rate-limit journal output so crash loops or verbose local backends cannot quickly fill a small VPS disk.
 - The generated systemd units set `CPUWeight` so the lightweight gateway gets a larger CPU share than the local model backend when both contend on a small node.
 - The generated systemd units also set `MemoryHigh`, `MemoryMax`, and `MemorySwapMax` cgroup ceilings from the gateway profile and llama.cpp memory budget so backend and gateway memory pressure stays bounded on one-node VPS hosts without letting one service consume the whole swap cushion.
