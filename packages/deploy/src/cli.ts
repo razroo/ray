@@ -116,6 +116,21 @@ function requireFlagValue(flag: string, value: string | undefined): string {
   return value;
 }
 
+function parsePathFlagValue(flag: string, value: string | undefined): string {
+  const pathValue = requireFlagValue(flag, value);
+
+  if (/[\0\r\n]/.test(pathValue)) {
+    throw new Error(`${flag} must not contain control characters`);
+  }
+
+  if (pathValue.length === 0 || pathValue.trim() !== pathValue) {
+    throw new Error(`${flag} must be a non-empty path without surrounding whitespace`);
+  }
+
+  assertDeployPathBytes(pathValue, flag);
+  return pathValue;
+}
+
 function parsePositiveIntegerFlag(value: string, label: string): number {
   const normalized = value.trim();
   const parsed = Number(normalized);
@@ -597,13 +612,13 @@ export function parseCliArgs(argv: string[]): CliOptions {
     }
 
     if (current === "--cwd") {
-      options.cwd = requireFlagValue(current, next);
+      options.cwd = parsePathFlagValue(current, next);
       index += 1;
       continue;
     }
 
     if (current === "--config") {
-      options.configPath = requireFlagValue(current, next);
+      options.configPath = parsePathFlagValue(current, next);
       index += 1;
       continue;
     }
@@ -621,13 +636,13 @@ export function parseCliArgs(argv: string[]): CliOptions {
     }
 
     if (current === "--env-file" || current === "--ray-env-file") {
-      options.envFile = requireFlagValue(current, next);
+      options.envFile = parsePathFlagValue(current, next);
       index += 1;
       continue;
     }
 
     if (current === "--systemd-env-file") {
-      options.systemdEnvFile = requireFlagValue(current, next);
+      options.systemdEnvFile = parsePathFlagValue(current, next);
       index += 1;
       continue;
     }
@@ -657,7 +672,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     }
 
     if (current === "--output-dir") {
-      options.outputDir = requireFlagValue(current, next);
+      options.outputDir = parsePathFlagValue(current, next);
       index += 1;
       continue;
     }

@@ -274,6 +274,23 @@ test("parseCliArgs rejects malformed direct argv values", () => {
     () => parseCliArgs(["doctor", "--config", "x".repeat(4_097)]),
     /argv\[2\] must be at most 4096 bytes/,
   );
+  assert.throws(
+    () => parseCliArgs(["doctor", "--cwd", " /srv/ray"]),
+    /--cwd must be a non-empty path without surrounding whitespace/,
+  );
+  assert.throws(
+    () => parseCliArgs(["doctor", "--config", "examples/config/ray.json\n"]),
+    /--config must not contain control characters/,
+  );
+  assert.throws(() => parseCliArgs(["render", "--env-file", ""]), /--env-file requires a value/);
+  assert.throws(
+    () => parseCliArgs(["render", "--systemd-env-file", "ray.env\r"]),
+    /--systemd-env-file must not contain control characters/,
+  );
+  assert.throws(
+    () => parseCliArgs(["render", "--output-dir", " ".repeat(4)]),
+    /--output-dir must be a non-empty path without surrounding whitespace/,
+  );
 });
 
 test("parseCliArgs rejects missing flag values", () => {
