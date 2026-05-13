@@ -186,6 +186,13 @@ function assertConfigPathInput(value: unknown, label: string): asserts value is 
     });
   }
 
+  if (value.trim() !== value) {
+    throw new RayError(`${label} must be a path without surrounding whitespace`, {
+      code: "config_validation_error",
+      status: 500,
+    });
+  }
+
   if (/[\0\r\n]/.test(value)) {
     throw new RayError(`${label} must not contain control characters`, {
       code: "config_validation_error",

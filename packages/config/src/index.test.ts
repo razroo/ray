@@ -92,6 +92,23 @@ test("loadRayConfig rejects oversized direct paths before reading", async () => 
     }),
     /configPath must be at most 4096 characters/,
   );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: ` ${process.cwd()}`,
+      env: {},
+    }),
+    /cwd must be a path without surrounding whitespace/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "examples/config/ray.tiny.json ",
+      env: {},
+    }),
+    /configPath must be a path without surrounding whitespace/,
+  );
 });
 
 test("loadRayConfig accepts every checked-in example config", async () => {

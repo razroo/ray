@@ -370,6 +370,14 @@ test("gateway parseCliArgs rejects ambiguous or malformed options", () => {
   );
   assert.throws(() => parseCliArgs(["./examples/config/ray.sub1b.json"]), /Unexpected positional/);
   assert.throws(() => parseCliArgs(["--config", `ray${"\0"}.json`]), /NUL bytes/);
+  assert.throws(
+    () => parseCliArgs(["--config", " ./examples/config/ray.sub1b.json"]),
+    /--config must be a path without surrounding whitespace/,
+  );
+  assert.throws(
+    () => parseCliArgs(["--config", "examples/config/ray.sub1b.json\n"]),
+    /--config must not contain control characters/,
+  );
   assert.throws(() => parseCliArgs(["--config", "x".repeat(4_097)]), /--config must be at most/);
   assert.throws(() => parseCliArgs(["--config", 42] as unknown as string[]), /argv\[1\]/);
 });

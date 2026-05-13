@@ -606,6 +606,14 @@ function requireFlagValue(flag: string, value: string | undefined): string {
 }
 
 function assertConfigPathFlagValue(value: string, flag: string): void {
+  if (/[\r\n]/.test(value)) {
+    throw new Error(`${flag} must not contain control characters`);
+  }
+
+  if (value.trim() !== value) {
+    throw new Error(`${flag} must be a path without surrounding whitespace`);
+  }
+
   if (value.length > MAX_GATEWAY_CONFIG_PATH_CHARS) {
     throw new Error(`${flag} must be at most ${MAX_GATEWAY_CONFIG_PATH_CHARS} characters`);
   }
