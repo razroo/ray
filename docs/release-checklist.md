@@ -16,18 +16,10 @@ Aligned with [roadmap Phase 1 exit criteria](roadmap.md) and day-one operator ex
 2. **Tiny profile (mock provider)**
 
    ```bash
-   bun run dev:tiny
+   bun run smoke:tiny
    ```
 
-   In another terminal:
-
-   ```bash
-   curl -fsS --connect-timeout 2 --max-time 30 http://127.0.0.1:3000/v1/infer \
-     -H 'content-type: application/json' \
-     -d '{"input":"Smoke test."}'
-   ```
-
-   Expect a JSON inference response without an external model server.
+   This starts the tiny mock-provider gateway on an ephemeral loopback port and verifies `/livez`, `/readyz`, and `/v1/infer` without an external model server.
 
 3. **Tests**
 
@@ -40,6 +32,7 @@ Aligned with [roadmap Phase 1 exit criteria](roadmap.md) and day-one operator ex
    ```bash
    bun run validate:config
    bun run validate:config:all
+   bun run smoke:tiny
    bun run deploy:smoke
    bun run deploy:scripts
    bun run package:runtime

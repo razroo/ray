@@ -532,6 +532,17 @@ function validateScripts(
     });
   }
 
+  if (releaseGate !== undefined && !releaseGate.includes("bun run smoke:tiny")) {
+    diagnostics.push({
+      level: "error",
+      code: "release_gate_tiny_gateway_smoke_missing",
+      packagePath: packageJsonPath,
+      scriptName: "release:gate",
+      message:
+        'Script "release:gate" must run bun run smoke:tiny so CI proves the tiny mock-provider gateway can boot and serve inference.',
+    });
+  }
+
   return diagnostics;
 }
 
