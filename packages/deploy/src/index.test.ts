@@ -634,6 +634,32 @@ test("diagnoseConfig warns when gateway cache budget is high for generated memor
   assert.match(diagnostic.message, /generated gateway MemoryMax of 896 MiB/);
 });
 
+test("diagnoseConfig warns when rate-limit key storage is high for gateway memory", () => {
+  const defaultConfig = createDefaultConfig("1b");
+  assert.ok(
+    !diagnoseConfig(defaultConfig, process.env).some(
+      (entry) => entry.code === "rate_limit_key_store_high_for_gateway_memory",
+    ),
+  );
+
+  const config = mergeConfig(defaultConfig, {
+    rateLimit: {
+      maxKeys: 16_384,
+    },
+  });
+
+  const diagnostic = diagnoseConfig(config, process.env).find(
+    (entry) => entry.code === "rate_limit_key_store_high_for_gateway_memory",
+  );
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /rateLimit\.maxKeys/);
+  assert.match(diagnostic.message, /RAY_RATE_LIMIT_MAX_KEYS/);
+  assert.match(diagnostic.message, /32 MiB/);
+  assert.match(diagnostic.message, /generated gateway MemoryMax of 896 MiB/);
+});
+
 test("diagnoseConfig warns when scheduler token buffers are high for gateway memory", () => {
   const defaultConfig = createDefaultConfig("1b");
   assert.ok(

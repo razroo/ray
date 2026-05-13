@@ -292,6 +292,9 @@ const GATEWAY_MEMORY_MAX_HEADROOM_MIB = 384;
 const GATEWAY_MEMORY_SWAP_MAX_MIB = 128;
 const GATEWAY_CACHE_MAX_BYTES_WARN_RATIO = 0.2;
 const GATEWAY_CACHE_MAX_BYTES_WARN_MIN_MIB = 128;
+const GATEWAY_RATE_LIMIT_KEY_ESTIMATED_BYTES = 2 * 1024;
+const GATEWAY_RATE_LIMIT_KEY_STORE_WARN_RATIO = 0.02;
+const GATEWAY_RATE_LIMIT_KEY_STORE_WARN_MIN_MIB = 16;
 const GATEWAY_SCHEDULER_BUFFER_WARN_RATIO = 0.15;
 const GATEWAY_SCHEDULER_BUFFER_WARN_MIN_MIB = 96;
 const MIN_WORKING_DIRECTORY_FREE_MIB = 512;
@@ -1595,6 +1598,13 @@ function resolveGatewayCacheMaxBytesWarnThresholdMiB(gatewayMemoryMaxMiB: number
   );
 }
 
+function resolveGatewayRateLimitKeyStoreWarnThresholdMiB(gatewayMemoryMaxMiB: number): number {
+  return Math.max(
+    GATEWAY_RATE_LIMIT_KEY_STORE_WARN_MIN_MIB,
+    Math.floor(gatewayMemoryMaxMiB * GATEWAY_RATE_LIMIT_KEY_STORE_WARN_RATIO),
+  );
+}
+
 function resolveGatewaySchedulerBufferWarnThresholdMiB(gatewayMemoryMaxMiB: number): number {
   return Math.max(
     GATEWAY_SCHEDULER_BUFFER_WARN_MIN_MIB,
@@ -1607,6 +1617,10 @@ function estimateSchedulerBufferMiB(config: Pick<RayConfig, "scheduler">): numbe
     (config.scheduler.maxQueuedTokens + config.scheduler.maxInflightTokens) *
       SCHEDULER_BYTES_PER_TOKEN,
   );
+}
+
+function estimateRateLimitKeyStoreMiB(config: Pick<RayConfig, "rateLimit">): number {
+  return bytesToMiBRoundedUp(config.rateLimit.maxKeys * GATEWAY_RATE_LIMIT_KEY_ESTIMATED_BYTES);
 }
 
 function resolveLlamaCppMemoryControls(
@@ -2826,6 +2840,21 @@ export function diagnoseConfig(
         code: "rate_limit_proxy_headers_disabled",
         message:
           "rateLimit.trustProxyHeaders is disabled while server.host is loopback. Generated VPS deployments normally receive traffic through Caddy, so IP-based rate limits will see the proxy address instead of the client unless proxy headers are trusted.",
+      });
+    }
+  }
+
+  if (config.rateLimit.enabled) {
+    const gatewayMemoryMaxMiB = resolveGatewayMemoryControls(config).memoryMaxMiB;
+    const rateLimitKeyStoreMiB = estimateRateLimitKeyStoreMiB(config);
+    const rateLimitKeyStoreWarnThresholdMiB =
+      resolveGatewayRateLimitKeyStoreWarnThresholdMiB(gatewayMemoryMaxMiB);
+
+    if (rateLimitKeyStoreMiB > rateLimitKeyStoreWarnThresholdMiB) {
+      diagnostics.push({
+        level: "warn",
+        code: "rate_limit_key_store_high_for_gateway_memory",
+        message: `rateLimit.maxKeys can retain about ${formatMiB(rateLimitKeyStoreMiB)} of in-process gateway rate-limit state, above the ${formatMiB(rateLimitKeyStoreWarnThresholdMiB)} small-VPS warning threshold for the generated gateway MemoryMax of ${formatMiB(gatewayMemoryMaxMiB)}. Lower RAY_RATE_LIMIT_MAX_KEYS so public key churn cannot crowd out request handling, cache, and graceful degradation headroom.`,
       });
     }
   }
