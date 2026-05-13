@@ -193,7 +193,21 @@ test("resolveClientIp normalizes trusted proxy headers into bounded IP keys", ()
     "203.0.113.10",
   );
   assert.equal(
+    resolveClientIp(
+      fakeRequest("0:0:0:0:0:ffff:7f00:1", "203.0.113.11, 0:0:0:0:0:ffff:0a00:1"),
+      true,
+    ),
+    "203.0.113.11",
+  );
+  assert.equal(
     resolveClientIp(fakeRequest("127.0.0.1", "::ffff:5db8:d822, ::ffff:0a00:1"), true),
+    "93.184.216.34",
+  );
+  assert.equal(
+    resolveClientIp(
+      fakeRequest("127.0.0.1", "0:0:0:0:0:ffff:5db8:d822, 0:0:0:0:0:ffff:0a00:1"),
+      true,
+    ),
     "93.184.216.34",
   );
   assert.equal(resolveClientIp(fakeRequest("127.0.0.1", "not-an-ip"), true), "127.0.0.1");

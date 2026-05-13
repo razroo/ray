@@ -230,6 +230,11 @@ export function createApiKeyVerifier(
 }
 
 function ipv4FromMappedIpv6(address: string): string | undefined {
+  const dottedMapped = address.match(/^(?:::ffff:|0:0:0:0:0:ffff:)(\d+\.\d+\.\d+\.\d+)$/);
+  if (dottedMapped && isIP(dottedMapped[1] ?? "") === 4) {
+    return dottedMapped[1];
+  }
+
   const mapped = address.match(/^(?:::ffff:|0:0:0:0:0:ffff:)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
 
   if (!mapped) {

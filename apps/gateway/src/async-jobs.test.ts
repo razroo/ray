@@ -1619,6 +1619,22 @@ test("durable inference queue rejects private and non-global callbacks by defaul
       /private, local, or non-global/,
     );
 
+    const fullMappedDnsQueue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+      lookupImpl: async () => [{ address: "0:0:0:0:0:ffff:10.0.0.1" }],
+    });
+
+    await assert.rejects(
+      () =>
+        fullMappedDnsQueue.enqueue({
+          input: "Do not call full IPv4-mapped private DNS callback",
+          callbackUrl: "https://full-mapped-private.example/ray-callback",
+        }),
+      /private, local, or non-global/,
+    );
+
     const wildcardAllowlistQueue = new DurableInferenceQueue({
       config: {
         ...config.asyncQueue,

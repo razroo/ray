@@ -850,7 +850,7 @@ function embeddedIpv4FromIpv6(address: string): string | undefined {
 
 function isNonGlobalIpv6(address: string): boolean {
   const normalized = normalizeHostname(address);
-  const mappedIpv4 = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  const mappedIpv4 = normalized.match(/^(?:::ffff:|0:0:0:0:0:ffff:)(\d+\.\d+\.\d+\.\d+)$/);
 
   if (mappedIpv4?.[1]) {
     return isNonGlobalIpv4(mappedIpv4[1]);
