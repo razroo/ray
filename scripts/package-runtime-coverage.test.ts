@@ -42,6 +42,7 @@ test("validatePackageRuntimeCoverage accepts current Bun-first workspace manifes
   assert.ok(summary.packageCount >= 10);
   assert.ok(summary.workflowCount >= 1);
   assert.ok(summary.docCount >= 8);
+  assert.equal(summary.runtimeScriptCount, 1);
   assert.ok(summary.scriptCount > 0);
   assert.equal(summary.forbiddenLockfiles.length, 0);
   assert.ok(
@@ -66,6 +67,60 @@ test("validatePackageRuntimeCoverage accepts current Bun-first workspace manifes
         result.packageManager?.startsWith("bun@"),
     ),
   );
+  assert.ok(
+    summary.results.some(
+      (result) =>
+        result.packagePath === path.join(repoRoot, "scripts", "deploy-storage-preflight.ts") &&
+        result.kind === "script",
+    ),
+  );
+});
+
+test("validatePackageRuntimeCoverage requires Bun cache storage preflight coverage", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-storage-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  await mkdir(path.join(tempDir, "scripts"), { recursive: true });
+  const rootPackageJson = path.join(tempDir, "package.json");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify(
+      {
+        name: "ray-test",
+        packageManager: "bun@1.3.9",
+        engines: {
+          bun: ">=1.3.0",
+        },
+        scripts: {
+          "deploy:storage": "bun ./scripts/deploy-storage-preflight.ts",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    path.join(tempDir, "scripts", "deploy-storage-preflight.ts"),
+    [
+      'const DEFAULT_STORAGE_PATHS = ["/srv/ray", "/var/lib/ray", "/tmp"] as const;',
+      'const HELP = "RAY_DEPLOY_MIN_FREE_STORAGE_MIB";',
+      "",
+    ].join("\n"),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson],
+  });
+  const codes = summary.results.flatMap((result) =>
+    result.diagnostics.map((diagnostic) => diagnostic.code),
+  );
+
+  assert.equal(summary.ok, false);
+  assert.equal(summary.runtimeScriptCount, 1);
+  assert.ok(codes.includes("deploy_storage_bun_cache_preflight_missing"));
 });
 
 test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", async (t) => {

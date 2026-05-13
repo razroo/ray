@@ -13,6 +13,7 @@ const DEFAULT_RUNTIME_DOCS = [
   "docs/portable-1b.md",
   "docs/release-checklist.md",
 ] as const;
+const DEFAULT_RUNTIME_SCRIPTS = ["scripts/deploy-storage-preflight.ts"] as const;
 const WORKSPACE_RUNTIME_DOC_DIRS = ["apps", "packages"] as const;
 const VPS_TIMEOUT_DOCS = new Set([
   "examples/deploy/vps/README.md",
@@ -42,6 +43,7 @@ const MAX_WORKFLOW_BYTES = 512 * 1024;
 const MAX_WORKFLOW_FILES = 64;
 const MAX_WORKFLOW_DIRECTORY_ENTRIES = 1_024;
 const MAX_RUNTIME_DOC_BYTES = 512 * 1024;
+const MAX_RUNTIME_SCRIPT_BYTES = 512 * 1024;
 const MAX_WORKSPACE_RUNTIME_DOC_DIRECTORY_ENTRIES = 512;
 const skipDirectoryNames = new Set([".git", ".ray", "dist", "node_modules"]);
 const forbiddenLockfiles = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"] as const;
@@ -64,18 +66,20 @@ export interface PackageRuntimeCoverageDiagnostic {
   packagePath?: string;
   workflowPath?: string;
   docPath?: string;
+  scriptPath?: string;
   scriptName?: string;
   line?: number;
 }
 
 export interface PackageRuntimeCoverageResult {
-  kind: "package" | "workflow" | "lockfile" | "doc";
+  kind: "package" | "workflow" | "lockfile" | "doc" | "script";
   packagePath: string;
   packageName?: string;
   packageManager?: string;
   scriptCount: number;
   workflowLineCount?: number;
   docLineCount?: number;
+  scriptLineCount?: number;
   diagnostics: PackageRuntimeCoverageDiagnostic[];
   errorCount: number;
 }
@@ -85,6 +89,7 @@ export interface PackageRuntimeCoverageSummary {
   packageCount: number;
   workflowCount: number;
   docCount: number;
+  runtimeScriptCount: number;
   scriptCount: number;
   errorCount: number;
   forbiddenLockfiles: string[];
@@ -1710,6 +1715,55 @@ async function validateWorkflow(
   };
 }
 
+function validateDeployStoragePreflightScript(
+  scriptPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(scriptPath) !== "deploy-storage-preflight.ts") {
+    return [];
+  }
+
+  if (
+    contents.includes('"/srv/ray"') &&
+    contents.includes('"/srv/ray/.ray/bun-install-cache"') &&
+    contents.includes('"/var/lib/ray"') &&
+    contents.includes('"/tmp"') &&
+    contents.includes("DEFAULT_STORAGE_PATHS") &&
+    contents.includes("RAY_DEPLOY_MIN_FREE_STORAGE_MIB")
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "deploy_storage_bun_cache_preflight_missing",
+      scriptPath,
+      line: workflowLineNumber(lines, "DEFAULT_STORAGE_PATHS"),
+      message:
+        "Manual deploy storage preflight must check /srv/ray/.ray/bun-install-cache by default so operator-run Bun installs use the same disk headroom guard as the VPS deploy workflow.",
+    },
+  ];
+}
+
+async function validateRuntimeScript(
+  scriptPath: string,
+): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
+  const contents = await readTextFileBounded(
+    scriptPath,
+    MAX_RUNTIME_SCRIPT_BYTES,
+    "runtime script",
+  );
+  const lines = contents.split(/\r?\n/);
+  const diagnostics = [...validateDeployStoragePreflightScript(scriptPath, contents, lines)];
+
+  return {
+    lineCount: lines.length,
+    diagnostics,
+  };
+}
+
 function isShellFenceStart(line: string): boolean {
   return /^```\s*(?:bash|sh|shell)\s*$/.test(line.trim());
 }
@@ -1991,6 +2045,14 @@ export async function validatePackageRuntimeCoverage(options: {
   const results: PackageRuntimeCoverageResult[] = [];
   const workflowPaths = await collectWorkflowPaths(cwd);
   const runtimeDocPaths = await collectRuntimeDocPaths(cwd);
+  const runtimeScriptPaths = (
+    await Promise.all(
+      DEFAULT_RUNTIME_SCRIPTS.map(async (scriptPath) => {
+        const resolvedPath = path.join(cwd, scriptPath);
+        return (await pathExists(resolvedPath)) ? resolvedPath : undefined;
+      }),
+    )
+  ).filter((scriptPath): scriptPath is string => scriptPath !== undefined);
   let rootScripts: Record<string, string> = {};
 
   for (const packageJsonPath of options.packageJsonPaths.map((filePath) =>
@@ -2101,6 +2163,35 @@ export async function validatePackageRuntimeCoverage(options: {
     }
   }
 
+  for (const scriptPath of runtimeScriptPaths) {
+    try {
+      const { lineCount, diagnostics } = await validateRuntimeScript(scriptPath);
+      results.push({
+        kind: "script",
+        packagePath: scriptPath,
+        scriptLineCount: lineCount,
+        scriptCount: 0,
+        diagnostics,
+        errorCount: diagnostics.length,
+      });
+    } catch (error) {
+      results.push({
+        kind: "script",
+        packagePath: scriptPath,
+        scriptCount: 0,
+        diagnostics: [
+          {
+            level: "error",
+            code: "runtime_script_invalid",
+            scriptPath,
+            message: error instanceof Error ? error.message : String(error),
+          },
+        ],
+        errorCount: 1,
+      });
+    }
+  }
+
   const lockfileDiagnostics: PackageRuntimeCoverageDiagnostic[] = [];
   const foundForbiddenLockfiles: string[] = [];
   for (const lockfile of forbiddenLockfiles) {
@@ -2134,6 +2225,7 @@ export async function validatePackageRuntimeCoverage(options: {
     packageCount: options.packageJsonPaths.length,
     workflowCount: workflowPaths.length,
     docCount: runtimeDocPaths.length,
+    runtimeScriptCount: runtimeScriptPaths.length,
     scriptCount,
     errorCount,
     forbiddenLockfiles: foundForbiddenLockfiles,
@@ -2143,7 +2235,7 @@ export async function validatePackageRuntimeCoverage(options: {
 
 export function formatTextSummary(cwd: string, summary: PackageRuntimeCoverageSummary): string {
   const lines = [
-    `Checked ${summary.packageCount} package manifest${summary.packageCount === 1 ? "" : "s"}, ${summary.workflowCount} GitHub workflow${summary.workflowCount === 1 ? "" : "s"}, and ${summary.docCount} runtime doc${summary.docCount === 1 ? "" : "s"} for Bun-first runtime coverage:`,
+    `Checked ${summary.packageCount} package manifest${summary.packageCount === 1 ? "" : "s"}, ${summary.workflowCount} GitHub workflow${summary.workflowCount === 1 ? "" : "s"}, ${summary.docCount} runtime doc${summary.docCount === 1 ? "" : "s"}, and ${summary.runtimeScriptCount} runtime script${summary.runtimeScriptCount === 1 ? "" : "s"} for Bun-first runtime coverage:`,
   ];
 
   for (const result of summary.results) {
@@ -2155,6 +2247,10 @@ export function formatTextSummary(cwd: string, summary: PackageRuntimeCoverageSu
     } else if (result.kind === "doc") {
       lines.push(
         `- ${status} ${displayPath(cwd, result.packagePath)} doc lines=${result.docLineCount ?? 0} errors=${result.errorCount}`,
+      );
+    } else if (result.kind === "script") {
+      lines.push(
+        `- ${status} ${displayPath(cwd, result.packagePath)} runtime-script lines=${result.scriptLineCount ?? 0} errors=${result.errorCount}`,
       );
     } else {
       const name = result.packageName ? ` name=${result.packageName}` : "";
@@ -2174,7 +2270,7 @@ export function formatTextSummary(cwd: string, summary: PackageRuntimeCoverageSu
   }
 
   lines.push(
-    `Summary: packages=${summary.packageCount} workflows=${summary.workflowCount} docs=${summary.docCount} scripts=${summary.scriptCount} errors=${summary.errorCount}${summary.ok ? "" : " (failed)"}`,
+    `Summary: packages=${summary.packageCount} workflows=${summary.workflowCount} docs=${summary.docCount} runtimeScripts=${summary.runtimeScriptCount} scripts=${summary.scriptCount} errors=${summary.errorCount}${summary.ok ? "" : " (failed)"}`,
   );
 
   return lines.join("\n");
