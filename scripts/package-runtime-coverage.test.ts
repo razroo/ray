@@ -41,7 +41,7 @@ test("validatePackageRuntimeCoverage accepts current Bun-first workspace manifes
   assert.equal(summary.ok, true);
   assert.ok(summary.packageCount >= 10);
   assert.ok(summary.workflowCount >= 1);
-  assert.ok(summary.docCount >= 3);
+  assert.ok(summary.docCount >= 5);
   assert.ok(summary.scriptCount > 0);
   assert.equal(summary.forbiddenLockfiles.length, 0);
   assert.ok(
@@ -62,9 +62,11 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   const appDir = path.join(tempDir, "apps", "gateway");
   const workflowDir = path.join(tempDir, ".github", "workflows");
   const vpsDocDir = path.join(tempDir, "examples", "deploy", "vps");
+  const integrationDocDir = path.join(tempDir, "docs", "integrations");
   await mkdir(appDir, { recursive: true });
   await mkdir(workflowDir, { recursive: true });
   await mkdir(vpsDocDir, { recursive: true });
+  await mkdir(integrationDocDir, { recursive: true });
   const rootPackageJson = path.join(tempDir, "package.json");
   const appPackageJson = path.join(appDir, "package.json");
   await writeFile(
@@ -160,6 +162,14 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
       "",
     ].join("\n"),
   );
+  await writeFile(
+    path.join(integrationDocDir, "razroo-email-ai.md"),
+    ["# Integration", "", "```bash", "yarn test", "```", ""].join("\n"),
+  );
+  await writeFile(
+    path.join(tempDir, "docs", "release-checklist.md"),
+    ["# Release checklist", "", "```bash", "npm run test", "```", ""].join("\n"),
+  );
 
   const summary = await validatePackageRuntimeCoverage({
     cwd: tempDir,
@@ -197,7 +207,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("vps_readme_apt_get_unbounded"));
   assert.ok(codes.includes("vps_readme_command_timeout_missing"));
   assert.ok(codes.includes("vps_readme_bun_install_unbounded"));
-  assert.equal(codes.filter((code) => code === "non_bun_runtime_doc_command").length, 2);
+  assert.equal(codes.filter((code) => code === "non_bun_runtime_doc_command").length, 4);
   assert.ok(codes.includes("non_bun_lockfile_present"));
 });
 
@@ -323,5 +333,5 @@ test("runPackageRuntimeCoverageCli prints JSON coverage", async () => {
   assert.equal(parsed.ok, true);
   assert.ok((parsed.packageCount ?? 0) >= 10);
   assert.ok((parsed.workflowCount ?? 0) >= 1);
-  assert.ok((parsed.docCount ?? 0) >= 3);
+  assert.ok((parsed.docCount ?? 0) >= 5);
 });

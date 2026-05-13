@@ -7,7 +7,9 @@ const DEFAULT_WORKFLOW_DIR = ".github/workflows";
 const DEFAULT_RUNTIME_DOCS = [
   "README.md",
   "examples/deploy/vps/README.md",
+  "docs/integrations/razroo-email-ai.md",
   "docs/portable-1b.md",
+  "docs/release-checklist.md",
 ] as const;
 const VPS_TIMEOUT_DOCS = new Set(["examples/deploy/vps/README.md", "docs/portable-1b.md"]);
 const MAX_CLI_ARGS = 8;
