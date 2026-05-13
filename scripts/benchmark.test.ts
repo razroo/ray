@@ -50,6 +50,27 @@ async function withTestServer(
   }
 }
 
+function minimalBenchmarkOutput(label: string) {
+  return {
+    kind: "benchmark-summary",
+    version: 1,
+    generatedAt: new Date(0).toISOString(),
+    args: {
+      baseUrl: "http://127.0.0.1:3000",
+      concurrency: 1,
+      requests: 1,
+      label,
+    },
+    summary: {
+      label,
+      baseUrl: "http://127.0.0.1:3000",
+      concurrency: 1,
+      requests: 1,
+      wallTimeMs: 1,
+    },
+  } as const;
+}
+
 test("parseArgs accepts strict benchmark CLI options", () => {
   const args = parseArgs([
     "--base-url",
@@ -838,6 +859,27 @@ test("waitForBenchmarkChildHealth fails fast with bounded child output", async (
   await assert.rejects(
     () => waitForBenchmarkChildHealth(child, "llama.cpp server", "http://127.0.0.1:1", 30_000),
     /llama\.cpp server exited before becoming healthy \(code=42 signal=null\)[\s\S]*llama startup failed/,
+  );
+});
+
+test("benchmark file helpers reject oversized direct paths before filesystem work", async () => {
+  const oversizedPath = `/${"a".repeat(4096)}`;
+
+  await assert.rejects(
+    () => loadWorkload(oversizedPath),
+    /Workload path must be at most 4096 bytes/,
+  );
+  await assert.rejects(
+    () => loadBaseline(oversizedPath),
+    /Baseline path must be at most 4096 bytes/,
+  );
+  await assert.rejects(
+    () => writeStructuredOutput(oversizedPath, minimalBenchmarkOutput("oversized-output-path")),
+    /Benchmark output path must be at most 4096 bytes/,
+  );
+  await assert.rejects(
+    () => appendHistoryOutput(oversizedPath, minimalBenchmarkOutput("oversized-history-path")),
+    /Benchmark history directory must be at most 4096 bytes/,
   );
 });
 

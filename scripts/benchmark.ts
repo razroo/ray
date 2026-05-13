@@ -19,6 +19,7 @@ const MAX_BENCHMARK_BASELINE_FILE_BYTES = 256 * 1024;
 const MAX_BENCHMARK_WORKLOAD_ITEMS = 1_024;
 const MAX_BENCHMARK_CLI_ARGS = 128;
 const MAX_BENCHMARK_CLI_ARG_BYTES = 4_096;
+const MAX_BENCHMARK_PATH_BYTES = 4_096;
 const MAX_BENCHMARK_CONCURRENCY = 64;
 const MAX_BENCHMARK_REQUESTS = 10_000;
 const DEFAULT_AUTOTUNE_SCHEDULER_CANDIDATES = 64;
@@ -458,7 +459,21 @@ function assertNonEmptyStringAtMost(value: string, label: string, maximum: numbe
 }
 
 function assertPathFlagValue(value: string, label: string): void {
-  assertNonEmptyStringAtMost(value, label, MAX_BENCHMARK_CLI_ARG_BYTES);
+  assertBenchmarkPathValue(value, label);
+}
+
+function assertBenchmarkPathValue(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${label} must be a non-empty path`);
+  }
+
+  if (value.includes("\0")) {
+    throw new Error(`${label} must not contain NUL bytes`);
+  }
+
+  if (Buffer.byteLength(value, "utf8") > MAX_BENCHMARK_PATH_BYTES) {
+    throw new Error(`${label} must be at most ${MAX_BENCHMARK_PATH_BYTES} bytes`);
+  }
 }
 
 function normalizeBaseUrlFlag(value: string): string {
@@ -1167,6 +1182,7 @@ export async function loadWorkload(workloadPath?: string): Promise<BenchmarkWork
     return defaultWorkload;
   }
 
+  assertBenchmarkPathValue(workloadPath, "Workload path");
   const resolvedPath = path.resolve(process.cwd(), workloadPath);
   const raw = await readTextFileBounded(
     resolvedPath,
@@ -1198,6 +1214,7 @@ export async function loadWorkload(workloadPath?: string): Promise<BenchmarkWork
 }
 
 export async function loadBaseline(baselinePath: string): Promise<BenchmarkBaseline> {
+  assertBenchmarkPathValue(baselinePath, "Baseline path");
   const resolvedPath = path.resolve(process.cwd(), baselinePath);
   const raw = await readTextFileBounded(
     resolvedPath,
@@ -2700,6 +2717,7 @@ export async function writeStructuredOutput(
   outputPath: string,
   payload: BenchmarkSummaryOutput | AutotuneOutput | PromptFormatSweepOutput,
 ): Promise<void> {
+  assertBenchmarkPathValue(outputPath, "Benchmark output path");
   const resolvedPath = path.resolve(process.cwd(), outputPath);
   const output = `${JSON.stringify(payload, null, 2)}\n`;
   const outputBytes = Buffer.byteLength(output, "utf8");
@@ -2787,6 +2805,7 @@ export async function appendHistoryOutput(
     return;
   }
 
+  assertBenchmarkPathValue(historyDir, "Benchmark history directory");
   const resolvedDir = path.resolve(process.cwd(), historyDir);
   const historyPath = path.join(resolvedDir, `${payload.kind}.jsonl`);
   const line = `${JSON.stringify(payload)}\n`;
