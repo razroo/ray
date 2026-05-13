@@ -598,6 +598,10 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
     env.RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB,
     "RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB",
   );
+  const degradationMemoryCgroupPressureRatioThreshold = parsePositiveUnitInterval(
+    env.RAY_DEGRADATION_MEMORY_CGROUP_PRESSURE_RATIO_THRESHOLD,
+    "RAY_DEGRADATION_MEMORY_CGROUP_PRESSURE_RATIO_THRESHOLD",
+  );
   const degradationCpuThrottledRatioThreshold = parsePositiveUnitInterval(
     env.RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD,
     "RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD",
@@ -1126,6 +1130,11 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
 
   if (degradationMemoryRssThresholdMiB !== undefined) {
     next.gracefulDegradation.memoryRssThresholdMiB = degradationMemoryRssThresholdMiB;
+  }
+
+  if (degradationMemoryCgroupPressureRatioThreshold !== undefined) {
+    next.gracefulDegradation.memoryCgroupPressureRatioThreshold =
+      degradationMemoryCgroupPressureRatioThreshold;
   }
 
   if (degradationCpuThrottledRatioThreshold !== undefined) {
@@ -2376,6 +2385,10 @@ function validateConfig(config: RayConfig): RayConfig {
     config.gracefulDegradation.memoryRssThresholdMiB,
     "gracefulDegradation.memoryRssThresholdMiB",
     MAX_GRACEFUL_DEGRADATION_MEMORY_RSS_MIB,
+  );
+  assertPositiveUnitInterval(
+    config.gracefulDegradation.memoryCgroupPressureRatioThreshold,
+    "gracefulDegradation.memoryCgroupPressureRatioThreshold",
   );
   assertPositiveUnitInterval(
     config.gracefulDegradation.cpuThrottledRatioThreshold,

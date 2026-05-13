@@ -62,6 +62,7 @@ const MAX_PUBLIC_DEGRADATION_QUEUE_DEPTH = 20;
 const MAX_PUBLIC_DEGRADATION_PROMPT_CHARS = 8_000;
 const MAX_PUBLIC_DEGRADATION_TOKENS = 160;
 const MAX_PUBLIC_DEGRADATION_MEMORY_RSS_MIB = 768;
+const MAX_PUBLIC_DEGRADATION_MEMORY_CGROUP_PRESSURE_RATIO = 0.9;
 const MAX_PUBLIC_DEGRADATION_CPU_THROTTLED_RATIO = 0.2;
 const MAX_PUBLIC_DEGRADATION_PSI_AVG10_THRESHOLD = 100;
 const MAX_PUBLIC_ADAPTIVE_SAMPLE_SIZE = 32;
@@ -1134,6 +1135,13 @@ async function diagnosePublicConfigPolicy(configPath: string): Promise<Deploymen
     ["gracefulDegradation", "memoryRssThresholdMiB"],
     MAX_PUBLIC_DEGRADATION_MEMORY_RSS_MIB,
     "public_config_degradation_memory_rss_explicit",
+  );
+  expectPublicConfigPositiveNumberAtMost(
+    diagnostics,
+    parsed,
+    ["gracefulDegradation", "memoryCgroupPressureRatioThreshold"],
+    MAX_PUBLIC_DEGRADATION_MEMORY_CGROUP_PRESSURE_RATIO,
+    "public_config_degradation_memory_cgroup_pressure_ratio_explicit",
   );
   expectPublicConfigPositiveNumberAtMost(
     diagnostics,

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createDefaultConfig, mergeConfig, resolveAuthApiKeys, sanitizeConfig } from "./index.js";
 
 function assertDefaultPsiThresholds(config: ReturnType<typeof createDefaultConfig>): void {
+  assert.equal(config.gracefulDegradation.memoryCgroupPressureRatioThreshold, 0.9);
   assert.equal(config.gracefulDegradation.memoryPsiSomeAvg10Threshold, 10);
   assert.equal(config.gracefulDegradation.memoryPsiFullAvg10Threshold, 1);
   assert.equal(config.gracefulDegradation.cpuPsiSomeAvg10Threshold, 50);

@@ -222,7 +222,6 @@ const MAX_CGROUP_TEXT_FILE_BYTES = 64 * 1024;
 const CGROUP_MEMORY_CACHE_TTL_MS = 250;
 const CGROUP_CPU_CACHE_TTL_MS = 250;
 const LINUX_PRESSURE_CACHE_TTL_MS = 250;
-const CGROUP_MEMORY_PRESSURE_RATIO = 0.9;
 const CGROUP_UNLIMITED_LIMIT_BYTES = 1024 ** 5;
 const unsafeMetadataKeys = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_LEARNED_FAMILY_HISTORY_KEYS = 512;
@@ -854,6 +853,14 @@ function resolveLinuxCpuPressure(
   );
 }
 
+function resolveCgroupMemoryPressure(config: RayConfig, snapshot: MemoryPressureSnapshot): boolean {
+  return (
+    snapshot.cgroupMemoryPressureRatio !== undefined &&
+    snapshot.cgroupMemoryPressureRatio >=
+      config.gracefulDegradation.memoryCgroupPressureRatioThreshold
+  );
+}
+
 function resolveCpuPressure(
   config: RayConfig,
   cgroupCpu: CgroupCpuSnapshot | undefined,
@@ -994,6 +1001,7 @@ function buildDegradationDiagnostics(options: {
   cgroupCpu: CgroupCpuSnapshot | undefined;
   linuxPressure: LinuxPressureSnapshot | undefined;
   memoryRssThresholdMiB: number;
+  memoryCgroupPressureRatioThreshold: number;
   cpuThrottledRatioThreshold: number;
   memoryPsiSomeAvg10Threshold: number;
   memoryPsiFullAvg10Threshold: number;
@@ -1044,7 +1052,10 @@ function buildDegradationDiagnostics(options: {
       ? { cgroupMemoryLimitMiB: options.memoryPressure.cgroupMemoryLimitMiB }
       : {}),
     ...(options.memoryPressure.cgroupMemoryPressureRatio !== undefined
-      ? { cgroupMemoryPressureRatio: options.memoryPressure.cgroupMemoryPressureRatio }
+      ? {
+          cgroupMemoryPressureRatio: options.memoryPressure.cgroupMemoryPressureRatio,
+          cgroupMemoryPressureRatioThreshold: options.memoryCgroupPressureRatioThreshold,
+        }
       : {}),
     ...(options.memoryPressure.cgroupMemorySwapCurrentMiB !== undefined
       ? { cgroupMemorySwapCurrentMiB: options.memoryPressure.cgroupMemorySwapCurrentMiB }
@@ -1122,6 +1133,7 @@ function buildRuntimeHealthDiagnostics(options: {
   memoryPressureSources: MemoryPressureSource[];
   memoryPressure: MemoryPressureSnapshot;
   memoryRssThresholdMiB: number;
+  memoryCgroupPressureRatioThreshold: number;
   cpuDegraded: boolean;
   cpuThrottledRatioThreshold: number;
   memoryPsiSomeAvg10Threshold: number;
@@ -1182,7 +1194,10 @@ function buildRuntimeHealthDiagnostics(options: {
         ? { cgroupMemoryLimitMiB: options.memoryPressure.cgroupMemoryLimitMiB }
         : {}),
       ...(options.memoryPressure.cgroupMemoryPressureRatio !== undefined
-        ? { cgroupMemoryPressureRatio: options.memoryPressure.cgroupMemoryPressureRatio }
+        ? {
+            cgroupMemoryPressureRatio: options.memoryPressure.cgroupMemoryPressureRatio,
+            cgroupMemoryPressureRatioThreshold: options.memoryCgroupPressureRatioThreshold,
+          }
         : {}),
       ...(options.memoryPressure.cgroupMemorySwapCurrentMiB !== undefined
         ? { cgroupMemorySwapCurrentMiB: options.memoryPressure.cgroupMemorySwapCurrentMiB }
@@ -1934,10 +1949,7 @@ function resolveMemoryPressureSources(
     sources.push("process_rss");
   }
 
-  if (
-    snapshot.cgroupMemoryPressureRatio !== undefined &&
-    snapshot.cgroupMemoryPressureRatio >= CGROUP_MEMORY_PRESSURE_RATIO
-  ) {
+  if (resolveCgroupMemoryPressure(config, snapshot)) {
     sources.push("cgroup");
   }
 
@@ -3846,6 +3858,8 @@ export class RayRuntime {
         cgroupCpu,
         linuxPressure,
         memoryRssThresholdMiB: this.config.gracefulDegradation.memoryRssThresholdMiB,
+        memoryCgroupPressureRatioThreshold:
+          this.config.gracefulDegradation.memoryCgroupPressureRatioThreshold,
         cpuThrottledRatioThreshold: this.config.gracefulDegradation.cpuThrottledRatioThreshold,
         memoryPsiSomeAvg10Threshold: this.config.gracefulDegradation.memoryPsiSomeAvg10Threshold,
         memoryPsiFullAvg10Threshold: this.config.gracefulDegradation.memoryPsiFullAvg10Threshold,
@@ -4046,6 +4060,8 @@ export class RayRuntime {
       memoryPressureSources,
       memoryPressure,
       memoryRssThresholdMiB: this.config.gracefulDegradation.memoryRssThresholdMiB,
+      memoryCgroupPressureRatioThreshold:
+        this.config.gracefulDegradation.memoryCgroupPressureRatioThreshold,
       cpuDegraded,
       cpuThrottledRatioThreshold: this.config.gracefulDegradation.cpuThrottledRatioThreshold,
       memoryPsiSomeAvg10Threshold: this.config.gracefulDegradation.memoryPsiSomeAvg10Threshold,
@@ -4797,8 +4813,12 @@ export class RayRuntime {
         memoryPressure.cgroupMemoryPressureRatio,
       );
       this.metrics.gauge(
+        "process.memory.cgroup_pressure_ratio_threshold",
+        this.config.gracefulDegradation.memoryCgroupPressureRatioThreshold,
+      );
+      this.metrics.gauge(
         "process.memory.cgroup_pressure",
-        memoryPressure.cgroupMemoryPressureRatio >= CGROUP_MEMORY_PRESSURE_RATIO ? 1 : 0,
+        resolveCgroupMemoryPressure(this.config, memoryPressure) ? 1 : 0,
       );
     }
     if (memoryPressure.cgroupMemorySwapCurrentMiB !== undefined) {

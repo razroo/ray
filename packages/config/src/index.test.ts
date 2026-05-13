@@ -316,6 +316,7 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
       RAY_GRACEFUL_DEGRADATION_ENABLED: "1",
       RAY_DEGRADATION_MAX_PROMPT_CHARS: "4200",
       RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB: "448",
+      RAY_DEGRADATION_MEMORY_CGROUP_PRESSURE_RATIO_THRESHOLD: "0.82",
       RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD: "0.35",
       RAY_DEGRADATION_MEMORY_PSI_SOME_AVG10_THRESHOLD: "8.5",
       RAY_DEGRADATION_MEMORY_PSI_FULL_AVG10_THRESHOLD: "0.75",
@@ -416,6 +417,7 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
   assert.equal(loaded.config.gracefulDegradation.enabled, true);
   assert.equal(loaded.config.gracefulDegradation.maxPromptChars, 4200);
   assert.equal(loaded.config.gracefulDegradation.memoryRssThresholdMiB, 448);
+  assert.equal(loaded.config.gracefulDegradation.memoryCgroupPressureRatioThreshold, 0.82);
   assert.equal(loaded.config.gracefulDegradation.cpuThrottledRatioThreshold, 0.35);
   assert.equal(loaded.config.gracefulDegradation.memoryPsiSomeAvg10Threshold, 8.5);
   assert.equal(loaded.config.gracefulDegradation.memoryPsiFullAvg10Threshold, 0.75);
@@ -652,6 +654,17 @@ test("loadRayConfig rejects malformed environment overrides", async () => {
       },
     }),
     /Expected RAY_DEGRADATION_CPU_THROTTLED_RATIO_THRESHOLD to be greater than 0 and less than or equal to 1/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_DEGRADATION_MEMORY_CGROUP_PRESSURE_RATIO_THRESHOLD: "0",
+      },
+    }),
+    /Expected RAY_DEGRADATION_MEMORY_CGROUP_PRESSURE_RATIO_THRESHOLD to be greater than 0 and less than or equal to 1/,
   );
 
   await assert.rejects(

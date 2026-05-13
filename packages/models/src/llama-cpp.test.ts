@@ -89,6 +89,7 @@ function createContext(model: ModelConfig, signal: AbortSignal): ProviderContext
         maxPromptChars: 2_000,
         degradeToMaxTokens: 64,
         memoryRssThresholdMiB: 512,
+        memoryCgroupPressureRatioThreshold: 0.9,
         cpuThrottledRatioThreshold: 0.2,
         memoryPsiSomeAvg10Threshold: 10,
         memoryPsiFullAvg10Threshold: 1,

@@ -104,6 +104,7 @@
     "maxPromptChars": 8000,
     "degradeToMaxTokens": 160,
     "memoryRssThresholdMiB": 768,
+    "memoryCgroupPressureRatioThreshold": 0.9,
     "cpuThrottledRatioThreshold": 0.2,
     "memoryPsiSomeAvg10Threshold": 10,
     "memoryPsiFullAvg10Threshold": 1,

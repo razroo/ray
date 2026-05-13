@@ -170,6 +170,7 @@ export interface GracefulDegradationConfig {
   maxPromptChars: number;
   degradeToMaxTokens: number;
   memoryRssThresholdMiB: number;
+  memoryCgroupPressureRatioThreshold: number;
   cpuThrottledRatioThreshold: number;
   memoryPsiSomeAvg10Threshold: number;
   memoryPsiFullAvg10Threshold: number;
@@ -498,6 +499,7 @@ export interface DegradationDiagnostics {
   cgroupMemoryHighMiB?: number;
   cgroupMemoryLimitMiB?: number;
   cgroupMemoryPressureRatio?: number;
+  cgroupMemoryPressureRatioThreshold?: number;
   cgroupMemorySwapCurrentMiB?: number;
   cgroupMemorySwapLimitMiB?: number;
   cgroupMemorySwapPressureRatio?: number;
@@ -581,6 +583,7 @@ export interface RuntimeHealthDiagnostics {
     cgroupMemoryHighMiB?: number;
     cgroupMemoryLimitMiB?: number;
     cgroupMemoryPressureRatio?: number;
+    cgroupMemoryPressureRatioThreshold?: number;
     cgroupMemorySwapCurrentMiB?: number;
     cgroupMemorySwapLimitMiB?: number;
     cgroupMemorySwapPressureRatio?: number;
