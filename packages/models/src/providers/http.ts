@@ -741,6 +741,10 @@ export async function adapterRequest(
       new RayError(`The backend did not respond within ${timeoutMs}ms`, {
         code: "provider_timeout",
         status: 504,
+        details: {
+          pathname,
+          timeoutMs,
+        },
       }),
     );
   }, timeoutMs);
@@ -752,7 +756,10 @@ export async function adapterRequest(
         : new RayError("The inference request was aborted before the backend replied", {
             code: "request_aborted",
             status: 504,
-            details: parentSignal?.reason,
+            details: {
+              pathname,
+              reason: parentSignal?.reason,
+            },
           }),
     );
   };
@@ -780,7 +787,11 @@ export async function adapterRequest(
       throw new RayError(`The backend rejected the request with ${response.status}`, {
         code: "provider_upstream_error",
         status: 502,
-        details: body,
+        details: {
+          ...body,
+          pathname,
+          upstreamStatus: response.status,
+        },
       });
     }
 
@@ -817,7 +828,10 @@ export async function adapterRequest(
     throw new RayError(`The backend request failed: ${toErrorMessage(error)}`, {
       code: "provider_request_failed",
       status: 502,
-      details: error,
+      details: {
+        pathname,
+        error,
+      },
     });
   } finally {
     clearTimeout(timeout);

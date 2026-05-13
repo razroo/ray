@@ -601,6 +601,8 @@ test("adapterRequest caps upstream error response bodies", async (t) => {
 
       const details = (error as { details?: unknown }).details;
       assert.ok(details && typeof details === "object" && !Array.isArray(details));
+      assert.equal((details as { pathname?: unknown }).pathname, "/v1/chat/completions");
+      assert.equal((details as { upstreamStatus?: unknown }).upstreamStatus, 500);
       assert.equal((details as { truncated?: unknown }).truncated, true);
       assert.equal(
         (details as { limitBytes?: unknown }).limitBytes,
@@ -610,6 +612,46 @@ test("adapterRequest caps upstream error response bodies", async (t) => {
         Buffer.byteLength((details as { body?: string }).body ?? ""),
         BACKEND_ERROR_BODY_LIMIT_BYTES,
       );
+
+      return true;
+    },
+  );
+});
+
+test("adapterRequest reports backend path on transport failures", async () => {
+  const server = createServer((_request, response) => {
+    response.writeHead(204);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: `http://127.0.0.1:${address.port}`,
+          timeoutMs: 200,
+        },
+        "/v1/models",
+        { method: "GET" },
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_request_failed");
+
+      const details = (error as { details?: unknown }).details;
+      assert.ok(details && typeof details === "object" && !Array.isArray(details));
+      assert.equal((details as { pathname?: unknown }).pathname, "/v1/models");
+      assert.ok((details as { error?: unknown }).error);
 
       return true;
     },
@@ -936,6 +978,10 @@ test("openai-compatible provider applies adapter timeout", async (t) => {
       ),
     (error: unknown) => {
       assert.ok(error instanceof Error);
+      const details = (error as { details?: unknown }).details;
+      assert.ok(details && typeof details === "object" && !Array.isArray(details));
+      assert.equal((details as { pathname?: unknown }).pathname, "/v1/chat/completions");
+      assert.equal((details as { timeoutMs?: unknown }).timeoutMs, 30);
       return (
         error instanceof Error &&
         "code" in error &&
