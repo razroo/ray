@@ -66,6 +66,7 @@ const expectedRequestRejectionCodes = new Set([
   "async_queue_full",
   "async_queue_storage_low",
 ]);
+const acknowledgedExpectContinueRequests = new WeakSet<IncomingMessage>();
 
 interface GatewayHttpParserRejection {
   code: string;
@@ -495,6 +496,61 @@ function snapshotGatewayHttpResources(
     requestTimeoutMs: GATEWAY_REQUEST_TIMEOUT_MS,
     keepAliveTimeoutMs: GATEWAY_KEEP_ALIVE_TIMEOUT_MS,
   };
+}
+
+function shouldAcknowledgeExpectContinue(
+  request: IncomingMessage,
+  requestBodyLimitBytes: number,
+): boolean {
+  const declaredContentLength = getDeclaredContentLength(request);
+  return declaredContentLength === undefined || declaredContentLength <= requestBodyLimitBytes;
+}
+
+function acknowledgeExpectContinue(
+  request: IncomingMessage,
+  response: ServerResponse,
+  requestBodyLimitBytes: number,
+): void {
+  if (!shouldAcknowledgeExpectContinue(request, requestBodyLimitBytes)) {
+    return;
+  }
+
+  if (acknowledgedExpectContinueRequests.has(request)) {
+    return;
+  }
+
+  const expectation = request.headers.expect;
+  if (typeof expectation !== "string" || expectation.toLowerCase() !== "100-continue") {
+    return;
+  }
+
+  response.writeContinue();
+  acknowledgedExpectContinueRequests.add(request);
+}
+
+function trackGatewayHttpRequest(
+  activeRequestsBySocket: Map<Socket, number>,
+  request: IncomingMessage,
+  response: ServerResponse,
+): void {
+  const socket = request.socket;
+  activeRequestsBySocket.set(socket, (activeRequestsBySocket.get(socket) ?? 0) + 1);
+
+  const releaseRequest = () => {
+    response.off("finish", releaseRequest);
+    response.off("close", releaseRequest);
+
+    const next = (activeRequestsBySocket.get(socket) ?? 1) - 1;
+    if (next <= 0) {
+      activeRequestsBySocket.delete(socket);
+      return;
+    }
+
+    activeRequestsBySocket.set(socket, next);
+  };
+
+  response.once("finish", releaseRequest);
+  response.once("close", releaseRequest);
 }
 
 function requireFlagValue(flag: string, value: string | undefined): string {
@@ -1387,6 +1443,7 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
         }
 
         assertJsonContentType(request);
+        acknowledgeExpectContinue(request, response, config.server.requestBodyLimitBytes);
         const body = (await readJsonBody(
           request,
           config.server.requestBodyLimitBytes,
@@ -1431,6 +1488,7 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
         }
 
         assertJsonContentType(request);
+        acknowledgeExpectContinue(request, response, config.server.requestBodyLimitBytes);
         const body = (await readJsonBody(
           request,
           config.server.requestBodyLimitBytes,
@@ -1598,24 +1656,13 @@ export function createGatewayServer(options: CreateGatewayHandlerOptions): Gatew
     });
   });
   server.on("request", (request, response) => {
-    const socket = request.socket;
-    activeRequestsBySocket.set(socket, (activeRequestsBySocket.get(socket) ?? 0) + 1);
+    trackGatewayHttpRequest(activeRequestsBySocket, request, response);
+  });
+  server.on("checkContinue", (request, response) => {
+    trackGatewayHttpRequest(activeRequestsBySocket, request, response);
+    acknowledgeExpectContinue(request, response, config.server.requestBodyLimitBytes);
 
-    const releaseRequest = () => {
-      response.off("finish", releaseRequest);
-      response.off("close", releaseRequest);
-
-      const next = (activeRequestsBySocket.get(socket) ?? 1) - 1;
-      if (next <= 0) {
-        activeRequestsBySocket.delete(socket);
-        return;
-      }
-
-      activeRequestsBySocket.set(socket, next);
-    };
-
-    response.once("finish", releaseRequest);
-    response.once("close", releaseRequest);
+    void handler(request, response);
   });
 
   return {
