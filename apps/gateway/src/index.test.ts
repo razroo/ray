@@ -1687,6 +1687,16 @@ test("gateway returns Retry-After on transient backpressure rejects", async (t) 
       retryAfter: "1",
     },
     {
+      code: "request_timeout",
+      status: 504,
+      retryAfter: "5",
+    },
+    {
+      code: "provider_timeout",
+      status: 504,
+      retryAfter: "5",
+    },
+    {
       code: "async_queue_storage_low",
       status: 503,
       retryAfter: "30",

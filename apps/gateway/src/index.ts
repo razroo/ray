@@ -48,11 +48,13 @@ const MAX_RESPONSE_ARRAY_ITEMS = 512;
 const MAX_RESPONSE_OBJECT_KEY_CHARS = 128;
 const MAX_RESPONSE_STRING_CHARS = 65_536;
 const QUEUE_BACKPRESSURE_RETRY_AFTER_SECONDS = 1;
+const TIMEOUT_RETRY_AFTER_SECONDS = 5;
 const STORAGE_BACKPRESSURE_RETRY_AFTER_SECONDS = 30;
 const GATEWAY_HOST_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const expectedRequestRejectionCodes = new Set([
   "queue_full",
   "request_timeout",
+  "provider_timeout",
   "async_queue_full",
   "async_queue_storage_low",
 ]);
@@ -928,6 +930,10 @@ function shouldCloseRequestAfterReject(request: IncomingMessage, error: RayError
 function resolveRetryAfterSeconds(error: RayError): number | undefined {
   if (error.code === "queue_full" || error.code === "async_queue_full") {
     return QUEUE_BACKPRESSURE_RETRY_AFTER_SECONDS;
+  }
+
+  if (error.code === "request_timeout" || error.code === "provider_timeout") {
+    return TIMEOUT_RETRY_AFTER_SECONDS;
   }
 
   if (error.code === "async_queue_storage_low") {

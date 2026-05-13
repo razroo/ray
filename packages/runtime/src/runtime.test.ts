@@ -5,7 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
 import { Logger, type LogFields } from "@ray/telemetry";
-import type { ModelProvider, ProviderDiagnostics, SchedulerSlotSnapshot } from "@razroo/ray-core";
+import {
+  RayError,
+  type ModelProvider,
+  type ProviderDiagnostics,
+  type SchedulerSlotSnapshot,
+} from "@razroo/ray-core";
 import {
   createRayRuntime,
   readCgroupCpuSnapshot,
@@ -1337,6 +1342,67 @@ test("runtime returns chars and provider token usage explicitly", async () => {
     completion: 4,
     total: 15,
   });
+});
+
+test("runtime logs provider timeouts as expected rejections without stacks", async () => {
+  const warnings: Array<{ message: string; fields: LogFields | undefined }> = [];
+  const errors: Array<{ message: string; fields: LogFields | undefined }> = [];
+  const logger = {
+    debug() {},
+    info() {},
+    warn(message: string, fields?: LogFields) {
+      warnings.push({ message, fields });
+    },
+    error(message: string, fields?: LogFields) {
+      errors.push({ message, fields });
+    },
+  } as unknown as Logger;
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "provider-timeout-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async infer() {
+      throw new RayError("The backend did not respond within 30ms", {
+        code: "provider_timeout",
+        status: 504,
+        details: {
+          timeoutMs: 30,
+        },
+      });
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider, logger });
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      cache: false,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_timeout");
+      return true;
+    },
+  );
+
+  assert.equal(errors.length, 0);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0]?.message, "inference rejected");
+  const loggedError = warnings[0]?.fields?.error as {
+    code?: string;
+    status?: number;
+    stack?: string;
+    details?: { timeoutMs?: number };
+  };
+  assert.equal(loggedError.code, "provider_timeout");
+  assert.equal(loggedError.status, 504);
+  assert.equal(loggedError.stack, undefined);
+  assert.equal(loggedError.details?.timeoutMs, 30);
 });
 
 test("runtime rejects malformed provider usage counts before caching", async () => {

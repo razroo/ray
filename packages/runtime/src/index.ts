@@ -276,7 +276,11 @@ const providerHealthStatuses = new Set<ProviderHealthSnapshot["status"]>([
   "degraded",
   "unavailable",
 ]);
-const expectedInferenceRejectionCodes = new Set(["queue_full", "request_timeout"]);
+const expectedInferenceRejectionCodes = new Set([
+  "queue_full",
+  "request_timeout",
+  "provider_timeout",
+]);
 
 export interface CreateRayRuntimeOptions {
   provider?: ModelProvider;
