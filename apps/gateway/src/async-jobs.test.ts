@@ -2107,6 +2107,83 @@ test("durable inference queue prunes expired completed jobs from the retained st
   }
 });
 
+test("durable inference queue bounds expired job prune file removals", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-"));
+  let activeRemovals = 0;
+  let maxActiveRemovals = 0;
+  let removals = 0;
+
+  try {
+    const config = mergeConfig(createDefaultConfig("tiny"), {
+      asyncQueue: {
+        enabled: true,
+        storageDir,
+        maxJobs: 24,
+        completedTtlMs: 25,
+        pollIntervalMs: 20,
+        dispatchConcurrency: 8,
+        maxAttempts: 1,
+        callbackTimeoutMs: 500,
+        maxCallbackAttempts: 1,
+      },
+      model: {
+        adapter: {
+          kind: "mock",
+          latencyMs: 1,
+        },
+      },
+    });
+    const runtime = createRayRuntime(config);
+    const logger = new Logger("test", "error");
+    const queue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+      removeFileImpl: async (filePath: string) => {
+        activeRemovals += 1;
+        removals += 1;
+        maxActiveRemovals = Math.max(maxActiveRemovals, activeRemovals);
+
+        try {
+          await new Promise((resolve) => setTimeout(resolve, 2));
+          await rm(filePath, { force: true });
+        } finally {
+          activeRemovals -= 1;
+        }
+      },
+    });
+
+    for (let index = 0; index < config.asyncQueue.maxJobs; index += 1) {
+      await queue.enqueue({
+        input: `Completed job ${index}`,
+      });
+    }
+
+    await queue.start();
+    await waitFor(
+      async () => queue.snapshot(),
+      (snapshot) => snapshot.succeeded === config.asyncQueue.maxJobs && snapshot.running === 0,
+    );
+    await queue.stop();
+    await new Promise((resolve) => setTimeout(resolve, config.asyncQueue.completedTtlMs + 10));
+
+    await queue.enqueue({
+      input: "New job should fit after bounded pruning",
+    });
+
+    assert.equal(removals, config.asyncQueue.maxJobs);
+    assert.ok(
+      maxActiveRemovals <= 16,
+      `expected at most 16 concurrent removals, saw ${maxActiveRemovals}`,
+    );
+    assert.equal(queue.snapshot().totalJobs, 1);
+
+    await queue.stop();
+  } finally {
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});
+
 test("durable inference queue does not prune expired jobs while callbacks are pending", async () => {
   const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-"));
 

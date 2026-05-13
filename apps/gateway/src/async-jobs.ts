@@ -45,6 +45,7 @@ const MAX_JOB_ERROR_DETAIL_NODES = 512;
 const MAX_ASYNC_QUEUE_JOBS = 2_000;
 const ASYNC_QUEUE_JOB_PRESSURE_RATIO = 0.9;
 const ASYNC_QUEUE_CALLBACK_CONCURRENCY = 1;
+const ASYNC_QUEUE_PRUNE_CONCURRENCY = 16;
 const MAX_ASYNC_QUEUE_RECOVERY_ENTRIES = 4_096;
 const MAX_ASYNC_QUEUE_RECOVERY_TEMP_REMOVALS = 2_048;
 const MAX_ASYNC_DISPATCH_CONCURRENCY = 8;
@@ -72,6 +73,7 @@ export interface StorageStats {
 }
 
 export type StorageStatsReader = (filePath: string) => Promise<StorageStats>;
+export type RemoveFile = (filePath: string) => Promise<void>;
 
 export interface CreateDurableInferenceQueueOptions {
   config: AsyncQueueConfig;
@@ -80,6 +82,7 @@ export interface CreateDurableInferenceQueueOptions {
   fetchImpl?: typeof fetch;
   lookupImpl?: CallbackAddressLookup;
   statfsImpl?: StorageStatsReader;
+  removeFileImpl?: RemoveFile;
 }
 
 export interface StopDurableInferenceQueueOptions {
@@ -1163,6 +1166,7 @@ export class DurableInferenceQueue {
   private readonly fetchImpl: typeof fetch;
   private readonly lookupImpl: CallbackAddressLookup;
   private readonly statfsImpl: StorageStatsReader;
+  private readonly removeFileImpl: RemoveFile;
   private readonly jobsDir: string;
   private readonly options: CreateDurableInferenceQueueOptions;
   private readyPromise: Promise<void> | undefined;
@@ -1179,6 +1183,8 @@ export class DurableInferenceQueue {
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.lookupImpl = options.lookupImpl ?? (lookup as CallbackAddressLookup);
     this.statfsImpl = options.statfsImpl ?? fs.statfs;
+    this.removeFileImpl =
+      options.removeFileImpl ?? ((filePath) => fs.rm(filePath, { force: true }));
     this.jobsDir = path.join(this.options.config.storageDir, "jobs");
   }
 
@@ -1940,7 +1946,7 @@ export class DurableInferenceQueue {
     this.removeCallbackJobId(job.id);
 
     try {
-      await fs.rm(filePath, { force: true });
+      await this.removeFileImpl(filePath);
     } catch (error) {
       this.options.logger.warn("failed to prune expired async job", {
         jobId: job.id,
@@ -1953,7 +1959,15 @@ export class DurableInferenceQueue {
   }
 
   private async pruneCompletedJobs(): Promise<void> {
-    await Promise.all([...this.jobs.values()].map((job) => this.pruneCompletedJob(job)));
+    const jobs = [...this.jobs.values()];
+
+    for (let offset = 0; offset < jobs.length; offset += ASYNC_QUEUE_PRUNE_CONCURRENCY) {
+      await Promise.all(
+        jobs
+          .slice(offset, offset + ASYNC_QUEUE_PRUNE_CONCURRENCY)
+          .map((job) => this.pruneCompletedJob(job)),
+      );
+    }
   }
 
   private async removeOverflowPersistedJob(
@@ -1965,7 +1979,7 @@ export class DurableInferenceQueue {
     }
 
     try {
-      await fs.rm(filePath, { force: true });
+      await this.removeFileImpl(filePath);
     } catch (error) {
       this.options.logger.warn("failed to remove overflow persisted async job", {
         jobId: job.id,
@@ -1991,7 +2005,7 @@ export class DurableInferenceQueue {
 
   private async removeStaleTempFile(filePath: string): Promise<void> {
     try {
-      await fs.rm(filePath, { force: true });
+      await this.removeFileImpl(filePath);
     } catch (error) {
       this.options.logger.warn("failed to remove stale async job temp file", {
         filePath,
@@ -2002,7 +2016,7 @@ export class DurableInferenceQueue {
 
   private async removeInvalidPersistedJob(filePath: string): Promise<void> {
     try {
-      await fs.rm(filePath, { force: true });
+      await this.removeFileImpl(filePath);
     } catch (error) {
       this.options.logger.warn("failed to remove invalid persisted async job", {
         filePath,
