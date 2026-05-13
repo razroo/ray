@@ -284,6 +284,50 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("non_bun_lockfile_present"));
 });
 
+test("validatePackageRuntimeCoverage matches release gate smoke steps exactly", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const rootPackageJson = path.join(tempDir, "package.json");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify(
+      {
+        name: "ray-test",
+        packageManager: "bun@1.3.9",
+        engines: {
+          bun: ">=1.3.0",
+        },
+        scripts: {
+          "release:gate": [
+            "bun run smoke:tiny:public-async",
+            "RAY_API_KEYS=smoke bun run validate:config:public",
+          ].join(" && "),
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson],
+  });
+  const codes = summary.results.flatMap((result) =>
+    result.diagnostics.map((diagnostic) => diagnostic.code),
+  );
+
+  assert.equal(summary.ok, false);
+  assert.ok(codes.includes("release_gate_tiny_gateway_smoke_missing"));
+  assert.ok(codes.includes("release_gate_tiny_public_smoke_missing"));
+  assert.ok(codes.includes("release_gate_tiny_async_smoke_missing"));
+  assert.ok(!codes.includes("release_gate_tiny_public_async_smoke_missing"));
+  assert.ok(!codes.includes("release_gate_public_auth_validate_missing"));
+});
+
 test("validatePackageRuntimeCoverage requires timeouts for VPS Ray helper aliases", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-vps-timeout-"));
   t.after(async () => {

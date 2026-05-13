@@ -499,6 +499,17 @@ function validateRootPackageManager(
   return diagnostics;
 }
 
+function splitReleaseGateSteps(command: string): string[] {
+  return command
+    .split("&&")
+    .map((step) => step.trim())
+    .filter((step) => step.length > 0);
+}
+
+function releaseGateHasStep(releaseGate: string | undefined, expected: string): boolean {
+  return releaseGate !== undefined && splitReleaseGateSteps(releaseGate).includes(expected);
+}
+
 function validateScripts(
   packageJsonPath: string,
   scripts: Record<string, string>,
@@ -520,7 +531,7 @@ function validateScripts(
   const releaseGate = scripts["release:gate"];
   if (
     releaseGate !== undefined &&
-    !releaseGate.includes("RAY_API_KEYS=smoke bun run validate:config:public")
+    !releaseGateHasStep(releaseGate, "RAY_API_KEYS=smoke bun run validate:config:public")
   ) {
     diagnostics.push({
       level: "error",
@@ -532,7 +543,7 @@ function validateScripts(
     });
   }
 
-  if (releaseGate !== undefined && !releaseGate.includes("bun run smoke:tiny")) {
+  if (releaseGate !== undefined && !releaseGateHasStep(releaseGate, "bun run smoke:tiny")) {
     diagnostics.push({
       level: "error",
       code: "release_gate_tiny_gateway_smoke_missing",
@@ -543,7 +554,7 @@ function validateScripts(
     });
   }
 
-  if (releaseGate !== undefined && !releaseGate.includes("bun run smoke:tiny:public")) {
+  if (releaseGate !== undefined && !releaseGateHasStep(releaseGate, "bun run smoke:tiny:public")) {
     diagnostics.push({
       level: "error",
       code: "release_gate_tiny_public_smoke_missing",
@@ -554,7 +565,7 @@ function validateScripts(
     });
   }
 
-  if (releaseGate !== undefined && !releaseGate.includes("bun run smoke:tiny:async")) {
+  if (releaseGate !== undefined && !releaseGateHasStep(releaseGate, "bun run smoke:tiny:async")) {
     diagnostics.push({
       level: "error",
       code: "release_gate_tiny_async_smoke_missing",
@@ -565,7 +576,10 @@ function validateScripts(
     });
   }
 
-  if (releaseGate !== undefined && !releaseGate.includes("bun run smoke:tiny:public-async")) {
+  if (
+    releaseGate !== undefined &&
+    !releaseGateHasStep(releaseGate, "bun run smoke:tiny:public-async")
+  ) {
     diagnostics.push({
       level: "error",
       code: "release_gate_tiny_public_async_smoke_missing",
