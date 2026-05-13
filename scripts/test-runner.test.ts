@@ -58,6 +58,13 @@ test("collectTestFiles rejects excessive discovered test files", async (t) => {
   );
 });
 
+test("collectTestFiles rejects oversized direct roots before discovery", async () => {
+  await assert.rejects(
+    () => collectTestFiles(`/${"a".repeat(4096)}`),
+    /root must be at most 4096 bytes/,
+  );
+});
+
 test("collectTestFiles streams directory entries without readdir", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-test-runner-stream-"));
   const originalReaddir = fs.readdir;
@@ -235,6 +242,39 @@ test("test disk preflight reports low repository or temp space before dispatch",
   assert.equal(code, 1);
   assert.deepEqual(commands, []);
   assert.match(stderr.join(""), /disk preflight failed/);
+});
+
+test("test disk preflight rejects oversized direct paths before probing", async () => {
+  let statfsCalls = 0;
+
+  await assert.rejects(
+    () =>
+      assertTestDiskHeadroom({
+        root: `/${"a".repeat(4096)}`,
+        minFreeSpaceMiB: 1,
+        statfs: async () => {
+          statfsCalls += 1;
+          return { bsize: 1024 * 1024, bavail: 2_048 };
+        },
+      }),
+    /root must be at most 4096 bytes/,
+  );
+
+  await assert.rejects(
+    () =>
+      assertTestDiskHeadroom({
+        root: process.cwd(),
+        tmpDir: `/${"a".repeat(4096)}`,
+        minFreeSpaceMiB: 1,
+        statfs: async () => {
+          statfsCalls += 1;
+          return { bsize: 1024 * 1024, bavail: 2_048 };
+        },
+      }),
+    /tmpDir must be at most 4096 bytes/,
+  );
+
+  assert.equal(statfsCalls, 0);
 });
 
 test("resolveMinimumTestFreeSpaceMiB accepts bounded overrides", () => {

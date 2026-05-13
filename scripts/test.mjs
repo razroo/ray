@@ -113,6 +113,20 @@ function assertPathWithinLimit(root, absolutePath, maxPathBytes) {
   }
 }
 
+function assertTestPathValue(value, label, maxPathBytes = MAX_TEST_PATH_BYTES) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty path`);
+  }
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} must not contain control characters`);
+  }
+
+  if (Buffer.byteLength(value, "utf8") > maxPathBytes) {
+    throw new Error(`${label} must be at most ${maxPathBytes} bytes`);
+  }
+}
+
 function assertDiscoveredFileCount(count, max, label) {
   if (count > max) {
     throw new Error(`Test discovery found more than ${max} ${label}`);
@@ -195,9 +209,10 @@ async function collectDirectory(current, state, limits, skipNames) {
 }
 
 export async function collectTestFiles(root = process.cwd(), options = {}) {
-  const resolvedRoot = path.resolve(root);
   const limits = resolveDiscoveryLimits(options);
   assertDiscoveryLimits(limits);
+  assertTestPathValue(root, "root", limits.maxPathBytes);
+  const resolvedRoot = path.resolve(root);
   const state = {
     root: resolvedRoot,
     testFiles: [],
@@ -248,9 +263,14 @@ export async function assertTestDiskHeadroom(options = {}) {
     return;
   }
 
+  const rootPath = options.root ?? process.cwd();
+  const tmpPath = options.tmpDir ?? tmpdir();
+  assertTestPathValue(rootPath, "root");
+  assertTestPathValue(tmpPath, "tmpDir");
+
   const targets = [
-    { label: "repository", path: path.resolve(options.root ?? process.cwd()) },
-    { label: "temporary directory", path: path.resolve(options.tmpDir ?? tmpdir()) },
+    { label: "repository", path: path.resolve(rootPath) },
+    { label: "temporary directory", path: path.resolve(tmpPath) },
   ];
 
   for (const target of targets) {
@@ -326,7 +346,9 @@ function formatTestCommand(binary, args) {
 }
 
 export async function runTestCli(options = {}) {
-  const root = path.resolve(options.root ?? process.cwd());
+  const rootPath = options.root ?? process.cwd();
+  assertTestPathValue(rootPath, "root");
+  const root = path.resolve(rootPath);
   const io = options.io ?? process;
   const env = options.env ?? process.env;
   const versions = options.versions ?? process.versions;
