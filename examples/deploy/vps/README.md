@@ -132,9 +132,9 @@ timeout 60s sudo chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/
 The `umask 022` keeps the checkout, built files, and Bun-installed dependencies
 readable by the generated service user without a recursive permission walk over
 `node_modules`.
-The storage preflight checks `/srv/ray`, `/var/lib/ray`, `/tmp`, and the
-repo-scoped Bun install cache at `/srv/ray/.ray/bun-install-cache` before the Bun
-install expands dependencies; set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` in the
+The storage preflight checks `/srv/ray`, `/var/lib/ray`, `/tmp`, `/var/tmp`, and
+the repo-scoped Bun install cache at `/srv/ray/.ray/bun-install-cache` before the
+Bun install expands dependencies; set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` in the
 process env or pass `--ray-env-file /etc/ray/ray.env` to raise or lower the
 default 1024 MiB threshold without shell-sourcing the rest of the env file.
 
@@ -473,8 +473,8 @@ The workflow validates the deploy SSH user and configured gateway runtime path
 after applying env-file overrides and before opening SSH, checks that
 `RAY_DEPLOY_KNOWN_HOSTS` contains an entry for the configured host and SSH port,
 requires the resolved `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` headroom on the remote
-root, `/srv/ray`, `/var/lib/ray`, `/tmp`, and repo-scoped Bun install-cache
-paths before bootstrap follow-up or Bun production install can consume more disk,
+root, `/srv/ray`, `/var/lib/ray`, `/tmp`, `/var/tmp`, and repo-scoped Bun
+install-cache paths before bootstrap follow-up or Bun production install can consume more disk,
 installs missing remote deploy prerequisites such as `curl`, `ca-certificates`,
 `unzip`, and `rsync`, refreshes `/usr/local/bin/bun` when it is missing or older
 than the repo's supported Bun runtime, copies that refreshed Bun to custom

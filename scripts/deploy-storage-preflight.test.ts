@@ -26,6 +26,7 @@ test("parseArgs accepts deploy storage preflight options", () => {
     "/srv/ray/.ray/bun-install-cache",
     "/var/lib/ray",
     "/tmp",
+    "/var/tmp",
   ]);
   assert.equal(parseArgs([], { RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "2048" }).minFreeStorageMiB, 2048);
   assert.equal(

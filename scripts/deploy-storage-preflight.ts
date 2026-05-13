@@ -17,6 +17,7 @@ const DEFAULT_STORAGE_PATHS = [
   "/srv/ray/.ray/bun-install-cache",
   "/var/lib/ray",
   "/tmp",
+  "/var/tmp",
 ] as const;
 
 export interface DeployStoragePreflightArgs {
@@ -48,7 +49,7 @@ Usage:
   bun ./scripts/deploy-storage-preflight.ts [options]
 
 Options:
-  --path <path>          Absolute path to check. Repeatable. Defaults to /srv/ray, /srv/ray/.ray/bun-install-cache, /var/lib/ray, and /tmp.
+  --path <path>          Absolute path to check. Repeatable. Defaults to /srv/ray, /srv/ray/.ray/bun-install-cache, /var/lib/ray, /tmp, and /var/tmp.
   --min-free-mib <n>    Required free storage in MiB. Default: RAY_DEPLOY_MIN_FREE_STORAGE_MIB or ${DEFAULT_MIN_FREE_STORAGE_MIB}. Use 0 to skip the threshold.
   --env-file <path>      Load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from a bounded dotenv file unless --min-free-mib is set.
   --ray-env-file <path>  Alias for --env-file.

@@ -602,6 +602,7 @@ jobs:
           check_free_storage /srv/ray "synced checkout"
           check_free_storage /var/lib/ray "Ray state"
           check_free_storage /tmp "temporary directory"
+          check_free_storage /var/tmp "persistent temporary directory"
           ENDSSH
 
       - name: Sync repository to VPS
@@ -847,6 +848,7 @@ jobs:
           check_free_storage /srv/ray "synced checkout"
           check_free_storage /var/lib/ray "Ray state"
           check_free_storage /tmp "temporary directory"
+          check_free_storage /var/tmp "persistent temporary directory"
           ensure_bun_runtime
 
           cd /srv/ray
