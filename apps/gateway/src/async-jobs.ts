@@ -58,6 +58,7 @@ const MAX_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB = 1_048_576;
 const MAX_ASYNC_ATTEMPTS = 100;
 const MAX_ASYNC_QUEUE_STORAGE_PATH_BYTES = 4_096;
 const BYTES_PER_MIB = 1024 * 1024;
+const PERSISTED_JOB_FILE_LIMIT_MIB = Math.ceil(PERSISTED_JOB_FILE_LIMIT_BYTES / BYTES_PER_MIB);
 const DNS_HOST_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export type CallbackAddressLookup = (
@@ -1316,11 +1317,10 @@ export class DurableInferenceQueue {
     await this.ensureReady();
     normalizeInferenceRequest(this.options.runtime.config, cloneRequest(request));
     await this.pruneCompletedJobs();
-    await this.ensureStorageReserve();
-
-    this.reserveJobAdmission();
+    const admissionCount = this.reserveJobAdmission();
 
     try {
+      await this.ensureStorageReserve(admissionCount);
       const callbackUrl = await normalizeCallbackUrl(
         request.callbackUrl,
         this.options.config,
@@ -1429,19 +1429,24 @@ export class DurableInferenceQueue {
     await this.readyPromise;
   }
 
-  private async ensureStorageReserve(): Promise<void> {
+  private async ensureStorageReserve(admissionCount = this.pendingJobAdmissions): Promise<void> {
     const availableMiB = await this.readAvailableStorageMiB();
     if (availableMiB === undefined) {
       return;
     }
 
-    if (availableMiB < this.options.config.minFreeStorageMiB) {
+    const reservedAdmissionMiB = admissionCount * PERSISTED_JOB_FILE_LIMIT_MIB;
+    const effectiveAvailableMiB = availableMiB - reservedAdmissionMiB;
+
+    if (effectiveAvailableMiB < this.options.config.minFreeStorageMiB) {
       throw new RayError("The async job store has insufficient free disk space", {
         code: "async_queue_storage_low",
         status: 503,
         details: {
           storageDir: this.options.config.storageDir,
           availableMiB,
+          reservedAdmissionMiB,
+          effectiveAvailableMiB,
           minFreeStorageMiB: this.options.config.minFreeStorageMiB,
         },
       });
@@ -1472,7 +1477,7 @@ export class DurableInferenceQueue {
     return availableMiB;
   }
 
-  private reserveJobAdmission(): void {
+  private reserveJobAdmission(): number {
     const retainedOrPendingJobs = this.jobs.size + this.pendingJobAdmissions;
 
     if (retainedOrPendingJobs >= this.options.config.maxJobs) {
@@ -1488,6 +1493,7 @@ export class DurableInferenceQueue {
     }
 
     this.pendingJobAdmissions += 1;
+    return this.pendingJobAdmissions;
   }
 
   private async loadJobsFromDisk(): Promise<void> {

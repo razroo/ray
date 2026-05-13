@@ -480,6 +480,75 @@ test("durable inference queue rejects new jobs when storage reserve is exhausted
   }
 });
 
+test("durable inference queue reserves storage headroom for concurrent admissions", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-storage-concurrent-"));
+  let statfsCalls = 0;
+  let releaseStatfs!: () => void;
+  const bothAdmissionsReserved = new Promise<void>((resolve) => {
+    releaseStatfs = resolve;
+  });
+
+  try {
+    const config = mergeConfig(createDefaultConfig("tiny"), {
+      asyncQueue: {
+        enabled: true,
+        storageDir,
+        maxJobs: 2,
+        minFreeStorageMiB: 2,
+      },
+    });
+    const runtime = createRayRuntime(config);
+    const logger = new Logger("test", "error");
+    const queue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+      statfsImpl: async () => {
+        statfsCalls += 1;
+        if (statfsCalls >= 2) {
+          releaseStatfs();
+        }
+        await Promise.race([
+          bothAdmissionsReserved,
+          new Promise((resolve) => setTimeout(resolve, 100)),
+        ]);
+        return {
+          bavail: 5,
+          bsize: 1024 * 1024,
+        };
+      },
+    });
+
+    const results = await Promise.allSettled([
+      queue.enqueue({
+        input: "First concurrent job",
+      }),
+      queue.enqueue({
+        input: "Second concurrent job",
+      }),
+    ]);
+    const fulfilled = results.filter((result) => result.status === "fulfilled");
+    const rejected = results.filter((result) => result.status === "rejected");
+
+    assert.equal(fulfilled.length, 1);
+    assert.equal(rejected.length, 1);
+    assert.ok(
+      rejected.every(
+        (result) =>
+          result.status === "rejected" &&
+          result.reason instanceof RayError &&
+          result.reason.code === "async_queue_storage_low" &&
+          (result.reason.details as { availableMiB?: number }).availableMiB === 5 &&
+          (result.reason.details as { reservedAdmissionMiB?: number }).reservedAdmissionMiB === 4 &&
+          (result.reason.details as { effectiveAvailableMiB?: number }).effectiveAvailableMiB === 1,
+      ),
+    );
+    assert.equal(queue.snapshot().totalJobs, 1);
+  } finally {
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});
+
 test("durable inference queue handles Bun statfs zero block size", async () => {
   const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-bun-statfs-"));
 
