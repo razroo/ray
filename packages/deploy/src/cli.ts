@@ -47,6 +47,7 @@ const DEFAULT_CONFIG_PATH = "./examples/config/ray.sub1b.public.json";
 const RESERVED_DEPLOY_STAGING_PREFIX = ".ray-deploy-";
 const VPS_WORKFLOW_EXCLUDED_CONFIG_SEGMENTS = new Set([".git", ".github", ".ray", "node_modules"]);
 const SYSTEMD_PROTECTED_HOME_PATHS = ["/home", "/root", "/run/user"] as const;
+const SYSTEMD_PRIVATE_TMP_PATHS = ["/tmp", "/var/tmp"] as const;
 
 const DEPLOY_CLI_HELP = `Ray deploy CLI
 
@@ -198,6 +199,20 @@ export function normalizeGatewayRuntimeBinaryPath(
   value: string,
   label = "RAY_GATEWAY_RUNTIME_BINARY",
 ): string {
+  const normalized = normalizeAbsoluteBinaryPath(value, label);
+  assertOutsideSystemdProtectedHome(normalized, label);
+  if (
+    SYSTEMD_PRIVATE_TMP_PATHS.some((temporaryPath) => isPosixPathInside(temporaryPath, normalized))
+  ) {
+    throw new Error(
+      `${label} must be outside /tmp and /var/tmp because systemd uses PrivateTmp=true`,
+    );
+  }
+
+  return normalized;
+}
+
+function normalizeAbsoluteBinaryPath(value: string, label: string): string {
   if (typeof value !== "string") {
     throw new Error(`${label} must be a string`);
   }
@@ -216,7 +231,10 @@ export function normalizeGatewayRuntimeBinaryPath(
     throw new Error(`${label} must be an absolute path`);
   }
 
-  const normalized = path.posix.normalize(value);
+  return path.posix.normalize(value);
+}
+
+function assertOutsideSystemdProtectedHome(normalized: string, label: string): void {
   if (
     SYSTEMD_PROTECTED_HOME_PATHS.some((protectedPath) =>
       isPosixPathInside(protectedPath, normalized),
@@ -226,12 +244,12 @@ export function normalizeGatewayRuntimeBinaryPath(
       `${label} must be outside /home, /root, and /run/user because systemd uses ProtectHome=true`,
     );
   }
-
-  return normalized;
 }
 
 export function normalizeCaddyBinaryPath(value: string, label = "RAY_DEPLOY_CADDY_BINARY"): string {
-  return normalizeGatewayRuntimeBinaryPath(value, label);
+  const normalized = normalizeAbsoluteBinaryPath(value, label);
+  assertOutsideSystemdProtectedHome(normalized, label);
+  return normalized;
 }
 
 export function parseDeploySshPort(value: string, label = "RAY_DEPLOY_SSH_PORT"): number {

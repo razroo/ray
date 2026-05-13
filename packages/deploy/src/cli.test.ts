@@ -97,6 +97,7 @@ test("normalizeGatewayRuntimeBinaryPath resolves deploy runtime paths", () => {
 
 test("normalizeCaddyBinaryPath resolves strict Caddy runtime paths", () => {
   assert.equal(normalizeCaddyBinaryPath("/usr/bin/../bin/caddy"), "/usr/bin/caddy");
+  assert.equal(normalizeCaddyBinaryPath("/tmp/caddy"), "/tmp/caddy");
 });
 
 test("normalizeGatewayRuntimeBinaryPath rejects paths hidden from systemd services", () => {
@@ -111,6 +112,14 @@ test("normalizeGatewayRuntimeBinaryPath rejects paths hidden from systemd servic
   assert.throws(
     () => normalizeGatewayRuntimeBinaryPath("/root/.bun/bin/bun", "RAY_GATEWAY_RUNTIME_BINARY"),
     /outside \/home, \/root, and \/run\/user/,
+  );
+  assert.throws(
+    () => normalizeGatewayRuntimeBinaryPath("/tmp/bun", "RAY_GATEWAY_RUNTIME_BINARY"),
+    /outside \/tmp and \/var\/tmp/,
+  );
+  assert.throws(
+    () => normalizeGatewayRuntimeBinaryPath("/var/tmp/bun", "RAY_GATEWAY_RUNTIME_BINARY"),
+    /outside \/tmp and \/var\/tmp/,
   );
   assert.throws(
     () => normalizeGatewayRuntimeBinaryPath(" /usr/local/bin/bun", "RAY_GATEWAY_RUNTIME_BINARY"),
