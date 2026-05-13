@@ -276,6 +276,7 @@ const providerHealthStatuses = new Set<ProviderHealthSnapshot["status"]>([
   "degraded",
   "unavailable",
 ]);
+const expectedInferenceRejectionCodes = new Set(["queue_full", "request_timeout"]);
 
 export interface CreateRayRuntimeOptions {
   provider?: ModelProvider;
@@ -3068,6 +3069,27 @@ function createProviderResultError(message: string, details?: Record<string, unk
   });
 }
 
+function isExpectedInferenceRejection(error: unknown): error is RayError {
+  return (
+    error instanceof RayError &&
+    (error.status < 500 || expectedInferenceRejectionCodes.has(error.code))
+  );
+}
+
+function serializeInferenceError(error: unknown): Record<string, unknown> {
+  if (isExpectedInferenceRejection(error)) {
+    return {
+      code: error.code,
+      status: error.status,
+      message: error.message,
+      name: error.name,
+      ...(error.details !== undefined ? { details: error.details } : {}),
+    };
+  }
+
+  return serializeError(error);
+}
+
 function assertOptionalProviderResultInteger(value: unknown, field: string): void {
   if (value === undefined) {
     return;
@@ -4039,10 +4061,16 @@ export class RayRuntime {
       );
     } catch (error) {
       this.metrics.recordError();
-      this.logger.error("inference failed", {
+      const logFields = {
         requestId,
-        error: serializeError(error),
-      });
+        error: serializeInferenceError(error),
+      };
+
+      if (isExpectedInferenceRejection(error)) {
+        this.logger.warn("inference rejected", logFields);
+      } else {
+        this.logger.error("inference failed", logFields);
+      }
 
       throw error;
     }

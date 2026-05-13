@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
+import { Logger, type LogFields } from "@ray/telemetry";
 import type { ModelProvider, ProviderDiagnostics, SchedulerSlotSnapshot } from "@razroo/ray-core";
 import {
   createRayRuntime,
@@ -2662,6 +2663,18 @@ test("runtime applies prompt length degradation to system and input together", a
 test("runtime times out and aborts stalled provider preparation", async () => {
   let prepareAborted = false;
   let inferCalled = false;
+  const warnings: Array<{ message: string; fields: LogFields | undefined }> = [];
+  const errors: Array<{ message: string; fields: LogFields | undefined }> = [];
+  const logger = {
+    debug() {},
+    info() {},
+    warn(message: string, fields?: LogFields) {
+      warnings.push({ message, fields });
+    },
+    error(message: string, fields?: LogFields) {
+      errors.push({ message, fields });
+    },
+  } as unknown as Logger;
   const provider: ModelProvider = {
     kind: "llama.cpp",
     modelId: "stalled-prepare-model",
@@ -2701,7 +2714,7 @@ test("runtime times out and aborts stalled provider preparation", async () => {
         requestTimeoutMs: 100,
       },
     }),
-    { provider },
+    { provider, logger },
   );
 
   await assert.rejects(
@@ -2722,12 +2735,37 @@ test("runtime times out and aborts stalled provider preparation", async () => {
 
   assert.equal(prepareAborted, true);
   assert.equal(inferCalled, false);
+  assert.equal(errors.length, 0);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0]?.message, "inference rejected");
+  const loggedError = warnings[0]?.fields?.error as {
+    code?: string;
+    status?: number;
+    stack?: string;
+    details?: { phase?: string };
+  };
+  assert.equal(loggedError.code, "request_timeout");
+  assert.equal(loggedError.status, 504);
+  assert.equal(loggedError.stack, undefined);
+  assert.equal(loggedError.details?.phase, "prepare");
 });
 
 test("runtime bounds concurrent provider preparation before scheduling inference", async () => {
   let activePreparations = 0;
   let maxActivePreparations = 0;
   let prepareStarts = 0;
+  const warnings: Array<{ message: string; fields: LogFields | undefined }> = [];
+  const errors: Array<{ message: string; fields: LogFields | undefined }> = [];
+  const logger = {
+    debug() {},
+    info() {},
+    warn(message: string, fields?: LogFields) {
+      warnings.push({ message, fields });
+    },
+    error(message: string, fields?: LogFields) {
+      errors.push({ message, fields });
+    },
+  } as unknown as Logger;
   const startWaiters: Array<() => void> = [];
   const releasePreparations: Array<() => void> = [];
   const waitForPrepareStarts = async (count: number) => {
@@ -2784,7 +2822,7 @@ test("runtime bounds concurrent provider preparation before scheduling inference
         enabled: false,
       },
     }),
-    { provider },
+    { provider, logger },
   );
 
   const first = runtime.infer({
@@ -2834,6 +2872,19 @@ test("runtime bounds concurrent provider preparation before scheduling inference
       return true;
     },
   );
+  assert.equal(errors.length, 0);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0]?.message, "inference rejected");
+  const loggedError = warnings[0]?.fields?.error as {
+    code?: string;
+    status?: number;
+    stack?: string;
+    details?: { phase?: string };
+  };
+  assert.equal(loggedError.code, "queue_full");
+  assert.equal(loggedError.status, 503);
+  assert.equal(loggedError.stack, undefined);
+  assert.equal(loggedError.details?.phase, "prepare");
 
   releasePreparations.shift()?.();
   await waitForPrepareStarts(2);
