@@ -1114,15 +1114,35 @@ export class DurableInferenceQueue {
 
   snapshot(): AsyncQueueSnapshot {
     let running = 0;
+    let succeeded = 0;
+    let failed = 0;
     let callbackPending = 0;
+    let callbackDelivered = 0;
+    let callbackFailed = 0;
 
     for (const job of this.jobs.values()) {
       if (job.status === "running") {
         running += 1;
       }
 
+      if (job.status === "succeeded") {
+        succeeded += 1;
+      }
+
+      if (job.status === "failed") {
+        failed += 1;
+      }
+
       if (job.callback?.status === "pending") {
         callbackPending += 1;
+      }
+
+      if (job.callback?.status === "delivered") {
+        callbackDelivered += 1;
+      }
+
+      if (job.callback?.status === "failed") {
+        callbackFailed += 1;
       }
     }
 
@@ -1135,7 +1155,11 @@ export class DurableInferenceQueue {
       degraded: jobsRatio >= 1,
       queued: this.queuedJobIds.length,
       running,
+      succeeded,
+      failed,
       callbackPending,
+      callbackDelivered,
+      callbackFailed,
       totalJobs: this.jobs.size,
       maxJobs: this.options.config.maxJobs,
       jobsRatio,

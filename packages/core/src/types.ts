@@ -310,7 +310,11 @@ export interface AsyncQueueSnapshot {
   degraded: boolean;
   queued: number;
   running: number;
+  succeeded: number;
+  failed: number;
   callbackPending: number;
+  callbackDelivered: number;
+  callbackFailed: number;
   totalJobs: number;
   maxJobs: number;
   jobsRatio: number;

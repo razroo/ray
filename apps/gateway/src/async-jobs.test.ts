@@ -1898,6 +1898,12 @@ test("durable inference queue delivers callbacks without following redirects", a
     assert.equal(completedJob.callback?.status, "delivered");
     assert.equal(callbackRequests[0]?.redirect, "manual");
     assert.equal(callbackBodyCancelled, true);
+    const snapshot = queue.snapshot();
+    assert.equal(snapshot.succeeded, 1);
+    assert.equal(snapshot.failed, 0);
+    assert.equal(snapshot.callbackPending, 0);
+    assert.equal(snapshot.callbackDelivered, 1);
+    assert.equal(snapshot.callbackFailed, 0);
 
     await queue.stop();
   } finally {
@@ -1962,6 +1968,12 @@ test("durable inference queue persists bounded callback failure errors", async (
     assert.match(persisted.callback?.lastError ?? "", /\[truncated \d+ chars\]/);
     assert.ok((persisted.callback?.lastError ?? "").length < 9_000);
     assert.ok(Buffer.byteLength(raw, "utf8") < PERSISTED_JOB_FILE_LIMIT_BYTES);
+    const snapshot = queue.snapshot();
+    assert.equal(snapshot.succeeded, 1);
+    assert.equal(snapshot.failed, 0);
+    assert.equal(snapshot.callbackPending, 0);
+    assert.equal(snapshot.callbackDelivered, 0);
+    assert.equal(snapshot.callbackFailed, 1);
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }

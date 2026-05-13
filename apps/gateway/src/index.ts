@@ -172,7 +172,11 @@ function attachAsyncQueueMetrics(
   metrics.gauges["async_queue.degraded"] = snapshot.degraded ? 1 : 0;
   metrics.gauges["async_queue.queued"] = snapshot.queued;
   metrics.gauges["async_queue.running"] = snapshot.running;
+  metrics.gauges["async_queue.succeeded"] = snapshot.succeeded;
+  metrics.gauges["async_queue.failed"] = snapshot.failed;
   metrics.gauges["async_queue.callback_pending"] = snapshot.callbackPending;
+  metrics.gauges["async_queue.callback_delivered"] = snapshot.callbackDelivered;
+  metrics.gauges["async_queue.callback_failed"] = snapshot.callbackFailed;
   metrics.gauges["async_queue.total_jobs"] = snapshot.totalJobs;
   metrics.gauges["async_queue.max_jobs"] = snapshot.maxJobs;
   metrics.gauges["async_queue.jobs_ratio"] = snapshot.jobsRatio;

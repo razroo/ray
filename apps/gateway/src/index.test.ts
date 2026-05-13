@@ -1074,7 +1074,11 @@ test("gateway metrics endpoint exposes async queue saturation", async (t) => {
   assert.equal(body.gauges["async_queue.degraded"], 0);
   assert.equal(body.gauges["async_queue.queued"], 0);
   assert.equal(body.gauges["async_queue.running"], 0);
+  assert.equal(body.gauges["async_queue.succeeded"], 0);
+  assert.equal(body.gauges["async_queue.failed"], 0);
   assert.equal(body.gauges["async_queue.callback_pending"], 0);
+  assert.equal(body.gauges["async_queue.callback_delivered"], 0);
+  assert.equal(body.gauges["async_queue.callback_failed"], 0);
   assert.equal(body.gauges["async_queue.total_jobs"], 0);
   assert.equal(body.gauges["async_queue.max_jobs"], 3);
   assert.equal(body.gauges["async_queue.jobs_ratio"], 0);
@@ -1090,6 +1094,10 @@ test("gateway metrics endpoint exposes async queue saturation", async (t) => {
   const health = (await healthResponse.json()) as HealthSnapshot;
   assert.equal(health.status, "ok");
   assert.equal(health.asyncQueue?.degraded, false);
+  assert.equal(health.asyncQueue?.succeeded, 0);
+  assert.equal(health.asyncQueue?.failed, 0);
+  assert.equal(health.asyncQueue?.callbackDelivered, 0);
+  assert.equal(health.asyncQueue?.callbackFailed, 0);
   assert.equal(health.asyncQueue?.availableStorageMiB, 256);
   assert.equal(health.asyncQueue?.storageReserveRatio, 4);
   assert.equal(health.asyncQueue?.storageLow, false);
