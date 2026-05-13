@@ -1132,6 +1132,7 @@ function validateDeployWorkflowRemoteBunInstallGuards(
   }
 
   const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
+  const contents = lines.join("\n");
   for (const [index, rawLine] of lines.entries()) {
     const line = rawLine.trim();
     if (line.includes("/usr/local/bin/bun install") && !line.includes("timeout ")) {
@@ -1144,6 +1145,20 @@ function validateDeployWorkflowRemoteBunInstallGuards(
           "VPS deploy workflow remote bun install calls must run under an overall timeout so dependency installation cannot hang indefinitely on a small host.",
       });
     }
+  }
+
+  if (
+    contents.includes("/usr/local/bin/bun install --production") &&
+    !contents.includes("timeout 120s rm -rf node_modules")
+  ) {
+    diagnostics.push({
+      level: "error",
+      code: "workflow_remote_bun_install_prune_missing",
+      workflowPath,
+      line: workflowLineNumber(lines, "/usr/local/bin/bun install --production"),
+      message:
+        "VPS deploy workflow must remove stale node_modules under timeout before the remote Bun production install so old dev dependencies cannot accumulate on small VPS disks.",
+    });
   }
 
   return diagnostics;

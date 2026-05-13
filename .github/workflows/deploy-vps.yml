@@ -718,6 +718,9 @@ jobs:
           ensure_bun_runtime
 
           cd /srv/ray
+          if [ -d node_modules ]; then
+            timeout 120s rm -rf node_modules
+          fi
           timeout 300s /usr/local/bin/bun install --production --frozen-lockfile --ignore-scripts
 
           if [ "${CONFIG_SOURCE:-repo}" = "secret" ] && [ -n "${CONFIG_B64:-}" ]; then

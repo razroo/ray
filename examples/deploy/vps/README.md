@@ -465,8 +465,10 @@ runtimes, broken gateway imports from a missing Bun production install or
 workspace build, unsupported generated llama.cpp launch flags, low checkout free space
 for the Bun production install, generated systemd unit verification, and
 generated Caddyfile validation fail before systemd tries to start the generated units. The
-configured gateway runtime binary defaults to `/usr/local/bin/bun`. Remote Bun
-helper commands for config inspection, staging-plan rendering, doctor, and
+configured gateway runtime binary defaults to `/usr/local/bin/bun`. The workflow
+removes stale `node_modules` under a timeout before the remote Bun production
+install so old dev dependencies do not accumulate between rsync deploys. Remote
+Bun helper commands for config inspection, staging-plan rendering, doctor, and
 service rendering run under explicit timeouts; deploy-time GGUF staging gets a
 longer bounded copy window, and each remote SSH session has its own wall-clock
 timeout. All workflow SSH and rsync calls run in batch mode

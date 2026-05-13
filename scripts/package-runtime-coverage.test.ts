@@ -251,6 +251,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("workflow_systemctl_timeout_missing"));
   assert.ok(codes.includes("workflow_journalctl_timeout_missing"));
   assert.ok(codes.includes("workflow_remote_bun_install_unbounded"));
+  assert.ok(codes.includes("workflow_remote_bun_install_prune_missing"));
   assert.ok(codes.includes("workflow_remote_bun_command_unbounded"));
   assert.ok(codes.includes("workflow_bun_version_probe_unbounded"));
   assert.ok(codes.includes("workflow_gateway_runtime_bun_install_missing"));
