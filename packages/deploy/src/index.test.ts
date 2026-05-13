@@ -3093,3 +3093,44 @@ test("loadAndDiagnoseDeployment warns when non-strict async queue storage is blo
   assert.equal(diagnostic.level, "warn");
   assert.match(diagnostic.message, new RegExp(blockedPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
+
+test("loadAndDiagnoseDeployment can skip host async queue storage probes", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-storage-skip-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const blockedPath = join(tempDir, "blocked");
+  await writeFile(blockedPath, "");
+
+  const config = mergeConfig(createDefaultConfig("vps"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir: join(blockedPath, "async-queue"),
+      minFreeStorageMiB: 1,
+    },
+  });
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    inspectHostStorage: false,
+  });
+
+  assert.equal(inspected.preflight.asyncQueueStorageStatus, undefined);
+  assert.equal(inspected.preflight.asyncQueueStorageAvailableMiB, undefined);
+  assert.equal(
+    inspected.diagnostics.some((entry) =>
+      [
+        "async_queue_storage_low",
+        "async_queue_storage_ok",
+        "async_queue_storage_not_directory",
+        "async_queue_storage_unreadable",
+        "async_queue_storage_service_user_inaccessible",
+      ].includes(entry.code),
+    ),
+    false,
+  );
+});

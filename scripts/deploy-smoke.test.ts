@@ -102,6 +102,20 @@ test("smokeDeployConfigs renders every checked-in public deploy profile", async 
   assert.equal(summary.errorCount, 0);
   assert.ok(summary.configCount >= 7);
   assert.ok(summary.warningCount > 0);
+  assert.equal(
+    summary.results
+      .flatMap((result) => result.diagnostics)
+      .some((diagnostic) =>
+        [
+          "async_queue_storage_low",
+          "async_queue_storage_ok",
+          "async_queue_storage_not_directory",
+          "async_queue_storage_unreadable",
+          "async_queue_storage_service_user_inaccessible",
+        ].includes(diagnostic.code),
+      ),
+    false,
+  );
   assert.ok(summary.results.every((result) => result.gatewayMemorySwapMaxMiB === 128));
   assert.ok(
     summary.results.some(
@@ -124,5 +138,6 @@ test("smokeDeployConfigs renders every checked-in public deploy profile", async 
 
   const verboseSummary = formatTextSummary(cwd, summary, { verbose: true });
   assert.match(verboseSummary, /warn auth_keys_unverified:/);
+  assert.doesNotMatch(verboseSummary, /async_queue_storage_(?:low|ok|not_directory|unreadable)/);
   assert.match(verboseSummary, /Summary: warnings=\d+ errors=0/);
 });

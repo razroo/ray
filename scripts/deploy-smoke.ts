@@ -230,6 +230,7 @@ export async function smokeDeployConfigs(options: {
         domain: options.domain,
         systemdEnvFile: options.systemdEnvFile,
         runtimeBinary: options.runtimeBinary,
+        inspectHostStorage: false,
       });
       const errorCount = bundle.summary.diagnostics.filter(
         (diagnostic) => diagnostic.level === "error",

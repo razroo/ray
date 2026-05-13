@@ -202,6 +202,7 @@ export async function validateConfigFiles(options: {
         cwd: options.cwd,
         configPath,
         env,
+        inspectHostStorage: false,
       });
       const errorCount = inspected.diagnostics.filter(
         (diagnostic) => diagnostic.level === "error",

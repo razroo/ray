@@ -89,6 +89,20 @@ test("validateConfigFiles accepts every checked-in example config", async () => 
   assert.equal(summary.errorCount, 0);
   assert.ok(summary.configCount >= 19);
   assert.ok(summary.warningCount > 0);
+  assert.equal(
+    summary.results
+      .flatMap((result) => result.diagnostics)
+      .some((diagnostic) =>
+        [
+          "async_queue_storage_low",
+          "async_queue_storage_ok",
+          "async_queue_storage_not_directory",
+          "async_queue_storage_unreadable",
+          "async_queue_storage_service_user_inaccessible",
+        ].includes(diagnostic.code),
+      ),
+    false,
+  );
   assert.ok(
     summary.results.some(
       (result) =>
@@ -99,6 +113,8 @@ test("validateConfigFiles accepts every checked-in example config", async () => 
   const compactSummary = formatTextSummary(cwd, summary);
   assert.match(compactSummary, /Run with --verbose to print warning diagnostics/);
   assert.doesNotMatch(compactSummary, /warn auth_disabled:/);
-  assert.match(formatTextSummary(cwd, summary, { verbose: true }), /warn auth_disabled:/);
+  const verboseSummary = formatTextSummary(cwd, summary, { verbose: true });
+  assert.match(verboseSummary, /warn auth_disabled:/);
+  assert.doesNotMatch(verboseSummary, /async_queue_storage_(?:low|ok|not_directory|unreadable)/);
   assert.match(compactSummary, /Summary: warnings=\d+ errors=0/);
 });

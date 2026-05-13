@@ -3000,6 +3000,7 @@ export async function loadAndDiagnoseDeployment(options: {
   nodeBinary?: string;
   allowMissingAuthKeys?: boolean;
   hostFiles?: DeploymentHostFilePaths;
+  inspectHostStorage?: boolean;
 }): Promise<{
   config: RayConfig;
   configPath?: string;
@@ -3024,6 +3025,9 @@ export async function loadAndDiagnoseDeployment(options: {
       ? { strictFilesystem: options.strictFilesystem }
       : {}),
     ...(options.hostFiles !== undefined ? { hostFiles: options.hostFiles } : {}),
+    ...(options.inspectHostStorage !== undefined
+      ? { inspectHostStorage: options.inspectHostStorage }
+      : {}),
   });
 
   return {
@@ -3054,6 +3058,7 @@ export async function renderDeploymentBundle(options: {
   runtimeBinary?: string;
   nodeBinary?: string;
   strictFilesystem?: boolean;
+  inspectHostStorage?: boolean;
 }): Promise<{
   service: string;
   caddyfile: string;
@@ -3079,6 +3084,9 @@ export async function renderDeploymentBundle(options: {
     ...(options.user !== undefined ? { user: options.user } : {}),
     ...(options.strictFilesystem !== undefined
       ? { strictFilesystem: options.strictFilesystem }
+      : {}),
+    ...(options.inspectHostStorage !== undefined
+      ? { inspectHostStorage: options.inspectHostStorage }
       : {}),
     ...(allowMissingAuthKeys ? { allowMissingAuthKeys } : {}),
   });
@@ -4146,6 +4154,7 @@ async function collectDeploymentPreflight(
     strictFilesystem?: boolean;
     nodeBinary?: string;
     hostFiles?: DeploymentHostFilePaths;
+    inspectHostStorage?: boolean;
   },
 ): Promise<DeploymentPreflight> {
   const hostMemoryMiB = Math.max(1, Math.floor(totalmem() / BYTES_PER_MIB));
@@ -4186,7 +4195,10 @@ async function collectDeploymentPreflight(
     options.strictFilesystem === true,
     serviceUserIdentity,
   );
-  const storagePreflight = await collectAsyncQueueStoragePreflight(config, serviceUserIdentity);
+  const storagePreflight =
+    options.strictFilesystem === true || options.inspectHostStorage !== false
+      ? await collectAsyncQueueStoragePreflight(config, serviceUserIdentity)
+      : {};
   const workingDirectoryPreflight = await collectWorkingDirectoryPreflight(
     options.cwd,
     options.strictFilesystem === true,
