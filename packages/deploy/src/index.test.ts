@@ -997,6 +997,18 @@ test("renderLlamaCppService emits a single-vps launch profile", () => {
   assert.match(service, /LLAMA_ARG_CACHE_IDLE_SLOTS=1/);
   assert.match(service, /LLAMA_ARG_CONTEXT_SHIFT=1/);
   assert.match(service, /ExecStart=\/usr\/local\/bin\/llama-server/);
+  assert.match(
+    service,
+    /ExecStart=\/usr\/local\/bin\/llama-server --model \/models\/qwen\.gguf --host 127\.0\.0\.1 --port 8081/,
+  );
+  assert.match(
+    service,
+    /--ctx-size 3072 --parallel 2 --threads 2 --threads-batch 2 --threads-http 2 --batch-size 256 --ubatch-size 128/,
+  );
+  assert.match(
+    service,
+    /--cache-prompt --cache-reuse 256 --cache-ram 512 --cont-batching --metrics --slots --warmup --kv-unified --cache-idle-slots --context-shift/,
+  );
   assert.match(service, /StartLimitIntervalSec=60/);
   assert.match(service, /StartLimitBurst=10/);
   assert.match(service, /LogRateLimitIntervalSec=30s/);
@@ -1281,8 +1293,42 @@ test("renderLlamaCppService escapes ExecStart arguments", () => {
 
   assert.match(
     service,
-    /ExecStart="\/opt\/llama cpp\/llama-server" --log-prefix "ray 100%%" "--jinja-template=\{\{ role == \\"user\\" \}\}"/,
+    /--context-shift --log-prefix "ray 100%%" "--jinja-template=\{\{ role == \\"user\\" \}\}"/,
   );
+});
+
+test("renderLlamaCppService emits disabled launch flags explicitly", () => {
+  const service = renderLlamaCppService({
+    user: "ray",
+    launchProfile: {
+      preset: "single-vps-1b-cx23",
+      binaryPath: "/usr/local/bin/llama-server",
+      modelPath: "/var/lib/ray/models/local-1b.gguf",
+      host: "127.0.0.1",
+      port: 8081,
+      ctxSize: 2048,
+      parallel: 1,
+      threads: 2,
+      threadsHttp: 2,
+      batchSize: 192,
+      ubatchSize: 96,
+      cachePrompt: false,
+      cacheReuse: 0,
+      continuousBatching: false,
+      enableMetrics: false,
+      exposeSlots: false,
+      warmup: false,
+      enableUnifiedKv: false,
+      cacheIdleSlots: false,
+      contextShift: false,
+    },
+  });
+
+  assert.match(
+    service,
+    /--no-cache-prompt --cache-reuse 0 --no-cont-batching --no-slots --no-warmup --no-kv-unified --no-cache-idle-slots --no-context-shift/,
+  );
+  assert.doesNotMatch(service, / --metrics/);
 });
 
 test("buildLlamaCppEnvironment emits cache and slot flags explicitly", () => {

@@ -29,7 +29,7 @@ Environment="LLAMA_ARG_WARMUP=1"
 Environment="LLAMA_ARG_KV_UNIFIED=1"
 Environment="LLAMA_ARG_CACHE_IDLE_SLOTS=1"
 Environment="LLAMA_ARG_CONTEXT_SHIFT=1"
-ExecStart=/usr/local/bin/llama-server
+ExecStart=/usr/local/bin/llama-server --model /var/lib/ray/models/qwen2.5-0.5b-instruct-q4_k_m.gguf --alias qwen2.5-0.5b-instruct-q4_k_m --host 127.0.0.1 --port 8081 --ctx-size 3072 --parallel 2 --threads 2 --threads-http 2 --batch-size 256 --ubatch-size 128 --cache-prompt --cache-reuse 256 --cache-ram 512 --cont-batching --metrics --slots --warmup --kv-unified --cache-idle-slots --context-shift
 Restart=always
 RestartSec=2
 LogRateLimitIntervalSec=30s

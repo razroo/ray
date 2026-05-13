@@ -1543,6 +1543,54 @@ export function buildLlamaCppEnvironment(profile: LlamaCppLaunchProfile): Record
   };
 }
 
+function boolToLaunchArg(value: boolean, enabledFlag: string, disabledFlag?: string): string[] {
+  if (value) {
+    return [enabledFlag];
+  }
+
+  return disabledFlag ? [disabledFlag] : [];
+}
+
+function buildLlamaCppLaunchArgs(profile: LlamaCppLaunchProfile): string[] {
+  assertLlamaCppLaunchProfileForEnvironment(profile);
+
+  return [
+    "--model",
+    profile.modelPath,
+    ...(profile.alias ? ["--alias", profile.alias] : []),
+    "--host",
+    profile.host,
+    "--port",
+    profile.port.toString(),
+    "--ctx-size",
+    profile.ctxSize.toString(),
+    "--parallel",
+    profile.parallel.toString(),
+    "--threads",
+    profile.threads.toString(),
+    ...(profile.threadsBatch !== undefined
+      ? ["--threads-batch", profile.threadsBatch.toString()]
+      : []),
+    "--threads-http",
+    profile.threadsHttp.toString(),
+    "--batch-size",
+    profile.batchSize.toString(),
+    "--ubatch-size",
+    profile.ubatchSize.toString(),
+    ...boolToLaunchArg(profile.cachePrompt, "--cache-prompt", "--no-cache-prompt"),
+    "--cache-reuse",
+    profile.cacheReuse.toString(),
+    ...(profile.cacheRamMiB !== undefined ? ["--cache-ram", profile.cacheRamMiB.toString()] : []),
+    ...boolToLaunchArg(profile.continuousBatching, "--cont-batching", "--no-cont-batching"),
+    ...boolToLaunchArg(profile.enableMetrics, "--metrics"),
+    ...boolToLaunchArg(profile.exposeSlots, "--slots", "--no-slots"),
+    ...boolToLaunchArg(profile.warmup, "--warmup", "--no-warmup"),
+    ...boolToLaunchArg(profile.enableUnifiedKv, "--kv-unified", "--no-kv-unified"),
+    ...boolToLaunchArg(profile.cacheIdleSlots, "--cache-idle-slots", "--no-cache-idle-slots"),
+    ...boolToLaunchArg(profile.contextShift, "--context-shift", "--no-context-shift"),
+  ];
+}
+
 export function renderSystemdService(options: SystemdServiceOptions): string {
   assertOptionsObject(options, "Systemd service options");
 
@@ -1756,7 +1804,11 @@ export function renderLlamaCppService(options: LlamaCppServiceOptions): string {
     .map(([name, value]) => formatSystemdEnvironmentLine(name, value))
     .map((line) => `${line}\n`)
     .join("");
-  const execStart = formatSystemdExecStart([profile.binaryPath, ...(profile.extraArgs ?? [])]);
+  const execStart = formatSystemdExecStart([
+    profile.binaryPath,
+    ...buildLlamaCppLaunchArgs(profile),
+    ...(profile.extraArgs ?? []),
+  ]);
   const memoryControlLines = formatSystemdMemoryControlLines({
     ...(options.memoryHighMiB !== undefined ? { memoryHighMiB: options.memoryHighMiB } : {}),
     ...(options.memoryMaxMiB !== undefined ? { memoryMaxMiB: options.memoryMaxMiB } : {}),
