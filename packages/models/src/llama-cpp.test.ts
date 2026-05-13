@@ -1104,6 +1104,86 @@ test("llama.cpp provider requires JSON-mode probes to return objects", async (t)
   assert.equal(health.detectedCapabilities?.jsonMode, "unavailable");
 });
 
+test("llama.cpp provider rejects oversized chat-completion output", async (t) => {
+  const server = createServer((request, response) => {
+    if (request.url === "/apply-template") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ prompt: "<s>json prompt" }));
+      return;
+    }
+
+    if (request.url === "/tokenize") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ tokens: [1, 2, 3] }));
+      return;
+    }
+
+    if (request.url === "/v1/chat/completions") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: "x".repeat(8_193),
+              },
+            },
+          ],
+        }),
+      );
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const model = createModel(`http://127.0.0.1:${address.port}`, 500);
+  const provider = new LlamaCppProvider(model, model.adapter as LlamaCppProviderConfig);
+  const context = createContext(model, new AbortController().signal);
+  const request = {
+    input: "Classify the reply",
+    system: "Return only compact JSON.",
+    maxTokens: 1,
+    temperature: 0.2,
+    topP: 0.95,
+    cache: true,
+    metadata: {},
+    responseFormat: {
+      type: "json_object" as const,
+    },
+  };
+
+  const preparation = await provider.prepare(request, context);
+
+  await assert.rejects(
+    () =>
+      provider.infer(request, {
+        ...context,
+        preparation,
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_invalid_response");
+
+      const details = (error as { details?: unknown }).details;
+      assert.ok(details && typeof details === "object" && !Array.isArray(details));
+      assert.equal((details as { maxChars?: unknown }).maxChars, 8_192);
+      assert.equal((details as { actualChars?: unknown }).actualChars, 8_193);
+
+      return true;
+    },
+  );
+});
+
 test("llama.cpp provider sanitizes chat-completion token usage", async (t) => {
   const server = createServer((request, response) => {
     if (request.url === "/apply-template") {

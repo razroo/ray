@@ -17,6 +17,7 @@ import {
   assertNonEmptyStringAtMost,
   extractAssistantText,
   normalizeOpenAICompatibleTokenUsage,
+  resolveAssistantTextLimit,
   snapshotAdapterWarmupRequests,
   snapshotHttpAdapterConfig,
 } from "./http.js";
@@ -315,7 +316,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
       context.signal,
     )) as OpenAICompatibleResponse;
 
-    const output = extractAssistantText(payload);
+    const output = extractAssistantText(payload, {
+      maxChars: resolveAssistantTextLimit(request.maxTokens),
+    });
     const usage = normalizeOpenAICompatibleTokenUsage(payload);
 
     return {

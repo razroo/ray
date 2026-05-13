@@ -55,6 +55,9 @@ const MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLES = 32;
 const MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLE_KEY_CHARS = 128;
 const MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLE_VALUE_CHARS = 16_384;
 const MAX_ASSISTANT_CONTENT_PARTS = 512;
+const MIN_ASSISTANT_TEXT_CHARS = 8_192;
+const MAX_ASSISTANT_TEXT_CHARS = 262_144;
+const MAX_ASSISTANT_TEXT_CHARS_PER_TOKEN = 64;
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 const unsafeAdapterRecordKeys = new Set(["__proto__", "constructor", "prototype"]);
@@ -129,6 +132,32 @@ function extractAssistantContentPartText(part: unknown): string {
   } catch {
     return "";
   }
+}
+
+export function resolveAssistantTextLimit(maxTokens: number): number {
+  if (!Number.isSafeInteger(maxTokens) || maxTokens <= 0) {
+    throw new RangeError("assistant maxTokens must be a positive safe integer");
+  }
+
+  return Math.min(
+    MAX_ASSISTANT_TEXT_CHARS,
+    Math.max(MIN_ASSISTANT_TEXT_CHARS, maxTokens * MAX_ASSISTANT_TEXT_CHARS_PER_TOKEN),
+  );
+}
+
+function assertAssistantTextWithinLimit(text: string, maxChars: number | undefined): void {
+  if (maxChars === undefined || text.length <= maxChars) {
+    return;
+  }
+
+  throw new RayError("The backend returned assistant text above the configured size limit", {
+    code: "provider_invalid_response",
+    status: 502,
+    details: {
+      maxChars,
+      actualChars: text.length,
+    },
+  });
 }
 
 function assertStringLength(value: string, label: string, maximum: number): void {
@@ -935,7 +964,10 @@ export async function adapterRequest(
   }
 }
 
-export function extractAssistantText(payload: OpenAICompatibleResponse): string {
+export function extractAssistantText(
+  payload: OpenAICompatibleResponse,
+  options: { maxChars?: number } = {},
+): string {
   const choice = payload.choices?.[0];
 
   if (!choice) {
@@ -946,12 +978,14 @@ export function extractAssistantText(payload: OpenAICompatibleResponse): string 
   }
 
   if (typeof choice.text === "string" && choice.text.length > 0) {
+    assertAssistantTextWithinLimit(choice.text, options.maxChars);
     return choice.text;
   }
 
   const content = choice.message?.content;
 
   if (typeof content === "string" && content.length > 0) {
+    assertAssistantTextWithinLimit(content, options.maxChars);
     return content;
   }
 
@@ -976,6 +1010,7 @@ export function extractAssistantText(payload: OpenAICompatibleResponse): string 
     text = text.trim();
 
     if (text.length > 0) {
+      assertAssistantTextWithinLimit(text, options.maxChars);
       return text;
     }
   }

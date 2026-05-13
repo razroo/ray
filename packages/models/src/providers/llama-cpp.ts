@@ -33,6 +33,7 @@ import {
   normalizeBaseUrl,
   normalizeOpenAICompatibleTokenUsage,
   readResponseBodyLimited,
+  resolveAssistantTextLimit,
   snapshotAdapterWarmupRequests,
   snapshotHttpAdapterConfig,
 } from "./http.js";
@@ -728,7 +729,9 @@ export class LlamaCppProvider implements ModelProvider {
       Math.min(this.adapter.timeoutMs, 5_000),
       signal,
     )) as OpenAICompatibleResponse;
-    const output = extractAssistantText(payload);
+    const output = extractAssistantText(payload, {
+      maxChars: resolveAssistantTextLimit(8),
+    });
 
     return isValidJsonObject(output);
   }
@@ -819,6 +822,7 @@ export class LlamaCppProvider implements ModelProvider {
       }),
       context,
       preparation.promptTokens,
+      request.maxTokens,
     );
     let output = initial.output;
     let usage = initial.usage;
@@ -851,6 +855,8 @@ export class LlamaCppProvider implements ModelProvider {
           user: context.requestId,
         },
         context,
+        undefined,
+        Math.max(32, Math.min(request.maxTokens, 128)),
       );
 
       if (isValidJsonObject(repaired.output)) {
@@ -906,6 +912,7 @@ export class LlamaCppProvider implements ModelProvider {
     payload: Record<string, unknown>,
     context: ProviderContext,
     fallbackPromptTokens?: number,
+    maxOutputTokens?: number,
   ): Promise<ChatCompletionInferenceResult> {
     const response = (await this.request(
       "/v1/chat/completions",
@@ -916,7 +923,11 @@ export class LlamaCppProvider implements ModelProvider {
       this.adapter.timeoutMs,
       context.signal,
     )) as OpenAICompatibleResponse;
-    const output = extractAssistantText(response);
+    const output = extractAssistantText(response, {
+      ...(maxOutputTokens !== undefined
+        ? { maxChars: resolveAssistantTextLimit(maxOutputTokens) }
+        : {}),
+    });
     const usage = normalizeOpenAICompatibleTokenUsage(response, fallbackPromptTokens);
 
     return {

@@ -598,6 +598,36 @@ test("extractAssistantText rejects excessive OpenAI content parts", () => {
   );
 });
 
+test("extractAssistantText rejects oversized assistant text", () => {
+  assert.throws(
+    () =>
+      extractAssistantText(
+        {
+          choices: [
+            {
+              message: {
+                content: "x".repeat(8_193),
+              },
+            },
+          ],
+        },
+        { maxChars: 8_192 },
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_invalid_response");
+      assert.equal((error as { status?: number }).status, 502);
+
+      const details = (error as { details?: unknown }).details;
+      assert.ok(details && typeof details === "object" && !Array.isArray(details));
+      assert.equal((details as { maxChars?: unknown }).maxChars, 8_192);
+      assert.equal((details as { actualChars?: unknown }).actualChars, 8_193);
+
+      return true;
+    },
+  );
+});
+
 test("openai-compatible provider rejects invalid direct adapter payload config", () => {
   const model = createModel("http://127.0.0.1:8080", 500);
   const adapter = model.adapter as OpenAICompatibleProviderConfig;
@@ -1032,6 +1062,67 @@ test("openai-compatible provider reports readiness and token usage", async (t) =
     completion: 2,
     total: 6,
   });
+});
+
+test("openai-compatible provider rejects oversized assistant output", async (t) => {
+  const server = createServer((request, response) => {
+    if (request.url === "/v1/chat/completions") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          choices: [{ message: { content: "x".repeat(8_193) } }],
+        }),
+      );
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const provider = new OpenAICompatibleProvider(
+    createModel(`http://127.0.0.1:${address.port}`, 500),
+    {
+      kind: "openai-compatible",
+      baseUrl: `http://127.0.0.1:${address.port}`,
+      modelRef: "test-model-ref",
+      timeoutMs: 500,
+    },
+  );
+
+  await assert.rejects(
+    () =>
+      provider.infer(
+        {
+          input: "hi",
+          maxTokens: 1,
+          temperature: 0.2,
+          topP: 0.9,
+          cache: true,
+          metadata: {},
+        },
+        createContext(new AbortController().signal),
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_invalid_response");
+
+      const details = (error as { details?: unknown }).details;
+      assert.ok(details && typeof details === "object" && !Array.isArray(details));
+      assert.equal((details as { maxChars?: unknown }).maxChars, 8_192);
+      assert.equal((details as { actualChars?: unknown }).actualChars, 8_193);
+
+      return true;
+    },
+  );
 });
 
 test("openai-compatible provider ignores malformed token usage counters", async (t) => {
