@@ -1,9 +1,51 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadRayConfig, resolveAuthApiKeys } from "./index.js";
+
+async function readDocumentedDotenvEnv(
+  relativePath: string,
+  marker: string,
+): Promise<NodeJS.ProcessEnv> {
+  const absolutePath = join(process.cwd(), relativePath);
+  const content = await readFile(absolutePath, "utf8");
+  const markerIndex = content.indexOf(marker);
+
+  if (markerIndex === -1) {
+    throw new Error(`Could not find marker in ${relativePath}: ${marker}`);
+  }
+
+  const fenceStart = content.indexOf("```dotenv", markerIndex);
+  if (fenceStart === -1) {
+    throw new Error(`Could not find dotenv fence in ${relativePath} after ${marker}`);
+  }
+
+  const blockStart = content.indexOf("\n", fenceStart) + 1;
+  const blockEnd = content.indexOf("```", blockStart);
+  if (blockStart === 0 || blockEnd === -1) {
+    throw new Error(`Could not read dotenv block in ${relativePath} after ${marker}`);
+  }
+
+  const env: NodeJS.ProcessEnv = {};
+  for (const [index, rawLine] of content.slice(blockStart, blockEnd).split(/\r?\n/).entries()) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith("#")) {
+      continue;
+    }
+
+    const match = /^([A-Z_][A-Z0-9_]*)=(.*)$/.exec(line);
+    assert.ok(match, `${relativePath} dotenv line ${index + 1} must be KEY=value`);
+    const name = match[1];
+    const value = match[2] ?? "";
+    assert.ok(name, `${relativePath} dotenv line ${index + 1} must include a key`);
+    assert.equal(env[name], undefined, `${relativePath} must not repeat ${name}`);
+    env[name] = value;
+  }
+
+  return env;
+}
 
 test("loadRayConfig defaults to the sub1b profile", async () => {
   const loaded = await loadRayConfig({
@@ -399,6 +441,46 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
   assert.equal(loaded.config.rateLimit.maxKeys, 1_024);
   assert.equal(loaded.config.rateLimit.keyStrategy, "api-key");
   assert.equal(loaded.config.rateLimit.trustProxyHeaders, false);
+});
+
+test("documented portable 1b dotenv examples resolve to single-slot budgets", async () => {
+  const examples = [
+    {
+      relativePath: "README.md",
+      marker: "Common portable deploy and model overrides",
+    },
+    {
+      relativePath: "examples/deploy/vps/README.md",
+      marker: "For portable deployments, keep model-specific",
+    },
+  ];
+
+  for (const example of examples) {
+    const loaded = await loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.generic.public.json",
+      env: await readDocumentedDotenvEnv(example.relativePath, example.marker),
+    });
+
+    if (
+      loaded.config.model.adapter.kind !== "llama.cpp" ||
+      !loaded.config.model.adapter.launchProfile
+    ) {
+      throw new Error(`Expected a llama.cpp launch profile for ${example.relativePath}`);
+    }
+
+    assert.equal(loaded.config.profile, "1b", example.relativePath);
+    assert.equal(loaded.config.scheduler.concurrency, 1, example.relativePath);
+    assert.equal(loaded.config.scheduler.maxInflightTokens, 2048, example.relativePath);
+    assert.equal(loaded.config.model.adapter.launchProfile.ctxSize, 2048, example.relativePath);
+    assert.equal(loaded.config.model.adapter.launchProfile.parallel, 1, example.relativePath);
+    assert.ok(
+      loaded.config.scheduler.maxInflightTokens <=
+        loaded.config.model.adapter.launchProfile.ctxSize *
+          loaded.config.model.adapter.launchProfile.parallel,
+      example.relativePath,
+    );
+  }
 });
 
 test("loadRayConfig resolves relative llama.cpp launch paths against cwd", async () => {
