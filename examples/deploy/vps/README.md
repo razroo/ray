@@ -564,7 +564,7 @@ file, package metadata, and the llama.cpp staging helper used during deploy.
 - Keep `model.adapter.baseUrl` on plain HTTP at the same loopback host, root, and port as `model.adapter.launchProfile` when Ray renders the llama.cpp service; config loading and doctor reject base URLs that point away from the generated backend.
 - For the `vps` and `balanced` OpenAI-compatible profiles, keep `model.adapter.baseUrl` on loopback unless you intentionally leave the one-box topology; doctor warns when those profiles point at a remote backend because Ray is no longer fronting a local self-hosted model.
 - Point OpenAI-compatible `model.adapter.baseUrl` at the backend origin or reverse-proxy prefix before `/v1`; Ray appends `/v1/models` and `/v1/chat/completions` itself, and doctor warns when the base URL already ends in `/v1`.
-- Backend adapter requests do not follow redirects; fix any 30x response at the local model server or reverse proxy instead of depending on Ray to chase it.
+- Backend adapter requests, including llama.cpp health probes, do not follow redirects; fix any 30x response at the local model server or reverse proxy instead of depending on Ray to chase it.
 - Return `application/json` or `application/*+json` from JSON-speaking backends; malformed JSON under those media types is treated as an invalid backend response, while other successful media types are passed through as text.
 - Send gateway JSON request bodies uncompressed or with `Content-Encoding: identity`; unsupported encodings are rejected before the gateway acknowledges `Expect: 100-continue` uploads or reads the body.
 - Benchmark helper requests do not follow redirects; fix Caddy or gateway routing before benchmarking instead of measuring a redirected target.

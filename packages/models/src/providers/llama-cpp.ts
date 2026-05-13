@@ -1529,9 +1529,23 @@ export class LlamaCppProvider implements ModelProvider {
         {
           method: "GET",
           headers: buildAdapterHeaders(this.adapter),
+          redirect: "manual",
           signal: controller.signal,
         },
       );
+
+      if (response.status >= 300 && response.status < 400) {
+        await response.body?.cancel().catch(() => undefined);
+        throw new RayError(`The llama.cpp health probe was redirected with ${response.status}`, {
+          code: "provider_upstream_error",
+          status: 502,
+          details: {
+            pathname: "/health?include_slots=1",
+            upstreamStatus: response.status,
+          },
+        });
+      }
+
       const contentType = response.headers.get("content-type") ?? "";
       await assertDeclaredResponseBodyWithinLimit(
         response,

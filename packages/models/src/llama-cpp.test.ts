@@ -527,6 +527,91 @@ test("llama.cpp provider rejects declared oversized health responses before read
   assert.equal(health.detectedCapabilities?.totalSlots, 1);
 });
 
+test("llama.cpp provider refuses to follow backend health redirects", async (t) => {
+  const envName = "RAY_LLAMA_CPP_HEALTH_REDIRECT_TEST_KEY";
+  const previousEnvValue = process.env[envName];
+  process.env[envName] = "health-redirect-secret";
+  t.after(() => {
+    if (previousEnvValue === undefined) {
+      delete process.env[envName];
+    } else {
+      process.env[envName] = previousEnvValue;
+    }
+  });
+
+  let redirectedRequests = 0;
+  let redirectedAuthorization: string | undefined;
+  const redirectedServer = createServer((request, response) => {
+    redirectedRequests += 1;
+    redirectedAuthorization =
+      typeof request.headers.authorization === "string" ? request.headers.authorization : undefined;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ status: "ok" }));
+  });
+
+  await new Promise<void>((resolve) => redirectedServer.listen(0, "127.0.0.1", resolve));
+  t.after(() => redirectedServer.close());
+
+  const redirectedAddress = redirectedServer.address();
+  if (!redirectedAddress || typeof redirectedAddress === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const server = createServer((request, response) => {
+    if (request.url === "/health?include_slots=1") {
+      response.writeHead(307, {
+        "content-type": "application/json",
+        location: `http://127.0.0.1:${redirectedAddress.port}/health?include_slots=1`,
+      });
+      response.end(JSON.stringify({ status: "redirected" }));
+      return;
+    }
+
+    if (request.url === "/props") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          total_slots: 1,
+          default_generation_settings: {
+            n_ctx: 8192,
+            model: "qwen2.5-0.6b-q4",
+          },
+        }),
+      );
+      return;
+    }
+
+    if (request.url === "/slots") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ slots: [] }));
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const model = createModel(`http://127.0.0.1:${address.port}`, 500, {
+    apiKeyEnv: envName,
+  });
+  const provider = new LlamaCppProvider(model, model.adapter as LlamaCppProviderConfig);
+  const health = await provider.health();
+
+  assert.equal(health.status, "ready");
+  assert.match(String(health.details?.healthError ?? ""), /redirected with 307/);
+  assert.equal(health.detectedCapabilities?.totalSlots, 1);
+  assert.equal(redirectedRequests, 0);
+  assert.equal(redirectedAuthorization, undefined);
+});
+
 test("llama.cpp provider falls back when native prompt templating is unavailable", async (t) => {
   const seenPaths: string[] = [];
   let completionBody: Record<string, unknown> | undefined;
