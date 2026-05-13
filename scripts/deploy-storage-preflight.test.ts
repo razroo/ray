@@ -22,6 +22,9 @@ function missingPathError(path: string): NodeJS.ErrnoException {
 
 test("parseArgs accepts deploy storage preflight options", () => {
   assert.deepEqual(parseArgs([], {}).paths, [
+    "/etc/ray",
+    "/etc/systemd/system",
+    "/etc/caddy",
     "/srv/ray",
     "/srv/ray/.ray/bun-install-cache",
     "/var/lib/ray",
@@ -90,6 +93,9 @@ test("loadDeployStoragePreflightArgs applies bounded ray env file thresholds", a
   assert.equal(fromEnvFile.minFreeStorageMiB, 2048);
   assert.equal(fromEnvFile.minFreeStorageMiBSource, "env-file");
   assert.deepEqual(fromEnvFile.paths, [
+    "/etc/ray",
+    "/etc/systemd/system",
+    "/etc/caddy",
     "/srv/ray",
     "/srv/ray/.ray/bun-install-cache",
     "/var/lib/ray",
