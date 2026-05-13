@@ -16,6 +16,10 @@ const MAX_PUBLIC_RATE_LIMIT_WINDOW_MS = 3_600_000;
 const MAX_PUBLIC_RATE_LIMIT_REQUESTS = 300;
 const MAX_PUBLIC_RATE_LIMIT_KEYS = 8_192;
 const MAX_PUBLIC_SERVER_PORT = 65_535;
+const PUBLIC_ASYNC_QUEUE_STORAGE_DIR = "/var/lib/ray/async-queue";
+const MAX_PUBLIC_ASYNC_QUEUE_JOBS = 2_000;
+const MAX_PUBLIC_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB = 1_024;
+const MAX_PUBLIC_ASYNC_QUEUE_COMPLETED_TTL_MS = 604_800_000;
 
 type ConfigRecord = Record<string, unknown>;
 
@@ -398,6 +402,41 @@ async function diagnosePublicConfigPolicy(configPath: string): Promise<Deploymen
     ["rateLimit", "trustProxyHeaders"],
     true,
     "public_config_rate_limit_proxy_headers_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["asyncQueue", "enabled"],
+    true,
+    "public_config_async_queue_enabled_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["asyncQueue", "storageDir"],
+    PUBLIC_ASYNC_QUEUE_STORAGE_DIR,
+    "public_config_async_queue_storage_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["asyncQueue", "maxJobs"],
+    MAX_PUBLIC_ASYNC_QUEUE_JOBS,
+    "public_config_async_queue_max_jobs_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["asyncQueue", "minFreeStorageMiB"],
+    MAX_PUBLIC_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB,
+    "public_config_async_queue_storage_reserve_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["asyncQueue", "completedTtlMs"],
+    MAX_PUBLIC_ASYNC_QUEUE_COMPLETED_TTL_MS,
+    "public_config_async_queue_completed_ttl_explicit",
   );
 
   return diagnostics;

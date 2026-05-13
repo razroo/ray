@@ -120,6 +120,11 @@ test("validateConfigFiles requires explicit public ingress controls", async (t) 
   assert.ok(codes.includes("public_config_rate_limit_window_explicit"));
   assert.ok(codes.includes("public_config_rate_limit_key_strategy_explicit"));
   assert.ok(codes.includes("public_config_rate_limit_proxy_headers_explicit"));
+  assert.ok(codes.includes("public_config_async_queue_enabled_explicit"));
+  assert.ok(codes.includes("public_config_async_queue_storage_explicit"));
+  assert.ok(codes.includes("public_config_async_queue_max_jobs_explicit"));
+  assert.ok(codes.includes("public_config_async_queue_storage_reserve_explicit"));
+  assert.ok(codes.includes("public_config_async_queue_completed_ttl_explicit"));
 });
 
 test("validateConfigFiles accepts every checked-in example config", async () => {
