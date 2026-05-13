@@ -407,6 +407,13 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
+function atomicStageTempTemplate(targetPath: string): string {
+  return path.join(
+    path.dirname(targetPath),
+    `${ATOMIC_STAGE_TEMP_PREFIX}${path.basename(targetPath)}.XXXXXX`,
+  );
+}
+
 async function readEnvironmentFileBounded(envFile: string): Promise<string> {
   let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
 
@@ -447,6 +454,8 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
   const binarySourcePath = plan.binarySourcePath ?? PLACEHOLDER_BINARY_SOURCE_PATH;
   const sourcePath = plan.sourcePath ?? PLACEHOLDER_SOURCE_PATH;
   const owner = `${plan.serviceUser}:${plan.serviceGroup}`;
+  const binaryTemp = "$binary_tmp";
+  const modelTemp = "$model_tmp";
   const binarySourcePreflight = `binary_source_bytes="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s stat -c %s -- ${shellQuote(
     binarySourcePath,
   )})" || exit "$?"; test "\${binary_source_bytes:-0}" -le ${MAX_LLAMA_CPP_BINARY_SOURCE_BYTES} || { printf '%s\\n' ${shellQuote(
@@ -479,21 +488,45 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
   const modelChecksumPreflight = plan.sha256
     ? `printf '%s  %s\\n' ${shellQuote(plan.sha256)} ${shellQuote(sourcePath)} | timeout ${STAGE_MODEL_CHECKSUM_TIMEOUT_SECONDS}s sha256sum -c -`
     : undefined;
+  const binaryAtomicInstall = `( binary_tmp="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s sudo mktemp ${shellQuote(
+    atomicStageTempTemplate(plan.binaryPath),
+  )})" && cleanup_binary_tmp() { timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s sudo rm -f -- "${binaryTemp}"; } && trap cleanup_binary_tmp EXIT && timeout ${STAGE_BINARY_COPY_TIMEOUT_SECONDS}s sudo install -m 0755 -- ${shellQuote(
+    binarySourcePath,
+  )} "${binaryTemp}" && timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s sudo -u ${shellQuote(
+    plan.serviceUser,
+  )} test -x "${binaryTemp}" && timeout ${STAGE_SERVICE_PROBE_TIMEOUT_SECONDS}s sudo -u ${shellQuote(
+    plan.serviceUser,
+  )} timeout ${LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS}s "${binaryTemp}" --help >/dev/null && timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo mv -f -- "${binaryTemp}" ${shellQuote(
+    plan.binaryPath,
+  )} && trap - EXIT )`;
+  const modelAtomicInstall = `( model_tmp="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s sudo mktemp ${shellQuote(
+    atomicStageTempTemplate(plan.modelPath),
+  )})" && cleanup_model_tmp() { timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s sudo rm -f -- "${modelTemp}"; } && trap cleanup_model_tmp EXIT && timeout ${STAGE_MODEL_COPY_TIMEOUT_SECONDS}s sudo install -m 0640 -- ${shellQuote(
+    sourcePath,
+  )} "${modelTemp}" && { model_magic="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s sudo head -c ${
+    GGUF_MAGIC.length
+  } -- "${modelTemp}")" || exit "$?"; test "$model_magic" = ${shellQuote(
+    GGUF_MAGIC,
+  )} || { printf '%s\\n' ${shellQuote(
+    `Staged GGUF copy does not start with the ${GGUF_MAGIC} header before replacing ${plan.modelPath}.`,
+  )} >&2; exit 1; }; } && timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo chown ${shellQuote(
+    owner,
+  )} "${modelTemp}" && timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s sudo -u ${shellQuote(
+    plan.serviceUser,
+  )} test -r "${modelTemp}" && timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo mv -f -- "${modelTemp}" ${shellQuote(
+    plan.modelPath,
+  )} && trap - EXIT )`;
   const commands = [
     `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo install -d -m 0755 ${shellQuote(plan.binaryDirectory)}`,
     binarySourcePreflight,
     ...(binaryChecksumPreflight ? [binaryChecksumPreflight] : []),
-    `timeout ${STAGE_BINARY_COPY_TIMEOUT_SECONDS}s sudo install -D -m 0755 -- ${shellQuote(binarySourcePath)} ${shellQuote(plan.binaryPath)}`,
-    `timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s sudo -u ${shellQuote(plan.serviceUser)} test -x ${shellQuote(plan.binaryPath)}`,
-    `timeout ${STAGE_SERVICE_PROBE_TIMEOUT_SECONDS}s sudo -u ${shellQuote(plan.serviceUser)} timeout ${LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS}s ${shellQuote(plan.binaryPath)} --help >/dev/null`,
+    binaryAtomicInstall,
     `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo install -d -m 0755 ${shellQuote(plan.modelDirectory)}`,
     ...(modelMemoryPreflight ? [modelMemoryPreflight] : []),
     modelStoragePreflight,
     modelFormatPreflight,
     ...(modelChecksumPreflight ? [modelChecksumPreflight] : []),
-    `timeout ${STAGE_MODEL_COPY_TIMEOUT_SECONDS}s sudo install -D -m 0640 -- ${shellQuote(sourcePath)} ${shellQuote(plan.modelPath)}`,
-    `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo chown ${shellQuote(owner)} ${shellQuote(plan.modelPath)}`,
-    `timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s sudo -u ${shellQuote(plan.serviceUser)} test -r ${shellQuote(plan.modelPath)}`,
+    modelAtomicInstall,
   ];
 
   return commands;

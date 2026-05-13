@@ -305,6 +305,9 @@ Use `bun run model:stage -- --config ./examples/config/ray.1b.generic.public.jso
 to print the exact install, ownership, optional checksum, target storage-headroom,
 GGUF header, and service-user read/execute plus `llama-server --help`
 startup-probe commands for the resolved `llama-server` and `RAY_MODEL_PATH`.
+Printed install commands copy through same-directory `.ray-stage-*` temp files
+and only move them into place after the temp artifact passes service-user checks,
+so an interrupted copy does not overwrite the last working binary or GGUF.
 Instead of passing source and checksum flags every time, `/etc/ray/ray.env` may
 include `RAY_LLAMA_CPP_BINARY_SOURCE_PATH`, `RAY_LLAMA_CPP_BINARY_SHA256`,
 `RAY_MODEL_SOURCE_PATH`, and `RAY_MODEL_SHA256`; explicit CLI flags still win.

@@ -158,7 +158,10 @@ Add `--binary-sha256 <expected-hex-digest>` when the compiled `llama-server`
 source publishes or produces a checksum. The output includes the resolved binary
 and model paths, install commands, checksum commands, model target storage
 headroom, GGUF header check, ownership, service-user execute/read tests, and a bounded
-`llama-server --help` startup probe.
+`llama-server --help` startup probe. Printed install commands copy through
+same-directory `.ray-stage-*` temp files and only move them into place after the
+temp artifact passes service-user checks, so an interrupted copy does not replace
+the last working binary or GGUF.
 You can also put those staging inputs in `/etc/ray/ray.env` as
 `RAY_LLAMA_CPP_BINARY_SOURCE_PATH`, `RAY_LLAMA_CPP_BINARY_SHA256`,
 `RAY_MODEL_SOURCE_PATH`, and `RAY_MODEL_SHA256`; explicit source/checksum flags

@@ -58,7 +58,7 @@ test("smokeModelStages renders every checked-in public staging plan", async () =
     summary.results.every(
       (result) =>
         result.errorCount === 0 &&
-        result.commandCount >= 9 &&
+        result.commandCount >= 8 &&
         result.modelPath?.startsWith("/var/lib/ray/models/") &&
         result.binaryPath === "/usr/local/bin/llama-server",
     ),
