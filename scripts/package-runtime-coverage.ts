@@ -543,6 +543,17 @@ function validateScripts(
     });
   }
 
+  if (releaseGate !== undefined && !releaseGate.includes("bun run smoke:tiny:public")) {
+    diagnostics.push({
+      level: "error",
+      code: "release_gate_tiny_public_smoke_missing",
+      packagePath: packageJsonPath,
+      scriptName: "release:gate",
+      message:
+        'Script "release:gate" must run bun run smoke:tiny:public so CI proves public-facing gateway auth and rate-limit guards stay wired.',
+    });
+  }
+
   return diagnostics;
 }
 

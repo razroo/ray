@@ -49,6 +49,7 @@ test("parseArgs accepts strict gateway smoke options", () => {
     "3017",
     "--timeout-ms",
     "5000",
+    "--public-safety",
     "--json",
   ]);
 
@@ -57,6 +58,7 @@ test("parseArgs accepts strict gateway smoke options", () => {
   assert.equal(args.host, "127.0.0.1");
   assert.equal(args.port, 3017);
   assert.equal(args.timeoutMs, 5000);
+  assert.equal(args.publicSafety, true);
   assert.equal(args.json, true);
 });
 
@@ -79,6 +81,7 @@ test("parseArgs rejects malformed gateway smoke argv", () => {
 test("formatTextSummary reports the checked gateway endpoints", () => {
   const summary: GatewaySmokeSummary = {
     ok: true,
+    mode: "public-safety",
     configPath: `${repoRoot}/examples/config/ray.tiny.json`,
     profile: "tiny",
     modelId: "tiny-dev",
@@ -89,6 +92,23 @@ test("formatTextSummary reports the checked gateway endpoints", () => {
     readyzStatus: 200,
     inferStatus: 200,
     outputChars: 42,
+    publicSafety: {
+      livezUnauthStatus: 200,
+      readyzUnauthStatus: 200,
+      protectedMissingStatuses: {
+        "/v1/infer": 401,
+        "/health": 401,
+      },
+      protectedInvalidStatuses: {
+        "/v1/infer": 401,
+        "/health": 401,
+      },
+      protectedValidStatuses: {
+        "/v1/infer": 200,
+        "/health": 200,
+      },
+      rateLimitStatus: 429,
+    },
   };
 
   const text = formatTextSummary(repoRoot, summary);
@@ -97,6 +117,8 @@ test("formatTextSummary reports the checked gateway endpoints", () => {
   assert.match(text, /livez: HTTP 200/);
   assert.match(text, /readyz: HTTP 200/);
   assert.match(text, /infer: HTTP 200, outputChars=42/);
+  assert.match(text, /protected missing auth: 401, 401/);
+  assert.match(text, /rate limit: HTTP 429/);
 });
 
 test("runGatewaySmokeCli starts the tiny profile and verifies inference", async () => {
@@ -109,6 +131,7 @@ test("runGatewaySmokeCli starts the tiny profile and verifies inference", async 
 
   const summary = JSON.parse(capture.stdout()) as GatewaySmokeSummary;
   assert.equal(summary.ok, true);
+  assert.equal(summary.mode, "basic");
   assert.equal(summary.profile, "tiny");
   assert.equal(summary.modelId, "tiny-dev");
   assert.equal(summary.host, "127.0.0.1");
@@ -117,4 +140,45 @@ test("runGatewaySmokeCli starts the tiny profile and verifies inference", async 
   assert.equal(summary.inferStatus, 200);
   assert.ok(summary.port > 0);
   assert.ok(summary.outputChars > 0);
+});
+
+test("runGatewaySmokeCli verifies public auth guards and rate limiting", async () => {
+  const capture = createIoCapture();
+
+  const exitCode = await runGatewaySmokeCli(
+    ["--cwd", repoRoot, "--public-safety", "--json"],
+    capture.io,
+  );
+
+  assert.equal(exitCode, 0);
+  assert.equal(capture.stderr(), "");
+
+  const summary = JSON.parse(capture.stdout()) as GatewaySmokeSummary;
+  assert.equal(summary.ok, true);
+  assert.equal(summary.mode, "public-safety");
+  assert.equal(summary.profile, "tiny");
+  assert.equal(summary.livezStatus, 200);
+  assert.equal(summary.readyzStatus, 200);
+  assert.equal(summary.inferStatus, 200);
+  assert.equal(summary.publicSafety?.livezUnauthStatus, 200);
+  assert.equal(summary.publicSafety?.readyzUnauthStatus, 200);
+  assert.equal(summary.publicSafety?.rateLimitStatus, 429);
+  assert.deepEqual(summary.publicSafety?.protectedMissingStatuses, {
+    "/v1/infer": 401,
+    "/health": 401,
+    "/metrics": 401,
+    "/v1/config": 401,
+  });
+  assert.deepEqual(summary.publicSafety?.protectedInvalidStatuses, {
+    "/v1/infer": 401,
+    "/health": 401,
+    "/metrics": 401,
+    "/v1/config": 401,
+  });
+  assert.deepEqual(summary.publicSafety?.protectedValidStatuses, {
+    "/health": 200,
+    "/metrics": 200,
+    "/v1/config": 200,
+    "/v1/infer": 200,
+  });
 });

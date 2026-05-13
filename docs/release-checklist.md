@@ -17,9 +17,10 @@ Aligned with [roadmap Phase 1 exit criteria](roadmap.md) and day-one operator ex
 
    ```bash
    bun run smoke:tiny
+   bun run smoke:tiny:public
    ```
 
-   This starts the tiny mock-provider gateway on an ephemeral loopback port and verifies `/livez`, `/readyz`, and `/v1/infer` without an external model server.
+   These start the tiny mock-provider gateway on ephemeral loopback ports and verify `/livez`, `/readyz`, `/v1/infer`, public auth guards, and rate limiting without an external model server.
 
 3. **Tests**
 
@@ -33,6 +34,7 @@ Aligned with [roadmap Phase 1 exit criteria](roadmap.md) and day-one operator ex
    bun run validate:config
    bun run validate:config:all
    bun run smoke:tiny
+   bun run smoke:tiny:public
    bun run deploy:smoke
    bun run deploy:scripts
    bun run package:runtime

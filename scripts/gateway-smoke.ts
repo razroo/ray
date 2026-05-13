@@ -13,6 +13,7 @@ const MAX_CLI_ARGS = 14;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_TEXT_BYTES = 256 * 1024;
+const PUBLIC_SAFETY_API_KEY = "ray-gateway-smoke";
 
 export interface GatewaySmokeArgs {
   cwd: string;
@@ -20,12 +21,23 @@ export interface GatewaySmokeArgs {
   host: string;
   port?: number;
   timeoutMs: number;
+  publicSafety: boolean;
   json: boolean;
   help: boolean;
 }
 
+export interface GatewayPublicSafetySummary {
+  livezUnauthStatus: number;
+  readyzUnauthStatus: number;
+  protectedMissingStatuses: Record<string, number>;
+  protectedInvalidStatuses: Record<string, number>;
+  protectedValidStatuses: Record<string, number>;
+  rateLimitStatus: number;
+}
+
 export interface GatewaySmokeSummary {
   ok: boolean;
+  mode: "basic" | "public-safety";
   configPath: string;
   profile: string;
   modelId: string;
@@ -36,11 +48,17 @@ export interface GatewaySmokeSummary {
   readyzStatus: number;
   inferStatus: number;
   outputChars: number;
+  publicSafety?: GatewayPublicSafetySummary;
 }
 
 interface JsonResponse {
   status: number;
   payload: unknown;
+}
+
+interface TextResponse {
+  status: number;
+  text: string;
 }
 
 const HELP = `Run a loopback Ray gateway smoke using the tiny mock-provider profile.
@@ -54,6 +72,7 @@ Options:
   --host <host>        Loopback host to bind and probe. Default: ${DEFAULT_HOST}
   --port <port>        TCP port to bind. Default: reserve an ephemeral port.
   --timeout-ms <ms>    Per-check timeout budget. Default: ${DEFAULT_TIMEOUT_MS}
+  --public-safety      Enable auth and rate limiting, then verify public-facing route guards.
   --json               Print machine-readable summary JSON.
   -h, --help           Show this help.
 `;
@@ -121,6 +140,7 @@ export function parseArgs(argv: string[]): GatewaySmokeArgs {
     configPath: DEFAULT_CONFIG_PATH,
     host: DEFAULT_HOST,
     timeoutMs: DEFAULT_TIMEOUT_MS,
+    publicSafety: false,
     json: false,
     help: false,
   };
@@ -164,6 +184,11 @@ export function parseArgs(argv: string[]): GatewaySmokeArgs {
 
     if (current === "--json") {
       args.json = true;
+      continue;
+    }
+
+    if (current === "--public-safety") {
+      args.publicSafety = true;
       continue;
     }
 
@@ -235,6 +260,18 @@ function cloneConfigForSmoke(config: RayConfig, host: string, port: number): Ray
   return next;
 }
 
+function enablePublicSafetyConfig(config: RayConfig): RayConfig {
+  const next = structuredClone(config) as RayConfig;
+  next.auth.enabled = true;
+  next.auth.apiKeyEnv = "RAY_API_KEYS";
+  next.rateLimit.enabled = true;
+  next.rateLimit.maxRequests = 1;
+  next.rateLimit.windowMs = 60_000;
+  next.rateLimit.keyStrategy = "api-key";
+  next.rateLimit.trustProxyHeaders = false;
+  return next;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -253,6 +290,28 @@ async function fetchJson(
   timeoutMs: number,
   label: string,
 ): Promise<JsonResponse> {
+  const response = await fetchText(url, init, timeoutMs, label);
+
+  try {
+    return {
+      status: response.status,
+      payload: response.text.length > 0 ? JSON.parse(response.text) : undefined,
+    };
+  } catch (error) {
+    throw new Error(
+      `${label} returned non-JSON response body: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
+async function fetchText(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  label: string,
+): Promise<TextResponse> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   timeout.unref?.();
@@ -268,18 +327,10 @@ async function fetchJson(
       throw new Error(`${label} returned more than ${MAX_RESPONSE_TEXT_BYTES} bytes`);
     }
 
-    try {
-      return {
-        status: response.status,
-        payload: text.length > 0 ? JSON.parse(text) : undefined,
-      };
-    } catch (error) {
-      throw new Error(
-        `${label} returned non-JSON response body: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
+    return {
+      status: response.status,
+      text,
+    };
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new Error(`${label} timed out after ${timeoutMs}ms`);
@@ -325,26 +376,162 @@ function assertStatusOk(result: JsonResponse, label: string): void {
   }
 }
 
+function assertTextStatus(result: TextResponse, label: string, expected: number): void {
+  if (result.status !== expected) {
+    throw new Error(`${label} returned HTTP ${result.status}, expected HTTP ${expected}`);
+  }
+}
+
+function protectedEndpointRequest(
+  pathName: string,
+  token?: string,
+): { path: string; init: RequestInit } {
+  const headers: Record<string, string> = {};
+
+  if (token) {
+    headers.authorization = `Bearer ${token}`;
+  }
+
+  if (pathName === "/v1/infer") {
+    headers["content-type"] = "application/json";
+    return {
+      path: pathName,
+      init: {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          input: "Public safety smoke.",
+          maxTokens: 16,
+        }),
+      },
+    };
+  }
+
+  return {
+    path: pathName,
+    init: {
+      method: "GET",
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    },
+  };
+}
+
+async function smokePublicSafety(options: { baseUrl: string; timeoutMs: number }): Promise<{
+  summary: GatewayPublicSafetySummary;
+  inferStatus: number;
+  outputChars: number;
+}> {
+  const protectedPaths = ["/v1/infer", "/health", "/metrics", "/v1/config"];
+  const protectedMissingStatuses: Record<string, number> = {};
+  const protectedInvalidStatuses: Record<string, number> = {};
+  const protectedValidStatuses: Record<string, number> = {};
+  const livez = await fetchJson(
+    `${options.baseUrl}/livez`,
+    { method: "GET" },
+    options.timeoutMs,
+    "/livez public safety",
+  );
+  assertStatusOk(livez, "/livez public safety");
+  const readyz = await waitForStatusOk(
+    `${options.baseUrl}/readyz`,
+    { method: "GET" },
+    options.timeoutMs,
+    "/readyz public safety",
+  );
+
+  for (const pathName of protectedPaths) {
+    const missing = protectedEndpointRequest(pathName);
+    const missingResponse = await fetchText(
+      `${options.baseUrl}${missing.path}`,
+      missing.init,
+      options.timeoutMs,
+      `${pathName} missing auth`,
+    );
+    assertTextStatus(missingResponse, `${pathName} missing auth`, 401);
+    protectedMissingStatuses[pathName] = missingResponse.status;
+
+    const invalid = protectedEndpointRequest(pathName, "wrong-token");
+    const invalidResponse = await fetchText(
+      `${options.baseUrl}${invalid.path}`,
+      invalid.init,
+      options.timeoutMs,
+      `${pathName} invalid auth`,
+    );
+    assertTextStatus(invalidResponse, `${pathName} invalid auth`, 401);
+    protectedInvalidStatuses[pathName] = invalidResponse.status;
+  }
+
+  for (const pathName of ["/health", "/metrics", "/v1/config"]) {
+    const valid = protectedEndpointRequest(pathName, PUBLIC_SAFETY_API_KEY);
+    const validResponse = await fetchText(
+      `${options.baseUrl}${valid.path}`,
+      valid.init,
+      options.timeoutMs,
+      `${pathName} valid auth`,
+    );
+    assertTextStatus(validResponse, `${pathName} valid auth`, 200);
+    protectedValidStatuses[pathName] = validResponse.status;
+  }
+
+  const infer = protectedEndpointRequest("/v1/infer", PUBLIC_SAFETY_API_KEY);
+  const inferResponse = await fetchJson(
+    `${options.baseUrl}${infer.path}`,
+    infer.init,
+    options.timeoutMs,
+    "/v1/infer valid auth",
+  );
+  assertStatusOk(inferResponse, "/v1/infer valid auth");
+  protectedValidStatuses["/v1/infer"] = inferResponse.status;
+  const output = requireInferenceOutput(inferResponse.payload);
+
+  const rateLimited = protectedEndpointRequest("/v1/infer", PUBLIC_SAFETY_API_KEY);
+  const rateLimitedResponse = await fetchText(
+    `${options.baseUrl}${rateLimited.path}`,
+    rateLimited.init,
+    options.timeoutMs,
+    "/v1/infer rate limited",
+  );
+  assertTextStatus(rateLimitedResponse, "/v1/infer rate limited", 429);
+
+  return {
+    summary: {
+      livezUnauthStatus: livez.status,
+      readyzUnauthStatus: readyz.status,
+      protectedMissingStatuses,
+      protectedInvalidStatuses,
+      protectedValidStatuses,
+      rateLimitStatus: rateLimitedResponse.status,
+    },
+    inferStatus: inferResponse.status,
+    outputChars: output.length,
+  };
+}
+
 export async function smokeGateway(options: {
   cwd: string;
   configPath: string;
   host: string;
   port?: number;
   timeoutMs?: number;
+  publicSafety?: boolean;
 }): Promise<GatewaySmokeSummary> {
   const cwd = path.resolve(options.cwd);
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const configEnv = Object.create(null) as NodeJS.ProcessEnv;
   const loaded = await loadRayConfig({
     cwd,
     configPath: options.configPath,
+    env: configEnv,
   });
   const port = options.port ?? (await reserveTcpPort(options.host));
-  const config = cloneConfigForSmoke(loaded.config, options.host, port);
+  const baseConfig = cloneConfigForSmoke(loaded.config, options.host, port);
+  const config = options.publicSafety ? enablePublicSafetyConfig(baseConfig) : baseConfig;
   const baseUrl = `http://${formatHostForUrl(options.host)}:${port}`;
   const gateway = await startGateway({
     config,
     configPath: loaded.configPath,
     logger: silentLogger,
+    env: options.publicSafety ? { RAY_API_KEYS: PUBLIC_SAFETY_API_KEY } : configEnv,
     warmupRetry: {
       initialDelayMs: 100,
       maxDelayMs: 250,
@@ -352,6 +539,29 @@ export async function smokeGateway(options: {
   });
 
   try {
+    if (options.publicSafety) {
+      const publicSafety = await smokePublicSafety({
+        baseUrl,
+        timeoutMs,
+      });
+
+      return {
+        ok: true,
+        mode: "public-safety",
+        configPath: loaded.configPath ?? path.resolve(cwd, options.configPath),
+        profile: config.profile,
+        modelId: config.model.id,
+        host: options.host,
+        port,
+        baseUrl,
+        livezStatus: publicSafety.summary.livezUnauthStatus,
+        readyzStatus: publicSafety.summary.readyzUnauthStatus,
+        inferStatus: publicSafety.inferStatus,
+        outputChars: publicSafety.outputChars,
+        publicSafety: publicSafety.summary,
+      };
+    }
+
     const livez = await fetchJson(`${baseUrl}/livez`, { method: "GET" }, timeoutMs, "/livez");
     assertStatusOk(livez, "/livez");
 
@@ -381,6 +591,7 @@ export async function smokeGateway(options: {
 
     return {
       ok: true,
+      mode: "basic",
       configPath: loaded.configPath ?? path.resolve(cwd, options.configPath),
       profile: config.profile,
       modelId: config.model.id,
@@ -405,17 +616,30 @@ function displayPath(cwd: string, filePath: string): string {
 }
 
 export function formatTextSummary(cwd: string, summary: GatewaySmokeSummary): string {
-  return [
+  const lines = [
     "Ran Ray tiny gateway smoke:",
     `- config: ${displayPath(cwd, summary.configPath)}`,
     `- listen: ${summary.baseUrl}`,
+    `- mode: ${summary.mode}`,
     `- profile: ${summary.profile}`,
     `- model: ${summary.modelId}`,
     `- livez: HTTP ${summary.livezStatus}`,
     `- readyz: HTTP ${summary.readyzStatus}`,
     `- infer: HTTP ${summary.inferStatus}, outputChars=${summary.outputChars}`,
-    `Summary: ${summary.ok ? "ok" : "failed"}`,
-  ].join("\n");
+  ];
+
+  if (summary.publicSafety) {
+    lines.push(
+      `- protected missing auth: ${Object.values(summary.publicSafety.protectedMissingStatuses).join(", ")}`,
+      `- protected invalid auth: ${Object.values(summary.publicSafety.protectedInvalidStatuses).join(", ")}`,
+      `- protected valid auth: ${Object.values(summary.publicSafety.protectedValidStatuses).join(", ")}`,
+      `- rate limit: HTTP ${summary.publicSafety.rateLimitStatus}`,
+    );
+  }
+
+  lines.push(`Summary: ${summary.ok ? "ok" : "failed"}`);
+
+  return lines.join("\n");
 }
 
 export async function runGatewaySmokeCli(
@@ -437,6 +661,7 @@ export async function runGatewaySmokeCli(
       host: args.host,
       ...(args.port ? { port: args.port } : {}),
       timeoutMs: args.timeoutMs,
+      publicSafety: args.publicSafety,
     });
 
     io.stdout.write(
