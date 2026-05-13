@@ -9,6 +9,7 @@ const MAX_PUBLIC_CONFIG_FILES = 128;
 const MAX_CLI_ARGS = 12;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_PACKAGE_JSON_BYTES = 512 * 1024;
+const MAX_DEPLOY_SCRIPT_PATH_BYTES = 4_096;
 
 type ScriptKind = "render" | "validate" | "doctor" | "modelStage";
 
@@ -170,6 +171,20 @@ function requireFlagValue(flag: string, value: string | undefined): string {
   }
 
   return value;
+}
+
+function assertDeployScriptPathValue(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty path`);
+  }
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} must not contain control characters`);
+  }
+
+  if (Buffer.byteLength(value, "utf8") > MAX_DEPLOY_SCRIPT_PATH_BYTES) {
+    throw new Error(`${label} must be at most ${MAX_DEPLOY_SCRIPT_PATH_BYTES} bytes`);
+  }
 }
 
 export function parseArgs(argv: string[]): DeployScriptCoverageArgs {
@@ -416,6 +431,11 @@ export function validateDeployScriptCoverage(options: {
     throw new Error(
       `Deploy script coverage can inspect at most ${MAX_DEPLOY_SCRIPT_CONFIGS} config files`,
     );
+  }
+
+  assertDeployScriptPathValue(options.cwd, "cwd");
+  for (const [index, configPath] of options.configPaths.entries()) {
+    assertDeployScriptPathValue(configPath, `configPaths[${index}]`);
   }
 
   const configByName = new Map(

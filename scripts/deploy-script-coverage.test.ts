@@ -106,6 +106,18 @@ test("validateDeployScriptCoverage rejects excessive config inputs before matchi
   );
 });
 
+test("validateDeployScriptCoverage rejects oversized direct paths before matching scripts", () => {
+  assert.throws(
+    () =>
+      validateDeployScriptCoverage({
+        cwd: process.cwd(),
+        configPaths: [`/${"a".repeat(4096)}`],
+        scripts: {},
+      }),
+    /configPaths\[0\] must be at most 4096 bytes/,
+  );
+});
+
 test("validateDeployScriptCoverage catches missing and mistargeted package aliases", async () => {
   const cwd = process.cwd();
   const configPaths = await collectDeployScriptConfigPaths(cwd, "examples/config");
