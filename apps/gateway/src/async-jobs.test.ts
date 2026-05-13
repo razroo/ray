@@ -215,11 +215,129 @@ test("durable inference queue snapshots config at construction", async () => {
     assert.equal(snapshot.jobsPressure, true);
     assert.equal(snapshot.pressureThreshold, 0.9);
     assert.equal(snapshot.degraded, true);
+    assert.equal(snapshot.activeInferenceJobs, 0);
+    assert.equal(snapshot.activeCallbackDeliveries, 0);
     assert.equal(snapshot.pollIntervalMs, 750);
     assert.equal(snapshot.dispatchConcurrency, 2);
+    assert.equal(snapshot.callbackConcurrency, 1);
     assert.equal(snapshot.maxAttempts, 4);
     assert.equal(snapshot.callbackTimeoutMs, 1_500);
     assert.equal(snapshot.maxCallbackAttempts, 3);
+  } finally {
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});
+
+test("durable inference queue snapshots active inference dispatches", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-active-inference-"));
+
+  try {
+    const config = mergeConfig(createDefaultConfig("tiny"), {
+      asyncQueue: {
+        enabled: true,
+        storageDir,
+        dispatchConcurrency: 1,
+      },
+      model: {
+        adapter: {
+          kind: "mock",
+          latencyMs: 250,
+        },
+      },
+    });
+    const runtime = createRayRuntime(config);
+    const logger = new Logger("test", "error");
+    const queue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+    });
+
+    await queue.enqueue({
+      input: "slow active inference",
+    });
+    await queue.start();
+
+    const snapshot = await waitFor(
+      async () => queue.snapshot(),
+      (value) => value.activeInferenceJobs === 1,
+    );
+
+    assert.equal(snapshot.running, 1);
+    assert.equal(snapshot.activeInferenceJobs, 1);
+    assert.equal(snapshot.queued, 0);
+
+    const completed = await waitFor(
+      async () => queue.snapshot(),
+      (value) => value.succeeded === 1 && value.activeInferenceJobs === 0,
+    );
+    assert.equal(completed.activeInferenceJobs, 0);
+
+    await queue.stop();
+  } finally {
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});
+
+test("durable inference queue snapshots active callback deliveries", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-active-callback-"));
+  let completeCallback: (() => void) | undefined;
+  let markCallbackStarted: (() => void) | undefined;
+  const callbackStarted = new Promise<void>((resolve) => {
+    markCallbackStarted = resolve;
+  });
+  const callbackResponse = new Promise<Response>((resolve) => {
+    completeCallback = () => resolve(new Response(null, { status: 200 }));
+  });
+
+  try {
+    const config = mergeConfig(createDefaultConfig("tiny"), {
+      asyncQueue: {
+        enabled: true,
+        storageDir,
+        callbackTimeoutMs: 1_000,
+        callbackAllowedHosts: ["callback.example"],
+      },
+      model: {
+        adapter: {
+          kind: "mock",
+          latencyMs: 1,
+        },
+      },
+    });
+    const runtime = createRayRuntime(config);
+    const logger = new Logger("test", "error");
+    const queue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+      fetchImpl: async () => {
+        markCallbackStarted?.();
+        return callbackResponse;
+      },
+    });
+
+    await queue.enqueue({
+      input: "callback stays active",
+      callbackUrl: "https://callback.example/ray",
+    });
+    await queue.start();
+    await callbackStarted;
+
+    const active = queue.snapshot();
+    assert.equal(active.succeeded, 1);
+    assert.equal(active.callbackPending, 1);
+    assert.equal(active.activeCallbackDeliveries, 1);
+    assert.equal(active.callbackConcurrency, 1);
+
+    completeCallback?.();
+    const delivered = await waitFor(
+      async () => queue.snapshot(),
+      (value) => value.callbackDelivered === 1 && value.activeCallbackDeliveries === 0,
+    );
+    assert.equal(delivered.activeCallbackDeliveries, 0);
+
+    await queue.stop();
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }

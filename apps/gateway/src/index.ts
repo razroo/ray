@@ -173,9 +173,11 @@ function attachAsyncQueueMetrics(
   metrics.gauges["async_queue.degraded"] = snapshot.degraded ? 1 : 0;
   metrics.gauges["async_queue.queued"] = snapshot.queued;
   metrics.gauges["async_queue.running"] = snapshot.running;
+  metrics.gauges["async_queue.active_inference_jobs"] = snapshot.activeInferenceJobs;
   metrics.gauges["async_queue.succeeded"] = snapshot.succeeded;
   metrics.gauges["async_queue.failed"] = snapshot.failed;
   metrics.gauges["async_queue.callback_pending"] = snapshot.callbackPending;
+  metrics.gauges["async_queue.active_callback_deliveries"] = snapshot.activeCallbackDeliveries;
   metrics.gauges["async_queue.callback_delivered"] = snapshot.callbackDelivered;
   metrics.gauges["async_queue.callback_failed"] = snapshot.callbackFailed;
   metrics.gauges["async_queue.retry_scheduled"] = snapshot.retryScheduled;
@@ -199,6 +201,7 @@ function attachAsyncQueueMetrics(
   metrics.gauges["async_queue.completed_ttl_ms"] = snapshot.completedTtlMs;
   metrics.gauges["async_queue.poll_interval_ms"] = snapshot.pollIntervalMs;
   metrics.gauges["async_queue.dispatch_concurrency"] = snapshot.dispatchConcurrency;
+  metrics.gauges["async_queue.callback_concurrency"] = snapshot.callbackConcurrency;
   metrics.gauges["async_queue.max_attempts"] = snapshot.maxAttempts;
   metrics.gauges["async_queue.callback_timeout_ms"] = snapshot.callbackTimeoutMs;
   metrics.gauges["async_queue.max_callback_attempts"] = snapshot.maxCallbackAttempts;

@@ -323,9 +323,11 @@ export interface AsyncQueueSnapshot {
   degraded: boolean;
   queued: number;
   running: number;
+  activeInferenceJobs: number;
   succeeded: number;
   failed: number;
   callbackPending: number;
+  activeCallbackDeliveries: number;
   callbackDelivered: number;
   callbackFailed: number;
   retryScheduled: number;
@@ -343,6 +345,7 @@ export interface AsyncQueueSnapshot {
   completedTtlMs: number;
   pollIntervalMs: number;
   dispatchConcurrency: number;
+  callbackConcurrency: number;
   maxAttempts: number;
   callbackTimeoutMs: number;
   maxCallbackAttempts: number;

@@ -44,6 +44,7 @@ const MAX_JOB_ERROR_DETAIL_TOTAL_CHARS = 64 * 1024;
 const MAX_JOB_ERROR_DETAIL_NODES = 512;
 const MAX_ASYNC_QUEUE_JOBS = 2_000;
 const ASYNC_QUEUE_JOB_PRESSURE_RATIO = 0.9;
+const ASYNC_QUEUE_CALLBACK_CONCURRENCY = 1;
 const MAX_ASYNC_QUEUE_RECOVERY_ENTRIES = 4_096;
 const MAX_ASYNC_QUEUE_RECOVERY_TEMP_REMOVALS = 2_048;
 const MAX_ASYNC_DISPATCH_CONCURRENCY = 8;
@@ -1172,9 +1173,11 @@ export class DurableInferenceQueue {
       degraded: jobsPressure,
       queued: this.queuedJobIds.length,
       running,
+      activeInferenceJobs: this.activeInferenceJobs,
       succeeded,
       failed,
       callbackPending,
+      activeCallbackDeliveries: this.activeCallbackDeliveries,
       callbackDelivered,
       callbackFailed,
       retryScheduled: jobRetryScheduled + callbackRetryScheduled,
@@ -1189,6 +1192,7 @@ export class DurableInferenceQueue {
       completedTtlMs: this.options.config.completedTtlMs,
       pollIntervalMs: this.options.config.pollIntervalMs,
       dispatchConcurrency: this.options.config.dispatchConcurrency,
+      callbackConcurrency: ASYNC_QUEUE_CALLBACK_CONCURRENCY,
       maxAttempts: this.options.config.maxAttempts,
       callbackTimeoutMs: this.options.config.callbackTimeoutMs,
       maxCallbackAttempts: this.options.config.maxCallbackAttempts,
@@ -1581,7 +1585,10 @@ export class DurableInferenceQueue {
       });
     }
 
-    while (this.activeCallbackDeliveries < 1 && this.pendingCallbackJobIds.length > 0) {
+    while (
+      this.activeCallbackDeliveries < ASYNC_QUEUE_CALLBACK_CONCURRENCY &&
+      this.pendingCallbackJobIds.length > 0
+    ) {
       const jobId = this.pendingCallbackJobIds.shift();
 
       if (!jobId) {

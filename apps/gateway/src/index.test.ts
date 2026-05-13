@@ -1153,9 +1153,11 @@ test("gateway metrics endpoint exposes async queue saturation", async (t) => {
   assert.equal(body.gauges["async_queue.degraded"], 0);
   assert.equal(body.gauges["async_queue.queued"], 0);
   assert.equal(body.gauges["async_queue.running"], 0);
+  assert.equal(body.gauges["async_queue.active_inference_jobs"], 0);
   assert.equal(body.gauges["async_queue.succeeded"], 0);
   assert.equal(body.gauges["async_queue.failed"], 0);
   assert.equal(body.gauges["async_queue.callback_pending"], 0);
+  assert.equal(body.gauges["async_queue.active_callback_deliveries"], 0);
   assert.equal(body.gauges["async_queue.callback_delivered"], 0);
   assert.equal(body.gauges["async_queue.callback_failed"], 0);
   assert.equal(body.gauges["async_queue.retry_scheduled"], 0);
@@ -1173,6 +1175,7 @@ test("gateway metrics endpoint exposes async queue saturation", async (t) => {
   assert.equal(body.gauges["async_queue.completed_ttl_ms"], config.asyncQueue.completedTtlMs);
   assert.equal(body.gauges["async_queue.poll_interval_ms"], config.asyncQueue.pollIntervalMs);
   assert.equal(body.gauges["async_queue.dispatch_concurrency"], 2);
+  assert.equal(body.gauges["async_queue.callback_concurrency"], 1);
   assert.equal(body.gauges["async_queue.max_attempts"], config.asyncQueue.maxAttempts);
   assert.equal(body.gauges["async_queue.callback_timeout_ms"], config.asyncQueue.callbackTimeoutMs);
   assert.equal(
@@ -1187,6 +1190,9 @@ test("gateway metrics endpoint exposes async queue saturation", async (t) => {
   assert.equal(health.asyncQueue?.degraded, false);
   assert.equal(health.asyncQueue?.jobsPressure, false);
   assert.equal(health.asyncQueue?.pressureThreshold, 0.9);
+  assert.equal(health.asyncQueue?.activeInferenceJobs, 0);
+  assert.equal(health.asyncQueue?.activeCallbackDeliveries, 0);
+  assert.equal(health.asyncQueue?.callbackConcurrency, 1);
   assert.equal(health.asyncQueue?.succeeded, 0);
   assert.equal(health.asyncQueue?.failed, 0);
   assert.equal(health.asyncQueue?.callbackDelivered, 0);
