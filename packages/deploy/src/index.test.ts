@@ -1915,6 +1915,30 @@ test("diagnoseConfig warns when async callbacks bypass network guardrails", () =
   assert.match(trustedHosts.message, /bypass DNS\/network address blocking/);
 });
 
+test("diagnoseConfig warns when async dispatch exceeds scheduler concurrency", () => {
+  const config = mergeConfig(createDefaultConfig("1b"), {
+    scheduler: {
+      concurrency: 1,
+    },
+    asyncQueue: {
+      enabled: true,
+      storageDir: "/var/lib/ray/async-queue",
+      dispatchConcurrency: 3,
+    },
+  });
+
+  const diagnostics = diagnoseConfig(config, process.env);
+  const diagnostic = diagnostics.find(
+    (entry) => entry.code === "async_queue_dispatch_exceeds_scheduler_concurrency",
+  );
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /asyncQueue\.dispatchConcurrency \(3\)/);
+  assert.match(diagnostic.message, /scheduler\.concurrency \(1\)/);
+  assert.match(diagnostic.message, /cannot create more backend slots/);
+});
+
 test("diagnoseConfig warns when non-strict async queue storage is below reserved headroom", () => {
   const config = mergeConfig(createDefaultConfig("1b"), {
     asyncQueue: {

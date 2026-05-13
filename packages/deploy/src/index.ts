@@ -2822,6 +2822,14 @@ export function diagnoseConfig(
       });
     }
 
+    if (config.asyncQueue.dispatchConcurrency > config.scheduler.concurrency) {
+      diagnostics.push({
+        level: "warn",
+        code: "async_queue_dispatch_exceeds_scheduler_concurrency",
+        message: `asyncQueue.dispatchConcurrency (${config.asyncQueue.dispatchConcurrency}) is higher than scheduler.concurrency (${config.scheduler.concurrency}). On a cheap single-node VPS this cannot create more backend slots; it only lets durable jobs pile up behind the in-process scheduler, so lower asyncQueue.dispatchConcurrency or raise scheduler.concurrency only after sizing the backend.`,
+      });
+    }
+
     if (!path.isAbsolute(config.asyncQueue.storageDir)) {
       diagnostics.push({
         level: "warn",
