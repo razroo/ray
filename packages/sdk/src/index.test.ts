@@ -129,6 +129,7 @@ test("RayClient fetches unauthenticated readiness snapshots", async (t) => {
           memory: false,
           cpu: false,
           asyncQueue: false,
+          rateLimit: false,
           gatewayHttp: false,
         },
         reasons: ["queue_pressure"],

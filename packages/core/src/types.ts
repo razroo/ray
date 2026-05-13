@@ -214,6 +214,19 @@ export interface RateLimitConfig {
   trustProxyHeaders: boolean;
 }
 
+export interface RateLimitSnapshot {
+  enabled: boolean;
+  degraded: boolean;
+  activeKeys: number;
+  maxKeys: number;
+  activeKeysRatio: number;
+  pressureThreshold: number;
+  windowMs: number;
+  maxRequests: number;
+  keyStrategy: RateLimitKeyStrategy;
+  trustProxyHeaders: boolean;
+}
+
 export interface RayConfig {
   profile: RayProfile;
   server: ServerConfig;
@@ -638,6 +651,7 @@ export interface HealthSnapshot {
   provider: ProviderHealthSnapshot;
   runtime?: RuntimeHealthDiagnostics;
   asyncQueue?: AsyncQueueSnapshot;
+  rateLimit?: RateLimitSnapshot;
   gateway?: GatewayHealthDiagnostics;
 }
 
@@ -672,6 +686,7 @@ export type ReadinessReason =
   | "memory_pressure"
   | "cpu_pressure"
   | "async_queue_pressure"
+  | "rate_limit_pressure"
   | "gateway_http_pressure";
 
 export interface ReadinessSnapshot {
@@ -686,6 +701,7 @@ export interface ReadinessSnapshot {
     memory: boolean;
     cpu: boolean;
     asyncQueue: boolean;
+    rateLimit: boolean;
     gatewayHttp: boolean;
   };
   reasons: ReadinessReason[];

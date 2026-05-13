@@ -90,6 +90,48 @@ test("fixed-window rate limiter snapshots config and bounds direct keys", () => 
   assert.throws(() => limiter.take("x".repeat(513), 0), /rate limit key/);
 });
 
+test("fixed-window rate limiter snapshots active key pressure without exposing keys", () => {
+  const limiter = new FixedWindowRateLimiter({
+    enabled: true,
+    windowMs: 1_000,
+    maxRequests: 10,
+    maxKeys: 2,
+    keyStrategy: "ip",
+    trustProxyHeaders: true,
+  });
+
+  assert.deepEqual(limiter.snapshot(0), {
+    enabled: true,
+    degraded: false,
+    activeKeys: 0,
+    maxKeys: 2,
+    activeKeysRatio: 0,
+    pressureThreshold: 0.9,
+    windowMs: 1_000,
+    maxRequests: 10,
+    keyStrategy: "ip",
+    trustProxyHeaders: true,
+  });
+
+  limiter.take("ip:198.51.100.1", 0);
+  limiter.take("ip:198.51.100.2", 0);
+
+  assert.deepEqual(limiter.snapshot(500), {
+    enabled: true,
+    degraded: true,
+    activeKeys: 2,
+    maxKeys: 2,
+    activeKeysRatio: 1,
+    pressureThreshold: 0.9,
+    windowMs: 1_000,
+    maxRequests: 10,
+    keyStrategy: "ip",
+    trustProxyHeaders: true,
+  });
+
+  assert.equal(limiter.snapshot(1_000).activeKeys, 0);
+});
+
 test("parseBearerToken rejects ambiguous or malformed authorization headers", () => {
   assert.equal(parseBearerToken("Bearer secret-token"), "secret-token");
   assert.equal(parseBearerToken("bearer secret-token"), "secret-token");

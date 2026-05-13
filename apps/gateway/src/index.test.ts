@@ -1031,6 +1031,81 @@ test("gateway metrics endpoint exposes HTTP socket pressure threshold", async (t
   assert.equal(body.gauges["gateway.http.request_body_limit_bytes"], 32_000);
 });
 
+test("gateway health and metrics expose rate-limit key pressure", async (t) => {
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    rateLimit: {
+      enabled: true,
+      maxRequests: 10,
+      maxKeys: 2,
+      windowMs: 60_000,
+      keyStrategy: "ip",
+      trustProxyHeaders: true,
+    },
+  });
+  const gateway = createGatewayServer({ config });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const inferUrl = `http://127.0.0.1:${address.port}/v1/infer`;
+  for (const clientIp of ["198.51.100.1", "198.51.100.2"]) {
+    const response = await fetch(inferUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-forwarded-for": clientIp,
+      },
+      body: JSON.stringify({
+        input: `request from ${clientIp}`,
+      }),
+    });
+    assert.equal(response.status, 200);
+    await response.arrayBuffer();
+  }
+
+  const metricsResponse = await fetch(`http://127.0.0.1:${address.port}/metrics`);
+  assert.equal(metricsResponse.status, 200);
+  const metrics = (await metricsResponse.json()) as RuntimeMetricsSnapshot;
+  assert.equal(metrics.gauges["rate_limit.enabled"], 1);
+  assert.equal(metrics.gauges["rate_limit.degraded"], 1);
+  assert.equal(metrics.gauges["rate_limit.active_keys"], 2);
+  assert.equal(metrics.gauges["rate_limit.max_keys"], 2);
+  assert.equal(metrics.gauges["rate_limit.active_keys_ratio"], 1);
+  assert.equal(metrics.gauges["rate_limit.pressure_threshold"], 0.9);
+  assert.equal(metrics.gauges["rate_limit.window_ms"], 60_000);
+  assert.equal(metrics.gauges["rate_limit.max_requests"], 10);
+  assert.equal(metrics.gauges["rate_limit.trust_proxy_headers"], 1);
+
+  const healthResponse = await fetch(`http://127.0.0.1:${address.port}/health`);
+  assert.equal(healthResponse.status, 200);
+  const health = (await healthResponse.json()) as HealthSnapshot;
+  assert.equal(health.status, "degraded");
+  assert.equal(health.rateLimit?.degraded, true);
+  assert.equal(health.rateLimit?.activeKeys, 2);
+  assert.equal(health.rateLimit?.maxKeys, 2);
+  assert.equal(health.rateLimit?.activeKeysRatio, 1);
+  assert.equal(health.rateLimit?.keyStrategy, "ip");
+  assert.equal(health.rateLimit?.trustProxyHeaders, true);
+
+  const readyzResponse = await fetch(`http://127.0.0.1:${address.port}/readyz`);
+  assert.equal(readyzResponse.status, 200);
+  const readyz = (await readyzResponse.json()) as {
+    status: string;
+    rateLimit?: unknown;
+    pressure?: { rateLimit: boolean };
+    reasons?: string[];
+  };
+  assert.equal(readyz.status, "degraded");
+  assert.equal(readyz.rateLimit, undefined);
+  assert.equal(readyz.pressure?.rateLimit, true);
+  assert.deepEqual(readyz.reasons, ["rate_limit_pressure"]);
+});
+
 test("gateway metrics endpoint exposes async queue saturation", async (t) => {
   const storageDir = await mkdtemp(join(tmpdir(), "ray-gateway-metrics-queue-"));
   const config = mergeConfig(createDefaultConfig("tiny"), {
@@ -1374,6 +1449,7 @@ test("gateway readyz exposes minimal pressure reasons without protected health d
     memory: true,
     cpu: true,
     asyncQueue: false,
+    rateLimit: false,
     gatewayHttp: false,
   });
   assert.deepEqual(body.reasons, [

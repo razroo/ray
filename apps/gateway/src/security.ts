@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { isIP } from "node:net";
-import type { RateLimitConfig } from "@razroo/ray-core";
+import type { RateLimitConfig, RateLimitSnapshot } from "@razroo/ray-core";
 
 interface FixedWindowEntry {
   count: number;
@@ -15,6 +15,7 @@ const MAX_RATE_LIMIT_WINDOW_MS = 3_600_000;
 const MAX_RATE_LIMIT_REQUESTS = 10_000;
 const MAX_RATE_LIMIT_KEYS = 16_384;
 const MAX_RATE_LIMIT_KEY_CHARS = 512;
+const RATE_LIMIT_KEY_PRESSURE_RATIO = 0.9;
 
 const rateLimitKeyStrategies = new Set<RateLimitConfig["keyStrategy"]>([
   "ip",
@@ -121,6 +122,27 @@ export class FixedWindowRateLimiter {
       limit: this.config.maxRequests,
       remaining: Math.max(this.config.maxRequests - existing.count, 0),
       resetAt: existing.resetAt,
+    };
+  }
+
+  snapshot(now = Date.now()): RateLimitSnapshot {
+    this.pruneExpired(now);
+
+    const activeKeysRatio = Number(
+      (this.entries.size / Math.max(1, this.config.maxKeys)).toFixed(4),
+    );
+
+    return {
+      enabled: this.config.enabled,
+      degraded: activeKeysRatio >= RATE_LIMIT_KEY_PRESSURE_RATIO,
+      activeKeys: this.entries.size,
+      maxKeys: this.config.maxKeys,
+      activeKeysRatio,
+      pressureThreshold: RATE_LIMIT_KEY_PRESSURE_RATIO,
+      windowMs: this.config.windowMs,
+      maxRequests: this.config.maxRequests,
+      keyStrategy: this.config.keyStrategy,
+      trustProxyHeaders: this.config.trustProxyHeaders,
     };
   }
 

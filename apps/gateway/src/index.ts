@@ -12,6 +12,7 @@ import {
   type HealthSnapshot,
   type InferenceRequest,
   type RayConfig,
+  type RateLimitSnapshot,
   type ReadinessReason,
   type ReadinessSnapshot,
   type RuntimeMetricsSnapshot,
@@ -234,11 +235,45 @@ function attachGatewayHttpResourceMetrics(
   return metrics;
 }
 
+function attachRateLimitMetrics(
+  metrics: RuntimeMetricsSnapshot,
+  snapshot: RateLimitSnapshot,
+): RuntimeMetricsSnapshot {
+  metrics.gauges["rate_limit.enabled"] = snapshot.enabled ? 1 : 0;
+  metrics.gauges["rate_limit.degraded"] = snapshot.degraded ? 1 : 0;
+  metrics.gauges["rate_limit.active_keys"] = snapshot.activeKeys;
+  metrics.gauges["rate_limit.max_keys"] = snapshot.maxKeys;
+  metrics.gauges["rate_limit.active_keys_ratio"] = snapshot.activeKeysRatio;
+  metrics.gauges["rate_limit.pressure_threshold"] = snapshot.pressureThreshold;
+  metrics.gauges["rate_limit.window_ms"] = snapshot.windowMs;
+  metrics.gauges["rate_limit.max_requests"] = snapshot.maxRequests;
+  metrics.gauges["rate_limit.trust_proxy_headers"] = snapshot.trustProxyHeaders ? 1 : 0;
+
+  return metrics;
+}
+
 function attachAsyncQueueHealth(
   health: HealthSnapshot,
   snapshot: AsyncQueueSnapshot,
 ): HealthSnapshot {
   health.asyncQueue = snapshot;
+
+  if (health.status === "ok" && snapshot.degraded) {
+    health.status = "degraded";
+  }
+
+  return health;
+}
+
+function attachRateLimitHealth(
+  health: HealthSnapshot,
+  snapshot: RateLimitSnapshot | undefined,
+): HealthSnapshot {
+  if (!snapshot) {
+    return health;
+  }
+
+  health.rateLimit = snapshot;
 
   if (health.status === "ok" && snapshot.degraded) {
     health.status = "degraded";
@@ -298,6 +333,7 @@ function buildReadyzResponse(
   const memoryPressure = health.runtime?.memory.degraded ?? false;
   const cpuPressure = health.runtime?.cpu?.degraded ?? false;
   const asyncQueuePressure = health.asyncQueue?.degraded ?? false;
+  const rateLimitPressure = health.rateLimit?.degraded ?? false;
   const gatewayHttpPressure = isGatewayHttpPressure(httpResources);
   const reasons: ReadinessReason[] = [];
 
@@ -329,12 +365,19 @@ function buildReadyzResponse(
     reasons.push("async_queue_pressure");
   }
 
+  if (rateLimitPressure) {
+    reasons.push("rate_limit_pressure");
+  }
+
   if (gatewayHttpPressure) {
     reasons.push("gateway_http_pressure");
   }
 
   return {
-    status: health.status === "ok" && gatewayHttpPressure ? "degraded" : health.status,
+    status:
+      health.status === "ok" && (rateLimitPressure || gatewayHttpPressure)
+        ? "degraded"
+        : health.status,
     service: "ray-gateway",
     providerStatus: health.provider.status,
     queueDepth: health.queueDepth,
@@ -345,6 +388,7 @@ function buildReadyzResponse(
       memory: memoryPressure,
       cpu: cpuPressure,
       asyncQueue: asyncQueuePressure,
+      rateLimit: rateLimitPressure,
       gatewayHttp: gatewayHttpPressure,
     },
     reasons,
@@ -1214,6 +1258,10 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
         if (jobQueue) {
           attachAsyncQueueHealth(health, await jobQueue.snapshotWithStorage());
         }
+        attachRateLimitHealth(
+          health,
+          config.rateLimit.enabled ? rateLimiter?.snapshot() : undefined,
+        );
         const httpResourceSnapshot = handlerOptions.httpResourceSnapshot?.();
         writeJsonWithoutReadingBody(
           request,
@@ -1240,6 +1288,10 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
         if (jobQueue) {
           attachAsyncQueueHealth(health, await jobQueue.snapshotWithStorage());
         }
+        attachRateLimitHealth(
+          health,
+          config.rateLimit.enabled ? rateLimiter?.snapshot() : undefined,
+        );
         attachGatewayHttpHealth(health, handlerOptions.httpResourceSnapshot?.());
         writeJsonWithoutReadingBody(
           request,
@@ -1271,14 +1323,13 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
         if (httpResourceSnapshot) {
           attachGatewayHttpResourceMetrics(metrics, httpResourceSnapshot);
         }
-        writeJsonWithoutReadingBody(
-          request,
-          response,
-          200,
-          jobQueue
-            ? attachAsyncQueueMetrics(metrics, await jobQueue.snapshotWithStorage())
-            : metrics,
-        );
+        if (config.rateLimit.enabled && rateLimiter) {
+          attachRateLimitMetrics(metrics, rateLimiter.snapshot());
+        }
+        if (jobQueue) {
+          attachAsyncQueueMetrics(metrics, await jobQueue.snapshotWithStorage());
+        }
+        writeJsonWithoutReadingBody(request, response, 200, metrics);
         return;
       }
 
