@@ -608,6 +608,32 @@ test("diagnoseConfig warns when IP rate-limit proxy header posture is unsafe", (
   );
 });
 
+test("diagnoseConfig warns when gateway cache budget is high for generated memory limits", () => {
+  const defaultConfig = createDefaultConfig("1b");
+  assert.ok(
+    !diagnoseConfig(defaultConfig, process.env).some(
+      (entry) => entry.code === "cache_max_bytes_high_for_gateway_memory",
+    ),
+  );
+
+  const config = mergeConfig(defaultConfig, {
+    cache: {
+      maxBytes: 256 * 1024 * 1024,
+    },
+  });
+
+  const diagnostic = diagnoseConfig(config, process.env).find(
+    (entry) => entry.code === "cache_max_bytes_high_for_gateway_memory",
+  );
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /cache\.maxBytes/);
+  assert.match(diagnostic.message, /RAY_CACHE_MAX_BYTES/);
+  assert.match(diagnostic.message, /256 MiB/);
+  assert.match(diagnostic.message, /generated gateway MemoryMax of 896 MiB/);
+});
+
 test("diagnoseConfig surfaces invalid auth key material without retaining secrets", () => {
   const config = mergeConfig(createDefaultConfig("vps"), {
     auth: {

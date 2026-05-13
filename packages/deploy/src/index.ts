@@ -290,6 +290,8 @@ const MAX_CADDY_UPSTREAM_TIMEOUT_MS = 120_000 + CADDY_UPSTREAM_TIMEOUT_GRACE_MS;
 const GATEWAY_MEMORY_HIGH_HEADROOM_MIB = 128;
 const GATEWAY_MEMORY_MAX_HEADROOM_MIB = 384;
 const GATEWAY_MEMORY_SWAP_MAX_MIB = 128;
+const GATEWAY_CACHE_MAX_BYTES_WARN_RATIO = 0.2;
+const GATEWAY_CACHE_MAX_BYTES_WARN_MIN_MIB = 128;
 const MIN_WORKING_DIRECTORY_FREE_MIB = 512;
 const LLAMA_CPP_MEMORY_HIGH_RATIO = 0.9;
 const LLAMA_CPP_SWAP_MAX_RATIO = 0.25;
@@ -1583,6 +1585,13 @@ function resolveGatewayMemoryControls(config: RayConfig): {
   };
 }
 
+function resolveGatewayCacheMaxBytesWarnThresholdMiB(gatewayMemoryMaxMiB: number): number {
+  return Math.max(
+    GATEWAY_CACHE_MAX_BYTES_WARN_MIN_MIB,
+    Math.floor(gatewayMemoryMaxMiB * GATEWAY_CACHE_MAX_BYTES_WARN_RATIO),
+  );
+}
+
 function resolveLlamaCppMemoryControls(
   launchProfile: LlamaCppLaunchProfile,
   preflight: Pick<DeploymentPreflight, "memoryBudgetMiB">,
@@ -2800,6 +2809,21 @@ export function diagnoseConfig(
         code: "rate_limit_proxy_headers_disabled",
         message:
           "rateLimit.trustProxyHeaders is disabled while server.host is loopback. Generated VPS deployments normally receive traffic through Caddy, so IP-based rate limits will see the proxy address instead of the client unless proxy headers are trusted.",
+      });
+    }
+  }
+
+  if (config.cache.enabled) {
+    const gatewayMemoryMaxMiB = resolveGatewayMemoryControls(config).memoryMaxMiB;
+    const cacheMaxMiB = bytesToMiBRoundedUp(config.cache.maxBytes);
+    const cacheMaxBytesWarnThresholdMiB =
+      resolveGatewayCacheMaxBytesWarnThresholdMiB(gatewayMemoryMaxMiB);
+
+    if (cacheMaxMiB > cacheMaxBytesWarnThresholdMiB) {
+      diagnostics.push({
+        level: "warn",
+        code: "cache_max_bytes_high_for_gateway_memory",
+        message: `cache.maxBytes allows the in-process gateway cache to grow to ${formatMiB(cacheMaxMiB)}, above the ${formatMiB(cacheMaxBytesWarnThresholdMiB)} small-VPS warning threshold for the generated gateway MemoryMax of ${formatMiB(gatewayMemoryMaxMiB)}. Lower RAY_CACHE_MAX_BYTES so result caching does not compete with request handling and graceful degradation headroom.`,
       });
     }
   }
