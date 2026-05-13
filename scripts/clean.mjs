@@ -55,6 +55,20 @@ function assertPathWithinLimit(root, absolutePath, maxPathBytes) {
   }
 }
 
+function assertCleanPathValue(value, label, maxPathBytes) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty path`);
+  }
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} must not contain control characters`);
+  }
+
+  if (Buffer.byteLength(value, "utf8") > maxPathBytes) {
+    throw new Error(`${label} must be at most ${maxPathBytes} bytes`);
+  }
+}
+
 async function readPackageJsonBounded(packageJsonPath) {
   let fileHandle;
 
@@ -188,9 +202,10 @@ async function walk(current, state, options) {
 }
 
 export async function cleanWorkspace(root = process.cwd(), options = {}) {
-  const resolvedRoot = path.resolve(root);
   const resolvedOptions = resolveCleanOptions(options);
   assertCleanOptions(resolvedOptions);
+  assertCleanPathValue(root, "root", resolvedOptions.maxPathBytes);
+  const resolvedRoot = path.resolve(root);
 
   if (resolvedOptions.verifyRoot) {
     await assertRayRepoRoot(resolvedRoot);

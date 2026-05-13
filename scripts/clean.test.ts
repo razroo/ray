@@ -68,6 +68,13 @@ test("cleanWorkspace rejects non-Ray roots before walking", async (t) => {
   assert.equal(await pathExists(path.join(tempDir, "dist")), true);
 });
 
+test("cleanWorkspace rejects oversized direct roots before walking", async () => {
+  await assert.rejects(
+    () => cleanWorkspace(`/${"a".repeat(4096)}`),
+    /root must be at most 4096 bytes/,
+  );
+});
+
 test("cleanWorkspace streams directory entries without readdir", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-clean-stream-"));
   const originalReaddir = fs.readdir;
