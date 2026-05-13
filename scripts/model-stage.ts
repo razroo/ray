@@ -43,6 +43,7 @@ const MODEL_READ_CHECK_MAX_BUFFER_BYTES = 16 * 1024;
 const BYTES_PER_MIB = 1024 * 1024;
 const MAX_LLAMA_CPP_BINARY_SOURCE_BYTES = 512 * BYTES_PER_MIB;
 const MAX_LLAMA_CPP_BINARY_SOURCE_MIB = MAX_LLAMA_CPP_BINARY_SOURCE_BYTES / BYTES_PER_MIB;
+const MIN_BINARY_STAGE_FREE_AFTER_COPY_MIB = 64;
 const MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB = 256;
 const GGUF_MAGIC = "GGUF";
 const LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS = 10;
@@ -553,6 +554,10 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
     binarySourcePath,
   )})" || exit "$?"; test "\${binary_source_bytes:-0}" -le ${MAX_LLAMA_CPP_BINARY_SOURCE_BYTES} || { printf '%s\\n' ${shellQuote(
     `llama-server source must be at most ${MAX_LLAMA_CPP_BINARY_SOURCE_MIB} MiB before copying to ${plan.binaryPath}.`,
+  )} >&2; exit 1; }; binary_df_output="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s df -Pm ${shellQuote(
+    plan.binaryDirectory,
+  )})" || exit "$?"; binary_source_mib="$(((\${binary_source_bytes:-0} + ${BYTES_PER_MIB - 1}) / ${BYTES_PER_MIB}))"; test "$binary_source_mib" -ge 1 || binary_source_mib=1; binary_required_mib="$((binary_source_mib + ${MIN_BINARY_STAGE_FREE_AFTER_COPY_MIB}))"; binary_available_mib="$(printf '%s\\n' "$binary_df_output" | awk 'NR==2 {print $4}')"; test "\${binary_available_mib:-0}" -ge "\${binary_required_mib:-0}" || { printf '%s\\n' ${shellQuote(
+    `Not enough free space in ${plan.binaryDirectory}: keep at least ${MIN_BINARY_STAGE_FREE_AFTER_COPY_MIB} MiB free after copying llama-server.`,
   )} >&2; exit 1; }`;
   const binarySourceLaunchFlagPreflight = `binary_help="$(timeout ${LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS}s ${shellQuote(
     binarySourcePath,
@@ -1163,6 +1168,7 @@ export function resolveModelStageAvailableStorageMiB(
 export function evaluateModelStageStorageHeadroom(
   sourceBytes: number,
   availableMiB: number,
+  reserveMiB = MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB,
 ): ModelStageStorageHeadroom {
   if (!Number.isSafeInteger(sourceBytes) || sourceBytes < 0) {
     throw new Error("sourceBytes must be a non-negative safe integer");
@@ -1172,12 +1178,16 @@ export function evaluateModelStageStorageHeadroom(
     throw new Error("availableMiB must be a non-negative safe integer");
   }
 
+  if (!Number.isSafeInteger(reserveMiB) || reserveMiB < 0) {
+    throw new Error("reserveMiB must be a non-negative safe integer");
+  }
+
   const sourceMiB = Math.max(1, Math.ceil(sourceBytes / BYTES_PER_MIB));
-  const requiredMiB = sourceMiB + MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB;
+  const requiredMiB = sourceMiB + reserveMiB;
 
   return {
     sourceMiB,
-    reserveMiB: MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB,
+    reserveMiB,
     requiredMiB,
     availableMiB,
     ok: availableMiB >= requiredMiB,
@@ -1230,9 +1240,11 @@ function assertModelStageMemoryFit(sourceBytes: number, plan: ModelStagePlan): v
   );
 }
 
-async function assertModelStageStorageHeadroom(
+async function assertArtifactStageStorageHeadroom(
   sourcePath: string,
   targetDirectory: string,
+  label: string,
+  reserveMiB: number,
   options: ModelStageApplyOptions = {},
 ): Promise<void> {
   const sourceStats = await stat(sourcePath);
@@ -1242,16 +1254,46 @@ async function assertModelStageStorageHeadroom(
       : resolveModelStageAvailableStorageMiB(await statfs(targetDirectory));
 
   if (availableMiB === undefined) {
-    throw new Error(`Could not inspect free space for model target directory: ${targetDirectory}`);
+    throw new Error(
+      `Could not inspect free space for ${label} target directory: ${targetDirectory}`,
+    );
   }
 
-  const headroom = evaluateModelStageStorageHeadroom(sourceStats.size, availableMiB);
+  const headroom = evaluateModelStageStorageHeadroom(sourceStats.size, availableMiB, reserveMiB);
 
   if (!headroom.ok) {
     throw new Error(
-      `Not enough free space in ${targetDirectory}: GGUF source is ${headroom.sourceMiB} MiB and staging keeps a ${headroom.reserveMiB} MiB reserve, requiring ${headroom.requiredMiB} MiB free but only ${headroom.availableMiB} MiB is available.`,
+      `Not enough free space in ${targetDirectory}: ${label} source is ${headroom.sourceMiB} MiB and staging keeps a ${headroom.reserveMiB} MiB reserve, requiring ${headroom.requiredMiB} MiB free but only ${headroom.availableMiB} MiB is available.`,
     );
   }
+}
+
+async function assertModelStageStorageHeadroom(
+  sourcePath: string,
+  targetDirectory: string,
+  options: ModelStageApplyOptions = {},
+): Promise<void> {
+  await assertArtifactStageStorageHeadroom(
+    sourcePath,
+    targetDirectory,
+    "GGUF",
+    MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB,
+    options,
+  );
+}
+
+async function assertBinaryStageStorageHeadroom(
+  sourcePath: string,
+  targetDirectory: string,
+  options: ModelStageApplyOptions = {},
+): Promise<void> {
+  await assertArtifactStageStorageHeadroom(
+    sourcePath,
+    targetDirectory,
+    "llama-server",
+    MIN_BINARY_STAGE_FREE_AFTER_COPY_MIB,
+    options,
+  );
 }
 
 async function chownIfNeeded(filePath: string, uid: number, gid: number): Promise<void> {
@@ -1346,6 +1388,13 @@ export async function applyModelStagePlan(
   }
 
   await mkdir(path.dirname(binaryTargetPath), { recursive: true, mode: 0o755 });
+  if (path.resolve(binarySourcePath) !== path.resolve(binaryTargetPath)) {
+    await assertBinaryStageStorageHeadroom(
+      binarySourcePath,
+      path.dirname(binaryTargetPath),
+      options,
+    );
+  }
   const copiedBinary = await copyFileAtomicUnlessSame(
     binarySourcePath,
     binaryTargetPath,

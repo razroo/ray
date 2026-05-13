@@ -140,8 +140,16 @@ test("evaluateModelStageStorageHeadroom keeps a post-copy reserve", () => {
     ok: true,
   });
   assert.equal(evaluateModelStageStorageHeadroom(1 * MiB + 1, 257).ok, false);
+  assert.deepEqual(evaluateModelStageStorageHeadroom(1, 65, 64), {
+    sourceMiB: 1,
+    reserveMiB: 64,
+    requiredMiB: 65,
+    availableMiB: 65,
+    ok: true,
+  });
   assert.throws(() => evaluateModelStageStorageHeadroom(-1, 258), /sourceBytes/);
   assert.throws(() => evaluateModelStageStorageHeadroom(1, -1), /availableMiB/);
+  assert.throws(() => evaluateModelStageStorageHeadroom(1, 258, -1), /reserveMiB/);
 });
 
 test("evaluateModelStageMemoryFit bounds projected llama.cpp backend working sets", () => {
@@ -235,6 +243,8 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
   assert.equal(plan.commands[1], "timeout 60s sudo install -d -m 0755 '/var/lib/ray/models'");
   const commandsText = plan.commands.join("\n");
   assert.match(commandsText, /timeout 30s stat -c %s -- '\.\/bin\/llama-server'/);
+  assert.match(commandsText, /timeout 30s df -Pm '\/usr\/local\/bin'/);
+  assert.match(commandsText, /keep at least 64 MiB free after copying llama-server/);
   assert.match(
     commandsText,
     /printf '%s {2}%s\\n' 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' '\.\/bin\/llama-server' \| timeout 120s sha256sum -c -/,
@@ -296,6 +306,7 @@ test("createModelStagePlan reads staging sources and checksums from env", async 
     plan.commands.join("\n"),
     /timeout 30s stat -c %s -- '\/tmp\/ray-artifacts\/llama-server'/,
   );
+  assert.match(plan.commands.join("\n"), /timeout 30s df -Pm '\/usr\/local\/bin'/);
   assert.ok(
     plan.commands.includes(
       "printf '%s  %s\\n' 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' '/tmp/ray-artifacts/llama-server' | timeout 120s sha256sum -c -",
@@ -377,6 +388,7 @@ test("formatTextPlan prints an operator-ready staging plan", async () => {
   assert.match(text, /Ray llama\.cpp artifact staging plan:/);
   assert.match(text, /binary source: pass --binary-source \/path\/to\/llama-server/);
   assert.match(text, /sudo mktemp '\/usr\/local\/bin\/\.ray-stage-llama-server\.XXXXXX'/);
+  assert.match(text, /keep at least 64 MiB free after copying llama-server/);
   assert.match(
     text,
     /timeout 120s sudo install -m 0755 -- '\/path\/to\/llama-server' "\$binary_tmp"/,
@@ -709,6 +721,55 @@ test("applyModelStagePlan installs verified artifacts into the resolved target p
   assert.equal(modelStats.mode & 0o777, 0o640);
   assert.equal(modelStats.uid, uid);
   assert.equal(modelStats.gid, gid);
+});
+
+test("applyModelStagePlan rejects low binary target storage before copying artifacts", async (t) => {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) {
+    return;
+  }
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-low-binary-storage-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const binaryPath = path.join(tempDir, "sources", "llama-server");
+  const modelPath = path.join(tempDir, "sources", "model.gguf");
+  const binaryTarget = path.join(tempDir, "target", "bin", "llama-server");
+  const modelTarget = path.join(tempDir, "target", "models", "model.gguf");
+  const binaryTargetDir = path.dirname(binaryTarget);
+
+  await mkdir(path.join(tempDir, "sources"), { recursive: true });
+  await writeFile(binaryPath, compatibleLlamaServerScript, "utf8");
+  await writeFile(modelPath, "GGUF", "utf8");
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o644);
+
+  const plan = await createModelStagePlan({
+    cwd: tempDir,
+    configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
+    env: {
+      RAY_LLAMA_CPP_BINARY_PATH: binaryTarget,
+      RAY_MODEL_PATH: modelTarget,
+    },
+    serviceUser: String(uid),
+    serviceGroup: String(gid),
+    binarySourcePath: "./sources/llama-server",
+    sourcePath: "./sources/model.gguf",
+  });
+
+  await assert.rejects(
+    () =>
+      applyModelStagePlan(tempDir, plan, {
+        resolveAvailableStorageMiB: (_sourcePath, targetDirectory) =>
+          targetDirectory === binaryTargetDir ? 1 : 1024,
+      }),
+    /Not enough free space.*llama-server source/s,
+  );
+  await assert.rejects(stat(binaryTarget), /ENOENT/);
+  await assert.rejects(stat(modelTarget), /ENOENT/);
 });
 
 test("applyModelStagePlan rejects low target storage before copying models", async (t) => {
