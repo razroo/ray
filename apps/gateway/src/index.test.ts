@@ -1384,13 +1384,85 @@ test("gateway readyz exposes HTTP socket pressure without protected metrics", as
     pressure?: Record<string, boolean>;
     reasons?: string[];
     gauges?: unknown;
+    gateway?: unknown;
   };
 
   assert.equal(body.status, "degraded");
   assert.equal(body.modelId, undefined);
   assert.equal(body.gauges, undefined);
+  assert.equal(body.gateway, undefined);
   assert.equal(body.pressure?.gatewayHttp, true);
   assert.deepEqual(body.reasons, ["gateway_http_pressure"]);
+});
+
+test("gateway detailed health exposes HTTP socket pressure diagnostics", async (t) => {
+  const config = createDefaultConfig("tiny");
+  const healthy: HealthSnapshot = {
+    status: "ok",
+    uptimeMs: 500,
+    queueDepth: 0,
+    inFlight: 0,
+    cacheEntries: 0,
+    profile: "tiny",
+    modelId: "tiny-model",
+    provider: {
+      status: "ready",
+      checkedAt: new Date().toISOString(),
+    },
+  };
+  const runtime = {
+    async health() {
+      return healthy;
+    },
+  } as unknown as RayRuntime;
+  const server = createServer(
+    createGatewayRequestHandler({
+      config,
+      runtime,
+      httpResourceSnapshot: () => ({
+        sockets: 231,
+        activeSockets: 230,
+        idleSockets: 1,
+        activeRequests: 240,
+        maxConnections: 256,
+        connectionRatio: 231 / 256,
+        maxHeaderBytes: 12_288,
+        maxHeadersCount: 64,
+        maxRequestsPerSocket: 1_000,
+        headersTimeoutMs: 15_000,
+        requestTimeoutMs: 30_000,
+        keepAliveTimeoutMs: 5_000,
+      }),
+    }),
+  );
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/health`);
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as HealthSnapshot;
+
+  assert.equal(body.status, "degraded");
+  assert.equal(body.gateway?.http.degraded, true);
+  assert.equal(body.gateway?.http.sockets, 231);
+  assert.equal(body.gateway?.http.activeSockets, 230);
+  assert.equal(body.gateway?.http.idleSockets, 1);
+  assert.equal(body.gateway?.http.activeRequests, 240);
+  assert.equal(body.gateway?.http.maxConnections, 256);
+  assert.equal(body.gateway?.http.connectionRatio, 231 / 256);
+  assert.equal(body.gateway?.http.pressureThreshold, 0.9);
+  assert.equal(body.gateway?.http.maxHeaderBytes, 12_288);
+  assert.equal(body.gateway?.http.maxHeadersCount, 64);
+  assert.equal(body.gateway?.http.maxRequestsPerSocket, 1_000);
+  assert.equal(body.gateway?.http.headersTimeoutMs, 15_000);
+  assert.equal(body.gateway?.http.requestTimeoutMs, 30_000);
+  assert.equal(body.gateway?.http.keepAliveTimeoutMs, 5_000);
 });
 
 test("startGateway exposes liveness while provider warmup fails in the background", async (t) => {

@@ -8,6 +8,7 @@ import {
   toErrorMessage,
   type AsyncQueueSnapshot,
   type CreateInferenceJobRequest,
+  type GatewayHttpHealthSnapshot,
   type HealthSnapshot,
   type InferenceRequest,
   type RayConfig,
@@ -232,6 +233,32 @@ function attachAsyncQueueHealth(
   health.asyncQueue = snapshot;
 
   if (health.status === "ok" && snapshot.degraded) {
+    health.status = "degraded";
+  }
+
+  return health;
+}
+
+function buildGatewayHttpHealth(snapshot: GatewayHttpResourceSnapshot): GatewayHttpHealthSnapshot {
+  return {
+    degraded: isGatewayHttpPressure(snapshot),
+    ...snapshot,
+    pressureThreshold: GATEWAY_HTTP_PRESSURE_RATIO,
+  };
+}
+
+function attachGatewayHttpHealth(
+  health: HealthSnapshot,
+  snapshot: GatewayHttpResourceSnapshot | undefined,
+): HealthSnapshot {
+  if (!snapshot) {
+    return health;
+  }
+
+  const http = buildGatewayHttpHealth(snapshot);
+  health.gateway = { http };
+
+  if (health.status === "ok" && http.degraded) {
     health.status = "degraded";
   }
 
@@ -1203,6 +1230,7 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
         if (jobQueue) {
           attachAsyncQueueHealth(health, await jobQueue.snapshotWithStorage());
         }
+        attachGatewayHttpHealth(health, handlerOptions.httpResourceSnapshot?.());
         writeJsonWithoutReadingBody(
           request,
           response,

@@ -634,6 +634,28 @@ export interface HealthSnapshot {
   provider: ProviderHealthSnapshot;
   runtime?: RuntimeHealthDiagnostics;
   asyncQueue?: AsyncQueueSnapshot;
+  gateway?: GatewayHealthDiagnostics;
+}
+
+export interface GatewayHealthDiagnostics {
+  http: GatewayHttpHealthSnapshot;
+}
+
+export interface GatewayHttpHealthSnapshot {
+  degraded: boolean;
+  sockets: number;
+  activeSockets: number;
+  idleSockets: number;
+  activeRequests: number;
+  maxConnections: number;
+  connectionRatio: number;
+  pressureThreshold: number;
+  maxHeaderBytes: number;
+  maxHeadersCount: number;
+  maxRequestsPerSocket: number;
+  headersTimeoutMs: number;
+  requestTimeoutMs: number;
+  keepAliveTimeoutMs: number;
 }
 
 export type ReadinessReason =
