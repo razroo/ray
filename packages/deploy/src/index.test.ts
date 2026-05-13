@@ -1785,6 +1785,26 @@ test("diagnoseConfig skips swap warnings for roomier llama.cpp profiles", () => 
   assert.ok(!diagnostics.some((diagnostic) => diagnostic.code === "swap_missing"));
 });
 
+test("diagnoseConfig errors when deploy memory cannot fit generated cgroup floors", () => {
+  const config = createDefaultConfig("1b");
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    preflight: {
+      memoryBudgetMiB: 1_024,
+      memoryBudgetSource: "override",
+    },
+  });
+
+  const diagnostic = diagnostics.find(
+    (entry) => entry.code === "memory_budget_below_systemd_floor",
+  );
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /1,024 MiB deploy memory target/);
+  assert.match(diagnostic.message, /gateway MemoryMax=896 MiB/);
+  assert.match(diagnostic.message, /backend minimum MemoryMax=512 MiB/);
+});
+
 test("diagnoseConfig warns when async queue storage is not durable", () => {
   const relativeConfig = mergeConfig(createDefaultConfig("1b"), {
     asyncQueue: {

@@ -280,6 +280,7 @@ const GATEWAY_MEMORY_SWAP_MAX_MIB = 128;
 const MIN_WORKING_DIRECTORY_FREE_MIB = 512;
 const LLAMA_CPP_MEMORY_HIGH_RATIO = 0.9;
 const LLAMA_CPP_SWAP_MAX_RATIO = 0.25;
+const LLAMA_CPP_MIN_MEMORY_MAX_MIB = 512;
 const LLAMA_CPP_MIN_SWAP_MAX_MIB = 256;
 const LLAMA_CPP_MAX_SWAP_MAX_MIB = MIN_SMALL_VPS_SWAP_MIB;
 const GATEWAY_CPU_WEIGHT = 200;
@@ -1394,6 +1395,10 @@ function getPresetMemoryBudgetMiB(preset: LlamaCppLaunchProfile["preset"]): numb
   return isSmallVpsPreset(preset) ? 4_096 : 8_192;
 }
 
+function resolveSystemReserveMiB(memoryBudgetMiB: number): number {
+  return Math.max(MIN_SYSTEM_RESERVE_MIB, Math.ceil(memoryBudgetMiB * SYSTEM_RESERVE_RATIO));
+}
+
 function collectHostCpuCount(): number | undefined {
   try {
     return Math.max(1, availableParallelism());
@@ -1490,10 +1495,7 @@ export function estimateLlamaCppMemoryFit(
       SCHEDULER_BYTES_PER_TOKEN,
   );
   const runtimeMiB = LLAMA_CPP_RUNTIME_RESERVE_MIB;
-  const reserveMiB = Math.max(
-    MIN_SYSTEM_RESERVE_MIB,
-    Math.ceil(preflight.memoryBudgetMiB * SYSTEM_RESERVE_RATIO),
-  );
+  const reserveMiB = resolveSystemReserveMiB(preflight.memoryBudgetMiB);
   const gatewayMemoryMaxMiB = resolveGatewayMemoryControls(config).memoryMaxMiB;
   const safeBudgetMiB = resolveLlamaCppMemoryControls(launchProfile, preflight, {
     memoryMaxMiB: gatewayMemoryMaxMiB,
@@ -1541,11 +1543,11 @@ function resolveLlamaCppMemoryControls(
 } {
   const memoryBudgetMiB =
     preflight.memoryBudgetMiB ?? getPresetMemoryBudgetMiB(launchProfile.preset);
-  const reserveMiB = Math.max(
-    MIN_SYSTEM_RESERVE_MIB,
-    Math.ceil(memoryBudgetMiB * SYSTEM_RESERVE_RATIO),
+  const reserveMiB = resolveSystemReserveMiB(memoryBudgetMiB);
+  const memoryMaxMiB = Math.max(
+    LLAMA_CPP_MIN_MEMORY_MAX_MIB,
+    memoryBudgetMiB - reserveMiB - gatewayControls.memoryMaxMiB,
   );
-  const memoryMaxMiB = Math.max(512, memoryBudgetMiB - reserveMiB - gatewayControls.memoryMaxMiB);
 
   return {
     memoryHighMiB: Math.max(1, Math.floor(memoryMaxMiB * LLAMA_CPP_MEMORY_HIGH_RATIO)),
@@ -3276,6 +3278,29 @@ export function diagnoseConfig(
           code: "model_file_service_user_inaccessible",
           message: `The generated systemd service user "${preflight.serviceUser ?? "the configured service user"}" cannot read the configured GGUF model file at ${preflight.modelFilePath}${preflight.modelFileAccessError ? ` (${preflight.modelFileAccessError})` : ""}. Adjust ownership or mode bits before restarting ray-llama-cpp.service.`,
         });
+      }
+
+      if (preflight?.memoryBudgetMiB !== undefined) {
+        const reserveMiB = resolveSystemReserveMiB(preflight.memoryBudgetMiB);
+        const gatewayMemoryMaxMiB = resolveGatewayMemoryControls(config).memoryMaxMiB;
+        const minimumMemoryBudgetMiB =
+          reserveMiB + gatewayMemoryMaxMiB + LLAMA_CPP_MIN_MEMORY_MAX_MIB;
+
+        if (preflight.memoryBudgetMiB < minimumMemoryBudgetMiB) {
+          diagnostics.push({
+            level: "error",
+            code: "memory_budget_below_systemd_floor",
+            message: `The ${formatMiB(
+              preflight.memoryBudgetMiB,
+            )} deploy memory target cannot fit the generated systemd cgroup floor: system reserve=${formatMiB(
+              reserveMiB,
+            )}, gateway MemoryMax=${formatMiB(
+              gatewayMemoryMaxMiB,
+            )}, and llama.cpp backend minimum MemoryMax=${formatMiB(
+              LLAMA_CPP_MIN_MEMORY_MAX_MIB,
+            )}. Raise RAY_DEPLOY_MEMORY_MIB or --memory-mib before rendering this VPS profile.`,
+          });
+        }
       }
 
       if (launchProfile.cacheRamMiB === -1 && preflight?.memoryBudgetMiB !== undefined) {
