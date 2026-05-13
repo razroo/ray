@@ -75,6 +75,20 @@ async function getAvailablePort(): Promise<number> {
   return port;
 }
 
+async function waitForCondition(predicate: () => boolean | Promise<boolean>): Promise<void> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < 1_000) {
+    if (await predicate()) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  throw new Error("Timed out waiting for condition");
+}
+
 async function readRawUnfinishedRequestResponse(
   server: Server,
   requestLines: string[],
@@ -1028,7 +1042,9 @@ test("startGateway exposes liveness while provider warmup fails in the backgroun
     runtime,
     logger,
   });
-  t.after(() => gateway.server.close());
+  t.after(async () => {
+    await stopGateway(gateway, { timeoutMs: 20 });
+  });
 
   const address = gateway.server.address();
   if (!address || typeof address === "string") {
@@ -1051,6 +1067,117 @@ test("startGateway exposes liveness while provider warmup fails in the backgroun
     String((errors[0]?.fields?.error as { message?: string } | undefined)?.message),
     /backend still booting/,
   );
+});
+
+test("startGateway retries provider warmup after startup failure", async (t) => {
+  const port = await getAvailablePort();
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    server: {
+      port,
+    },
+  });
+  const events: Array<{ level: string; message: string; fields: LogFields | undefined }> = [];
+  let warmCalls = 0;
+  const runtime = {
+    async warm() {
+      warmCalls += 1;
+      if (warmCalls === 1) {
+        throw new Error("backend socket not open yet");
+      }
+    },
+    async health() {
+      return {
+        status: warmCalls >= 2 ? "ok" : "degraded",
+        uptimeMs: 0,
+        queueDepth: 0,
+        inFlight: 0,
+        cacheEntries: 0,
+        profile: "tiny",
+        modelId: "recovering-model",
+        provider: {
+          status: warmCalls >= 2 ? "ready" : "warming",
+          checkedAt: new Date().toISOString(),
+        },
+      } satisfies HealthSnapshot;
+    },
+  } as unknown as RayRuntime;
+  const logger = {
+    debug() {},
+    info(message: string, fields?: LogFields) {
+      events.push({ level: "info", message, fields });
+    },
+    warn(message: string, fields?: LogFields) {
+      events.push({ level: "warn", message, fields });
+    },
+    error(message: string, fields?: LogFields) {
+      events.push({ level: "error", message, fields });
+    },
+  } as unknown as Logger;
+
+  const gateway = await startGateway({
+    config,
+    runtime,
+    logger,
+    warmupRetry: {
+      initialDelayMs: 5,
+      maxDelayMs: 5,
+    },
+  });
+  t.after(async () => {
+    await stopGateway(gateway, { timeoutMs: 20 });
+  });
+
+  await waitForCondition(() => warmCalls === 2);
+  await waitForCondition(() =>
+    events.some((event) => event.message === "provider warmup recovered"),
+  );
+
+  assert.equal(
+    events.find((event) => event.level === "error")?.message,
+    "provider warmup failed after gateway start",
+  );
+  assert.equal(
+    events.find((event) => event.message === "provider warmup recovered")?.fields?.attempts,
+    2,
+  );
+});
+
+test("stopGateway cancels pending provider warmup retries", async () => {
+  const port = await getAvailablePort();
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    server: {
+      port,
+    },
+  });
+  let warmCalls = 0;
+  const runtime = {
+    async warm() {
+      warmCalls += 1;
+      throw new Error("backend unavailable");
+    },
+  } as unknown as RayRuntime;
+  const logger = {
+    debug() {},
+    info() {},
+    warn() {},
+    error() {},
+  } as unknown as Logger;
+
+  const gateway = await startGateway({
+    config,
+    runtime,
+    logger,
+    warmupRetry: {
+      initialDelayMs: 50,
+      maxDelayMs: 50,
+    },
+  });
+  await waitForCondition(() => warmCalls === 1);
+
+  await stopGateway(gateway, { timeoutMs: 20 });
+  await new Promise((resolve) => setTimeout(resolve, 75));
+
+  assert.equal(warmCalls, 1);
 });
 
 test("startGateway stops async queue work when the HTTP listener fails", async (t) => {

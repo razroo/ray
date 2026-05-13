@@ -36,6 +36,9 @@ const GATEWAY_REQUEST_TIMEOUT_MS = 30_000;
 const GATEWAY_KEEP_ALIVE_TIMEOUT_MS = 5_000;
 const GATEWAY_MAX_REQUESTS_PER_SOCKET = 1_000;
 const GATEWAY_SHUTDOWN_TIMEOUT_MS = 30_000;
+const GATEWAY_WARMUP_RETRY_INITIAL_MS = 2_000;
+const GATEWAY_WARMUP_RETRY_MAX_MS = 15_000;
+const GATEWAY_WARMUP_RETRY_DELAY_MAX_MS = 60_000;
 const MAX_RESPONSE_FIELD_DEPTH = 10;
 const MAX_RESPONSE_OBJECT_KEYS = 256;
 const MAX_RESPONSE_ARRAY_ITEMS = 512;
@@ -57,12 +60,23 @@ export interface GatewayServer {
   runtime: RayRuntime;
   jobQueue?: DurableInferenceQueue;
   logger: Logger;
+  warmup?: GatewayWarmupController;
   sockets?: Set<Socket>;
   activeRequestsBySocket?: Map<Socket, number>;
 }
 
+export interface GatewayWarmupRetryOptions {
+  initialDelayMs?: number;
+  maxDelayMs?: number;
+}
+
+interface GatewayWarmupController {
+  stop(): void;
+}
+
 export interface StartGatewayOptions extends CreateGatewayHandlerOptions {
   configPath?: string;
+  warmupRetry?: GatewayWarmupRetryOptions;
 }
 
 export interface StopGatewayOptions {
@@ -145,6 +159,48 @@ function resolveReadyzStatusCode(health: HealthSnapshot): number {
   }
 
   return 200;
+}
+
+function resolveWarmupRetryDelayOption(
+  value: number | undefined,
+  fallback: number,
+  label: string,
+): number {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  if (!Number.isFinite(value) || value < 1 || value > GATEWAY_WARMUP_RETRY_DELAY_MAX_MS) {
+    throw new Error(`${label} must be a finite delay between 1 and 60000 milliseconds`);
+  }
+
+  return value;
+}
+
+function resolveWarmupRetryOptions(
+  options: GatewayWarmupRetryOptions | undefined,
+): Required<GatewayWarmupRetryOptions> {
+  return {
+    initialDelayMs: resolveWarmupRetryDelayOption(
+      options?.initialDelayMs,
+      GATEWAY_WARMUP_RETRY_INITIAL_MS,
+      "warmupRetry.initialDelayMs",
+    ),
+    maxDelayMs: resolveWarmupRetryDelayOption(
+      options?.maxDelayMs,
+      GATEWAY_WARMUP_RETRY_MAX_MS,
+      "warmupRetry.maxDelayMs",
+    ),
+  };
+}
+
+function resolveWarmupRetryDelayMs(
+  attempt: number,
+  options: Required<GatewayWarmupRetryOptions>,
+): number {
+  const multiplier = 2 ** Math.min(Math.max(0, attempt - 1), 4);
+
+  return Math.min(options.maxDelayMs, options.initialDelayMs * multiplier);
 }
 
 function destroyGatewaySockets(sockets: Iterable<Socket> | undefined): void {
@@ -1126,13 +1182,68 @@ export async function startGateway(options: StartGatewayOptions): Promise<Gatewa
     configPath: options.configPath ?? "defaults",
   });
 
-  void gateway.runtime.warm().catch((error) => {
-    gateway.logger.error("provider warmup failed after gateway start", {
-      error: serializeError(error),
-    });
-  });
+  gateway.warmup = startGatewayWarmup(gateway, options.warmupRetry);
 
   return gateway;
+}
+
+function startGatewayWarmup(
+  gateway: GatewayServer,
+  retryOptions: GatewayWarmupRetryOptions | undefined,
+): GatewayWarmupController {
+  const retry = resolveWarmupRetryOptions(retryOptions);
+  let stopped = false;
+  let attempts = 0;
+  let retryTimer: NodeJS.Timeout | undefined;
+
+  const run = () => {
+    if (stopped) {
+      return;
+    }
+
+    attempts += 1;
+
+    void gateway.runtime
+      .warm()
+      .then(() => {
+        if (!stopped && attempts > 1) {
+          gateway.logger.info("provider warmup recovered", { attempts });
+        }
+      })
+      .catch((error) => {
+        if (stopped) {
+          return;
+        }
+
+        const retryInMs = resolveWarmupRetryDelayMs(attempts, retry);
+        const fields = {
+          attempt: attempts,
+          retryInMs,
+          error: serializeError(error),
+        };
+
+        if (attempts === 1) {
+          gateway.logger.error("provider warmup failed after gateway start", fields);
+        } else {
+          gateway.logger.warn("provider warmup retry failed", fields);
+        }
+
+        retryTimer = setTimeout(run, retryInMs);
+        retryTimer.unref();
+      });
+  };
+
+  run();
+
+  return {
+    stop() {
+      stopped = true;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = undefined;
+      }
+    },
+  };
 }
 
 function listenGatewayServer(server: Server, port: number, host: string): Promise<void> {
@@ -1179,6 +1290,7 @@ export async function stopGateway(
   let forceTimeout: NodeJS.Timeout | undefined;
 
   gateway.logger.info("gateway shutting down", { signal, timeoutMs });
+  gateway.warmup?.stop();
 
   try {
     const closePromise = new Promise<void>((resolve, reject) => {
