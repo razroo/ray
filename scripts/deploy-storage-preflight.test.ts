@@ -81,6 +81,7 @@ test("loadDeployStoragePreflightArgs applies bounded ray env file thresholds", a
       "RAY_DEPLOY_MIN_FREE_STORAGE_MIB=2048",
       'RAY_MODEL_PATH="/mnt/ray/models/local 1b.gguf"',
       "RAY_LLAMA_CPP_MODEL_PATH=/ignored/fallback.gguf",
+      "RAY_LLAMA_CPP_BINARY_PATH=/opt/ray/bin/llama-server",
       "RAY_ASYNC_QUEUE_STORAGE_DIR=/mnt/ray/async-queue",
       "RAY_API_KEYS=not-retained-by-storage-preflight",
       "",
@@ -102,6 +103,7 @@ test("loadDeployStoragePreflightArgs applies bounded ray env file thresholds", a
     "/tmp",
     "/var/tmp",
     "/mnt/ray/models/local 1b.gguf",
+    "/opt/ray/bin/llama-server",
     "/mnt/ray/async-queue",
   ]);
 
@@ -111,8 +113,10 @@ test("loadDeployStoragePreflightArgs applies bounded ray env file thresholds", a
   );
   assert.equal(fromFlag.minFreeStorageMiB, 128);
   assert.equal(fromFlag.minFreeStorageMiBSource, "flag");
-  assert.deepEqual(fromFlag.paths.slice(-2), [
+  assert.deepEqual(fromFlag.paths.slice(-2), ["/opt/ray/bin/llama-server", "/mnt/ray/async-queue"]);
+  assert.deepEqual(fromFlag.paths.slice(-3), [
     "/mnt/ray/models/local 1b.gguf",
+    "/opt/ray/bin/llama-server",
     "/mnt/ray/async-queue",
   ]);
 

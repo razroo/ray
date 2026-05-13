@@ -25,6 +25,7 @@ const DEFAULT_STORAGE_PATHS = [
 const ENV_FILE_STORAGE_PATH_KEYS = [
   "RAY_MODEL_PATH",
   "RAY_LLAMA_CPP_MODEL_PATH",
+  "RAY_LLAMA_CPP_BINARY_PATH",
   "RAY_ASYNC_QUEUE_STORAGE_DIR",
 ] as const;
 
@@ -387,6 +388,11 @@ function parseDeployStorageEnvironmentFile(contents: string): DeployStorageEnvir
     configuredModelPath === undefined ? "RAY_LLAMA_CPP_MODEL_PATH" : "RAY_MODEL_PATH";
   if (modelPath !== undefined && modelPath.length > 0) {
     storagePaths.push(normalizeStoragePath(modelPath, modelPathLabel));
+  }
+
+  const llamaCppBinaryPath = values.get("RAY_LLAMA_CPP_BINARY_PATH");
+  if (llamaCppBinaryPath !== undefined && llamaCppBinaryPath.length > 0) {
+    storagePaths.push(normalizeStoragePath(llamaCppBinaryPath, "RAY_LLAMA_CPP_BINARY_PATH"));
   }
 
   const asyncQueueStorageDir = values.get("RAY_ASYNC_QUEUE_STORAGE_DIR");

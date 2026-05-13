@@ -139,8 +139,9 @@ dependencies or deploy writes config, units, and the Caddyfile; set
 `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` in the process env or pass
 `--ray-env-file /etc/ray/ray.env` to raise or lower the default 1024 MiB
 threshold without shell-sourcing the rest of the env file. When that env file
-sets a custom `RAY_MODEL_PATH`, `RAY_LLAMA_CPP_MODEL_PATH`, or
-`RAY_ASYNC_QUEUE_STORAGE_DIR`, the preflight checks those volumes too.
+sets a custom `RAY_MODEL_PATH`, `RAY_LLAMA_CPP_MODEL_PATH`,
+`RAY_LLAMA_CPP_BINARY_PATH`, or `RAY_ASYNC_QUEUE_STORAGE_DIR`, the preflight
+checks those volumes too.
 Use `sudo /usr/local/bin/bun run deploy:storage -- --ray-env-file /etc/ray/ray.env`
 when the env file is installed as root-owned `0600`.
 
@@ -418,7 +419,7 @@ Optional repository variables:
 - `RAY_DEPLOY_SERVICE_USER` — generated non-root systemd service account name or numeric UID, defaults to `ray`; workflow deploys create missing named users, numeric UIDs must already resolve to an account on the VPS, and local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--user` is omitted
 - `RAY_DEPLOY_DOMAIN` — Caddy site address to render, defaults to `ray.local`; set it to the real public DNS name before installing Caddy because render/doctor warn on local placeholder addresses; local deploy CLI runs honor this value from the process env or `--ray-env-file` when `--domain` is omitted, and workflow deploys honor it from `RAY_ENV_FILE_CONTENTS` before repository variables
 - `RAY_DEPLOY_MEMORY_MIB` — optional VPS memory class used by workflow doctor/render and model staging when `/etc/ray/ray.env` does not already set it; local deploy CLI runs honor this value from the process env or `--ray-env-file` when `--memory-mib` is omitted, and workflow deploys validate and honor it from `RAY_ENV_FILE_CONTENTS` before repository variables. Render, doctor, and model staging reject targets too small to fit the generated systemd memory floors.
-- `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` — minimum free storage the workflow requires before remote package bootstrap, checkout sync follow-up, config/unit/Caddy writes, Bun install-cache use, Bun production install, and env-file model or async-queue storage use, defaults to `1024`; set to `0` only when intentionally skipping the deploy storage preflight
+- `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` — minimum free storage the workflow requires before remote package bootstrap, checkout sync follow-up, config/unit/Caddy writes, Bun install-cache use, Bun production install, and env-file model, llama.cpp binary, or async-queue storage use, defaults to `1024`; set to `0` only when intentionally skipping the deploy storage preflight
 - `RAY_DEPLOY_INSTALL_CADDY` — set to `true` to install and reload the generated Caddyfile; requires `RAY_DEPLOY_DOMAIN` to be a real public DNS name, not `ray.local`, `localhost`, loopback, or another `.local` placeholder; workflow deploys honor this value from `RAY_ENV_FILE_CONTENTS` before repository variables
 - `RAY_CONFIG_PATH` — repo-relative config path to install, defaults to `./examples/config/ray.sub1b.public.json`; the workflow rejects absolute paths, path traversal, and paths excluded from repo sync before opening SSH
 - `RAY_GATEWAY_RUNTIME_BINARY` — absolute JavaScript runtime path rendered into `ray-gateway.service`, defaults to `/usr/local/bin/bun`; the deploy CLI and workflow reject relative paths, paths under `/home`, `/root`, or `/run/user` because generated units use `ProtectHome=true`, and paths under `/tmp` or `/var/tmp` because generated units use `PrivateTmp=true`
