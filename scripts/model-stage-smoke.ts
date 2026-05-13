@@ -7,6 +7,7 @@ const DEFAULT_CONFIG_DIR = "examples/config";
 const DEFAULT_SERVICE_USER = "ray";
 const MAX_CLI_ARGS = 14;
 const MAX_CLI_ARG_BYTES = 4_096;
+const MAX_MODEL_STAGE_SMOKE_CONFIGS = 128;
 const SYSTEMD_PRINCIPAL_PATTERN = /^(?:[A-Za-z_][A-Za-z0-9_-]{0,30}|[0-9]{1,10})$/;
 
 export interface ModelStageSmokeArgs {
@@ -182,6 +183,12 @@ export async function smokeModelStages(options: {
   serviceGroup?: string;
   env?: NodeJS.ProcessEnv;
 }): Promise<ModelStageSmokeSummary> {
+  if (options.configPaths.length > MAX_MODEL_STAGE_SMOKE_CONFIGS) {
+    throw new Error(
+      `Model stage smoke can inspect at most ${MAX_MODEL_STAGE_SMOKE_CONFIGS} config files`,
+    );
+  }
+
   const results: ModelStageSmokeResult[] = [];
   const env = options.env ?? (Object.create(null) as NodeJS.ProcessEnv);
 

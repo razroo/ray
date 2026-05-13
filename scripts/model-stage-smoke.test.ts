@@ -40,6 +40,21 @@ test("parseArgs rejects malformed model stage smoke argv", () => {
   assert.throws(() => parseArgs(["examples/config"]), /Unexpected positional argument/);
 });
 
+test("smokeModelStages rejects excessive config inputs before rendering", async () => {
+  await assert.rejects(
+    () =>
+      smokeModelStages({
+        cwd: process.cwd(),
+        configPaths: Array.from(
+          { length: 129 },
+          (_value, index) => `/tmp/ray-${index}.public.json`,
+        ),
+        serviceUser: "ray",
+      }),
+    /at most 128 config files/,
+  );
+});
+
 test("smokeModelStages renders every checked-in public staging plan", async () => {
   const cwd = process.cwd();
   const configPaths = await collectPublicConfigPaths(cwd, "examples/config");
