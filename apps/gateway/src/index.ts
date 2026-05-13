@@ -46,6 +46,8 @@ const MAX_RESPONSE_OBJECT_KEYS = 256;
 const MAX_RESPONSE_ARRAY_ITEMS = 512;
 const MAX_RESPONSE_OBJECT_KEY_CHARS = 128;
 const MAX_RESPONSE_STRING_CHARS = 65_536;
+const QUEUE_BACKPRESSURE_RETRY_AFTER_SECONDS = 1;
+const STORAGE_BACKPRESSURE_RETRY_AFTER_SECONDS = 30;
 const GATEWAY_HOST_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export interface CreateGatewayHandlerOptions {
@@ -860,6 +862,30 @@ function shouldCloseRequestAfterReject(request: IncomingMessage, error: RayError
   );
 }
 
+function resolveRetryAfterSeconds(error: RayError): number | undefined {
+  if (error.code === "queue_full" || error.code === "async_queue_full") {
+    return QUEUE_BACKPRESSURE_RETRY_AFTER_SECONDS;
+  }
+
+  if (error.code === "async_queue_storage_low") {
+    return STORAGE_BACKPRESSURE_RETRY_AFTER_SECONDS;
+  }
+
+  return undefined;
+}
+
+function buildRejectedRequestHeaders(
+  error: RayError,
+  closeRequest: boolean,
+): Record<string, string> {
+  const retryAfterSeconds = resolveRetryAfterSeconds(error);
+
+  return {
+    ...(retryAfterSeconds !== undefined ? { "retry-after": retryAfterSeconds.toString() } : {}),
+    ...(closeRequest ? { connection: "close" } : {}),
+  };
+}
+
 export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions) {
   const config = snapshotRayConfig(options.config);
   const handlerOptions: CreateGatewayHandlerOptions = { ...options, config };
@@ -1175,7 +1201,7 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
             details: normalized.details,
           },
         },
-        closeRequest ? { connection: "close" } : {},
+        buildRejectedRequestHeaders(normalized, closeRequest),
       );
     }
   };

@@ -1582,6 +1582,61 @@ test("gateway serializes unusual error details without masking the original stat
   assert.equal(body.error.code, "provider_weird_diagnostic");
   assert.equal(body.error.details.count, "3");
   assert.equal(body.error.details.self, "[Circular]");
+  assert.equal(response.headers.get("retry-after"), null);
+});
+
+test("gateway returns Retry-After on transient backpressure rejects", async (t) => {
+  const scenarios = [
+    {
+      code: "queue_full",
+      status: 503,
+      retryAfter: "1",
+    },
+    {
+      code: "async_queue_storage_low",
+      status: 503,
+      retryAfter: "30",
+    },
+  ] as const;
+
+  for (const scenario of scenarios) {
+    const config = createDefaultConfig("tiny");
+    const runtime = {
+      async infer() {
+        throw new RayError("The VPS is under backpressure", {
+          code: scenario.code,
+          status: scenario.status,
+        });
+      },
+    } as unknown as RayRuntime;
+    const gateway = createGatewayServer({
+      config,
+      runtime,
+    });
+
+    await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+    t.after(() => gateway.server.close());
+
+    const address = gateway.server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Expected a TCP server address");
+    }
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/infer`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        input: "hello",
+      }),
+    });
+
+    assert.equal(response.status, scenario.status);
+    assert.equal(response.headers.get("retry-after"), scenario.retryAfter);
+    const body = (await response.json()) as { error: { code: string } };
+    assert.equal(body.error.code, scenario.code);
+  }
 });
 
 test("gateway rate limits repeated inference requests", async (t) => {
