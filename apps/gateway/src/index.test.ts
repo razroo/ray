@@ -906,9 +906,16 @@ test("gateway detailed health degrades when async queue storage is low", async (
 
   const readyzResponse = await fetch(`http://127.0.0.1:${address.port}/readyz`);
   assert.equal(readyzResponse.status, 200);
-  const readyz = (await readyzResponse.json()) as { status: string; asyncQueue?: unknown };
+  const readyz = (await readyzResponse.json()) as {
+    status: string;
+    asyncQueue?: unknown;
+    pressure?: { asyncQueue: boolean };
+    reasons?: string[];
+  };
   assert.equal(readyz.status, "degraded");
   assert.equal(readyz.asyncQueue, undefined);
+  assert.equal(readyz.pressure?.asyncQueue, true);
+  assert.deepEqual(readyz.reasons, ["async_queue_pressure"]);
 });
 
 test("gateway returns service unavailable when detailed health is unavailable", async (t) => {
@@ -953,9 +960,16 @@ test("gateway returns service unavailable when detailed health is unavailable", 
 
   const readyz = await fetch(`${baseUrl}/readyz`);
   assert.equal(readyz.status, 503);
-  const readyzBody = (await readyz.json()) as { status: string; provider?: unknown };
+  const readyzBody = (await readyz.json()) as {
+    status: string;
+    provider?: unknown;
+    providerStatus?: string;
+    reasons?: string[];
+  };
   assert.equal(readyzBody.status, "unavailable");
   assert.equal(readyzBody.provider, undefined);
+  assert.equal(readyzBody.providerStatus, "unavailable");
+  assert.deepEqual(readyzBody.reasons, ["provider_unavailable"]);
 
   const response = await fetch(`${baseUrl}/health`);
   assert.equal(response.status, 503);
@@ -1000,15 +1014,128 @@ test("gateway keeps readyz unavailable while provider is warming", async (t) => 
   const baseUrl = `http://127.0.0.1:${address.port}`;
   const readyz = await fetch(`${baseUrl}/readyz`);
   assert.equal(readyz.status, 503);
-  const readyzBody = (await readyz.json()) as { status: string; provider?: unknown };
+  const readyzBody = (await readyz.json()) as {
+    status: string;
+    provider?: unknown;
+    providerStatus?: string;
+    reasons?: string[];
+  };
   assert.equal(readyzBody.status, "degraded");
   assert.equal(readyzBody.provider, undefined);
+  assert.equal(readyzBody.providerStatus, "warming");
+  assert.deepEqual(readyzBody.reasons, ["provider_warming"]);
 
   const health = await fetch(`${baseUrl}/health`);
   assert.equal(health.status, 200);
   const healthBody = (await health.json()) as HealthSnapshot;
   assert.equal(healthBody.status, "degraded");
   assert.equal(healthBody.provider.status, "warming");
+});
+
+test("gateway readyz exposes minimal pressure reasons without protected health details", async (t) => {
+  const config = createDefaultConfig("tiny");
+  const degradedHealth: HealthSnapshot = {
+    status: "degraded",
+    uptimeMs: 500,
+    queueDepth: 7,
+    inFlight: 2,
+    cacheEntries: 1,
+    profile: "tiny",
+    modelId: "private-model-id",
+    provider: {
+      status: "degraded",
+      checkedAt: new Date().toISOString(),
+      details: {
+        upstream: "http://127.0.0.1:8081",
+      },
+    },
+    runtime: {
+      queue: {
+        degraded: true,
+        depth: 7,
+        depthRatio: 0.5,
+        shortDepth: 1,
+        draftDepth: 1,
+        threshold: 4,
+        maxQueue: 14,
+        inFlight: 2,
+        inFlightRatio: 0.5,
+        concurrency: 4,
+        queuedTokens: 512,
+        queuedTokensRatio: 0.25,
+        maxQueuedTokens: 2_048,
+        inFlightTokens: 256,
+        inFlightTokensRatio: 0.125,
+        maxInflightTokens: 2_048,
+      },
+      preparation: {
+        active: 1,
+        concurrency: 2,
+        activeRatio: 0.5,
+        queued: 0,
+        maxQueue: 4,
+        queuedRatio: 0,
+      },
+      memory: {
+        degraded: true,
+        sources: ["process_rss"],
+        processRssMiB: 600,
+        memoryRssThresholdMiB: 512,
+        processRssPressureRatio: 1.1719,
+      },
+      cpu: {
+        degraded: true,
+        cgroupCpuThrottledRatio: 0.3,
+        cgroupCpuThrottledThreshold: 0.2,
+      },
+    },
+  };
+  const runtime = {
+    async health() {
+      return degradedHealth;
+    },
+  } as unknown as RayRuntime;
+  const gateway = createGatewayServer({ config, runtime });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/readyz`);
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as {
+    status: string;
+    provider?: unknown;
+    providerStatus?: string;
+    modelId?: string;
+    queueDepth?: number;
+    inFlight?: number;
+    pressure?: Record<string, boolean>;
+    reasons?: string[];
+  };
+
+  assert.equal(body.status, "degraded");
+  assert.equal(body.provider, undefined);
+  assert.equal(body.modelId, undefined);
+  assert.equal(body.providerStatus, "degraded");
+  assert.equal(body.queueDepth, 7);
+  assert.equal(body.inFlight, 2);
+  assert.deepEqual(body.pressure, {
+    queue: true,
+    memory: true,
+    cpu: true,
+    asyncQueue: false,
+  });
+  assert.deepEqual(body.reasons, [
+    "provider_degraded",
+    "queue_pressure",
+    "memory_pressure",
+    "cpu_pressure",
+  ]);
 });
 
 test("startGateway exposes liveness while provider warmup fails in the background", async (t) => {

@@ -50,7 +50,7 @@ Aligned with [roadmap Phase 1 exit criteria](roadmap.md) and day-one operator ex
 
 5. **VPS-oriented checks** (when exercising the default `sub1b` / `llama.cpp` path)
    - Gateway serves unauthenticated `/livez` for reverse-proxy health checks.
-   - Gateway serves unauthenticated `/readyz` for minimal backend-aware readiness checks.
+   - Gateway serves unauthenticated `/readyz` with minimal provider status, queue, pressure, and readiness reason codes.
    - With auth enabled in config, `/v1/infer`, `/health`, `/metrics`, and `/v1/config` reject missing or invalid API keys.
    - Rate limiting behaves as configured.
    - On a real Hetzner runner, `bun run benchmark:assert:cx23` or `bun run benchmark:assert:cax11` passes for the target machine class.

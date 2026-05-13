@@ -96,6 +96,30 @@ export interface StopGatewayOptions {
   timeoutMs?: number;
 }
 
+type GatewayReadinessReason =
+  | "provider_unavailable"
+  | "provider_warming"
+  | "provider_degraded"
+  | "queue_pressure"
+  | "memory_pressure"
+  | "cpu_pressure"
+  | "async_queue_pressure";
+
+interface GatewayReadyzResponse {
+  status: HealthSnapshot["status"];
+  service: "ray-gateway";
+  providerStatus: HealthSnapshot["provider"]["status"];
+  queueDepth: number;
+  inFlight: number;
+  pressure: {
+    queue: boolean;
+    memory: boolean;
+    cpu: boolean;
+    asyncQueue: boolean;
+  };
+  reasons: GatewayReadinessReason[];
+}
+
 function assertCliArgv(argv: unknown): asserts argv is string[] {
   if (!Array.isArray(argv)) {
     throw new Error("argv must be an array of strings");
@@ -186,6 +210,53 @@ function resolveReadyzStatusCode(health: HealthSnapshot): number {
   }
 
   return 200;
+}
+
+function buildReadyzResponse(health: HealthSnapshot): GatewayReadyzResponse {
+  const queuePressure = health.runtime?.queue.degraded ?? false;
+  const memoryPressure = health.runtime?.memory.degraded ?? false;
+  const cpuPressure = health.runtime?.cpu?.degraded ?? false;
+  const asyncQueuePressure = health.asyncQueue?.degraded ?? false;
+  const reasons: GatewayReadinessReason[] = [];
+
+  if (health.provider.status === "unavailable") {
+    reasons.push("provider_unavailable");
+  } else if (health.provider.status === "warming") {
+    reasons.push("provider_warming");
+  } else if (health.provider.status === "degraded") {
+    reasons.push("provider_degraded");
+  }
+
+  if (queuePressure) {
+    reasons.push("queue_pressure");
+  }
+
+  if (memoryPressure) {
+    reasons.push("memory_pressure");
+  }
+
+  if (cpuPressure) {
+    reasons.push("cpu_pressure");
+  }
+
+  if (asyncQueuePressure) {
+    reasons.push("async_queue_pressure");
+  }
+
+  return {
+    status: health.status,
+    service: "ray-gateway",
+    providerStatus: health.provider.status,
+    queueDepth: health.queueDepth,
+    inFlight: health.inFlight,
+    pressure: {
+      queue: queuePressure,
+      memory: memoryPressure,
+      cpu: cpuPressure,
+      asyncQueue: asyncQueuePressure,
+    },
+    reasons,
+  };
 }
 
 function resolveWarmupRetryDelayOption(
@@ -862,10 +933,12 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
         if (jobQueue) {
           attachAsyncQueueHealth(health, await jobQueue.snapshotWithStorage());
         }
-        writeJsonWithoutReadingBody(request, response, resolveReadyzStatusCode(health), {
-          status: health.status,
-          service: "ray-gateway",
-        });
+        writeJsonWithoutReadingBody(
+          request,
+          response,
+          resolveReadyzStatusCode(health),
+          buildReadyzResponse(health),
+        );
         return;
       }
 
