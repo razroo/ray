@@ -251,6 +251,51 @@ test("RayClient reports malformed successful JSON responses with route context",
   );
 });
 
+test("RayClient refuses to follow redirects away from the configured gateway", async (t) => {
+  let redirectedRequests = 0;
+  let redirectedAuthorization: string | undefined;
+  const redirectedServer = createServer((request, response) => {
+    redirectedRequests += 1;
+    redirectedAuthorization =
+      typeof request.headers.authorization === "string" ? request.headers.authorization : undefined;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ status: "ready" }));
+  });
+
+  await new Promise<void>((resolve) => redirectedServer.listen(0, "127.0.0.1", resolve));
+  t.after(() => redirectedServer.close());
+
+  const redirectedAddress = redirectedServer.address();
+  if (!redirectedAddress || typeof redirectedAddress === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const redirectingServer = createServer((_request, response) => {
+    response.writeHead(307, {
+      "content-type": "application/json",
+      location: `http://127.0.0.1:${redirectedAddress.port}/readyz`,
+    });
+    response.end(JSON.stringify({ error: { code: "redirected" } }));
+  });
+
+  await new Promise<void>((resolve) => redirectingServer.listen(0, "127.0.0.1", resolve));
+  t.after(() => redirectingServer.close());
+
+  const redirectingAddress = redirectingServer.address();
+  if (!redirectingAddress || typeof redirectingAddress === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const client = new RayClient({
+    baseUrl: `http://127.0.0.1:${redirectingAddress.port}`,
+    apiKey: "client-secret",
+  });
+
+  await assert.rejects(() => client.readyz(), /Ray request failed with 307/);
+  assert.equal(redirectedRequests, 0);
+  assert.equal(redirectedAuthorization, undefined);
+});
+
 test("RayClient times out stalled requests", async (t) => {
   const server = createServer((_request, response) => {
     setTimeout(() => {

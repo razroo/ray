@@ -417,6 +417,7 @@ export class RayClient {
     try {
       const response = await fetch(`${this.baseUrl}${pathname}`, {
         ...init,
+        redirect: "manual",
         headers: {
           ...this.headers,
           ...(init?.headers ?? {}),
