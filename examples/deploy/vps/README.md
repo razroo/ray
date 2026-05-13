@@ -441,7 +441,8 @@ passes `RAY_DEPLOY_CADDY_BINARY` through remote doctor, render, and generated
 Caddyfile validation when a custom Caddy path is configured. Missing API keys,
 missing or corrupt GGUF files,
 memory-fit errors, exhausted async queue storage reserves, unsupported gateway
-runtimes, unsupported generated llama.cpp launch flags, low checkout free space
+runtimes, broken gateway imports from a missing Bun production install or
+workspace build, unsupported generated llama.cpp launch flags, low checkout free space
 for the Bun production install, generated systemd unit verification, and
 generated Caddyfile validation fail before systemd tries to start the generated units. The
 configured gateway runtime binary defaults to `/usr/local/bin/bun`. Remote Bun
@@ -486,7 +487,7 @@ file, package metadata, and the llama.cpp staging helper used during deploy.
 - Install Caddy on `PATH`, set `RAY_DEPLOY_CADDY_BINARY`, or pass `--caddy-binary`; doctor runs that binary for `version` and `validate --config` before you install or reload the generated reverse proxy config.
 - Keep `/etc/ray/ray.json` readable by the generated service user, for example with `root:<service-user-primary-group>` ownership and mode `0640`; doctor verifies this before systemd uses it.
 - Keep the Ray checkout at the generated `WorkingDirectory` such as `/srv/ray`, not under `/home`, `/root`, or `/run/user`; doctor verifies the directory exists, is not hidden by `ProtectHome=true`, and has read/execute mode bits for the generated service user before systemd uses it.
-- Run `bun run build` before rendering or restarting services; doctor verifies the built gateway entrypoint exists under the generated `WorkingDirectory` and is readable by the generated service user.
+- Run `timeout 300s bun install --production --frozen-lockfile --ignore-scripts` and `bun run build` before rendering or restarting services; doctor verifies the built gateway entrypoint exists under the generated `WorkingDirectory`, is readable by the generated service user, and can be imported by the configured gateway runtime with the installed workspace packages.
 - Use `/livez` for reverse-proxy liveness checks, and `/readyz` when a dependent app needs a minimal backend-aware readiness check; `/readyz` returns 503 while the provider is unavailable or still warming, then reports degraded async-queue storage without exposing detailed queue internals. The gateway binds before provider warmup finishes and retries failed warmups in the background, so a slow local model backend should not make systemd treat the gateway process itself as dead.
 - Gateway shutdown is bounded for unattended VPS restarts: SIGTERM stops new HTTP sockets, closes idle keep-alives, and force-closes active connections after 30 seconds so the generated `TimeoutStopSec=35` unit does not hang on a stuck client.
 - Let the generated Caddy upstream timeouts track `scheduler.requestTimeoutMs`; public proxy sockets should not outlive Ray's own request budget for long.

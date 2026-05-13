@@ -2469,6 +2469,8 @@ test("diagnoseConfig errors when the generated service user cannot access gatewa
       gatewayEntrypointStatus: "found",
       gatewayEntrypointAccessStatus: "blocked",
       gatewayEntrypointAccessError: "read permission is not granted on index.js",
+      gatewayEntrypointImportStatus: "failed",
+      gatewayEntrypointImportError: "Cannot find package '@ray/config'",
     },
   });
 
@@ -2505,6 +2507,14 @@ test("diagnoseConfig errors when the generated service user cannot access gatewa
   assert.equal(entrypointDiagnostic.level, "error");
   assert.match(entrypointDiagnostic.message, /ray/);
   assert.match(entrypointDiagnostic.message, /read permission/);
+
+  const importDiagnostic = diagnostics.find(
+    (entry) => entry.code === "gateway_entrypoint_import_failed",
+  );
+  assert.ok(importDiagnostic);
+  assert.equal(importDiagnostic.level, "error");
+  assert.match(importDiagnostic.message, /bun install --production --frozen-lockfile/);
+  assert.match(importDiagnostic.message, /Cannot find package '@ray\/config'/);
 });
 
 test("diagnoseConfig errors when strict working directory storage is below the deploy cushion", () => {
@@ -3009,6 +3019,7 @@ test("loadAndDiagnoseDeployment reports the built gateway entrypoint in strict m
     cwd: tempDir,
     configPath,
     strictFilesystem: true,
+    runtimeBinary: process.execPath,
   });
 
   const diagnostic = inspected.diagnostics.find((entry) => entry.code === "gateway_entrypoint_ok");
@@ -3018,6 +3029,42 @@ test("loadAndDiagnoseDeployment reports the built gateway entrypoint in strict m
     diagnostic.message,
     new RegExp(entrypointPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
   );
+
+  const importDiagnostic = inspected.diagnostics.find(
+    (entry) => entry.code === "gateway_entrypoint_import_ok",
+  );
+  assert.ok(importDiagnostic);
+  assert.equal(importDiagnostic.level, "info");
+  assert.match(importDiagnostic.message, /Bun production dependency install/);
+});
+
+test("loadAndDiagnoseDeployment errors when the built gateway cannot import dependencies", async (t) => {
+  const tempDir = await mkRayDeployTempDir("ray-deploy-gateway-import-missing-");
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  const entrypointPath = join(tempDir, "apps", "gateway", "dist", "index.js");
+  await mkdir(join(tempDir, "apps", "gateway", "dist"), { recursive: true });
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+  await writeFile(entrypointPath, "import '@ray/definitely-missing';\n");
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    strictFilesystem: true,
+    runtimeBinary: process.execPath,
+  });
+
+  const diagnostic = inspected.diagnostics.find(
+    (entry) => entry.code === "gateway_entrypoint_import_failed",
+  );
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /definitely-missing/);
+  assert.match(diagnostic.message, /bun install --production --frozen-lockfile/);
 });
 
 test("loadAndDiagnoseDeployment errors when the projected memory fit exceeds a 4 GB target", async (t) => {

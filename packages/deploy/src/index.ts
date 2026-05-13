@@ -4,6 +4,7 @@ import { access, mkdtemp, open, rm, stat, statfs, writeFile } from "node:fs/prom
 import { isIP } from "node:net";
 import { availableParallelism, tmpdir, totalmem } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { loadRayConfig, resolveAuthApiKeys, sanitizeConfig } from "@ray/config";
 import {
   getLlamaCppLaunchProfileExtraArgOverride,
@@ -86,6 +87,7 @@ type LlamaCppBinaryStatus = BinaryPreflightStatus;
 type LlamaCppBinaryProbeStatus = "ok" | "failed";
 type LlamaCppBinaryLaunchFlagsStatus = "ok" | "unsupported";
 type GatewayEntrypointStatus = BinaryPreflightStatus;
+type GatewayEntrypointImportStatus = "ok" | "failed";
 type ConfigFileStatus = BinaryPreflightStatus;
 type WorkingDirectoryStatus = "found" | "missing" | "not_directory" | "unreadable";
 type WorkingDirectoryStorageStatus = "available" | "unreadable";
@@ -140,6 +142,8 @@ export interface DeploymentPreflight {
   gatewayEntrypointError?: string;
   gatewayEntrypointAccessStatus?: ServiceUserAccessStatus;
   gatewayEntrypointAccessError?: string;
+  gatewayEntrypointImportStatus?: GatewayEntrypointImportStatus;
+  gatewayEntrypointImportError?: string;
   configFilePath?: string;
   configFileStatus?: ConfigFileStatus;
   configFileError?: string;
@@ -238,6 +242,8 @@ const MIN_GATEWAY_BUN_VERSION = "1.3.0";
 const MIN_GATEWAY_NODE_VERSION = "20.11.0";
 const GATEWAY_RUNTIME_VERSION_TIMEOUT_MS = 10_000;
 const GATEWAY_RUNTIME_VERSION_MAX_BUFFER_BYTES = 16 * 1024;
+const GATEWAY_ENTRYPOINT_IMPORT_TIMEOUT_MS = 10_000;
+const GATEWAY_ENTRYPOINT_IMPORT_MAX_BUFFER_BYTES = 64 * 1024;
 const SYSTEMD_RUNTIME_DIRECTORY = "/run/systemd/system";
 const SYSTEMCTL_VERSION_TIMEOUT_MS = 10_000;
 const SYSTEMCTL_VERSION_MAX_BUFFER_BYTES = 16 * 1024;
@@ -2618,6 +2624,23 @@ export function diagnoseConfig(
     }
   }
 
+  if (strictFilesystem && preflight?.gatewayEntrypointImportStatus !== undefined) {
+    if (preflight.gatewayEntrypointImportStatus === "failed") {
+      diagnostics.push({
+        level: "error",
+        code: "gateway_entrypoint_import_failed",
+        message: `The configured gateway runtime could not import the built Ray gateway entrypoint${preflight.gatewayEntrypointImportError ? ` (${preflight.gatewayEntrypointImportError})` : ""}. Run timeout 300s bun install --production --frozen-lockfile --ignore-scripts and bun run build in the generated WorkingDirectory before restarting ray-gateway.service.`,
+      });
+    } else {
+      diagnostics.push({
+        level: "info",
+        code: "gateway_entrypoint_import_ok",
+        message:
+          "The configured gateway runtime can import the built Ray gateway entrypoint, including the Bun production dependency install and built workspace packages.",
+      });
+    }
+  }
+
   if (!config.rateLimit.enabled) {
     diagnostics.push({
       level: "warn",
@@ -4228,6 +4251,54 @@ async function collectGatewayEntrypointPreflight(
   }
 }
 
+async function collectGatewayEntrypointImportPreflight(
+  cwd: string,
+  runtimeBinary: string | undefined,
+  strictFilesystem: boolean,
+  gatewayEntrypointStatus: GatewayEntrypointStatus | undefined,
+  gatewayRuntimeBinaryStatus: GatewayRuntimeBinaryStatus | undefined,
+): Promise<Partial<DeploymentPreflight>> {
+  if (
+    !strictFilesystem ||
+    runtimeBinary === undefined ||
+    gatewayEntrypointStatus !== "found" ||
+    gatewayRuntimeBinaryStatus !== "found"
+  ) {
+    return {};
+  }
+
+  const entrypointPath = path.resolve(cwd, GATEWAY_ENTRYPOINT_RELATIVE_PATH);
+  const importScript = `await import(${JSON.stringify(pathToFileURL(entrypointPath).href)});`;
+
+  return await new Promise<Partial<DeploymentPreflight>>((resolve) => {
+    execFile(
+      runtimeBinary,
+      ["--input-type=module", "--eval", importScript],
+      {
+        cwd,
+        timeout: GATEWAY_ENTRYPOINT_IMPORT_TIMEOUT_MS,
+        maxBuffer: GATEWAY_ENTRYPOINT_IMPORT_MAX_BUFFER_BYTES,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        const output = `${stdout}\n${stderr}`.trim();
+
+        if (error) {
+          resolve({
+            gatewayEntrypointImportStatus: "failed",
+            gatewayEntrypointImportError: output
+              ? `${toErrorMessage(error)}; output: ${truncateRuntimeVersionOutput(output)}`
+              : toErrorMessage(error),
+          });
+          return;
+        }
+
+        resolve({ gatewayEntrypointImportStatus: "ok" });
+      },
+    );
+  });
+}
+
 async function collectConfigFilePreflight(
   configPath: string | undefined,
   strictFilesystem: boolean,
@@ -4568,6 +4639,13 @@ async function collectDeploymentPreflight(
     serviceUserIdentity,
     options.strictFilesystem === true,
   );
+  const gatewayEntrypointImportPreflight = await collectGatewayEntrypointImportPreflight(
+    options.cwd,
+    runtimeBinary,
+    options.strictFilesystem === true,
+    gatewayEntrypointPreflight.gatewayEntrypointStatus,
+    runtimePreflight.gatewayRuntimeBinaryStatus,
+  );
   const swapPreflight = await collectSwapPreflight(options.hostFiles);
 
   if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
@@ -4586,6 +4664,7 @@ async function collectDeploymentPreflight(
       ...workingDirectoryPreflight,
       ...gatewayEntrypointPreflight,
       ...runtimePreflight,
+      ...gatewayEntrypointImportPreflight,
       ...swapPreflight,
     };
     const systemdUnitPreflight = await collectSystemdUnitPreflight(
@@ -4639,6 +4718,7 @@ async function collectDeploymentPreflight(
     ...workingDirectoryPreflight,
     ...gatewayEntrypointPreflight,
     ...runtimePreflight,
+    ...gatewayEntrypointImportPreflight,
     ...llamaBinaryPreflight,
     ...swapPreflight,
     memoryBudgetMiB: budget.memoryBudgetMiB,
