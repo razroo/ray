@@ -146,8 +146,18 @@ test("gateway bounds HTTP server socket and header resources for small VPS hosts
 });
 
 test("gateway rejects oversized HTTP headers before request handling", async (t) => {
+  const warnings: Array<{ message: string; fields: LogFields | undefined }> = [];
+  const logger = {
+    debug() {},
+    info() {},
+    warn(message: string, fields?: LogFields) {
+      warnings.push({ message, fields });
+    },
+    error() {},
+  } as unknown as Logger;
   const gateway = createGatewayServer({
     config: createDefaultConfig("tiny"),
+    logger,
   });
 
   await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
@@ -194,6 +204,15 @@ test("gateway rejects oversized HTTP headers before request handling", async (t)
 
   assert.match(response, /^HTTP\/1\.1 431 /);
   assert.match(response, /\r\nconnection: close\r\n/i);
+  assert.equal(warnings[0]?.message, "request rejected");
+  assert.equal(warnings[0]?.fields?.method, "[parser]");
+  assert.equal(warnings[0]?.fields?.path, "[parser]");
+
+  const error = warnings[0]?.fields?.error as Record<string, unknown> | undefined;
+  assert.equal(error?.code, "request_headers_too_large");
+  assert.equal(error?.status, 431);
+  assert.equal(error?.parserCode, "HPE_HEADER_OVERFLOW");
+  assert.equal(error?.stack, undefined);
 });
 
 test("stopGateway force-closes active request sockets before systemd timeout", async (t) => {

@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { isIP, type Socket } from "node:net";
+import type { Duplex } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { loadRayConfig, resolveAuthApiKeys, snapshotRayConfig } from "@ray/config";
 import {
@@ -61,6 +62,14 @@ const expectedRequestRejectionCodes = new Set([
   "async_queue_full",
   "async_queue_storage_low",
 ]);
+
+interface GatewayHttpParserRejection {
+  code: string;
+  message: string;
+  parserCode: string;
+  statusCode: number;
+  statusText: string;
+}
 
 export interface CreateGatewayHandlerOptions {
   config: RayConfig;
@@ -524,6 +533,82 @@ function stringifyJsonResponse(payload: unknown): string {
       2,
     )}\n`;
   }
+}
+
+function resolveHttpParserRejection(error: Error & { code?: string }): GatewayHttpParserRejection {
+  const parserCode = typeof error.code === "string" ? error.code : "HTTP_PARSE_ERROR";
+
+  if (parserCode === "HPE_HEADER_OVERFLOW") {
+    return {
+      code: "request_headers_too_large",
+      message: "Request headers are too large",
+      parserCode,
+      statusCode: 431,
+      statusText: "Request Header Fields Too Large",
+    };
+  }
+
+  return {
+    code: "invalid_http_request",
+    message: "Request line or headers are invalid",
+    parserCode,
+    statusCode: 400,
+    statusText: "Bad Request",
+  };
+}
+
+function writeHttpParserReject(socket: Duplex, rejection: GatewayHttpParserRejection): void {
+  if (socket.destroyed || !socket.writable) {
+    return;
+  }
+
+  const body = stringifyJsonResponse({
+    error: {
+      code: rejection.code,
+      message: rejection.message,
+    },
+  });
+
+  socket.end(
+    [
+      `HTTP/1.1 ${rejection.statusCode} ${rejection.statusText}`,
+      "content-type: application/json; charset=utf-8",
+      `content-length: ${Buffer.byteLength(body).toString()}`,
+      "connection: close",
+      "",
+      body,
+    ].join("\r\n"),
+  );
+}
+
+function shouldUseRuntimeHttpParserRejectResponse(): boolean {
+  return typeof (process.versions as NodeJS.ProcessVersions & { bun?: string }).bun === "string";
+}
+
+function handleHttpParserReject(
+  error: Error & { bytesParsed?: number; code?: string },
+  socket: Duplex,
+  logger: Logger,
+): void {
+  const rejection = resolveHttpParserRejection(error);
+  logger.warn("request rejected", {
+    method: "[parser]",
+    path: "[parser]",
+    error: {
+      code: rejection.code,
+      status: rejection.statusCode,
+      message: rejection.message,
+      name: error.name,
+      parserCode: rejection.parserCode,
+      ...(typeof error.bytesParsed === "number" ? { bytesParsed: error.bytesParsed } : {}),
+    },
+  });
+
+  if (shouldUseRuntimeHttpParserRejectResponse()) {
+    return;
+  }
+
+  writeHttpParserReject(socket, rejection);
 }
 
 function writeJsonWithoutReadingBody(
@@ -1313,6 +1398,9 @@ export function createGatewayServer(options: CreateGatewayHandlerOptions): Gatew
   server.maxRequestsPerSocket = GATEWAY_MAX_REQUESTS_PER_SOCKET;
   server.maxConnections = GATEWAY_MAX_CONNECTIONS;
   server.maxHeadersCount = GATEWAY_MAX_HEADERS_COUNT;
+  server.on("clientError", (error, socket) => {
+    handleHttpParserReject(error, socket, logger);
+  });
   server.on("connection", (socket) => {
     sockets.add(socket);
     socket.on("close", () => {
