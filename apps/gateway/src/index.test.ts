@@ -958,6 +958,8 @@ test("gateway metrics endpoint refreshes live runtime gauges", async (t) => {
   assert.equal(body.gauges["gateway.http.active_requests"], 1);
   assert.equal(body.gauges["gateway.http.max_connections"], 256);
   assert.equal(body.gauges["gateway.http.connection_ratio"], 1 / 256);
+  assert.equal(body.gauges["gateway.http.connection_ratio_threshold"], 0.9);
+  assert.equal(body.gauges["gateway.http.degraded"], 0);
   assert.equal(body.gauges["gateway.http.max_header_bytes"], 12_288);
   assert.equal(body.gauges["gateway.http.max_headers_count"], 64);
   assert.equal(body.gauges["gateway.http.max_requests_per_socket"], 1_000);
@@ -979,6 +981,51 @@ test("gateway metrics endpoint refreshes live runtime gauges", async (t) => {
   assert.equal(body.gauges["process.cpu.cgroup_throttled_ratio"], 0.05);
   assert.equal(body.gauges["process.cpu.cgroup_throttled_threshold"], 0.2);
   assert.equal(body.gauges["process.cpu.pressure"], 0);
+});
+
+test("gateway metrics endpoint exposes HTTP socket pressure threshold", async (t) => {
+  const config = createDefaultConfig("tiny");
+  const runtime = {
+    async collectMetricsSnapshot() {
+      return { counters: {}, gauges: {} };
+    },
+  } as unknown as RayRuntime;
+  const server = createServer(
+    createGatewayRequestHandler({
+      config,
+      runtime,
+      httpResourceSnapshot: () => ({
+        sockets: 231,
+        activeSockets: 230,
+        idleSockets: 1,
+        activeRequests: 240,
+        maxConnections: 256,
+        connectionRatio: 231 / 256,
+        maxHeaderBytes: 12_288,
+        maxHeadersCount: 64,
+        maxRequestsPerSocket: 1_000,
+        headersTimeoutMs: 15_000,
+        requestTimeoutMs: 30_000,
+        keepAliveTimeoutMs: 5_000,
+      }),
+    }),
+  );
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/metrics`);
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as RuntimeMetricsSnapshot;
+
+  assert.equal(body.gauges["gateway.http.connection_ratio"], 231 / 256);
+  assert.equal(body.gauges["gateway.http.connection_ratio_threshold"], 0.9);
+  assert.equal(body.gauges["gateway.http.degraded"], 1);
 });
 
 test("gateway metrics endpoint exposes async queue saturation", async (t) => {

@@ -216,6 +216,8 @@ function attachGatewayHttpResourceMetrics(
   metrics.gauges["gateway.http.active_requests"] = snapshot.activeRequests;
   metrics.gauges["gateway.http.max_connections"] = snapshot.maxConnections;
   metrics.gauges["gateway.http.connection_ratio"] = snapshot.connectionRatio;
+  metrics.gauges["gateway.http.connection_ratio_threshold"] = GATEWAY_HTTP_PRESSURE_RATIO;
+  metrics.gauges["gateway.http.degraded"] = isGatewayHttpPressure(snapshot) ? 1 : 0;
   metrics.gauges["gateway.http.max_header_bytes"] = snapshot.maxHeaderBytes;
   metrics.gauges["gateway.http.max_headers_count"] = snapshot.maxHeadersCount;
   metrics.gauges["gateway.http.max_requests_per_socket"] = snapshot.maxRequestsPerSocket;
