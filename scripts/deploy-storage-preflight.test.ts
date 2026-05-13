@@ -234,3 +234,30 @@ test("runDeployStoragePreflightCli reports malformed thresholds", async () => {
   assert.deepEqual(stdout, []);
   assert.match(stderr.join(""), /--min-free-mib must be less than or equal to/);
 });
+
+test("runDeployStoragePreflightCli help documents env-file binary storage paths", async () => {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const code = await runDeployStoragePreflightCli(
+    ["--help"],
+    {
+      stdout: {
+        write: (message: string) => {
+          stdout.push(message);
+          return true;
+        },
+      },
+      stderr: {
+        write: (message: string) => {
+          stderr.push(message);
+          return true;
+        },
+      },
+    },
+    {},
+  );
+
+  assert.equal(code, 0);
+  assert.deepEqual(stderr, []);
+  assert.match(stdout.join(""), /model, llama\.cpp binary, and async-queue paths/);
+});
