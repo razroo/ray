@@ -47,6 +47,7 @@ const MIN_BINARY_STAGE_FREE_AFTER_COPY_MIB = 64;
 const MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB = 256;
 const MAX_DEPLOY_MIN_FREE_STORAGE_MIB = 1_048_576;
 const DEPLOY_MIN_FREE_STORAGE_ENV = "RAY_DEPLOY_MIN_FREE_STORAGE_MIB";
+const MAX_STAGE_PATH_BYTES = 4_096;
 const GGUF_MAGIC = "GGUF";
 const LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS = 10;
 const LLAMA_CPP_BINARY_SMOKE_TIMEOUT_MS = LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS * 1000;
@@ -299,6 +300,10 @@ function normalizeOptionalPath(value: string, label: string): string {
 
   if (value.includes("\0") || value.includes("\n") || value.includes("\r")) {
     throw new Error(`${label} must not contain control characters`);
+  }
+
+  if (Buffer.byteLength(value, "utf8") > MAX_STAGE_PATH_BYTES) {
+    throw new Error(`${label} must be at most ${MAX_STAGE_PATH_BYTES} bytes`);
   }
 
   return value;

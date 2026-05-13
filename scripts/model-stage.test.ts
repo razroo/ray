@@ -339,6 +339,17 @@ test("createModelStagePlan reads staging sources and checksums from env", async 
   assert.match(plan.commands.join("\n"), /timeout 30s df -Pm '\/var\/lib\/ray\/models'/);
 });
 
+test("createModelStagePlan rejects oversized staging paths before rendering commands", async () => {
+  await assert.rejects(
+    createModelStagePlan({
+      cwd: repoRoot,
+      configPath: "./examples/config/ray.1b.generic.public.json",
+      sourcePath: `/${"a".repeat(4096)}`,
+    }),
+    /source path must be at most 4096 bytes/,
+  );
+});
+
 test("createModelStagePlan uses deploy memory env for staging fit checks", async () => {
   const plan = await createModelStagePlan({
     cwd: repoRoot,
