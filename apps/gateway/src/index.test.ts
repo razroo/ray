@@ -960,6 +960,7 @@ test("gateway metrics endpoint refreshes live runtime gauges", async (t) => {
   assert.equal(body.gauges["gateway.http.connection_ratio"], 1 / 256);
   assert.equal(body.gauges["gateway.http.connection_ratio_threshold"], 0.9);
   assert.equal(body.gauges["gateway.http.degraded"], 0);
+  assert.equal(body.gauges["gateway.http.request_body_limit_bytes"], 32_000);
   assert.equal(body.gauges["gateway.http.max_header_bytes"], 12_288);
   assert.equal(body.gauges["gateway.http.max_headers_count"], 64);
   assert.equal(body.gauges["gateway.http.max_requests_per_socket"], 1_000);
@@ -1001,6 +1002,7 @@ test("gateway metrics endpoint exposes HTTP socket pressure threshold", async (t
         activeRequests: 240,
         maxConnections: 256,
         connectionRatio: 231 / 256,
+        requestBodyLimitBytes: 32_000,
         maxHeaderBytes: 12_288,
         maxHeadersCount: 64,
         maxRequestsPerSocket: 1_000,
@@ -1026,6 +1028,7 @@ test("gateway metrics endpoint exposes HTTP socket pressure threshold", async (t
   assert.equal(body.gauges["gateway.http.connection_ratio"], 231 / 256);
   assert.equal(body.gauges["gateway.http.connection_ratio_threshold"], 0.9);
   assert.equal(body.gauges["gateway.http.degraded"], 1);
+  assert.equal(body.gauges["gateway.http.request_body_limit_bytes"], 32_000);
 });
 
 test("gateway metrics endpoint exposes async queue saturation", async (t) => {
@@ -1405,6 +1408,7 @@ test("gateway readyz exposes HTTP socket pressure without protected metrics", as
         activeRequests: 231,
         maxConnections: 256,
         connectionRatio: 231 / 256,
+        requestBodyLimitBytes: 32_000,
         maxHeaderBytes: 12_288,
         maxHeadersCount: 64,
         maxRequestsPerSocket: 1_000,
@@ -1473,6 +1477,7 @@ test("gateway detailed health exposes HTTP socket pressure diagnostics", async (
         activeRequests: 240,
         maxConnections: 256,
         connectionRatio: 231 / 256,
+        requestBodyLimitBytes: 32_000,
         maxHeaderBytes: 12_288,
         maxHeadersCount: 64,
         maxRequestsPerSocket: 1_000,
@@ -1504,6 +1509,7 @@ test("gateway detailed health exposes HTTP socket pressure diagnostics", async (
   assert.equal(body.gateway?.http.maxConnections, 256);
   assert.equal(body.gateway?.http.connectionRatio, 231 / 256);
   assert.equal(body.gateway?.http.pressureThreshold, 0.9);
+  assert.equal(body.gateway?.http.requestBodyLimitBytes, 32_000);
   assert.equal(body.gateway?.http.maxHeaderBytes, 12_288);
   assert.equal(body.gateway?.http.maxHeadersCount, 64);
   assert.equal(body.gateway?.http.maxRequestsPerSocket, 1_000);

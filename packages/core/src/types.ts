@@ -650,6 +650,7 @@ export interface GatewayHttpHealthSnapshot {
   maxConnections: number;
   connectionRatio: number;
   pressureThreshold: number;
+  requestBodyLimitBytes: number;
   maxHeaderBytes: number;
   maxHeadersCount: number;
   maxRequestsPerSocket: number;

@@ -116,6 +116,7 @@ export interface GatewayHttpResourceSnapshot {
   activeRequests: number;
   maxConnections: number;
   connectionRatio: number;
+  requestBodyLimitBytes: number;
   maxHeaderBytes: number;
   maxHeadersCount: number;
   maxRequestsPerSocket: number;
@@ -218,6 +219,7 @@ function attachGatewayHttpResourceMetrics(
   metrics.gauges["gateway.http.connection_ratio"] = snapshot.connectionRatio;
   metrics.gauges["gateway.http.connection_ratio_threshold"] = GATEWAY_HTTP_PRESSURE_RATIO;
   metrics.gauges["gateway.http.degraded"] = isGatewayHttpPressure(snapshot) ? 1 : 0;
+  metrics.gauges["gateway.http.request_body_limit_bytes"] = snapshot.requestBodyLimitBytes;
   metrics.gauges["gateway.http.max_header_bytes"] = snapshot.maxHeaderBytes;
   metrics.gauges["gateway.http.max_headers_count"] = snapshot.maxHeadersCount;
   metrics.gauges["gateway.http.max_requests_per_socket"] = snapshot.maxRequestsPerSocket;
@@ -408,6 +410,7 @@ function destroyIdleGatewaySockets(gateway: GatewayServer): void {
 function snapshotGatewayHttpResources(
   sockets: Set<Socket>,
   activeRequestsBySocket: Map<Socket, number>,
+  requestBodyLimitBytes: number,
 ): GatewayHttpResourceSnapshot {
   let activeRequests = 0;
   for (const count of activeRequestsBySocket.values()) {
@@ -423,6 +426,7 @@ function snapshotGatewayHttpResources(
     activeRequests,
     maxConnections: GATEWAY_MAX_CONNECTIONS,
     connectionRatio: sockets.size / GATEWAY_MAX_CONNECTIONS,
+    requestBodyLimitBytes,
     maxHeaderBytes: GATEWAY_MAX_HEADER_BYTES,
     maxHeadersCount: GATEWAY_MAX_HEADERS_COUNT,
     maxRequestsPerSocket: GATEWAY_MAX_REQUESTS_PER_SOCKET,
@@ -1502,7 +1506,12 @@ export function createGatewayServer(options: CreateGatewayHandlerOptions): Gatew
     logger,
     ...(jobQueue ? { jobQueue } : {}),
     warmupSnapshot: () => warmup?.snapshot(),
-    httpResourceSnapshot: () => snapshotGatewayHttpResources(sockets, activeRequestsBySocket),
+    httpResourceSnapshot: () =>
+      snapshotGatewayHttpResources(
+        sockets,
+        activeRequestsBySocket,
+        config.server.requestBodyLimitBytes,
+      ),
   });
   const server = createServer({ maxHeaderSize: GATEWAY_MAX_HEADER_BYTES }, handler);
   server.requestTimeout = GATEWAY_REQUEST_TIMEOUT_MS;
