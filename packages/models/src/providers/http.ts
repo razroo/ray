@@ -45,6 +45,7 @@ const MAX_ADAPTER_PATHNAME_CHARS = 2_048;
 const MAX_ADAPTER_HEADERS = 64;
 const MAX_ADAPTER_HEADER_KEY_CHARS = 128;
 const MAX_ADAPTER_HEADER_VALUE_CHARS = 4_096;
+const MAX_ADAPTER_API_KEY_CHARS = 1_024;
 const MAX_ADAPTER_ENV_NAME_CHARS = 128;
 const MAX_ADAPTER_WARMUP_REQUESTS = 8;
 const MAX_ADAPTER_WARMUP_TEXT_CHARS = 8_192;
@@ -263,6 +264,17 @@ function assertHeaderRecord(value: Record<string, string> | undefined, label: st
   }
 }
 
+function assertAdapterApiKey(value: string, label: string): void {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_ADAPTER_API_KEY_CHARS ||
+    /\s|[\0\r\n]/.test(value)
+  ) {
+    throw new TypeError(`${label} must be a bounded bearer token string without whitespace`);
+  }
+}
+
 function assertStopSequences(value: string[] | undefined, label: string): void {
   if (value === undefined) {
     return;
@@ -458,7 +470,8 @@ export function buildAdapterHeaders(adapter: HttpAdapterConfig): Record<string, 
 
   if (adapter.apiKeyEnv) {
     const apiKey = process.env[adapter.apiKeyEnv];
-    if (apiKey) {
+    if (apiKey !== undefined) {
+      assertAdapterApiKey(apiKey, adapter.apiKeyEnv);
       headers.authorization = `Bearer ${apiKey}`;
     }
   }

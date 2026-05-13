@@ -12,6 +12,7 @@ import {
   BACKEND_REQUEST_BODY_LIMIT_BYTES,
   BACKEND_RESPONSE_BODY_LIMIT_BYTES,
   adapterRequest,
+  buildAdapterHeaders,
   extractAssistantText,
 } from "./providers/http.js";
 
@@ -260,6 +261,72 @@ test("adapterRequest rejects invalid direct adapter config before dispatch", asy
       ),
     /adapter\.pathname must be at most 2048 characters/,
   );
+});
+
+test("buildAdapterHeaders forwards bounded apiKeyEnv values", () => {
+  const envName = "RAY_TEST_UPSTREAM_API_KEY";
+  const original = process.env[envName];
+
+  try {
+    process.env[envName] = "upstream-token_123";
+
+    assert.deepEqual(
+      buildAdapterHeaders({
+        baseUrl: "http://127.0.0.1:8080",
+        timeoutMs: 500,
+        apiKeyEnv: envName,
+        headers: { "x-ray-test": "static" },
+      }),
+      {
+        "content-type": "application/json",
+        "x-ray-test": "static",
+        authorization: "Bearer upstream-token_123",
+      },
+    );
+  } finally {
+    if (original === undefined) {
+      delete process.env[envName];
+    } else {
+      process.env[envName] = original;
+    }
+  }
+});
+
+test("buildAdapterHeaders rejects unsafe apiKeyEnv values before dispatch", () => {
+  const envName = "RAY_TEST_UPSTREAM_API_KEY";
+  const original = process.env[envName];
+
+  try {
+    process.env[envName] = "bad\nkey";
+
+    assert.throws(
+      () =>
+        buildAdapterHeaders({
+          baseUrl: "http://127.0.0.1:8080",
+          timeoutMs: 500,
+          apiKeyEnv: envName,
+        }),
+      /RAY_TEST_UPSTREAM_API_KEY must be a bounded bearer token string without whitespace/,
+    );
+
+    process.env[envName] = "";
+
+    assert.throws(
+      () =>
+        buildAdapterHeaders({
+          baseUrl: "http://127.0.0.1:8080",
+          timeoutMs: 500,
+          apiKeyEnv: envName,
+        }),
+      /RAY_TEST_UPSTREAM_API_KEY must be a bounded bearer token string without whitespace/,
+    );
+  } finally {
+    if (original === undefined) {
+      delete process.env[envName];
+    } else {
+      process.env[envName] = original;
+    }
+  }
 });
 
 test("adapterRequest rejects oversized request bodies before dispatch", async (t) => {
