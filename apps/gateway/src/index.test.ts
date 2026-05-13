@@ -1069,12 +1069,13 @@ test("gateway readyz exposes minimal pressure reasons without protected health d
         maxInflightTokens: 2_048,
       },
       preparation: {
+        degraded: true,
         active: 1,
         concurrency: 2,
         activeRatio: 0.5,
-        queued: 0,
+        queued: 1,
         maxQueue: 4,
-        queuedRatio: 0,
+        queuedRatio: 0.25,
       },
       memory: {
         degraded: true,
@@ -1126,6 +1127,7 @@ test("gateway readyz exposes minimal pressure reasons without protected health d
   assert.equal(body.inFlight, 2);
   assert.deepEqual(body.pressure, {
     queue: true,
+    preparation: true,
     memory: true,
     cpu: true,
     asyncQueue: false,
@@ -1133,6 +1135,7 @@ test("gateway readyz exposes minimal pressure reasons without protected health d
   assert.deepEqual(body.reasons, [
     "provider_degraded",
     "queue_pressure",
+    "preparation_pressure",
     "memory_pressure",
     "cpu_pressure",
   ]);

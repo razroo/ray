@@ -192,6 +192,7 @@ function resolveReadyzStatusCode(health: HealthSnapshot): number {
 
 function buildReadyzResponse(health: HealthSnapshot): ReadinessSnapshot {
   const queuePressure = health.runtime?.queue.degraded ?? false;
+  const preparationPressure = health.runtime?.preparation.degraded ?? false;
   const memoryPressure = health.runtime?.memory.degraded ?? false;
   const cpuPressure = health.runtime?.cpu?.degraded ?? false;
   const asyncQueuePressure = health.asyncQueue?.degraded ?? false;
@@ -207,6 +208,10 @@ function buildReadyzResponse(health: HealthSnapshot): ReadinessSnapshot {
 
   if (queuePressure) {
     reasons.push("queue_pressure");
+  }
+
+  if (preparationPressure) {
+    reasons.push("preparation_pressure");
   }
 
   if (memoryPressure) {
@@ -229,6 +234,7 @@ function buildReadyzResponse(health: HealthSnapshot): ReadinessSnapshot {
     inFlight: health.inFlight,
     pressure: {
       queue: queuePressure,
+      preparation: preparationPressure,
       memory: memoryPressure,
       cpu: cpuPressure,
       asyncQueue: asyncQueuePressure,

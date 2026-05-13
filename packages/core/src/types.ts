@@ -567,6 +567,7 @@ export interface RuntimeHealthDiagnostics {
     maxInflightTokens: number;
   };
   preparation: {
+    degraded: boolean;
     active: number;
     concurrency: number;
     activeRatio: number;
@@ -640,6 +641,7 @@ export type ReadinessReason =
   | "provider_warming"
   | "provider_degraded"
   | "queue_pressure"
+  | "preparation_pressure"
   | "memory_pressure"
   | "cpu_pressure"
   | "async_queue_pressure";
@@ -652,6 +654,7 @@ export interface ReadinessSnapshot {
   inFlight: number;
   pressure: {
     queue: boolean;
+    preparation: boolean;
     memory: boolean;
     cpu: boolean;
     asyncQueue: boolean;

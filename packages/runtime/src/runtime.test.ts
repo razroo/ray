@@ -2796,6 +2796,8 @@ test("runtime bounds concurrent provider preparation before scheduling inference
 
   assert.equal(prepareStarts, 1);
   assert.equal(maxActivePreparations, 1);
+  assert.equal(health.status, "degraded");
+  assert.equal(health.runtime?.preparation.degraded, true);
   assert.equal(health.runtime?.preparation.active, 1);
   assert.equal(health.runtime?.preparation.concurrency, 1);
   assert.equal(health.runtime?.preparation.activeRatio, 1);

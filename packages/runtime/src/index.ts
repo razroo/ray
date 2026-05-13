@@ -4059,6 +4059,7 @@ export class RayRuntime {
     const memoryPressureSources = resolveMemoryPressureSources(this.config, memoryPressure);
     const queueDegraded =
       snapshot.queueDepth >= this.config.gracefulDegradation.queueDepthThreshold;
+    const preparationDegraded = preparationSnapshot.degraded;
     const memoryDegraded = memoryPressureSources.length > 0;
     const cpuDegraded = resolveCpuPressure(this.config, cgroupCpu, linuxPressure);
     const runtimeHealth = buildRuntimeHealthDiagnostics({
@@ -4088,6 +4089,7 @@ export class RayRuntime {
         : provider.status === "degraded" ||
             provider.status === "warming" ||
             queueDegraded ||
+            preparationDegraded ||
             memoryDegraded ||
             cpuDegraded
           ? "degraded"
@@ -4140,6 +4142,7 @@ export class RayRuntime {
 
   private preparationSnapshot(): PreparationSnapshot {
     return {
+      degraded: this.preparationQueue.length > 0,
       active: this.activePreparations,
       concurrency: this.config.scheduler.concurrency,
       activeRatio: resolveSaturationRatio(
