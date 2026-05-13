@@ -215,8 +215,11 @@ timeout 300s bun run doctor:1b:8gb:generic
 
 Doctor checks auth/env readiness, env-file permissions, systemd host readiness and generated unit-file verification, Caddy availability and generated Caddyfile validation for the reverse proxy (`caddy` on `PATH`, `RAY_DEPLOY_CADDY_BINARY`, or `--caddy-binary`), generated systemd user readiness, service-user access to the rendered config file, Bun runtime (`/usr/local/bin/bun` by default, `RAY_GATEWAY_RUNTIME_BINARY`, or `--gateway-runtime-binary`) including service-user-scoped Bun/Node version compatibility, generated WorkingDirectory access and free-space headroom for the synced checkout and Bun production install, built gateway entrypoint and configured-runtime importability, `llama-server` binary service-user startup and generated launch-flag support, GGUF model file presence and header, and async queue storage, launch profile consistency, architecture compatibility for ARM CAX11 versus x64 CX23 sub-1B profiles, generated gateway and llama.cpp paths that would be hidden by `ProtectHome=true` or `PrivateTmp=true`, projected memory fit against the generated backend `MemoryMax`, memory targets too small for the generated systemd cgroup floors, async queue storage headroom, swap cushion, and `vm.swappiness` for the 4 GB llama.cpp profile before the service starts.
 If doctor reports a missing swap cushion on a 4 GB VPS, run `bun run swap:plan`
-to print guarded commands for creating the default 1 GiB swap file and
-persisting `vm.swappiness=10`, then rerun doctor before sustained inference.
+to print guarded commands for creating the default 1 GiB swap file while
+preserving the default 512 MiB free-space cushion on the swap parent filesystem
+and persisting `vm.swappiness=10`, then rerun doctor before sustained inference.
+Use `bun run swap:plan -- --min-free-after-mib 1024` when the root filesystem
+needs a larger post-swap disk cushion.
 If swap already exists and doctor only reports eager host swapping, run
 `bun run swap:plan -- --sysctl-only --swappiness 10` to print only the
 guarded sysctl persistence and apply commands.

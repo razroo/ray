@@ -3,10 +3,12 @@ import { pathToFileURL } from "node:url";
 
 const DEFAULT_SWAP_PATH = "/swapfile";
 const DEFAULT_SWAP_SIZE_MIB = 1_024;
+const DEFAULT_MIN_FREE_AFTER_MIB = 512;
 const DEFAULT_SWAPPINESS = 10;
 const MAX_SWAP_SIZE_MIB = 65_536;
+const MAX_MIN_FREE_AFTER_MIB = 65_536;
 const MAX_SWAPPINESS = 200;
-const MAX_CLI_ARGS = 8;
+const MAX_CLI_ARGS = 10;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MIN_CREATE_TIMEOUT_SECONDS = 300;
 const MAX_CREATE_TIMEOUT_SECONDS = 7_200;
@@ -17,6 +19,7 @@ const INSPECT_TIMEOUT_SECONDS = 30;
 export interface SwapPlanArgs {
   path: string;
   sizeMiB: number;
+  minFreeAfterMiB: number;
   swappiness: number;
   sysctlOnly: boolean;
   json: boolean;
@@ -26,6 +29,7 @@ export interface SwapPlanArgs {
 export interface SwapPlan {
   path: string;
   sizeMiB: number;
+  minFreeAfterMiB: number;
   swappiness: number;
   sysctlOnly: boolean;
   commands: string[];
@@ -39,6 +43,8 @@ Usage:
 Options:
   --path <path>       Absolute swap file path. Default: ${DEFAULT_SWAP_PATH}
   --size-mib <n>      Swap file size in MiB. Default: ${DEFAULT_SWAP_SIZE_MIB}
+  --min-free-after-mib <n>
+                      Required free MiB left on the swap parent filesystem. Default: ${DEFAULT_MIN_FREE_AFTER_MIB}
   --swappiness <n>    Linux vm.swappiness value from 0 to ${MAX_SWAPPINESS}. Default: ${DEFAULT_SWAPPINESS}
   --sysctl-only       Print only vm.swappiness persistence/apply commands; do not touch swap files.
   --json              Print machine-readable plan JSON.
@@ -113,6 +119,23 @@ function parseSwapSizeMiB(value: string): number {
   return parsed;
 }
 
+function parseMinFreeAfterMiB(value: string): number {
+  const normalized = value.trim();
+  const parsed = Number(normalized);
+
+  if (
+    !/^(?:0|[1-9][0-9]*)$/.test(normalized) ||
+    !Number.isSafeInteger(parsed) ||
+    parsed > MAX_MIN_FREE_AFTER_MIB
+  ) {
+    throw new Error(
+      `minimum free-after-swap headroom must be an integer from 0 to ${MAX_MIN_FREE_AFTER_MIB} MiB`,
+    );
+  }
+
+  return parsed;
+}
+
 function parseSwappiness(value: string): number {
   const normalized = value.trim();
   const parsed = Number(normalized);
@@ -134,6 +157,7 @@ export function parseArgs(argv: string[]): SwapPlanArgs {
   const args: SwapPlanArgs = {
     path: DEFAULT_SWAP_PATH,
     sizeMiB: DEFAULT_SWAP_SIZE_MIB,
+    minFreeAfterMiB: DEFAULT_MIN_FREE_AFTER_MIB,
     swappiness: DEFAULT_SWAPPINESS,
     sysctlOnly: false,
     json: false,
@@ -141,6 +165,7 @@ export function parseArgs(argv: string[]): SwapPlanArgs {
   };
   let pathProvided = false;
   let sizeMiBProvided = false;
+  let minFreeAfterMiBProvided = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const current = argv[index];
@@ -161,6 +186,13 @@ export function parseArgs(argv: string[]): SwapPlanArgs {
     if (current === "--size-mib") {
       args.sizeMiB = parseSwapSizeMiB(requireFlagValue(current, argv[index + 1]));
       sizeMiBProvided = true;
+      index += 1;
+      continue;
+    }
+
+    if (current === "--min-free-after-mib") {
+      args.minFreeAfterMiB = parseMinFreeAfterMiB(requireFlagValue(current, argv[index + 1]));
+      minFreeAfterMiBProvided = true;
       index += 1;
       continue;
     }
@@ -195,6 +227,10 @@ export function parseArgs(argv: string[]): SwapPlanArgs {
     throw new Error("--size-mib cannot be used with --sysctl-only");
   }
 
+  if (args.sysctlOnly && minFreeAfterMiBProvided) {
+    throw new Error("--min-free-after-mib cannot be used with --sysctl-only");
+  }
+
   return args;
 }
 
@@ -209,8 +245,33 @@ function calculateCreateTimeoutSeconds(sizeMiB: number): number {
   );
 }
 
+function buildDiskHeadroomCommand(
+  swapPath: string,
+  sizeMiB: number,
+  minFreeAfterMiB: number,
+): string {
+  const parent = path.posix.dirname(swapPath);
+  const requiredMiB = sizeMiB + minFreeAfterMiB;
+  const script = [
+    `parent=${shellQuote(parent)}`,
+    `required_mib=${requiredMiB}`,
+    `test -d "$parent" || { echo "Swap parent directory does not exist: $parent" >&2; exit 1; }`,
+    `available_mib=$(df -Pm "$parent" | awk 'NR==2 {print $4}')`,
+    `case "$available_mib" in ''|*[!0-9]*) echo "Could not read free MiB for $parent" >&2; exit 1;; esac`,
+    `if [ "$available_mib" -lt "$required_mib" ]; then echo "Need at least ${requiredMiB} MiB free on $parent before creating Ray swap (${sizeMiB} MiB swap + ${minFreeAfterMiB} MiB headroom); found $available_mib MiB" >&2; exit 1; fi`,
+  ].join("; ");
+
+  return `timeout ${INSPECT_TIMEOUT_SECONDS}s sh -c ${shellQuote(script)}`;
+}
+
 export function createSwapPlan(
-  options: { path?: string; sizeMiB?: number; swappiness?: number; sysctlOnly?: boolean } = {},
+  options: {
+    path?: string;
+    sizeMiB?: number;
+    minFreeAfterMiB?: number;
+    swappiness?: number;
+    sysctlOnly?: boolean;
+  } = {},
 ): SwapPlan {
   const sysctlOnly = options.sysctlOnly ?? false;
   if (sysctlOnly && options.path !== undefined) {
@@ -219,12 +280,19 @@ export function createSwapPlan(
   if (sysctlOnly && options.sizeMiB !== undefined) {
     throw new Error("sizeMiB cannot be used with sysctlOnly");
   }
+  if (sysctlOnly && options.minFreeAfterMiB !== undefined) {
+    throw new Error("minFreeAfterMiB cannot be used with sysctlOnly");
+  }
 
   const swapPath = normalizeSwapPath(options.path ?? DEFAULT_SWAP_PATH);
   const sizeMiB =
     options.sizeMiB === undefined
       ? DEFAULT_SWAP_SIZE_MIB
       : parseSwapSizeMiB(String(options.sizeMiB));
+  const minFreeAfterMiB =
+    options.minFreeAfterMiB === undefined
+      ? DEFAULT_MIN_FREE_AFTER_MIB
+      : parseMinFreeAfterMiB(String(options.minFreeAfterMiB));
   const swappiness =
     options.swappiness === undefined
       ? DEFAULT_SWAPPINESS
@@ -244,11 +312,13 @@ export function createSwapPlan(
   return {
     path: swapPath,
     sizeMiB,
+    minFreeAfterMiB,
     swappiness,
     sysctlOnly,
     commands: sysctlOnly
       ? sysctlCommands
       : [
+          buildDiskHeadroomCommand(swapPath, sizeMiB, minFreeAfterMiB),
           `timeout ${INSPECT_TIMEOUT_SECONDS}s sudo test ! -e ${quotedPath}; status=$?; if [ "$status" -eq 1 ]; then echo 'Swap file already exists: ${swapPath}' >&2; exit 1; elif [ "$status" -ne 0 ]; then exit "$status"; fi`,
           `if command -v fallocate >/dev/null 2>&1; then timeout ${createTimeoutSeconds}s sudo fallocate -l ${sizeMiB}M ${quotedPath}; else timeout ${createTimeoutSeconds}s sudo dd if=/dev/zero of=${quotedPath} bs=1M count=${sizeMiB} status=progress; fi`,
           `timeout ${QUICK_TIMEOUT_SECONDS}s sudo chmod 600 ${quotedPath}`,
@@ -276,6 +346,7 @@ export function formatTextPlan(plan: SwapPlan): string {
         "Ray small-VPS swap file plan:",
         `- swap file: ${plan.path}`,
         `- size: ${plan.sizeMiB} MiB`,
+        `- minimum free after swap: ${plan.minFreeAfterMiB} MiB`,
         `- vm.swappiness: ${plan.swappiness}`,
         "",
         "Run on the VPS:",
@@ -308,6 +379,7 @@ export async function runSwapPlanCli(
         : {
             path: args.path,
             sizeMiB: args.sizeMiB,
+            minFreeAfterMiB: args.minFreeAfterMiB,
             swappiness: args.swappiness,
           },
     );

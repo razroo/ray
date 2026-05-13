@@ -8,6 +8,8 @@ test("parseArgs accepts strict swap plan options", () => {
     "/var/lib/ray/swapfile",
     "--size-mib",
     "2048",
+    "--min-free-after-mib",
+    "768",
     "--swappiness",
     "5",
     "--json",
@@ -15,6 +17,7 @@ test("parseArgs accepts strict swap plan options", () => {
 
   assert.equal(args.path, "/var/lib/ray/swapfile");
   assert.equal(args.sizeMiB, 2_048);
+  assert.equal(args.minFreeAfterMiB, 768);
   assert.equal(args.swappiness, 5);
   assert.equal(args.sysctlOnly, false);
   assert.equal(args.json, true);
@@ -32,10 +35,16 @@ test("parseArgs rejects malformed swap plan argv", () => {
   assert.throws(() => parseArgs(["--path", "/"]), /must point to a file/);
   assert.throws(() => parseArgs(["--size-mib", "0"]), /integer from 1/);
   assert.throws(() => parseArgs(["--size-mib", "65537"]), /integer from 1/);
+  assert.throws(() => parseArgs(["--min-free-after-mib", "-1"]), /integer from 0/);
+  assert.throws(() => parseArgs(["--min-free-after-mib", "65537"]), /integer from 0/);
   assert.throws(() => parseArgs(["--swappiness", "-1"]), /integer from 0/);
   assert.throws(() => parseArgs(["--swappiness", "201"]), /integer from 0/);
   assert.throws(() => parseArgs(["--sysctl-only", "--path", "/swapfile"]), /--path cannot/);
   assert.throws(() => parseArgs(["--sysctl-only", "--size-mib", "1024"]), /--size-mib cannot/);
+  assert.throws(
+    () => parseArgs(["--sysctl-only", "--min-free-after-mib", "512"]),
+    /--min-free-after-mib cannot/,
+  );
   assert.throws(() => parseArgs(["--unknown"]), /Unknown option: --unknown/);
   assert.throws(() => parseArgs(["/swapfile"]), /Unexpected positional argument/);
 });
@@ -44,19 +53,26 @@ test("createSwapPlan prints guarded swap-file commands", () => {
   const plan = createSwapPlan({
     path: "/var/lib/ray/swapfile",
     sizeMiB: 2_048,
+    minFreeAfterMiB: 768,
     swappiness: 5,
   });
 
   assert.equal(plan.path, "/var/lib/ray/swapfile");
   assert.equal(plan.sizeMiB, 2_048);
+  assert.equal(plan.minFreeAfterMiB, 768);
   assert.equal(plan.swappiness, 5);
-  assert.match(plan.commands[0] ?? "", /timeout 30s sudo test ! -e '\/var\/lib\/ray\/swapfile'/);
-  assert.match(plan.commands[0] ?? "", /elif \[ "\$status" -ne 0 \]; then exit "\$status"; fi/);
+  assert.match(plan.commands[0] ?? "", /timeout 30s sh -c/);
+  assert.match(plan.commands[0] ?? "", /\/var\/lib\/ray/);
+  assert.match(plan.commands[0] ?? "", /required_mib=2816/);
+  assert.match(plan.commands[0] ?? "", /df -Pm "\$parent"/);
+  assert.match(plan.commands[0] ?? "", /2048 MiB swap \+ 768 MiB headroom/);
+  assert.match(plan.commands[1] ?? "", /timeout 30s sudo test ! -e '\/var\/lib\/ray\/swapfile'/);
+  assert.match(plan.commands[1] ?? "", /elif \[ "\$status" -ne 0 \]; then exit "\$status"; fi/);
   assert.match(
-    plan.commands[1] ?? "",
+    plan.commands[2] ?? "",
     /timeout 300s sudo fallocate -l 2048M '\/var\/lib\/ray\/swapfile'/,
   );
-  assert.match(plan.commands[1] ?? "", /timeout 300s sudo dd/);
+  assert.match(plan.commands[2] ?? "", /timeout 300s sudo dd/);
   assert.match(plan.commands.join("\n"), /timeout 60s sudo chmod 600 '\/var\/lib\/ray\/swapfile'/);
   assert.match(plan.commands.join("\n"), /timeout 60s sudo mkswap '\/var\/lib\/ray\/swapfile'/);
   assert.match(plan.commands.join("\n"), /timeout 60s sudo swapon '\/var\/lib\/ray\/swapfile'/);
@@ -82,7 +98,10 @@ test("createSwapPlan can print swappiness-only commands without touching swap fi
   assert.equal(plan.sysctlOnly, true);
   assert.equal(plan.swappiness, 10);
   assert.equal(plan.commands.length, 3);
-  assert.doesNotMatch(plan.commands.join("\n"), /fallocate|mkswap|swapon --show|\/etc\/fstab/);
+  assert.doesNotMatch(
+    plan.commands.join("\n"),
+    /df -Pm|fallocate|mkswap|swapon --show|\/etc\/fstab/,
+  );
   assert.match(
     plan.commands.join("\n"),
     /timeout 60s sudo tee \/etc\/sysctl\.d\/99-ray-swap\.conf/,
@@ -91,6 +110,10 @@ test("createSwapPlan can print swappiness-only commands without touching swap fi
   assert.match(plan.commands.join("\n"), /cat \/proc\/sys\/vm\/swappiness/);
   assert.throws(() => createSwapPlan({ path: "/swapfile", sysctlOnly: true }), /path cannot/);
   assert.throws(() => createSwapPlan({ sizeMiB: 1024, sysctlOnly: true }), /sizeMiB cannot/);
+  assert.throws(
+    () => createSwapPlan({ minFreeAfterMiB: 512, sysctlOnly: true }),
+    /minFreeAfterMiB cannot/,
+  );
 });
 
 test("createSwapPlan scales creation timeout for large swap files", () => {
@@ -98,7 +121,7 @@ test("createSwapPlan scales creation timeout for large swap files", () => {
     sizeMiB: 16_384,
   });
 
-  assert.match(plan.commands[1] ?? "", /timeout 2048s sudo fallocate -l 16384M '\/swapfile'/);
+  assert.match(plan.commands[2] ?? "", /timeout 2048s sudo fallocate -l 16384M '\/swapfile'/);
 });
 
 test("formatTextPlan prints operator-ready swap instructions", () => {
@@ -107,6 +130,7 @@ test("formatTextPlan prints operator-ready swap instructions", () => {
   assert.match(text, /Ray small-VPS swap file plan:/);
   assert.match(text, /swap file: \/swapfile/);
   assert.match(text, /size: 1024 MiB/);
+  assert.match(text, /minimum free after swap: 512 MiB/);
   assert.match(text, /vm\.swappiness: 10/);
   assert.match(text, /Run on the VPS:/);
   assert.match(text, /Then run doctor again/);
@@ -126,7 +150,17 @@ test("runSwapPlanCli prints JSON output", async () => {
   let stdout = "";
   let stderr = "";
   const exitCode = await runSwapPlanCli(
-    ["--path", "/var/lib/ray/swapfile", "--size-mib", "1536", "--swappiness", "1", "--json"],
+    [
+      "--path",
+      "/var/lib/ray/swapfile",
+      "--size-mib",
+      "1536",
+      "--min-free-after-mib",
+      "256",
+      "--swappiness",
+      "1",
+      "--json",
+    ],
     {
       stdout: { write: (chunk: string) => (stdout += chunk) },
       stderr: { write: (chunk: string) => (stderr += chunk) },
@@ -135,9 +169,15 @@ test("runSwapPlanCli prints JSON output", async () => {
 
   assert.equal(exitCode, 0);
   assert.equal(stderr, "");
-  const parsed = JSON.parse(stdout) as { path: string; sizeMiB: number; swappiness: number };
+  const parsed = JSON.parse(stdout) as {
+    path: string;
+    sizeMiB: number;
+    minFreeAfterMiB: number;
+    swappiness: number;
+  };
   assert.equal(parsed.path, "/var/lib/ray/swapfile");
   assert.equal(parsed.sizeMiB, 1_536);
+  assert.equal(parsed.minFreeAfterMiB, 256);
   assert.equal(parsed.swappiness, 1);
 });
 
