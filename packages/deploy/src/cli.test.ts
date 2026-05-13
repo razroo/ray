@@ -1,5 +1,4 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -17,8 +16,32 @@ import {
   runCli,
 } from "./cli.js";
 
+const repoRoot = process.cwd();
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function mkRayDeployTempDir(prefix: string): Promise<string> {
+  // Linux CI checkouts usually live under /home, and tmpdir() is /tmp; both are
+  // intentionally rejected for generated systemd WorkingDirectory values.
+  const tempRoots = [
+    "/proc/self/cwd/.ray/test-tmp",
+    "/dev/shm/ray-deploy-tests",
+    join(repoRoot, ".ray", "test-tmp"),
+  ];
+  let lastError: unknown;
+
+  for (const tempRoot of tempRoots) {
+    try {
+      await mkdir(tempRoot, { recursive: true });
+      return await mkdtemp(join(tempRoot, prefix));
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Could not create deploy test temp dir");
 }
 
 test("parseCliArgs accepts strict memory budget overrides", () => {
@@ -413,7 +436,7 @@ test("runCli prints deploy help without loading config or env files", async (t) 
 });
 
 test("runCli rejects oversized explicit env files before parsing", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-env-limit-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-env-limit-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -436,7 +459,7 @@ test("runCli rejects oversized explicit env files before parsing", async (t) => 
 });
 
 test("runCli render applies env-file overrides to generated llama.cpp service", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-cli-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-cli-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -486,7 +509,7 @@ test("runCli render applies env-file overrides to generated llama.cpp service", 
 });
 
 test("runCli explicit gateway runtime flag overrides env-file runtime", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-runtime-env-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-runtime-env-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -526,7 +549,7 @@ test("runCli explicit gateway runtime flag overrides env-file runtime", async (t
 });
 
 test("runCli rejects malformed env-file gateway runtime paths", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-runtime-invalid-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-runtime-invalid-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -555,7 +578,7 @@ test("runCli rejects malformed env-file gateway runtime paths", async (t) => {
 });
 
 test("runCli rejects malformed env-file Caddy binary paths", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-caddy-invalid-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-caddy-invalid-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -584,7 +607,7 @@ test("runCli rejects malformed env-file Caddy binary paths", async (t) => {
 });
 
 test("runCli render applies env-file deploy domain to generated Caddyfile", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-domain-env-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-domain-env-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -621,7 +644,7 @@ test("runCli render applies env-file deploy domain to generated Caddyfile", asyn
 });
 
 test("runCli explicit deploy domain overrides env-file domain", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-domain-flag-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-domain-flag-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -661,7 +684,7 @@ test("runCli explicit deploy domain overrides env-file domain", async (t) => {
 });
 
 test("runCli render applies env-file service user to generated systemd units", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-user-env-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-user-env-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -699,7 +722,7 @@ test("runCli render applies env-file service user to generated systemd units", a
 });
 
 test("runCli explicit service user overrides env-file service user", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-user-flag-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-user-flag-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -739,7 +762,7 @@ test("runCli explicit service user overrides env-file service user", async (t) =
 });
 
 test("runCli explicit service user ignores malformed env-file service user", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-user-flag-invalid-env-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-user-flag-invalid-env-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -777,7 +800,7 @@ test("runCli explicit service user ignores malformed env-file service user", asy
 });
 
 test("runCli rejects malformed env-file service users", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-user-invalid-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-user-invalid-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -804,7 +827,7 @@ test("runCli rejects malformed env-file service users", async (t) => {
 });
 
 test("runCli render writes deployment files when output-dir is provided", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-files-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-files-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -875,7 +898,7 @@ test("runCli render writes deployment files when output-dir is provided", async 
 });
 
 test("runCli render can separate loaded env files from rendered systemd paths", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-systemd-env-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-systemd-env-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -932,7 +955,7 @@ test("runCli render can separate loaded env files from rendered systemd paths", 
 });
 
 test("runCli render allows systemd env-file paths before secrets exist locally", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-systemd-env-only-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-systemd-env-only-");
   const originalApiKeys = process.env.RAY_API_KEYS;
   const originalAuthApiKeyEnv = process.env.RAY_AUTH_API_KEY_ENV;
   delete process.env.RAY_API_KEYS;
@@ -997,7 +1020,7 @@ test("runCli render allows systemd env-file paths before secrets exist locally",
 });
 
 test("runCli render refuses to write deployment files when diagnostics contain errors", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-render-errors-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-render-errors-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -1046,7 +1069,7 @@ test("runCli render refuses to write deployment files when diagnostics contain e
 });
 
 test("runCli render strict-filesystem refuses to write when host checks fail", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-render-strict-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-render-strict-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -1091,7 +1114,7 @@ test("runCli render strict-filesystem refuses to write when host checks fail", a
 });
 
 test("runCli render allows non-strict host storage warnings", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-render-storage-warning-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-render-storage-warning-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -1164,7 +1187,7 @@ test("runCli validate prints deployment preflight details", async (t) => {
 });
 
 test("runCli validate applies env-file memory budget", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-memory-env-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-memory-env-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -1200,7 +1223,7 @@ test("runCli validate applies env-file memory budget", async (t) => {
 });
 
 test("runCli explicit memory flag overrides env-file memory budget", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-memory-flag-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-memory-flag-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -1238,7 +1261,7 @@ test("runCli explicit memory flag overrides env-file memory budget", async (t) =
 });
 
 test("runCli explicit memory flag ignores malformed env-file memory budget", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-memory-flag-invalid-env-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-memory-flag-invalid-env-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -1276,7 +1299,7 @@ test("runCli explicit memory flag ignores malformed env-file memory budget", asy
 });
 
 test("runCli validate strict-filesystem prints host check diagnostics", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-validate-strict-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-validate-strict-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -1318,7 +1341,7 @@ test("runCli validate strict-filesystem prints host check diagnostics", async (t
 });
 
 test("runCli render removes stale llama.cpp service files from reused output directories", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-stale-files-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-stale-files-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });

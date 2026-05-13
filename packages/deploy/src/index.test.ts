@@ -24,6 +24,30 @@ import {
   renderSystemdService,
 } from "./index.js";
 
+const repoRoot = process.cwd();
+
+async function mkRayDeployTempDir(prefix: string): Promise<string> {
+  // Linux CI checkouts usually live under /home, and tmpdir() is /tmp; both are
+  // intentionally rejected for generated systemd WorkingDirectory values.
+  const tempRoots = [
+    "/proc/self/cwd/.ray/test-tmp",
+    "/dev/shm/ray-deploy-tests",
+    join(repoRoot, ".ray", "test-tmp"),
+  ];
+  let lastError: unknown;
+
+  for (const tempRoot of tempRoots) {
+    try {
+      await mkdir(tempRoot, { recursive: true });
+      return await mkdtemp(join(tempRoot, prefix));
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Could not create deploy test temp dir");
+}
+
 test("renderSystemdService includes hardening directives", () => {
   const service = renderSystemdService({
     workingDirectory: "/srv/ray",
@@ -820,7 +844,7 @@ test("renderDeploymentBundle accepts every public example deployment profile", a
 });
 
 test("renderDeploymentBundle redacts adapter headers from summary output", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-summary-redaction-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-summary-redaction-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -857,7 +881,7 @@ test("renderDeploymentBundle redacts adapter headers from summary output", async
 });
 
 test("renderDeploymentBundle warns when generated services run as root", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-root-service-user-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-root-service-user-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -881,7 +905,7 @@ test("renderDeploymentBundle warns when generated services run as root", async (
 });
 
 test("renderDeploymentBundle warns when the Caddy site address is still local", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-local-caddy-site-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-local-caddy-site-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -2000,7 +2024,7 @@ test("diagnoseConfig warns when the generated Caddy site address is local", () =
 });
 
 test("loadAndDiagnoseDeployment warns when EnvironmentFile permissions are open in strict mode", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-env-file-mode-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-env-file-mode-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -2192,7 +2216,7 @@ test("diagnoseConfig reports a valid generated Caddyfile in strict mode", () => 
 });
 
 test("loadAndDiagnoseDeployment validates the generated Caddyfile in strict mode", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-caddyfile-ok-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-caddyfile-ok-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -2607,7 +2631,7 @@ test("diagnoseConfig reports when the configured llama.cpp binary starts", () =>
 });
 
 test("loadAndDiagnoseDeployment reports an existing generated service user in strict mode", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-service-user-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-service-user-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -2629,7 +2653,7 @@ test("loadAndDiagnoseDeployment reports an existing generated service user in st
 });
 
 test("loadAndDiagnoseDeployment reports oversized host passwd as unreadable in strict mode", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-service-user-passwd-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-service-user-passwd-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -2660,7 +2684,7 @@ test("loadAndDiagnoseDeployment reports oversized host passwd as unreadable in s
 });
 
 test("loadAndDiagnoseDeployment bounds host swap preflight files", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-host-swap-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-host-swap-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -2689,7 +2713,7 @@ test("loadAndDiagnoseDeployment bounds host swap preflight files", async (t) => 
 });
 
 test("loadAndDiagnoseDeployment reports a service-readable gateway config in strict mode", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-config-file-ok-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-config-file-ok-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -2713,7 +2737,7 @@ test("loadAndDiagnoseDeployment reports a service-readable gateway config in str
 });
 
 test("loadAndDiagnoseDeployment errors when the generated working directory is missing in strict mode", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-working-directory-missing-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-working-directory-missing-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -2742,7 +2766,7 @@ test("loadAndDiagnoseDeployment errors when the generated working directory is m
 });
 
 test("loadAndDiagnoseDeployment reports the generated working directory in strict mode", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-working-directory-ok-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-working-directory-ok-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -2764,7 +2788,7 @@ test("loadAndDiagnoseDeployment reports the generated working directory in stric
 });
 
 test("loadAndDiagnoseDeployment errors when the built gateway entrypoint is missing in strict mode", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-gateway-entrypoint-missing-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-gateway-entrypoint-missing-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -2788,7 +2812,7 @@ test("loadAndDiagnoseDeployment errors when the built gateway entrypoint is miss
 });
 
 test("loadAndDiagnoseDeployment reports the built gateway entrypoint in strict mode", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-gateway-entrypoint-ok-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-gateway-entrypoint-ok-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -2816,7 +2840,7 @@ test("loadAndDiagnoseDeployment reports the built gateway entrypoint in strict m
 });
 
 test("loadAndDiagnoseDeployment errors when the projected memory fit exceeds a 4 GB target", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-memory-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-memory-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -2879,7 +2903,7 @@ test("loadAndDiagnoseDeployment errors when the projected memory fit exceeds a 4
 });
 
 test("loadAndDiagnoseDeployment errors when the configured model file is missing in strict mode", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-model-missing-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-model-missing-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -2943,7 +2967,7 @@ test("loadAndDiagnoseDeployment errors when the configured model file is missing
 });
 
 test("loadAndDiagnoseDeployment errors when the configured model file is not GGUF", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-model-format-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-model-format-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -2985,7 +3009,7 @@ test("loadAndDiagnoseDeployment errors when the configured model file is not GGU
 });
 
 test("loadAndDiagnoseDeployment errors when the configured llama.cpp binary is missing in strict mode", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-llama-binary-missing-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-llama-binary-missing-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -3023,7 +3047,7 @@ test("loadAndDiagnoseDeployment errors when the configured llama.cpp binary is m
 });
 
 test("loadAndDiagnoseDeployment reports an executable llama.cpp binary in strict mode", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-llama-binary-ok-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-llama-binary-ok-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -3065,7 +3089,7 @@ test("loadAndDiagnoseDeployment reports an executable llama.cpp binary in strict
 });
 
 test("loadAndDiagnoseDeployment errors when the configured llama.cpp binary fails startup probe", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-llama-binary-probe-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-llama-binary-probe-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -3103,7 +3127,7 @@ test("loadAndDiagnoseDeployment errors when the configured llama.cpp binary fail
 });
 
 test("loadAndDiagnoseDeployment errors when the configured gateway runtime is missing in strict mode", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-runtime-missing-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-runtime-missing-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -3127,7 +3151,7 @@ test("loadAndDiagnoseDeployment errors when the configured gateway runtime is mi
 });
 
 test("loadAndDiagnoseDeployment reports an executable gateway runtime in strict mode", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-runtime-ok-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-runtime-ok-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -3162,7 +3186,7 @@ test("loadAndDiagnoseDeployment reports an executable gateway runtime in strict 
 });
 
 test("loadAndDiagnoseDeployment errors when the configured Bun runtime is too old in strict mode", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-runtime-old-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-runtime-old-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -3191,7 +3215,7 @@ test("loadAndDiagnoseDeployment errors when the configured Bun runtime is too ol
 });
 
 test("loadAndDiagnoseDeployment reports async queue storage headroom from the nearest existing parent", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-storage-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-storage-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -3221,7 +3245,7 @@ test("loadAndDiagnoseDeployment reports async queue storage headroom from the ne
 });
 
 test("loadAndDiagnoseDeployment records working directory storage headroom in strict mode", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-workdir-storage-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-workdir-storage-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -3249,7 +3273,7 @@ test("loadAndDiagnoseDeployment records working directory storage headroom in st
 });
 
 test("loadAndDiagnoseDeployment warns when non-strict async queue storage is blocked by an existing file", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-storage-file-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-storage-file-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -3281,7 +3305,7 @@ test("loadAndDiagnoseDeployment warns when non-strict async queue storage is blo
 });
 
 test("loadAndDiagnoseDeployment can skip host async queue storage probes", async (t) => {
-  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-storage-skip-"));
+  const tempDir = await mkRayDeployTempDir("ray-deploy-storage-skip-");
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
