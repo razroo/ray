@@ -18,6 +18,17 @@
       }
     }
   },
+  "scheduler": {
+    "concurrency": 1,
+    "maxQueue": 40,
+    "maxQueuedTokens": 18000,
+    "maxInflightTokens": 2048,
+    "requestTimeoutMs": 32000,
+    "dedupeInflight": true,
+    "batchWindowMs": 5,
+    "affinityLookahead": 12,
+    "shortJobMaxTokens": 96
+  },
   "asyncQueue": {
     "enabled": true,
     "storageDir": "/var/lib/ray/async-queue",

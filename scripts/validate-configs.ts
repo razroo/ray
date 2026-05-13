@@ -16,6 +16,14 @@ const MAX_PUBLIC_RATE_LIMIT_WINDOW_MS = 3_600_000;
 const MAX_PUBLIC_RATE_LIMIT_REQUESTS = 300;
 const MAX_PUBLIC_RATE_LIMIT_KEYS = 8_192;
 const MAX_PUBLIC_SERVER_PORT = 65_535;
+const MAX_PUBLIC_SCHEDULER_CONCURRENCY = 2;
+const MAX_PUBLIC_SCHEDULER_QUEUE_DEPTH = 96;
+const MAX_PUBLIC_SCHEDULER_QUEUED_TOKENS = 48_000;
+const MAX_PUBLIC_SCHEDULER_INFLIGHT_TOKENS = 6_144;
+const MAX_PUBLIC_SCHEDULER_REQUEST_TIMEOUT_MS = 32_000;
+const MAX_PUBLIC_SCHEDULER_BATCH_WINDOW_MS = 10;
+const MAX_PUBLIC_SCHEDULER_AFFINITY_LOOKAHEAD = 24;
+const MAX_PUBLIC_SCHEDULER_SHORT_JOB_TOKENS = 96;
 const PUBLIC_ASYNC_QUEUE_STORAGE_DIR = "/var/lib/ray/async-queue";
 const MAX_PUBLIC_ASYNC_QUEUE_JOBS = 2_000;
 const MAX_PUBLIC_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB = 1_024;
@@ -454,6 +462,69 @@ async function diagnosePublicConfigPolicy(configPath: string): Promise<Deploymen
     ["rateLimit", "trustProxyHeaders"],
     true,
     "public_config_rate_limit_proxy_headers_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["scheduler", "concurrency"],
+    MAX_PUBLIC_SCHEDULER_CONCURRENCY,
+    "public_config_scheduler_concurrency_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["scheduler", "maxQueue"],
+    MAX_PUBLIC_SCHEDULER_QUEUE_DEPTH,
+    "public_config_scheduler_max_queue_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["scheduler", "maxQueuedTokens"],
+    MAX_PUBLIC_SCHEDULER_QUEUED_TOKENS,
+    "public_config_scheduler_queued_tokens_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["scheduler", "maxInflightTokens"],
+    MAX_PUBLIC_SCHEDULER_INFLIGHT_TOKENS,
+    "public_config_scheduler_inflight_tokens_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["scheduler", "requestTimeoutMs"],
+    MAX_PUBLIC_SCHEDULER_REQUEST_TIMEOUT_MS,
+    "public_config_scheduler_request_timeout_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["scheduler", "dedupeInflight"],
+    true,
+    "public_config_scheduler_dedupe_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["scheduler", "batchWindowMs"],
+    MAX_PUBLIC_SCHEDULER_BATCH_WINDOW_MS,
+    "public_config_scheduler_batch_window_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["scheduler", "affinityLookahead"],
+    MAX_PUBLIC_SCHEDULER_AFFINITY_LOOKAHEAD,
+    "public_config_scheduler_affinity_lookahead_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["scheduler", "shortJobMaxTokens"],
+    MAX_PUBLIC_SCHEDULER_SHORT_JOB_TOKENS,
+    "public_config_scheduler_short_job_tokens_explicit",
   );
   expectPublicConfigValue(
     diagnostics,

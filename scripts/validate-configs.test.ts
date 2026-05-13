@@ -120,6 +120,15 @@ test("validateConfigFiles requires explicit public runtime guardrails", async (t
   assert.ok(codes.includes("public_config_rate_limit_window_explicit"));
   assert.ok(codes.includes("public_config_rate_limit_key_strategy_explicit"));
   assert.ok(codes.includes("public_config_rate_limit_proxy_headers_explicit"));
+  assert.ok(codes.includes("public_config_scheduler_concurrency_explicit"));
+  assert.ok(codes.includes("public_config_scheduler_max_queue_explicit"));
+  assert.ok(codes.includes("public_config_scheduler_queued_tokens_explicit"));
+  assert.ok(codes.includes("public_config_scheduler_inflight_tokens_explicit"));
+  assert.ok(codes.includes("public_config_scheduler_request_timeout_explicit"));
+  assert.ok(codes.includes("public_config_scheduler_dedupe_explicit"));
+  assert.ok(codes.includes("public_config_scheduler_batch_window_explicit"));
+  assert.ok(codes.includes("public_config_scheduler_affinity_lookahead_explicit"));
+  assert.ok(codes.includes("public_config_scheduler_short_job_tokens_explicit"));
   assert.ok(codes.includes("public_config_async_queue_enabled_explicit"));
   assert.ok(codes.includes("public_config_async_queue_storage_explicit"));
   assert.ok(codes.includes("public_config_async_queue_max_jobs_explicit"));
