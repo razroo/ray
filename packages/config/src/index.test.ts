@@ -537,6 +537,19 @@ test("loadRayConfig resolves relative llama.cpp launch paths against cwd", async
   );
 });
 
+test("loadRayConfig rejects unresolved relative llama.cpp launch executables", async () => {
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_LLAMA_CPP_BINARY_PATH: "llama-server",
+      },
+    }),
+    /model\.adapter\.launchProfile\.binaryPath must be an absolute path/,
+  );
+});
+
 test("loadRayConfig rejects malformed environment overrides", async () => {
   await assert.rejects(
     loadRayConfig({

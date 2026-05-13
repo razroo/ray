@@ -1223,6 +1223,18 @@ function assertTcpPort(value: number, label: string): void {
   }
 }
 
+function assertAbsolutePath(value: string, label: string): void {
+  if (path.isAbsolute(value)) {
+    return;
+  }
+
+  throw new RayError(`${label} must be an absolute path`, {
+    code: "config_validation_error",
+    status: 500,
+    details: { value },
+  });
+}
+
 function assertHttpBaseUrl(value: string, label: string): URL {
   let parsed: URL;
   try {
@@ -2547,11 +2559,13 @@ function validateConfig(config: RayConfig): RayConfig {
         "model.adapter.launchProfile.binaryPath",
         MAX_CONFIG_PATH_CHARS,
       );
+      assertAbsolutePath(profile.binaryPath, "model.adapter.launchProfile.binaryPath");
       assertNonEmptyStringLength(
         profile.modelPath,
         "model.adapter.launchProfile.modelPath",
         MAX_CONFIG_PATH_CHARS,
       );
+      assertAbsolutePath(profile.modelPath, "model.adapter.launchProfile.modelPath");
       assertNonEmptyStringLength(
         profile.host,
         "model.adapter.launchProfile.host",
