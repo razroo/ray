@@ -577,6 +577,9 @@ test("runtime health exposes queue saturation ratios", async () => {
     },
   };
   const config = mergeConfig(createDefaultConfig("tiny"), {
+    model: {
+      maxOutputTokens: 96,
+    },
     scheduler: {
       concurrency: 1,
       maxQueue: 4,

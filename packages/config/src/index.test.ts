@@ -1295,6 +1295,62 @@ test("loadRayConfig rejects oversized scalar resource budgets", async (t) => {
   );
 });
 
+test("loadRayConfig rejects scheduler token budgets that cannot admit a default request", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-config-impossible-token-budget-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const inflightConfigPath = join(tempDir, "ray.inflight-budget.invalid.json");
+  await writeFile(
+    inflightConfigPath,
+    JSON.stringify({
+      profile: "tiny",
+      model: {
+        maxOutputTokens: 64,
+      },
+      scheduler: {
+        shortJobMaxTokens: 64,
+        maxInflightTokens: 64,
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: inflightConfigPath,
+      env: {},
+    }),
+    /scheduler\.maxInflightTokens must be at least model\.maxOutputTokens plus one prompt token/,
+  );
+
+  const queuedConfigPath = join(tempDir, "ray.queued-budget.invalid.json");
+  await writeFile(
+    queuedConfigPath,
+    JSON.stringify({
+      profile: "tiny",
+      model: {
+        maxOutputTokens: 64,
+      },
+      scheduler: {
+        shortJobMaxTokens: 64,
+        maxInflightTokens: 65,
+        maxQueuedTokens: 64,
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: queuedConfigPath,
+      env: {},
+    }),
+    /scheduler\.maxQueuedTokens must be at least model\.maxOutputTokens plus one prompt token/,
+  );
+});
+
 test("loadRayConfig rejects oversized scalar config strings", async () => {
   await assert.rejects(
     loadRayConfig({

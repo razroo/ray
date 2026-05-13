@@ -104,6 +104,7 @@ const MAX_PROMPT_SCAFFOLD_CACHE_ENTRIES = 4_096;
 const MAX_AUTH_API_KEY_ENV_CHARS = 64 * 1024;
 const MAX_AUTH_API_KEYS = 128;
 const MAX_AUTH_API_KEY_CHARS = 1_024;
+const MIN_PROMPT_TOKEN_BUDGET = 1;
 const DNS_HOST_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -1505,6 +1506,40 @@ function assertRequestBodyLimitBytes(value: number): void {
   }
 }
 
+function assertSchedulerTokenBudgetCanAdmitDefaultRequest(config: RayConfig): void {
+  const minimumRequestTokens = config.model.maxOutputTokens + MIN_PROMPT_TOKEN_BUDGET;
+
+  if (config.scheduler.maxInflightTokens < minimumRequestTokens) {
+    throw new RayError(
+      "scheduler.maxInflightTokens must be at least model.maxOutputTokens plus one prompt token",
+      {
+        code: "config_validation_error",
+        status: 500,
+        details: {
+          maxInflightTokens: config.scheduler.maxInflightTokens,
+          maxOutputTokens: config.model.maxOutputTokens,
+          minimumRequestTokens,
+        },
+      },
+    );
+  }
+
+  if (config.scheduler.maxQueuedTokens < minimumRequestTokens) {
+    throw new RayError(
+      "scheduler.maxQueuedTokens must be at least model.maxOutputTokens plus one prompt token",
+      {
+        code: "config_validation_error",
+        status: 500,
+        details: {
+          maxQueuedTokens: config.scheduler.maxQueuedTokens,
+          maxOutputTokens: config.model.maxOutputTokens,
+          minimumRequestTokens,
+        },
+      },
+    );
+  }
+}
+
 function assertPositiveIntegerAtMost(value: number, label: string, maximum: number): void {
   assertPositiveInteger(value, label);
 
@@ -2204,6 +2239,7 @@ function validateConfig(config: RayConfig): RayConfig {
       },
     );
   }
+  assertSchedulerTokenBudgetCanAdmitDefaultRequest(config);
   assertPositiveIntegerAtMost(
     config.asyncQueue.maxJobs,
     "asyncQueue.maxJobs",
