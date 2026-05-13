@@ -55,6 +55,7 @@ const MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLES = 32;
 const MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLE_KEY_CHARS = 128;
 const MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLE_VALUE_CHARS = 16_384;
 const MAX_ASSISTANT_CONTENT_PARTS = 512;
+const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 const unsafeAdapterRecordKeys = new Set(["__proto__", "constructor", "prototype"]);
 
@@ -170,6 +171,18 @@ function assertOptionalString(value: string | undefined, label: string, maximum:
   }
 
   assertStringLength(value, label, maximum);
+}
+
+function assertOptionalEnvironmentVariableName(value: string | undefined, label: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  assertOptionalString(value, label, MAX_ADAPTER_ENV_NAME_CHARS);
+
+  if (!ENVIRONMENT_VARIABLE_NAME_PATTERN.test(value) || unsafeAdapterRecordKeys.has(value)) {
+    throw new TypeError(`${label} must be a valid environment variable name`);
+  }
 }
 
 function assertSafeInteger(value: number, label: string): void {
@@ -447,7 +460,7 @@ export function assertHttpAdapterConfig(adapter: HttpAdapterConfig): void {
 
   assertHttpBaseUrl(adapter.baseUrl, "adapter.baseUrl");
   assertPositiveSafeIntegerAtMost(adapter.timeoutMs, "adapter.timeoutMs", MAX_ADAPTER_TIMEOUT_MS);
-  assertOptionalString(adapter.apiKeyEnv, "adapter.apiKeyEnv", MAX_ADAPTER_ENV_NAME_CHARS);
+  assertOptionalEnvironmentVariableName(adapter.apiKeyEnv, "adapter.apiKeyEnv");
   assertHeaderRecord(adapter.headers, "adapter.headers");
 }
 

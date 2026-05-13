@@ -153,6 +153,34 @@ test("adapterRequest rejects invalid direct adapter config before dispatch", asy
         {
           baseUrl: "http://127.0.0.1:8080",
           timeoutMs: 500,
+          apiKeyEnv: "RAY UPSTREAM KEY",
+        },
+        "/health",
+        {},
+      ),
+    /adapter\.apiKeyEnv must be a valid environment variable name/,
+  );
+
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: "http://127.0.0.1:8080",
+          timeoutMs: 500,
+          apiKeyEnv: "__proto__",
+        },
+        "/health",
+        {},
+      ),
+    /adapter\.apiKeyEnv must be a valid environment variable name/,
+  );
+
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: "http://127.0.0.1:8080",
+          timeoutMs: 500,
           headers: { "x-bad": 1 as unknown as string },
         },
         "/health",
