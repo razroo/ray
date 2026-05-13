@@ -348,6 +348,15 @@ function isTemporaryStoragePath(storageDir: string): boolean {
   );
 }
 
+function isSystemdPrivateTmpPath(value: string): boolean {
+  if (!path.isAbsolute(value)) {
+    return false;
+  }
+
+  const resolved = path.resolve(value);
+  return ["/tmp", "/var/tmp"].some((privateTmpPath) => isPathInside(privateTmpPath, resolved));
+}
+
 function isSystemdProtectHomePath(value: string): boolean {
   if (!path.isAbsolute(value)) {
     return false;
@@ -1486,6 +1495,7 @@ export function renderSystemdService(options: SystemdServiceOptions): string {
     options.runtimeBinary ?? options.nodeBinary ?? DEFAULT_GATEWAY_RUNTIME_BINARY;
   assertSystemdScalar(runtimeBinary, "runtimeBinary");
   assertSystemdScalar(options.workingDirectory, "workingDirectory");
+  assertSystemdScalar(options.configPath, "configPath");
   assertAbsolutePath(runtimeBinary, "runtimeBinary");
   assertAbsolutePath(options.workingDirectory, "workingDirectory");
   if (isSystemdProtectHomePath(runtimeBinary)) {
@@ -1493,9 +1503,19 @@ export function renderSystemdService(options: SystemdServiceOptions): string {
       "runtimeBinary is under /home, /root, or /run/user, but the generated gateway service uses ProtectHome=true",
     );
   }
+  if (isSystemdPrivateTmpPath(runtimeBinary)) {
+    throw new Error(
+      "runtimeBinary is under /tmp or /var/tmp, but the generated gateway service uses PrivateTmp=true",
+    );
+  }
   if (isSystemdProtectHomePath(options.workingDirectory)) {
     throw new Error(
       "workingDirectory is under /home, /root, or /run/user, but the generated gateway service uses ProtectHome=true",
+    );
+  }
+  if (isSystemdPrivateTmpPath(options.workingDirectory)) {
+    throw new Error(
+      "workingDirectory is under /tmp or /var/tmp, but the generated gateway service uses PrivateTmp=true",
     );
   }
   if (options.envFile !== undefined) {
@@ -1517,6 +1537,11 @@ export function renderSystemdService(options: SystemdServiceOptions): string {
   const wantsLine = formatSystemdDependencyLine("Wants", wants ?? []);
   const afterLine = formatSystemdDependencyLine("After", ["network.target", ...(after ?? [])]);
   const absoluteConfigPath = path.resolve(options.workingDirectory, options.configPath);
+  if (isSystemdPrivateTmpPath(absoluteConfigPath)) {
+    throw new Error(
+      "configPath resolves under /tmp or /var/tmp, but the generated gateway service uses PrivateTmp=true",
+    );
+  }
   const gatewayEntryPoint = path.join(options.workingDirectory, GATEWAY_ENTRYPOINT_RELATIVE_PATH);
   const execStart = formatSystemdExecStart([
     runtimeBinary,
@@ -2146,6 +2171,12 @@ export function diagnoseConfig(
         code: "working_directory_home_protected",
         message: `The generated systemd WorkingDirectory is under /home, /root, or /run/user at ${workingDirectoryPath}, but ray-gateway.service uses ProtectHome=true. Sync Ray to a service-readable path such as /srv/ray.`,
       });
+    } else if (isSystemdPrivateTmpPath(workingDirectoryPath)) {
+      diagnostics.push({
+        level: "error",
+        code: "working_directory_private_tmp",
+        message: `The generated systemd WorkingDirectory is under /tmp or /var/tmp at ${workingDirectoryPath}, but ray-gateway.service uses PrivateTmp=true and temporary storage can be hidden or wiped. Sync Ray to a persistent service-readable path such as /srv/ray.`,
+      });
     } else if (preflight.workingDirectoryAccessStatus === "blocked") {
       diagnostics.push({
         level: "error",
@@ -2253,6 +2284,12 @@ export function diagnoseConfig(
         code: "config_file_home_protected",
         message: `The generated gateway config file is under /home, /root, or /run/user at ${configFilePath}, but ray-gateway.service uses ProtectHome=true. Install the rendered config somewhere service-readable such as /etc/ray/ray.json.`,
       });
+    } else if (isSystemdPrivateTmpPath(configFilePath)) {
+      diagnostics.push({
+        level: "error",
+        code: "config_file_private_tmp",
+        message: `The generated gateway config file is under /tmp or /var/tmp at ${configFilePath}, but ray-gateway.service uses PrivateTmp=true and temporary storage can be hidden or wiped. Install the rendered config somewhere persistent such as /etc/ray/ray.json.`,
+      });
     } else if (preflight.configFileStatus === "missing") {
       diagnostics.push({
         level: "error",
@@ -2291,6 +2328,12 @@ export function diagnoseConfig(
         level: "error",
         code: "gateway_runtime_home_protected",
         message: `The configured gateway runtime binary is under /home, /root, or /run/user at ${runtimePath}, but ray-gateway.service uses ProtectHome=true. Install Bun somewhere service-readable such as ${DEFAULT_GATEWAY_RUNTIME_BINARY} or pass --gateway-runtime-binary with that path.`,
+      });
+    } else if (isSystemdPrivateTmpPath(runtimePath)) {
+      diagnostics.push({
+        level: "error",
+        code: "gateway_runtime_private_tmp",
+        message: `The configured gateway runtime binary is under /tmp or /var/tmp at ${runtimePath}, but ray-gateway.service uses PrivateTmp=true and temporary storage can be hidden or wiped. Install Bun somewhere persistent such as ${DEFAULT_GATEWAY_RUNTIME_BINARY} or pass --gateway-runtime-binary with that path.`,
       });
     } else if (preflight.gatewayRuntimeBinaryStatus === "missing") {
       diagnostics.push({
@@ -2670,7 +2713,7 @@ export function diagnoseConfig(
         });
       }
 
-      if (isTemporaryStoragePath(launchProfile.binaryPath)) {
+      if (isSystemdPrivateTmpPath(launchProfile.binaryPath)) {
         diagnostics.push({
           level: "error",
           code: "llama_binary_path_private_tmp",
@@ -2744,7 +2787,7 @@ export function diagnoseConfig(
         });
       }
 
-      if (isTemporaryStoragePath(launchProfile.modelPath)) {
+      if (isSystemdPrivateTmpPath(launchProfile.modelPath)) {
         diagnostics.push({
           level: "error",
           code: "llama_model_path_private_tmp",

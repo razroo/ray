@@ -187,6 +187,17 @@ test("renderSystemdService rejects unsafe systemd execution directives", () => {
   assert.throws(
     () =>
       renderSystemdService({
+        workingDirectory: "/srv/ray",
+        configPath: "/etc/ray/ray.json",
+        user: "ray",
+        runtimeBinary: "/tmp/bun",
+      }),
+    /runtimeBinary is under \/tmp or \/var\/tmp/,
+  );
+
+  assert.throws(
+    () =>
+      renderSystemdService({
         workingDirectory: ".",
         configPath: "/etc/ray/ray.json",
         user: "ray",
@@ -202,6 +213,26 @@ test("renderSystemdService rejects unsafe systemd execution directives", () => {
         user: "ray",
       }),
     /workingDirectory is under \/home, \/root, or \/run\/user/,
+  );
+
+  assert.throws(
+    () =>
+      renderSystemdService({
+        workingDirectory: "/var/tmp/ray",
+        configPath: "/etc/ray/ray.json",
+        user: "ray",
+      }),
+    /workingDirectory is under \/tmp or \/var\/tmp/,
+  );
+
+  assert.throws(
+    () =>
+      renderSystemdService({
+        workingDirectory: "/srv/ray",
+        configPath: "/tmp/ray.json",
+        user: "ray",
+      }),
+    /configPath resolves under \/tmp or \/var\/tmp/,
   );
 
   assert.throws(
@@ -2347,6 +2378,43 @@ test("diagnoseConfig errors when the generated gateway config is hidden by Prote
   assert.equal(diagnostic.level, "error");
   assert.match(diagnostic.message, /ProtectHome=true/);
   assert.match(diagnostic.message, /\/etc\/ray\/ray\.json/);
+});
+
+test("diagnoseConfig errors when generated gateway paths use temporary storage", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      workingDirectoryPath: "/tmp/ray",
+      workingDirectoryStatus: "found",
+      configFilePath: "/var/tmp/ray.json",
+      configFileStatus: "found",
+      gatewayRuntimeBinaryPath: "/tmp/bun",
+      gatewayRuntimeBinaryStatus: "found",
+    },
+  });
+
+  const workingDirectoryDiagnostic = diagnostics.find(
+    (entry) => entry.code === "working_directory_private_tmp",
+  );
+  assert.ok(workingDirectoryDiagnostic);
+  assert.equal(workingDirectoryDiagnostic.level, "error");
+  assert.match(workingDirectoryDiagnostic.message, /PrivateTmp=true/);
+  assert.match(workingDirectoryDiagnostic.message, /\/srv\/ray/);
+
+  const configDiagnostic = diagnostics.find((entry) => entry.code === "config_file_private_tmp");
+  assert.ok(configDiagnostic);
+  assert.equal(configDiagnostic.level, "error");
+  assert.match(configDiagnostic.message, /PrivateTmp=true/);
+  assert.match(configDiagnostic.message, /\/etc\/ray\/ray\.json/);
+
+  const runtimeDiagnostic = diagnostics.find(
+    (entry) => entry.code === "gateway_runtime_private_tmp",
+  );
+  assert.ok(runtimeDiagnostic);
+  assert.equal(runtimeDiagnostic.level, "error");
+  assert.match(runtimeDiagnostic.message, /PrivateTmp=true/);
+  assert.match(runtimeDiagnostic.message, /\/usr\/local\/bin\/bun/);
 });
 
 test("diagnoseConfig errors when the configured gateway runtime is hidden by ProtectHome", () => {
