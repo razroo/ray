@@ -8,7 +8,9 @@ import {
   assertTestDiskHeadroom,
   collectTestFiles,
   resolveMinimumTestFreeSpaceMiB,
+  resolveTestCommandTimeoutMs,
   runTestCli,
+  runTestCommand,
 } from "./test.mjs";
 
 function relativePaths(root: string, files: string[]): string[] {
@@ -112,16 +114,21 @@ test("runTestCli dispatches bounded built tests before script tests", async (t) 
   await writeFile(path.join(tempDir, "apps", "gateway", "dist", "index.test.js"), "");
   await writeFile(path.join(tempDir, "scripts", "package-runtime-coverage.test.ts"), "");
 
-  const commands: Array<{ binary: string; args: string[]; cwd?: string }> = [];
+  const commands: Array<{ binary: string; args: string[]; cwd?: string; timeoutMs?: number }> = [];
   const code = await runTestCli({
     root: tempDir,
+    commandTimeoutMs: 123_456,
     env: {
       RAY_BUN_BINARY: "/usr/local/bin/bun",
       RAY_NODE_BINARY: "/usr/local/bin/node",
     },
     diskPreflight: async () => undefined,
-    runCommand: async (binary: string, args: string[], options?: { cwd?: string }) => {
-      commands.push({ binary, args, cwd: options?.cwd });
+    runCommand: async (
+      binary: string,
+      args: string[],
+      options?: { cwd?: string; timeoutMs?: number },
+    ) => {
+      commands.push({ binary, args, cwd: options?.cwd, timeoutMs: options?.timeoutMs });
       return 0;
     },
   });
@@ -135,6 +142,7 @@ test("runTestCli dispatches bounded built tests before script tests", async (t) 
     path.join(tempDir, "apps", "gateway", "dist", "index.test.js"),
   );
   assert.equal(commands[0]?.cwd, tempDir);
+  assert.equal(commands[0]?.timeoutMs, 123_456);
   assert.equal(commands[1]?.binary, "/usr/local/bin/bun");
   assert.deepEqual(commands[1]?.args.slice(0, 3), [
     "test",
@@ -146,6 +154,28 @@ test("runTestCli dispatches bounded built tests before script tests", async (t) 
     path.join(tempDir, "scripts", "package-runtime-coverage.test.ts"),
   );
   assert.equal(commands[1]?.cwd, tempDir);
+  assert.equal(commands[1]?.timeoutMs, 123_456);
+});
+
+test("runTestCommand times out hung child commands", async () => {
+  const stderr: string[] = [];
+  const startedAt = Date.now();
+
+  const code = await runTestCommand(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    timeoutMs: 50,
+    io: {
+      stderr: {
+        write: (message: string) => {
+          stderr.push(message);
+          return true;
+        },
+      },
+    },
+  });
+
+  assert.equal(code, 1);
+  assert.match(stderr.join(""), /timed out after 50ms/);
+  assert.ok(Date.now() - startedAt < 2_000);
 });
 
 test("test disk preflight reports low repository or temp space before dispatch", async (t) => {
@@ -214,5 +244,18 @@ test("resolveMinimumTestFreeSpaceMiB accepts bounded overrides", () => {
   assert.throws(
     () => resolveMinimumTestFreeSpaceMiB({ RAY_TEST_MIN_FREE_SPACE_MIB: "1.5" }),
     /RAY_TEST_MIN_FREE_SPACE_MIB must be a non-negative integer/,
+  );
+});
+
+test("resolveTestCommandTimeoutMs accepts bounded overrides", () => {
+  assert.equal(resolveTestCommandTimeoutMs({}), 600_000);
+  assert.equal(resolveTestCommandTimeoutMs({ RAY_TEST_COMMAND_TIMEOUT_MS: "120000" }), 120_000);
+  assert.throws(
+    () => resolveTestCommandTimeoutMs({ RAY_TEST_COMMAND_TIMEOUT_MS: "0" }),
+    /RAY_TEST_COMMAND_TIMEOUT_MS must be a positive integer/,
+  );
+  assert.throws(
+    () => resolveTestCommandTimeoutMs({ RAY_TEST_COMMAND_TIMEOUT_MS: "3600001" }),
+    /RAY_TEST_COMMAND_TIMEOUT_MS must be less than or equal to 3600000/,
   );
 });

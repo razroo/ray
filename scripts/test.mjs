@@ -13,7 +13,11 @@ export const MAX_SCRIPT_TEST_FILES = 256;
 export const MAX_TEST_PATH_BYTES = 4_096;
 export const DEFAULT_MIN_TEST_FREE_SPACE_MIB = 1_024;
 export const MAX_TEST_FREE_SPACE_MIB = 1_048_576;
+export const DEFAULT_TEST_COMMAND_TIMEOUT_MS = 600_000;
+export const MAX_TEST_COMMAND_TIMEOUT_MS = 3_600_000;
 const BYTES_PER_MIB = 1024 * 1024;
+const TEST_COMMAND_KILL_GRACE_MS = 5_000;
+const MAX_TEST_COMMAND_DISPLAY_CHARS = 512;
 export const DEFAULT_SKIP_NAMES = new Set([
   ".git",
   ".playwright-mcp",
@@ -58,10 +62,38 @@ function parseNonNegativeInteger(value, label) {
   return parsed;
 }
 
+function parsePositiveIntegerAtMost(value, label, maximum) {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  const parsed = Number(normalized);
+  if (!/^\d+$/.test(normalized) || !Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+
+  if (parsed > maximum) {
+    throw new Error(`${label} must be less than or equal to ${maximum}`);
+  }
+
+  return parsed;
+}
+
 export function resolveMinimumTestFreeSpaceMiB(env = process.env) {
   return (
     parseNonNegativeInteger(env.RAY_TEST_MIN_FREE_SPACE_MIB, "RAY_TEST_MIN_FREE_SPACE_MIB") ??
     DEFAULT_MIN_TEST_FREE_SPACE_MIB
+  );
+}
+
+export function resolveTestCommandTimeoutMs(env = process.env) {
+  return (
+    parsePositiveIntegerAtMost(
+      env.RAY_TEST_COMMAND_TIMEOUT_MS,
+      "RAY_TEST_COMMAND_TIMEOUT_MS",
+      MAX_TEST_COMMAND_TIMEOUT_MS,
+    ) ?? DEFAULT_TEST_COMMAND_TIMEOUT_MS
   );
 }
 
@@ -233,19 +265,64 @@ export async function assertTestDiskHeadroom(options = {}) {
 
 export function runTestCommand(binary, args, options = {}) {
   return new Promise((resolve) => {
+    const timeoutMs = options.timeoutMs ?? DEFAULT_TEST_COMMAND_TIMEOUT_MS;
+    const io = options.io ?? process;
+    let settled = false;
+    let timeout;
+    let killTimer;
     const child = spawn(binary, args, {
       cwd: options.cwd ?? process.cwd(),
       stdio: "inherit",
     });
 
+    const cleanup = () => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      if (killTimer) {
+        clearTimeout(killTimer);
+      }
+    };
+
+    const finish = (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(code);
+    };
+
+    timeout = setTimeout(() => {
+      const command = formatTestCommand(binary, args);
+      io.stderr.write(`${command} timed out after ${timeoutMs}ms\n`);
+      child.kill("SIGTERM");
+      killTimer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+      }, TEST_COMMAND_KILL_GRACE_MS);
+      killTimer.unref?.();
+    }, timeoutMs);
+    timeout.unref?.();
+
     child.on("error", () => {
-      resolve(1);
+      finish(1);
     });
 
     child.on("exit", (code) => {
-      resolve(code ?? 1);
+      finish(code ?? 1);
     });
   });
+}
+
+function formatTestCommand(binary, args) {
+  const command = [binary, ...args].join(" ");
+  if (command.length <= MAX_TEST_COMMAND_DISPLAY_CHARS) {
+    return command;
+  }
+
+  return `${command.slice(0, MAX_TEST_COMMAND_DISPLAY_CHARS)}...`;
 }
 
 export async function runTestCli(options = {}) {
@@ -257,6 +334,7 @@ export async function runTestCli(options = {}) {
   const diskPreflight = options.diskPreflight ?? assertTestDiskHeadroom;
   const bunBinary = env.RAY_BUN_BINARY ?? (versions.bun ? process.execPath : "bun");
   const nodeBinary = env.RAY_NODE_BINARY ?? "node";
+  const commandTimeoutMs = options.commandTimeoutMs ?? resolveTestCommandTimeoutMs(env);
 
   try {
     await diskPreflight({ root, env });
@@ -275,7 +353,7 @@ export async function runTestCli(options = {}) {
   let code = await runCommand(
     nodeBinary,
     ["--test", "--test-concurrency=1", ...discovered.testFiles],
-    { cwd: root },
+    { cwd: root, timeoutMs: commandTimeoutMs, io },
   );
   if (code !== 0) {
     return code;
@@ -288,7 +366,7 @@ export async function runTestCli(options = {}) {
   code = await runCommand(
     bunBinary,
     ["test", "--max-concurrency=1", "--timeout=120000", ...discovered.scriptTestFiles],
-    { cwd: root },
+    { cwd: root, timeoutMs: commandTimeoutMs, io },
   );
 
   return code;
