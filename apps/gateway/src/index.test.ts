@@ -1169,7 +1169,14 @@ test("gateway metrics endpoint exposes async queue saturation", async (t) => {
   assert.equal(body.gauges["async_queue.storage_reserve_ratio"], 4);
   assert.equal(body.gauges["async_queue.storage_low"], 0);
   assert.equal(body.gauges["async_queue.completed_ttl_ms"], config.asyncQueue.completedTtlMs);
+  assert.equal(body.gauges["async_queue.poll_interval_ms"], config.asyncQueue.pollIntervalMs);
   assert.equal(body.gauges["async_queue.dispatch_concurrency"], 2);
+  assert.equal(body.gauges["async_queue.max_attempts"], config.asyncQueue.maxAttempts);
+  assert.equal(body.gauges["async_queue.callback_timeout_ms"], config.asyncQueue.callbackTimeoutMs);
+  assert.equal(
+    body.gauges["async_queue.max_callback_attempts"],
+    config.asyncQueue.maxCallbackAttempts,
+  );
 
   const healthResponse = await fetch(`http://127.0.0.1:${address.port}/health`);
   assert.equal(healthResponse.status, 200);
@@ -1186,6 +1193,10 @@ test("gateway metrics endpoint exposes async queue saturation", async (t) => {
   assert.equal(health.asyncQueue?.availableStorageMiB, 256);
   assert.equal(health.asyncQueue?.storageReserveRatio, 4);
   assert.equal(health.asyncQueue?.storageLow, false);
+  assert.equal(health.asyncQueue?.pollIntervalMs, config.asyncQueue.pollIntervalMs);
+  assert.equal(health.asyncQueue?.maxAttempts, config.asyncQueue.maxAttempts);
+  assert.equal(health.asyncQueue?.callbackTimeoutMs, config.asyncQueue.callbackTimeoutMs);
+  assert.equal(health.asyncQueue?.maxCallbackAttempts, config.asyncQueue.maxCallbackAttempts);
 });
 
 test("gateway detailed health degrades when async queue storage is low", async (t) => {

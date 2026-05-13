@@ -178,6 +178,11 @@ test("durable inference queue snapshots config at construction", async () => {
         enabled: true,
         storageDir,
         maxJobs: 1,
+        pollIntervalMs: 750,
+        dispatchConcurrency: 2,
+        maxAttempts: 4,
+        callbackTimeoutMs: 1_500,
+        maxCallbackAttempts: 3,
       },
     });
     const runtime = createRayRuntime(config);
@@ -204,9 +209,15 @@ test("durable inference queue snapshots config at construction", async () => {
         (error as { code?: string }).code === "async_queue_full",
     );
 
-    assert.equal(queue.snapshot().maxJobs, 1);
-    assert.equal(queue.snapshot().jobsRatio, 1);
-    assert.equal(queue.snapshot().degraded, true);
+    const snapshot = queue.snapshot();
+    assert.equal(snapshot.maxJobs, 1);
+    assert.equal(snapshot.jobsRatio, 1);
+    assert.equal(snapshot.degraded, true);
+    assert.equal(snapshot.pollIntervalMs, 750);
+    assert.equal(snapshot.dispatchConcurrency, 2);
+    assert.equal(snapshot.maxAttempts, 4);
+    assert.equal(snapshot.callbackTimeoutMs, 1_500);
+    assert.equal(snapshot.maxCallbackAttempts, 3);
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }

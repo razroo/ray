@@ -1183,7 +1183,11 @@ export class DurableInferenceQueue {
       jobsRatio,
       minFreeStorageMiB: this.options.config.minFreeStorageMiB,
       completedTtlMs: this.options.config.completedTtlMs,
+      pollIntervalMs: this.options.config.pollIntervalMs,
       dispatchConcurrency: this.options.config.dispatchConcurrency,
+      maxAttempts: this.options.config.maxAttempts,
+      callbackTimeoutMs: this.options.config.callbackTimeoutMs,
+      maxCallbackAttempts: this.options.config.maxCallbackAttempts,
     };
   }
 

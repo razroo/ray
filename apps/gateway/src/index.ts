@@ -195,7 +195,11 @@ function attachAsyncQueueMetrics(
     metrics.gauges["async_queue.storage_low"] = snapshot.storageLow ? 1 : 0;
   }
   metrics.gauges["async_queue.completed_ttl_ms"] = snapshot.completedTtlMs;
+  metrics.gauges["async_queue.poll_interval_ms"] = snapshot.pollIntervalMs;
   metrics.gauges["async_queue.dispatch_concurrency"] = snapshot.dispatchConcurrency;
+  metrics.gauges["async_queue.max_attempts"] = snapshot.maxAttempts;
+  metrics.gauges["async_queue.callback_timeout_ms"] = snapshot.callbackTimeoutMs;
+  metrics.gauges["async_queue.max_callback_attempts"] = snapshot.maxCallbackAttempts;
 
   return metrics;
 }

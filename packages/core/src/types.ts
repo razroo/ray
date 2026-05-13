@@ -339,7 +339,11 @@ export interface AsyncQueueSnapshot {
   storageReserveRatio?: number;
   storageLow?: boolean;
   completedTtlMs: number;
+  pollIntervalMs: number;
   dispatchConcurrency: number;
+  maxAttempts: number;
+  callbackTimeoutMs: number;
+  maxCallbackAttempts: number;
 }
 
 export interface UsageBreakdown {
