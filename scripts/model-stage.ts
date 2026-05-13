@@ -45,6 +45,8 @@ const MAX_LLAMA_CPP_BINARY_SOURCE_BYTES = 512 * BYTES_PER_MIB;
 const MAX_LLAMA_CPP_BINARY_SOURCE_MIB = MAX_LLAMA_CPP_BINARY_SOURCE_BYTES / BYTES_PER_MIB;
 const MIN_BINARY_STAGE_FREE_AFTER_COPY_MIB = 64;
 const MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB = 256;
+const MAX_DEPLOY_MIN_FREE_STORAGE_MIB = 1_048_576;
+const DEPLOY_MIN_FREE_STORAGE_ENV = "RAY_DEPLOY_MIN_FREE_STORAGE_MIB";
 const GGUF_MAGIC = "GGUF";
 const LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS = 10;
 const LLAMA_CPP_BINARY_SMOKE_TIMEOUT_MS = LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS * 1000;
@@ -109,6 +111,8 @@ export interface ModelStagePlan {
   memoryBudgetSource?: "env" | "config";
   safeMemoryBudgetMiB?: number;
   nonModelWorkingSetMiB?: number;
+  binaryStorageReserveMiB: number;
+  modelStorageReserveMiB: number;
   requiredLaunchFlags: string[];
   commands: string[];
 }
@@ -182,6 +186,7 @@ Options:
   --binary-sha256 <hex>    Expected SHA-256 for the installed llama-server binary.
   --source <path>          Local GGUF path to install into the configured model path.
   --sha256 <hex>           Expected SHA-256 for the installed GGUF.
+  RAY_DEPLOY_MIN_FREE_STORAGE_MIB raises the post-copy binary and GGUF storage reserves when set.
   --check-sources          Verify source artifacts and provided checksums before printing the plan.
   --apply                  Install verified source artifacts into the resolved binary/model paths.
   --commands-only          Print only shell commands, one per line.
@@ -250,6 +255,26 @@ function parseOptionalPositiveIntegerEnv(
   const parsed = Number(normalized);
   if (!/^\d+$/.test(normalized) || !Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(`${label} must be a positive integer`);
+  }
+
+  return parsed;
+}
+
+function parseOptionalDeployStorageReserveMiB(value: string | undefined): number | undefined {
+  const normalized = readNonEmptyEnvValue(value);
+  if (normalized === undefined) {
+    return undefined;
+  }
+
+  const parsed = Number(normalized);
+  if (
+    !/^\d+$/.test(normalized) ||
+    !Number.isSafeInteger(parsed) ||
+    parsed > MAX_DEPLOY_MIN_FREE_STORAGE_MIB
+  ) {
+    throw new Error(
+      `${DEPLOY_MIN_FREE_STORAGE_ENV} must be a non-negative integer less than or equal to ${MAX_DEPLOY_MIN_FREE_STORAGE_MIB}`,
+    );
   }
 
   return parsed;
@@ -556,8 +581,8 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
     `llama-server source must be at most ${MAX_LLAMA_CPP_BINARY_SOURCE_MIB} MiB before copying to ${plan.binaryPath}.`,
   )} >&2; exit 1; }; binary_df_output="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s df -Pm ${shellQuote(
     plan.binaryDirectory,
-  )})" || exit "$?"; binary_source_mib="$(((\${binary_source_bytes:-0} + ${BYTES_PER_MIB - 1}) / ${BYTES_PER_MIB}))"; test "$binary_source_mib" -ge 1 || binary_source_mib=1; binary_required_mib="$((binary_source_mib + ${MIN_BINARY_STAGE_FREE_AFTER_COPY_MIB}))"; binary_available_mib="$(printf '%s\\n' "$binary_df_output" | awk 'NR==2 {print $4}')"; test "\${binary_available_mib:-0}" -ge "\${binary_required_mib:-0}" || { printf '%s\\n' ${shellQuote(
-    `Not enough free space in ${plan.binaryDirectory}: keep at least ${MIN_BINARY_STAGE_FREE_AFTER_COPY_MIB} MiB free after copying llama-server.`,
+  )})" || exit "$?"; binary_source_mib="$(((\${binary_source_bytes:-0} + ${BYTES_PER_MIB - 1}) / ${BYTES_PER_MIB}))"; test "$binary_source_mib" -ge 1 || binary_source_mib=1; binary_required_mib="$((binary_source_mib + ${plan.binaryStorageReserveMiB}))"; binary_available_mib="$(printf '%s\\n' "$binary_df_output" | awk 'NR==2 {print $4}')"; test "\${binary_available_mib:-0}" -ge "\${binary_required_mib:-0}" || { printf '%s\\n' ${shellQuote(
+    `Not enough free space in ${plan.binaryDirectory}: keep at least ${plan.binaryStorageReserveMiB} MiB free after copying llama-server.`,
   )} >&2; exit 1; }`;
   const binarySourceLaunchFlagPreflight = `binary_help="$(timeout ${LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS}s ${shellQuote(
     binarySourcePath,
@@ -572,8 +597,8 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
     sourcePath,
   )})" || exit "$?"; df_output="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s df -Pm ${shellQuote(
     plan.modelDirectory,
-  )})" || exit "$?"; source_mib="$(((\${source_bytes:-0} + ${BYTES_PER_MIB - 1}) / ${BYTES_PER_MIB}))"; test "$source_mib" -ge 1 || source_mib=1; required_mib="$((source_mib + ${MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB}))"; available_mib="$(printf '%s\\n' "$df_output" | awk 'NR==2 {print $4}')"; test "\${available_mib:-0}" -ge "\${required_mib:-0}" || { printf '%s\\n' ${shellQuote(
-    `Not enough free space in ${plan.modelDirectory}: keep at least ${MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB} MiB free after copying the GGUF.`,
+  )})" || exit "$?"; source_mib="$(((\${source_bytes:-0} + ${BYTES_PER_MIB - 1}) / ${BYTES_PER_MIB}))"; test "$source_mib" -ge 1 || source_mib=1; required_mib="$((source_mib + ${plan.modelStorageReserveMiB}))"; available_mib="$(printf '%s\\n' "$df_output" | awk 'NR==2 {print $4}')"; test "\${available_mib:-0}" -ge "\${required_mib:-0}" || { printf '%s\\n' ${shellQuote(
+    `Not enough free space in ${plan.modelDirectory}: keep at least ${plan.modelStorageReserveMiB} MiB free after copying the GGUF.`,
   )} >&2; exit 1; }`;
   const modelFormatPreflight = `magic="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s head -c ${GGUF_MAGIC.length} -- ${shellQuote(
     sourcePath,
@@ -700,6 +725,16 @@ export async function createModelStagePlan(options: {
     env.RAY_DEPLOY_MEMORY_MIB,
     "RAY_DEPLOY_MEMORY_MIB",
   );
+  const deployStorageReserveMiB =
+    parseOptionalDeployStorageReserveMiB(env[DEPLOY_MIN_FREE_STORAGE_ENV]) ?? 0;
+  const binaryStorageReserveMiB = Math.max(
+    MIN_BINARY_STAGE_FREE_AFTER_COPY_MIB,
+    deployStorageReserveMiB,
+  );
+  const modelStorageReserveMiB = Math.max(
+    MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB,
+    deployStorageReserveMiB,
+  );
   const memoryBudgetMiB =
     memoryBudgetOverrideMiB ??
     loaded.config.model.operational?.memoryClassMiB ??
@@ -749,6 +784,8 @@ export async function createModelStagePlan(options: {
           nonModelWorkingSetMiB: memoryEstimate.projectedWorkingSetMiB,
         }
       : {}),
+    binaryStorageReserveMiB,
+    modelStorageReserveMiB,
     requiredLaunchFlags,
   };
 
@@ -1271,13 +1308,14 @@ async function assertArtifactStageStorageHeadroom(
 async function assertModelStageStorageHeadroom(
   sourcePath: string,
   targetDirectory: string,
+  reserveMiB: number,
   options: ModelStageApplyOptions = {},
 ): Promise<void> {
   await assertArtifactStageStorageHeadroom(
     sourcePath,
     targetDirectory,
     "GGUF",
-    MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB,
+    reserveMiB,
     options,
   );
 }
@@ -1285,13 +1323,14 @@ async function assertModelStageStorageHeadroom(
 async function assertBinaryStageStorageHeadroom(
   sourcePath: string,
   targetDirectory: string,
+  reserveMiB: number,
   options: ModelStageApplyOptions = {},
 ): Promise<void> {
   await assertArtifactStageStorageHeadroom(
     sourcePath,
     targetDirectory,
     "llama-server",
-    MIN_BINARY_STAGE_FREE_AFTER_COPY_MIB,
+    reserveMiB,
     options,
   );
 }
@@ -1384,7 +1423,12 @@ export async function applyModelStagePlan(
 
   await mkdir(path.dirname(modelTargetPath), { recursive: true, mode: 0o755 });
   if (path.resolve(modelSourcePath) !== path.resolve(modelTargetPath)) {
-    await assertModelStageStorageHeadroom(modelSourcePath, path.dirname(modelTargetPath), options);
+    await assertModelStageStorageHeadroom(
+      modelSourcePath,
+      path.dirname(modelTargetPath),
+      plan.modelStorageReserveMiB,
+      options,
+    );
   }
 
   await mkdir(path.dirname(binaryTargetPath), { recursive: true, mode: 0o755 });
@@ -1392,6 +1436,7 @@ export async function applyModelStagePlan(
     await assertBinaryStageStorageHeadroom(
       binarySourcePath,
       path.dirname(binaryTargetPath),
+      plan.binaryStorageReserveMiB,
       options,
     );
   }

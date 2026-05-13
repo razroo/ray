@@ -237,6 +237,8 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
   assert.equal(plan.memoryBudgetSource, "config");
   assert.equal(plan.safeMemoryBudgetMiB, 2380);
   assert.equal(plan.nonModelWorkingSetMiB, 928);
+  assert.equal(plan.binaryStorageReserveMiB, 64);
+  assert.equal(plan.modelStorageReserveMiB, 256);
   assert.ok(plan.requiredLaunchFlags.includes("--ctx-size"));
   assert.ok(plan.requiredLaunchFlags.includes("--cache-ram"));
   assert.equal(plan.commands[0], "timeout 60s sudo install -d -m 0755 '/usr/local/bin'");
@@ -351,6 +353,21 @@ test("createModelStagePlan uses deploy memory env for staging fit checks", async
   assert.match(plan.commands.join("\n"), /8192 MiB env memory target/);
 });
 
+test("createModelStagePlan uses deploy storage reserve for staging headroom", async () => {
+  const plan = await createModelStagePlan({
+    cwd: repoRoot,
+    configPath: "./examples/config/ray.1b.generic.public.json",
+    env: {
+      RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "1024",
+    },
+  });
+
+  assert.equal(plan.binaryStorageReserveMiB, 1_024);
+  assert.equal(plan.modelStorageReserveMiB, 1_024);
+  assert.match(plan.commands.join("\n"), /keep at least 1024 MiB free after copying llama-server/);
+  assert.match(plan.commands.join("\n"), /keep at least 1024 MiB free after copying the GGUF/);
+});
+
 test("createModelStagePlan rejects malformed deploy memory env", async () => {
   await assert.rejects(
     createModelStagePlan({
@@ -361,6 +378,19 @@ test("createModelStagePlan rejects malformed deploy memory env", async () => {
       },
     }),
     /RAY_DEPLOY_MEMORY_MIB must be a positive integer/,
+  );
+});
+
+test("createModelStagePlan rejects malformed deploy storage reserve env", async () => {
+  await assert.rejects(
+    createModelStagePlan({
+      cwd: repoRoot,
+      configPath: "./examples/config/ray.1b.generic.public.json",
+      env: {
+        RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "bad",
+      },
+    }),
+    /RAY_DEPLOY_MIN_FREE_STORAGE_MIB must be a non-negative integer/,
   );
 });
 
@@ -814,6 +844,56 @@ test("applyModelStagePlan rejects low target storage before copying models", asy
         resolveAvailableStorageMiB: () => 1,
       }),
     /Not enough free space/,
+  );
+  await assert.rejects(stat(binaryTarget), /ENOENT/);
+  await assert.rejects(stat(modelTarget), /ENOENT/);
+});
+
+test("applyModelStagePlan honors deploy storage reserve before copying models", async (t) => {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) {
+    return;
+  }
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-deploy-reserve-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const binaryPath = path.join(tempDir, "sources", "llama-server");
+  const modelPath = path.join(tempDir, "sources", "model.gguf");
+  const binaryTarget = path.join(tempDir, "target", "bin", "llama-server");
+  const modelTarget = path.join(tempDir, "target", "models", "model.gguf");
+  const modelTargetDir = path.dirname(modelTarget);
+
+  await mkdir(path.join(tempDir, "sources"), { recursive: true });
+  await writeFile(binaryPath, compatibleLlamaServerScript, "utf8");
+  await writeFile(modelPath, "GGUF", "utf8");
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o644);
+
+  const plan = await createModelStagePlan({
+    cwd: tempDir,
+    configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
+    env: {
+      RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "512",
+      RAY_LLAMA_CPP_BINARY_PATH: binaryTarget,
+      RAY_MODEL_PATH: modelTarget,
+    },
+    serviceUser: String(uid),
+    serviceGroup: String(gid),
+    binarySourcePath: "./sources/llama-server",
+    sourcePath: "./sources/model.gguf",
+  });
+
+  await assert.rejects(
+    () =>
+      applyModelStagePlan(tempDir, plan, {
+        resolveAvailableStorageMiB: (_sourcePath, targetDirectory) =>
+          targetDirectory === modelTargetDir ? 300 : 1024,
+      }),
+    /staging keeps a 512 MiB reserve/,
   );
   await assert.rejects(stat(binaryTarget), /ENOENT/);
   await assert.rejects(stat(modelTarget), /ENOENT/);

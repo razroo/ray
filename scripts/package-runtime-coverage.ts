@@ -1942,6 +1942,7 @@ function validateModelStageScript(
     contents.includes("assertModelStageStorageHeadroom") &&
     contents.includes("df -Pm") &&
     contents.includes("RAY_DEPLOY_MEMORY_MIB") &&
+    contents.includes("RAY_DEPLOY_MIN_FREE_STORAGE_MIB") &&
     contents.includes("evaluateModelStageMemoryFit") &&
     contents.includes("assertGgufMagicHeader") &&
     contents.includes("assertLlamaCppBinarySupportsLaunchFlags") &&
@@ -1960,7 +1961,7 @@ function validateModelStageScript(
       scriptPath,
       line: workflowLineNumber(lines, "ModelStageStorageHeadroom"),
       message:
-        "Model staging must guard binary and GGUF target storage headroom, generated backend MemoryMax fit, GGUF headers, generated llama.cpp launch flags, bounded env-file reads, and same-directory atomic replacement before a small VPS replaces working artifacts.",
+        "Model staging must guard binary and GGUF target storage headroom with the configured deploy storage reserve, generated backend MemoryMax fit, GGUF headers, generated llama.cpp launch flags, bounded env-file reads, and same-directory atomic replacement before a small VPS replaces working artifacts.",
     },
   ];
 }
