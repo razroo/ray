@@ -231,6 +231,7 @@ test("stopGateway force-closes active request sockets before systemd timeout", a
     requestStarted?.();
   });
   const { sockets, activeRequestsBySocket } = trackTestServerSockets(server);
+  const queueStopTimeouts: number[] = [];
   const logger = {
     debug() {},
     info() {},
@@ -245,6 +246,11 @@ test("stopGateway force-closes active request sockets before systemd timeout", a
     logger,
     sockets,
     activeRequestsBySocket,
+    jobQueue: {
+      async stop(options?: { timeoutMs?: number }) {
+        queueStopTimeouts.push(options?.timeoutMs ?? -1);
+      },
+    } as unknown as DurableInferenceQueue,
   };
 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -274,6 +280,13 @@ test("stopGateway force-closes active request sockets before systemd timeout", a
   );
   assert.equal(warnings[0]?.fields?.signal, "SIGTERM");
   assert.equal(warnings[0]?.fields?.timeoutMs, 20);
+  assert.equal(queueStopTimeouts.length, 1);
+  const queueStopTimeout = queueStopTimeouts[0];
+  if (typeof queueStopTimeout !== "number") {
+    throw new Error("Expected async queue stop timeout to be recorded");
+  }
+  assert.ok(queueStopTimeout >= 1);
+  assert.ok(queueStopTimeout <= 20);
 });
 
 test("stopGateway closes tracked idle keep-alive sockets without waiting for timeout", async (t) => {

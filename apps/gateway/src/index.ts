@@ -1785,6 +1785,7 @@ export async function stopGateway(
 ): Promise<void> {
   const timeoutMs = options.timeoutMs ?? GATEWAY_SHUTDOWN_TIMEOUT_MS;
   const signal = options.signal ?? "SIGTERM";
+  const startedAt = Date.now();
   let forceTimeout: NodeJS.Timeout | undefined;
 
   gateway.logger.info("gateway shutting down", { signal, timeoutMs });
@@ -1821,7 +1822,8 @@ export async function stopGateway(
       clearTimeout(forceTimeout);
     }
 
-    await gateway.jobQueue?.stop();
+    const remainingTimeoutMs = Math.max(1, timeoutMs - (Date.now() - startedAt));
+    await gateway.jobQueue?.stop({ timeoutMs: remainingTimeoutMs });
   }
 }
 
