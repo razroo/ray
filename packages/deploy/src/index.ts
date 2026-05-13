@@ -1241,6 +1241,19 @@ function formatServiceUserAccessError(
   )})`;
 }
 
+function resolveChildProcessServiceIdentity(
+  identity: ServiceUserIdentity | undefined,
+): { uid: number; gid: number } | undefined {
+  if (!identity || typeof process.getuid !== "function" || process.getuid() !== 0) {
+    return undefined;
+  }
+
+  return {
+    uid: identity.uid,
+    gid: identity.gid,
+  };
+}
+
 async function verifyServiceUserPathAccess(
   targetPath: string,
   identity: ServiceUserIdentity,
@@ -4257,6 +4270,7 @@ async function collectGatewayEntrypointImportPreflight(
   strictFilesystem: boolean,
   gatewayEntrypointStatus: GatewayEntrypointStatus | undefined,
   gatewayRuntimeBinaryStatus: GatewayRuntimeBinaryStatus | undefined,
+  serviceUserIdentity: ServiceUserIdentity | undefined,
 ): Promise<Partial<DeploymentPreflight>> {
   if (
     !strictFilesystem ||
@@ -4269,6 +4283,7 @@ async function collectGatewayEntrypointImportPreflight(
 
   const entrypointPath = path.resolve(cwd, GATEWAY_ENTRYPOINT_RELATIVE_PATH);
   const importScript = `await import(${JSON.stringify(pathToFileURL(entrypointPath).href)});`;
+  const serviceIdentity = resolveChildProcessServiceIdentity(serviceUserIdentity);
 
   return await new Promise<Partial<DeploymentPreflight>>((resolve) => {
     execFile(
@@ -4279,6 +4294,7 @@ async function collectGatewayEntrypointImportPreflight(
         timeout: GATEWAY_ENTRYPOINT_IMPORT_TIMEOUT_MS,
         maxBuffer: GATEWAY_ENTRYPOINT_IMPORT_MAX_BUFFER_BYTES,
         windowsHide: true,
+        ...(serviceIdentity ? serviceIdentity : {}),
       },
       (error, stdout, stderr) => {
         const output = `${stdout}\n${stderr}`.trim();
@@ -4645,6 +4661,7 @@ async function collectDeploymentPreflight(
     options.strictFilesystem === true,
     gatewayEntrypointPreflight.gatewayEntrypointStatus,
     runtimePreflight.gatewayRuntimeBinaryStatus,
+    serviceUserIdentity,
   );
   const swapPreflight = await collectSwapPreflight(options.hostFiles);
 
