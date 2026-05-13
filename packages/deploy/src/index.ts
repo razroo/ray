@@ -474,6 +474,10 @@ function adapterBaseUrlTargetsGatewaySocket(config: RayConfig, adapterBaseUrl: U
   return localBindHostsOverlap(gatewayHost, adapterHost);
 }
 
+function isSingleNodeOpenAiCompatibleProfile(profile: RayConfig["profile"]): boolean {
+  return profile === "vps" || profile === "balanced";
+}
+
 function normalizeHostLiteral(value: string): string {
   const trimmed = value.trim().toLowerCase();
   return trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
@@ -2924,6 +2928,19 @@ export function diagnoseConfig(
         level: "error",
         code: "adapter_base_url_gateway_loop",
         message: `model.adapter.baseUrl (${config.model.adapter.baseUrl}) points at the Ray gateway listen socket (${config.server.host}:${config.server.port}). Point it at the model backend instead so inference requests do not recursively call the gateway.`,
+      });
+    }
+
+    if (
+      adapterBaseUrl &&
+      config.model.adapter.kind === "openai-compatible" &&
+      isSingleNodeOpenAiCompatibleProfile(config.profile) &&
+      !isLoopbackHost(adapterBaseUrl.hostname)
+    ) {
+      diagnostics.push({
+        level: "warn",
+        code: "openai_compatible_base_url_not_loopback",
+        message: `model.adapter.baseUrl (${config.model.adapter.baseUrl}) is not loopback for the ${config.profile} single-node profile. Cheap VPS deployments should keep the OpenAI-compatible backend on 127.0.0.1 or localhost so Ray remains the public inference surface; use a remote backend only when intentionally leaving the one-box topology.`,
       });
     }
 

@@ -530,6 +530,7 @@ file, package metadata, and the llama.cpp staging helper used during deploy.
 
 - Keep the model backend bound to localhost; config loading and doctor reject generated llama.cpp services whose `model.adapter.launchProfile.host` is not `127.0.0.1`, `localhost`, or another loopback address.
 - Keep `model.adapter.baseUrl` on plain HTTP at the same loopback host, root, and port as `model.adapter.launchProfile` when Ray renders the llama.cpp service; config loading and doctor reject base URLs that point away from the generated backend.
+- For the `vps` and `balanced` OpenAI-compatible profiles, keep `model.adapter.baseUrl` on loopback unless you intentionally leave the one-box topology; doctor warns when those profiles point at a remote backend because Ray is no longer fronting a local self-hosted model.
 - Let Ray be the public inference surface.
 - Keep the Ray gateway bound to localhost and expose it through Caddy or nginx.
 - Set `RAY_DEPLOY_DOMAIN` or pass `--domain` with the real public DNS name before installing the generated Caddyfile; render and doctor warn when the generated site address is still `ray.local`, `localhost`, loopback, or another `.local` placeholder.

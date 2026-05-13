@@ -2264,6 +2264,40 @@ test("diagnoseConfig errors when adapter baseUrl points at the gateway socket", 
   assert.match(diagnostic.message, /recursively call the gateway/);
 });
 
+test("diagnoseConfig warns when single-node OpenAI-compatible profiles point off-node", () => {
+  for (const profile of ["vps", "balanced"] as const) {
+    const loopbackConfig = createDefaultConfig(profile);
+    const remoteConfig = createDefaultConfig(profile);
+
+    if (
+      loopbackConfig.model.adapter.kind !== "openai-compatible" ||
+      remoteConfig.model.adapter.kind !== "openai-compatible"
+    ) {
+      throw new Error(`Expected ${profile} to use an OpenAI-compatible adapter`);
+    }
+
+    remoteConfig.model.adapter.baseUrl = "https://api.example.com/v1";
+
+    const loopbackDiagnostics = diagnoseConfig(loopbackConfig, process.env);
+    const remoteDiagnostics = diagnoseConfig(remoteConfig, process.env);
+    const remoteDiagnostic = remoteDiagnostics.find(
+      (entry) => entry.code === "openai_compatible_base_url_not_loopback",
+    );
+
+    assert.ok(
+      !loopbackDiagnostics.some(
+        (entry) => entry.code === "openai_compatible_base_url_not_loopback",
+      ),
+      `${profile} should not warn for its default loopback backend URL`,
+    );
+    assert.ok(remoteDiagnostic);
+    assert.equal(remoteDiagnostic.level, "warn");
+    assert.match(remoteDiagnostic.message, new RegExp(`${profile} single-node profile`));
+    assert.match(remoteDiagnostic.message, /Ray remains the public inference surface/);
+    assert.match(remoteDiagnostic.message, /one-box topology/);
+  }
+});
+
 test("diagnoseConfig errors when Ray points away from the generated llama.cpp service", () => {
   const publicBaseUrlConfig = createDefaultConfig("1b");
   const portMismatchConfig = createDefaultConfig("1b");
