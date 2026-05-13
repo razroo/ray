@@ -62,6 +62,7 @@
     "autotune:hetzner-email-ai": "bun ./scripts/benchmark.ts --autotune --config ./examples/config/ray.hetzner-cx23-qwen0.6b.json --workload ./examples/workloads/email-workload.jsonl --concurrency 2 --requests 16",
     "autotune:1b": "bun ./scripts/benchmark.ts --autotune --config ./examples/config/ray.1b.json --workload ./examples/workloads/email-1b-workload.jsonl --concurrency 1 --requests 10",
     "autotune:1b:8gb": "bun ./scripts/benchmark.ts --autotune --config ./examples/config/ray.1b.8gb.json --workload ./examples/workloads/email-1b-workload.jsonl --concurrency 2 --requests 16",
+    "deploy:storage": "bun ./scripts/deploy-storage-preflight.ts",
     "deploy:smoke": "bun ./scripts/deploy-smoke.ts",
     "deploy:scripts": "bun ./scripts/deploy-script-coverage.ts",
     "package:runtime": "bun ./scripts/package-runtime-coverage.ts",

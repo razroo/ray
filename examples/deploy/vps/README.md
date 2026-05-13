@@ -121,6 +121,7 @@ On an 8 GB node, [ray.1b.8gb.generic.public.json](../../config/ray.1b.8gb.generi
 umask 022
 timeout 300s git clone --depth 1 https://github.com/razroo/ray.git /srv/ray
 cd /srv/ray
+timeout 60s bun run deploy:storage
 timeout 300s bun install --frozen-lockfile
 timeout 300s bun run build
 SERVICE_USER="${RAY_DEPLOY_SERVICE_USER:-ray}"
@@ -131,6 +132,9 @@ timeout 60s sudo chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/
 The `umask 022` keeps the checkout, built files, and Bun-installed dependencies
 readable by the generated service user without a recursive permission walk over
 `node_modules`.
+The storage preflight checks `/srv/ray`, `/var/lib/ray`, and `/tmp` before the
+Bun install expands dependencies; set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` to raise
+or lower the default 1024 MiB threshold.
 
 ### 4. Place the config
 

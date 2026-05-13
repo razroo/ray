@@ -1612,6 +1612,7 @@ function isVpsRayHelperScriptRequiringTimeout(scriptName: string): boolean {
     scriptName.startsWith("render:service:") ||
     scriptName === "model:stage" ||
     scriptName.startsWith("model:stage:") ||
+    scriptName === "deploy:storage" ||
     scriptName === "deploy:smoke" ||
     scriptName === "deploy:scripts" ||
     scriptName === "validate:config" ||

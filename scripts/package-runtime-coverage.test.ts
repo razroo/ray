@@ -297,6 +297,7 @@ test("validatePackageRuntimeCoverage requires timeouts for VPS Ray helper aliase
         engines: { bun: ">=1.3" },
         scripts: {
           "benchmark:assert:cx23:1b": "bun ./scripts/benchmark.ts",
+          "deploy:storage": "bun ./scripts/deploy-storage-preflight.ts",
           "deploy:smoke": "bun ./scripts/deploy-smoke.ts",
           "doctor:1b:generic": "bun packages/deploy/dist/cli.js doctor",
           "doctor:hetzner-email-ai": "bun packages/deploy/dist/cli.js doctor",
@@ -315,6 +316,7 @@ test("validatePackageRuntimeCoverage requires timeouts for VPS Ray helper aliase
       "",
       "```bash",
       "bun run doctor:1b:generic",
+      "bun run deploy:storage",
       "timeout 300s bun run model:stage:1b:generic",
       "RAY_API_KEYS=smoke bun run validate:config:all",
       "timeout 1800s bun run benchmark:assert:cx23:1b",
@@ -347,7 +349,8 @@ test("validatePackageRuntimeCoverage requires timeouts for VPS Ray helper aliase
     [
       ["docs/integrations/razroo-email-ai.md", 4],
       ["examples/deploy/vps/README.md", 4],
-      ["examples/deploy/vps/README.md", 6],
+      ["examples/deploy/vps/README.md", 5],
+      ["examples/deploy/vps/README.md", 7],
     ],
   );
 });
