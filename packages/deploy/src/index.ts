@@ -1537,6 +1537,11 @@ export function renderSystemdService(options: SystemdServiceOptions): string {
   const wantsLine = formatSystemdDependencyLine("Wants", wants ?? []);
   const afterLine = formatSystemdDependencyLine("After", ["network.target", ...(after ?? [])]);
   const absoluteConfigPath = path.resolve(options.workingDirectory, options.configPath);
+  if (isSystemdProtectHomePath(absoluteConfigPath)) {
+    throw new Error(
+      "configPath resolves under /home, /root, or /run/user, but the generated gateway service uses ProtectHome=true",
+    );
+  }
   if (isSystemdPrivateTmpPath(absoluteConfigPath)) {
     throw new Error(
       "configPath resolves under /tmp or /var/tmp, but the generated gateway service uses PrivateTmp=true",

@@ -253,6 +253,16 @@ test("renderSystemdService rejects unsafe systemd execution directives", () => {
     () =>
       renderSystemdService({
         workingDirectory: "/srv/ray",
+        configPath: "/home/ray/ray.json",
+        user: "ray",
+      }),
+    /configPath resolves under \/home, \/root, or \/run\/user/,
+  );
+
+  assert.throws(
+    () =>
+      renderSystemdService({
+        workingDirectory: "/srv/ray",
         configPath: "/tmp/ray.json",
         user: "ray",
       }),
