@@ -1295,6 +1295,55 @@ test("runtime keeps seeded variants isolated in cache keys", async () => {
   assert.deepEqual(calls, [11, 12]);
 });
 
+test("runtime keeps metadata variants isolated in cache keys", async () => {
+  const calls: string[] = [];
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "metadata-sensitive-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async infer(request) {
+      const format = request.metadata.rayPromptFormat ?? "default";
+      calls.push(format);
+      return {
+        output: `format:${format}:call:${calls.length}`,
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+
+  const first = await runtime.infer({
+    input: "hello world",
+    metadata: {
+      rayPromptFormat: "prompt-scaffold",
+    },
+  });
+  const second = await runtime.infer({
+    input: "hello world",
+    metadata: {
+      rayPromptFormat: "prompt-scaffold",
+    },
+  });
+  const third = await runtime.infer({
+    input: "hello world",
+    metadata: {
+      rayPromptFormat: "ray-chat-fallback",
+    },
+  });
+
+  assert.equal(first.output, "format:prompt-scaffold:call:1");
+  assert.equal(first.cached, false);
+  assert.equal(second.output, "format:prompt-scaffold:call:1");
+  assert.equal(second.cached, true);
+  assert.equal(third.output, "format:ray-chat-fallback:call:2");
+  assert.equal(third.cached, false);
+  assert.deepEqual(calls, ["prompt-scaffold", "ray-chat-fallback"]);
+});
+
 test("runtime skips caching payloads above the configured byte budget", async () => {
   let calls = 0;
   const provider: ModelProvider = {
