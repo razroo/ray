@@ -46,11 +46,15 @@ export interface GatewayAsyncQueueSummary {
   finalStatus: string;
   pollCount: number;
   outputChars: number;
+  auth?: {
+    missingStatus: number;
+    invalidStatus: number;
+  };
 }
 
 export interface GatewaySmokeSummary {
   ok: boolean;
-  mode: "basic" | "public-safety" | "async-queue";
+  mode: "basic" | "public-safety" | "async-queue" | "public-async-queue";
   configPath: string;
   profile: string;
   modelId: string;
@@ -88,6 +92,7 @@ Options:
   --timeout-ms <ms>    Per-check timeout budget. Default: ${DEFAULT_TIMEOUT_MS}
   --public-safety      Enable auth and rate limiting, then verify public-facing route guards.
   --async-queue        Enable the durable queue, then verify /v1/jobs submit and status flow.
+                       Combine with --public-safety to verify authenticated async jobs.
   --json               Print machine-readable summary JSON.
   -h, --help           Show this help.
 `;
@@ -225,10 +230,6 @@ export function parseArgs(argv: string[]): GatewaySmokeArgs {
     throw new Error(`Unexpected positional argument: ${current ?? ""}`);
   }
 
-  if (args.publicSafety && args.asyncQueue) {
-    throw new Error("--public-safety and --async-queue cannot be combined");
-  }
-
   return args;
 }
 
@@ -285,12 +286,15 @@ function cloneConfigForSmoke(config: RayConfig, host: string, port: number): Ray
   return next;
 }
 
-function enablePublicSafetyConfig(config: RayConfig): RayConfig {
+function enablePublicSafetyConfig(
+  config: RayConfig,
+  options: { maxRequests?: number } = {},
+): RayConfig {
   const next = structuredClone(config) as RayConfig;
   next.auth.enabled = true;
   next.auth.apiKeyEnv = "RAY_API_KEYS";
   next.rateLimit.enabled = true;
-  next.rateLimit.maxRequests = 1;
+  next.rateLimit.maxRequests = options.maxRequests ?? 1;
   next.rateLimit.windowMs = 60_000;
   next.rateLimit.keyStrategy = "api-key";
   next.rateLimit.trustProxyHeaders = false;
@@ -620,14 +624,23 @@ async function smokePublicSafety(options: { baseUrl: string; timeoutMs: number }
 async function smokeAsyncQueue(options: {
   baseUrl: string;
   timeoutMs: number;
+  token?: string;
 }): Promise<GatewayAsyncQueueSummary> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+  };
+  const pollHeaders: Record<string, string> = {};
+
+  if (options.token) {
+    headers.authorization = `Bearer ${options.token}`;
+    pollHeaders.authorization = `Bearer ${options.token}`;
+  }
+
   const createResponse = await fetchJson(
     `${options.baseUrl}/v1/jobs`,
     {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
+      headers,
       body: JSON.stringify({
         input: ASYNC_QUEUE_JOB_INPUT,
         maxTokens: 16,
@@ -650,7 +663,10 @@ async function smokeAsyncQueue(options: {
     const remainingMs = Math.max(1, options.timeoutMs - (Date.now() - startedAt));
     const statusResponse = await fetchJson(
       `${options.baseUrl}${accepted.location}`,
-      { method: "GET" },
+      {
+        method: "GET",
+        ...(Object.keys(pollHeaders).length > 0 ? { headers: pollHeaders } : {}),
+      },
       Math.min(1_000, remainingMs),
       accepted.location,
     );
@@ -716,11 +732,15 @@ export async function smokeGateway(options: {
   if (options.asyncQueue) {
     asyncStorageDir = await mkdtemp(path.join(tmpdir(), "ray-gateway-smoke-async-"));
   }
-  const config = options.publicSafety
-    ? enablePublicSafetyConfig(baseConfig)
-    : options.asyncQueue && asyncStorageDir
-      ? enableAsyncQueueConfig(baseConfig, asyncStorageDir)
-      : baseConfig;
+  let config = baseConfig;
+  if (options.publicSafety) {
+    config = enablePublicSafetyConfig(config, {
+      maxRequests: options.asyncQueue ? 64 : undefined,
+    });
+  }
+  if (options.asyncQueue && asyncStorageDir) {
+    config = enableAsyncQueueConfig(config, asyncStorageDir);
+  }
   const baseUrl = `http://${formatHostForUrl(options.host)}:${port}`;
 
   try {
@@ -734,6 +754,68 @@ export async function smokeGateway(options: {
         maxDelayMs: 250,
       },
     });
+
+    if (options.publicSafety && options.asyncQueue) {
+      const livez = await fetchJson(
+        `${baseUrl}/livez`,
+        { method: "GET" },
+        timeoutMs,
+        "/livez public async queue",
+      );
+      assertStatusOk(livez, "/livez public async queue");
+      const readyz = await waitForStatusOk(
+        `${baseUrl}/readyz`,
+        { method: "GET" },
+        timeoutMs,
+        "/readyz public async queue",
+      );
+
+      const missing = protectedEndpointRequest("/v1/jobs");
+      const missingResponse = await fetchText(
+        `${baseUrl}${missing.path}`,
+        missing.init,
+        timeoutMs,
+        "/v1/jobs public async missing auth",
+      );
+      assertTextStatus(missingResponse, "/v1/jobs public async missing auth", 401);
+
+      const invalid = protectedEndpointRequest("/v1/jobs", "wrong-token");
+      const invalidResponse = await fetchText(
+        `${baseUrl}${invalid.path}`,
+        invalid.init,
+        timeoutMs,
+        "/v1/jobs public async invalid auth",
+      );
+      assertTextStatus(invalidResponse, "/v1/jobs public async invalid auth", 401);
+
+      const asyncQueue = await smokeAsyncQueue({
+        baseUrl,
+        timeoutMs,
+        token: PUBLIC_SAFETY_API_KEY,
+      });
+
+      return {
+        ok: true,
+        mode: "public-async-queue",
+        configPath: loaded.configPath ?? path.resolve(cwd, options.configPath),
+        profile: config.profile,
+        modelId: config.model.id,
+        host: options.host,
+        port,
+        baseUrl,
+        livezStatus: livez.status,
+        readyzStatus: readyz.status,
+        inferStatus: asyncQueue.createStatus,
+        outputChars: asyncQueue.outputChars,
+        asyncQueue: {
+          ...asyncQueue,
+          auth: {
+            missingStatus: missingResponse.status,
+            invalidStatus: invalidResponse.status,
+          },
+        },
+      };
+    }
 
     if (options.publicSafety) {
       const publicSafety = await smokePublicSafety({
@@ -868,6 +950,11 @@ export function formatTextSummary(cwd: string, summary: GatewaySmokeSummary): st
     lines.push(
       `- async job: HTTP ${summary.asyncQueue.createStatus}, polls=${summary.asyncQueue.pollCount}, status=${summary.asyncQueue.finalStatus}, outputChars=${summary.asyncQueue.outputChars}`,
     );
+    if (summary.asyncQueue.auth) {
+      lines.push(
+        `- async job auth: missing=${summary.asyncQueue.auth.missingStatus}, invalid=${summary.asyncQueue.auth.invalidStatus}`,
+      );
+    }
   } else {
     lines.push(`- infer: HTTP ${summary.inferStatus}, outputChars=${summary.outputChars}`);
   }

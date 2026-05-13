@@ -65,6 +65,10 @@ test("parseArgs accepts strict gateway smoke options", () => {
   const asyncArgs = parseArgs(["--async-queue"]);
   assert.equal(asyncArgs.asyncQueue, true);
   assert.equal(asyncArgs.publicSafety, false);
+
+  const publicAsyncArgs = parseArgs(["--public-safety", "--async-queue"]);
+  assert.equal(publicAsyncArgs.publicSafety, true);
+  assert.equal(publicAsyncArgs.asyncQueue, true);
 });
 
 test("parseArgs rejects malformed gateway smoke argv", () => {
@@ -79,7 +83,6 @@ test("parseArgs rejects malformed gateway smoke argv", () => {
     () => parseArgs(["--timeout-ms", "120001"]),
     /--timeout-ms must be a positive integer/,
   );
-  assert.throws(() => parseArgs(["--public-safety", "--async-queue"]), /cannot be combined/);
   assert.throws(() => parseArgs(["--unknown"]), /Unknown option: --unknown/);
   assert.throws(() => parseArgs(["config.json"]), /Unexpected positional argument/);
 });
@@ -148,6 +151,10 @@ test("formatTextSummary reports async queue job smoke results", () => {
       finalStatus: "succeeded",
       pollCount: 3,
       outputChars: 42,
+      auth: {
+        missingStatus: 401,
+        invalidStatus: 401,
+      },
     },
   };
 
@@ -155,6 +162,7 @@ test("formatTextSummary reports async queue job smoke results", () => {
 
   assert.match(text, /mode: async-queue/);
   assert.match(text, /async job: HTTP 202, polls=3, status=succeeded, outputChars=42/);
+  assert.match(text, /async job auth: missing=401, invalid=401/);
 });
 
 test("runGatewaySmokeCli starts the tiny profile and verifies inference", async () => {
@@ -241,6 +249,33 @@ test("runGatewaySmokeCli verifies async queue submission and completion", async 
   assert.equal(summary.livezStatus, 200);
   assert.equal(summary.readyzStatus, 200);
   assert.equal(summary.inferStatus, 202);
+  assert.equal(summary.asyncQueue?.createStatus, 202);
+  assert.equal(summary.asyncQueue?.finalStatus, "succeeded");
+  assert.match(summary.asyncQueue?.location ?? "", /^\/v1\/jobs\//);
+  assert.ok((summary.asyncQueue?.pollCount ?? 0) > 0);
+  assert.ok((summary.asyncQueue?.outputChars ?? 0) > 0);
+});
+
+test("runGatewaySmokeCli verifies authenticated public async queue submission", async () => {
+  const capture = createIoCapture();
+
+  const exitCode = await runGatewaySmokeCli(
+    ["--cwd", repoRoot, "--public-safety", "--async-queue", "--json"],
+    capture.io,
+  );
+
+  assert.equal(exitCode, 0);
+  assert.equal(capture.stderr(), "");
+
+  const summary = JSON.parse(capture.stdout()) as GatewaySmokeSummary;
+  assert.equal(summary.ok, true);
+  assert.equal(summary.mode, "public-async-queue");
+  assert.equal(summary.profile, "tiny");
+  assert.equal(summary.livezStatus, 200);
+  assert.equal(summary.readyzStatus, 200);
+  assert.equal(summary.inferStatus, 202);
+  assert.equal(summary.asyncQueue?.auth?.missingStatus, 401);
+  assert.equal(summary.asyncQueue?.auth?.invalidStatus, 401);
   assert.equal(summary.asyncQueue?.createStatus, 202);
   assert.equal(summary.asyncQueue?.finalStatus, "succeeded");
   assert.match(summary.asyncQueue?.location ?? "", /^\/v1\/jobs\//);
