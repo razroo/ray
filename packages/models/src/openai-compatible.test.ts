@@ -376,6 +376,61 @@ test("buildAdapterHeaders rejects unsafe apiKeyEnv values before dispatch", () =
   }
 });
 
+test("adapterRequest validates per-request headers before dispatch", async (t) => {
+  let requests = 0;
+  let observedHeader: string | string[] | undefined;
+  const server = createServer((request, response) => {
+    requests += 1;
+    observedHeader = request.headers["x-ray-request"];
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end("{}");
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const adapter = {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    timeoutMs: 500,
+  };
+
+  await adapterRequest(adapter, "/health", {
+    method: "GET",
+    headers: { "x-ray-request": "safe" },
+  });
+
+  assert.equal(requests, 1);
+  assert.equal(observedHeader, "safe");
+
+  await assert.rejects(
+    () =>
+      adapterRequest(adapter, "/health", {
+        method: "GET",
+        headers: { "Content-Length": "10" },
+      }),
+    /adapter\.request\.headers\.Content-Length must not use a transport-controlled header name/,
+  );
+
+  await assert.rejects(
+    () =>
+      adapterRequest(adapter, "/health", {
+        method: "GET",
+        headers: [
+          ["x-ray-request", "one"],
+          ["X-Ray-Request", "two"],
+        ],
+      }),
+    /adapter\.request\.headers must not contain duplicate header name "X-Ray-Request"/,
+  );
+
+  assert.equal(requests, 1);
+});
+
 test("adapterRequest rejects oversized request bodies before dispatch", async (t) => {
   let requests = 0;
   const server = createServer((_request, response) => {

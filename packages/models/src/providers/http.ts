@@ -293,6 +293,62 @@ function assertHeaderRecord(value: Record<string, string> | undefined, label: st
   }
 }
 
+function normalizeHeaderInit(value: RequestInit["headers"], label: string): Record<string, string> {
+  if (value === undefined) {
+    return {};
+  }
+
+  if (typeof Headers !== "undefined" && value instanceof Headers) {
+    const headers: Record<string, string> = {};
+
+    for (const [key, entry] of value.entries()) {
+      headers[key] = entry;
+    }
+
+    assertHeaderRecord(headers, label);
+    return headers;
+  }
+
+  if (Array.isArray(value)) {
+    const headers: Record<string, string> = {};
+    const seen = new Set<string>();
+
+    if (value.length > MAX_ADAPTER_HEADERS) {
+      throw new RangeError(`${label} must contain at most ${MAX_ADAPTER_HEADERS} entries`);
+    }
+
+    for (const entry of value) {
+      if (!Array.isArray(entry) || entry.length !== 2) {
+        throw new TypeError(`${label} must be an object or array of string header pairs`);
+      }
+
+      const [key, headerValue] = entry;
+
+      if (typeof key !== "string" || typeof headerValue !== "string") {
+        throw new TypeError(`${label} must be an object or array of string header pairs`);
+      }
+
+      const normalizedKey = key.toLowerCase();
+      if (seen.has(normalizedKey)) {
+        throw new TypeError(`${label} must not contain duplicate header name "${key}"`);
+      }
+
+      seen.add(normalizedKey);
+      headers[key] = headerValue;
+    }
+
+    assertHeaderRecord(headers, label);
+    return headers;
+  }
+
+  if (value === null || typeof value !== "object") {
+    throw new TypeError(`${label} must be an object or array of string header pairs`);
+  }
+
+  assertHeaderRecord(value as Record<string, string>, label);
+  return { ...(value as Record<string, string>) };
+}
+
 function assertAdapterApiKey(value: string, label: string): void {
   if (
     typeof value !== "string" ||
@@ -763,6 +819,7 @@ export async function adapterRequest(
   assertAdapterPathname(pathname);
   assertPositiveSafeIntegerAtMost(timeoutMs, "adapter.timeoutMs", MAX_ADAPTER_TIMEOUT_MS);
   assertRequestBodyWithinLimit(init);
+  const requestHeaders = normalizeHeaderInit(init.headers, "adapter.request.headers");
 
   const controller = new AbortController();
   const timeout = setTimeout(() => {
@@ -806,7 +863,7 @@ export async function adapterRequest(
       ...init,
       headers: {
         ...buildAdapterHeaders(adapter),
-        ...(init.headers ?? {}),
+        ...requestHeaders,
       },
       redirect: "manual",
       signal: controller.signal,
