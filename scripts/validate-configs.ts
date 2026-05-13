@@ -51,6 +51,12 @@ const MAX_PUBLIC_ADAPTIVE_LEARNED_CAP_MIN_SAMPLES = 8;
 const MAX_PUBLIC_ADAPTIVE_DRAFT_PERCENTILE = 0.95;
 const MAX_PUBLIC_ADAPTIVE_SHORT_PERCENTILE = 0.9;
 const MAX_PUBLIC_ADAPTIVE_LEARNED_CAP_HEADROOM_TOKENS = 24;
+const PUBLIC_PROMPT_COMPILER_FAMILY_KEYS = [
+  "promptFamily",
+  "taskTemplate",
+  "template",
+  "useCase",
+] as const;
 
 type ConfigRecord = Record<string, unknown>;
 
@@ -319,6 +325,30 @@ function expectPublicConfigEmptyArray(
     diagnostics,
     code,
     `Public example configs must explicitly declare ${keys.join(".")}=[].`,
+  );
+}
+
+function expectPublicConfigStringArrayValue(
+  diagnostics: DeploymentDiagnostic[],
+  config: ConfigRecord,
+  keys: string[],
+  expected: readonly string[],
+  code: string,
+): void {
+  const actual = getConfigValue(config, keys);
+
+  if (
+    Array.isArray(actual) &&
+    actual.length === expected.length &&
+    actual.every((entry, index) => entry === expected[index])
+  ) {
+    return;
+  }
+
+  pushPublicConfigPolicyError(
+    diagnostics,
+    code,
+    `Public example configs must explicitly declare ${keys.join(".")}=${JSON.stringify(expected)}.`,
   );
 }
 
@@ -695,6 +725,34 @@ async function diagnosePublicConfigPolicy(configPath: string): Promise<Deploymen
     ["gracefulDegradation", "cpuThrottledRatioThreshold"],
     MAX_PUBLIC_DEGRADATION_CPU_THROTTLED_RATIO,
     "public_config_degradation_cpu_throttled_ratio_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["promptCompiler", "enabled"],
+    true,
+    "public_config_prompt_compiler_enabled_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["promptCompiler", "collapseWhitespace"],
+    true,
+    "public_config_prompt_compiler_collapse_whitespace_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["promptCompiler", "dedupeRepeatedLines"],
+    true,
+    "public_config_prompt_compiler_dedupe_lines_explicit",
+  );
+  expectPublicConfigStringArrayValue(
+    diagnostics,
+    parsed,
+    ["promptCompiler", "familyMetadataKeys"],
+    PUBLIC_PROMPT_COMPILER_FAMILY_KEYS,
+    "public_config_prompt_compiler_family_keys_explicit",
   );
   expectPublicConfigValue(
     diagnostics,

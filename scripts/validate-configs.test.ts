@@ -152,6 +152,10 @@ test("validateConfigFiles requires explicit public runtime guardrails", async (t
   assert.ok(codes.includes("public_config_degradation_tokens_explicit"));
   assert.ok(codes.includes("public_config_degradation_memory_rss_explicit"));
   assert.ok(codes.includes("public_config_degradation_cpu_throttled_ratio_explicit"));
+  assert.ok(codes.includes("public_config_prompt_compiler_enabled_explicit"));
+  assert.ok(codes.includes("public_config_prompt_compiler_collapse_whitespace_explicit"));
+  assert.ok(codes.includes("public_config_prompt_compiler_dedupe_lines_explicit"));
+  assert.ok(codes.includes("public_config_prompt_compiler_family_keys_explicit"));
   assert.ok(codes.includes("public_config_adaptive_enabled_explicit"));
   assert.ok(codes.includes("public_config_adaptive_sample_size_explicit"));
   assert.ok(codes.includes("public_config_adaptive_queue_latency_explicit"));

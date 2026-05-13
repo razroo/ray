@@ -70,6 +70,12 @@
     "memoryRssThresholdMiB": 512,
     "cpuThrottledRatioThreshold": 0.2
   },
+  "promptCompiler": {
+    "enabled": true,
+    "collapseWhitespace": true,
+    "dedupeRepeatedLines": true,
+    "familyMetadataKeys": ["promptFamily", "taskTemplate", "template", "useCase"]
+  },
   "adaptiveTuning": {
     "enabled": true,
     "sampleSize": 32,
