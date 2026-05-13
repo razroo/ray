@@ -16,6 +16,7 @@ const MAX_PUBLIC_RATE_LIMIT_WINDOW_MS = 3_600_000;
 const MAX_PUBLIC_RATE_LIMIT_REQUESTS = 300;
 const MAX_PUBLIC_RATE_LIMIT_KEYS = 8_192;
 const MAX_PUBLIC_SERVER_PORT = 65_535;
+const MAX_PUBLIC_TELEMETRY_SLOW_REQUEST_MS = 2_200;
 const MAX_PUBLIC_SCHEDULER_CONCURRENCY = 2;
 const MAX_PUBLIC_SCHEDULER_QUEUE_DEPTH = 96;
 const MAX_PUBLIC_SCHEDULER_QUEUED_TOKENS = 48_000;
@@ -502,6 +503,34 @@ async function diagnosePublicConfigPolicy(configPath: string): Promise<Deploymen
     ["rateLimit", "trustProxyHeaders"],
     true,
     "public_config_rate_limit_proxy_headers_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["telemetry", "serviceName"],
+    "ray-gateway",
+    "public_config_telemetry_service_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["telemetry", "logLevel"],
+    "info",
+    "public_config_telemetry_log_level_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["telemetry", "includeDebugMetrics"],
+    true,
+    "public_config_telemetry_debug_metrics_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["telemetry", "slowRequestThresholdMs"],
+    MAX_PUBLIC_TELEMETRY_SLOW_REQUEST_MS,
+    "public_config_telemetry_slow_request_explicit",
   );
   expectPublicConfigPositiveIntegerAtMost(
     diagnostics,

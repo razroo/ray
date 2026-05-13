@@ -62,6 +62,12 @@
     "ttlMs": 120000,
     "keyStrategy": "input+params"
   },
+  "telemetry": {
+    "serviceName": "ray-gateway",
+    "logLevel": "info",
+    "includeDebugMetrics": true,
+    "slowRequestThresholdMs": 2200
+  },
   "gracefulDegradation": {
     "enabled": true,
     "queueDepthThreshold": 10,

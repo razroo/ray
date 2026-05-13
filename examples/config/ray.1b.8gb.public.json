@@ -85,6 +85,9 @@
     "keyStrategy": "input+params"
   },
   "telemetry": {
+    "serviceName": "ray-gateway",
+    "logLevel": "info",
+    "includeDebugMetrics": true,
     "slowRequestThresholdMs": 1800
   },
   "gracefulDegradation": {
