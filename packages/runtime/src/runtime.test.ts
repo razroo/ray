@@ -681,6 +681,8 @@ test("readCgroupMemorySnapshot falls back to memory.max when memory.high is unli
   await writeFile(join(cgroupDir, "memory.current"), String(900 * 1024 * 1024), "utf8");
   await writeFile(join(cgroupDir, "memory.high"), "max\n", "utf8");
   await writeFile(join(cgroupDir, "memory.max"), String(1_000 * 1024 * 1024), "utf8");
+  await writeFile(join(cgroupDir, "memory.swap.current"), "0\n", "utf8");
+  await writeFile(join(cgroupDir, "memory.swap.max"), "0\n", "utf8");
 
   const snapshot = await readCgroupMemorySnapshot({
     procSelfCgroupPath: procCgroupPath,
@@ -691,10 +693,49 @@ test("readCgroupMemorySnapshot falls back to memory.max when memory.high is unli
   assert.equal(snapshot?.highMiB, undefined);
   assert.equal(snapshot?.limitMiB, 1_000);
   assert.equal(snapshot?.pressureRatio, 0.9);
+  assert.equal(snapshot?.swapCurrentMiB, 0);
+  assert.equal(snapshot?.swapLimitMiB, 0);
+  assert.equal(snapshot?.swapPressureRatio, undefined);
   assert.equal(snapshot?.highEvents, undefined);
   assert.equal(snapshot?.maxEvents, undefined);
   assert.equal(snapshot?.oomEvents, undefined);
   assert.equal(snapshot?.oomKillEvents, undefined);
+});
+
+test("readCgroupMemorySnapshot reads legacy cgroup memsw swap usage", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-cgroup-memory-v1-swap-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const cgroupDir = join(tempDir, "ray", "gateway");
+  const procCgroupPath = join(tempDir, "self-cgroup");
+
+  await mkdir(cgroupDir, { recursive: true });
+  await writeFile(procCgroupPath, "5:memory:/ray/gateway\n", "utf8");
+  await writeFile(join(cgroupDir, "memory.usage_in_bytes"), String(640 * 1024 * 1024), "utf8");
+  await writeFile(join(cgroupDir, "memory.limit_in_bytes"), String(1_024 * 1024 * 1024), "utf8");
+  await writeFile(
+    join(cgroupDir, "memory.memsw.usage_in_bytes"),
+    String(768 * 1024 * 1024),
+    "utf8",
+  );
+  await writeFile(
+    join(cgroupDir, "memory.memsw.limit_in_bytes"),
+    String(1_536 * 1024 * 1024),
+    "utf8",
+  );
+
+  const snapshot = await readCgroupMemorySnapshot({
+    procSelfCgroupPath: procCgroupPath,
+    cgroupV1MemoryRoot: tempDir,
+  });
+
+  assert.equal(snapshot?.currentMiB, 640);
+  assert.equal(snapshot?.limitMiB, 1_024);
+  assert.equal(snapshot?.pressureRatio, 0.625);
+  assert.equal(snapshot?.swapCurrentMiB, 128);
+  assert.equal(snapshot?.swapLimitMiB, 512);
+  assert.equal(snapshot?.swapPressureRatio, 0.25);
 });
 
 test("readCgroupMemorySnapshot skips oversized cgroup memory files", async (t) => {

@@ -131,6 +131,8 @@ interface CgroupMemoryCandidate {
   eventsPath?: string;
   swapCurrentPath?: string;
   swapLimitPath?: string;
+  memswUsagePath?: string;
+  memswLimitPath?: string;
 }
 
 interface CgroupCpuCandidate {
@@ -1411,6 +1413,12 @@ function resolveCgroupMemoryCandidates(
     const swapLimitPath = isUnifiedCgroup
       ? resolveCgroupFile(root, cgroupPath, "memory.swap.max")
       : undefined;
+    const memswUsagePath = !isUnifiedCgroup
+      ? resolveCgroupFile(root, cgroupPath, "memory.memsw.usage_in_bytes")
+      : undefined;
+    const memswLimitPath = !isUnifiedCgroup
+      ? resolveCgroupFile(root, cgroupPath, "memory.memsw.limit_in_bytes")
+      : undefined;
 
     if (!currentPath || !limitPath) {
       continue;
@@ -1418,7 +1426,7 @@ function resolveCgroupMemoryCandidates(
 
     const key = `${currentPath}\n${highPath ?? ""}\n${limitPath}\n${eventsPath ?? ""}\n${swapCurrentPath ?? ""}\n${
       swapLimitPath ?? ""
-    }`;
+    }\n${memswUsagePath ?? ""}\n${memswLimitPath ?? ""}`;
 
     if (seen.has(key)) {
       continue;
@@ -1432,6 +1440,8 @@ function resolveCgroupMemoryCandidates(
       ...(eventsPath ? { eventsPath } : {}),
       ...(swapCurrentPath ? { swapCurrentPath } : {}),
       ...(swapLimitPath ? { swapLimitPath } : {}),
+      ...(memswUsagePath ? { memswUsagePath } : {}),
+      ...(memswLimitPath ? { memswLimitPath } : {}),
     });
   }
 
@@ -1549,6 +1559,28 @@ export async function readCgroupMemorySnapshot(
         swapLimitRaw === undefined
           ? undefined
           : parseCgroupByteValue(swapLimitRaw, { allowMax: true });
+      const memswUsageRaw = candidate.memswUsagePath
+        ? await readTextFile(candidate.memswUsagePath).catch(() => undefined)
+        : undefined;
+      const memswUsageBytes =
+        memswUsageRaw === undefined
+          ? undefined
+          : parseCgroupByteValue(memswUsageRaw, { allowMax: false });
+      const memswLimitRaw = candidate.memswLimitPath
+        ? await readTextFile(candidate.memswLimitPath).catch(() => undefined)
+        : undefined;
+      const memswLimitBytes =
+        memswLimitRaw === undefined
+          ? undefined
+          : parseCgroupByteValue(memswLimitRaw, { allowMax: true });
+      const resolvedSwapCurrentBytes =
+        swapCurrentBytes ??
+        (memswUsageBytes !== undefined ? Math.max(0, memswUsageBytes - currentBytes) : undefined);
+      const resolvedSwapLimitBytes =
+        swapLimitBytes ??
+        (memswLimitBytes !== undefined && limitBytes !== undefined
+          ? Math.max(0, memswLimitBytes - limitBytes)
+          : undefined);
       const snapshot: CgroupMemorySnapshot = {
         currentMiB: bytesToMiB(currentBytes),
       };
@@ -1566,16 +1598,22 @@ export async function readCgroupMemorySnapshot(
         snapshot.pressureRatio = Number((currentBytes / pressureLimitBytes).toFixed(4));
       }
 
-      if (swapCurrentBytes !== undefined) {
-        snapshot.swapCurrentMiB = bytesToMiB(swapCurrentBytes);
+      if (resolvedSwapCurrentBytes !== undefined) {
+        snapshot.swapCurrentMiB = bytesToMiB(resolvedSwapCurrentBytes);
       }
 
-      if (swapLimitBytes !== undefined && swapLimitBytes > 0) {
-        snapshot.swapLimitMiB = bytesToMiB(swapLimitBytes);
+      if (resolvedSwapLimitBytes !== undefined) {
+        snapshot.swapLimitMiB = bytesToMiB(resolvedSwapLimitBytes);
       }
 
-      if (swapCurrentBytes !== undefined && swapLimitBytes !== undefined && swapLimitBytes > 0) {
-        snapshot.swapPressureRatio = Number((swapCurrentBytes / swapLimitBytes).toFixed(4));
+      if (
+        resolvedSwapCurrentBytes !== undefined &&
+        resolvedSwapLimitBytes !== undefined &&
+        resolvedSwapLimitBytes > 0
+      ) {
+        snapshot.swapPressureRatio = Number(
+          (resolvedSwapCurrentBytes / resolvedSwapLimitBytes).toFixed(4),
+        );
       }
 
       if (events?.highEvents !== undefined) {
