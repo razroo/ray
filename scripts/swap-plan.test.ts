@@ -25,6 +25,14 @@ test("parseArgs accepts strict swap plan options", () => {
   const sysctlOnlyArgs = parseArgs(["--sysctl-only", "--swappiness", "10"]);
   assert.equal(sysctlOnlyArgs.sysctlOnly, true);
   assert.equal(sysctlOnlyArgs.swappiness, 10);
+
+  assert.equal(parseArgs([], { RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "1024" }).minFreeAfterMiB, 1024);
+  assert.equal(
+    parseArgs(["--min-free-after-mib", "768"], {
+      RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "1024",
+    }).minFreeAfterMiB,
+    768,
+  );
 });
 
 test("parseArgs rejects malformed swap plan argv", () => {
@@ -37,6 +45,10 @@ test("parseArgs rejects malformed swap plan argv", () => {
   assert.throws(() => parseArgs(["--size-mib", "65537"]), /integer from 1/);
   assert.throws(() => parseArgs(["--min-free-after-mib", "-1"]), /integer from 0/);
   assert.throws(() => parseArgs(["--min-free-after-mib", "65537"]), /integer from 0/);
+  assert.throws(
+    () => parseArgs([], { RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "bad" }),
+    /RAY_DEPLOY_MIN_FREE_STORAGE_MIB must be an integer from 0/,
+  );
   assert.throws(() => parseArgs(["--swappiness", "-1"]), /integer from 0/);
   assert.throws(() => parseArgs(["--swappiness", "201"]), /integer from 0/);
   assert.throws(() => parseArgs(["--sysctl-only", "--path", "/swapfile"]), /--path cannot/);
@@ -202,4 +214,23 @@ test("runSwapPlanCli prints JSON sysctl-only output", async () => {
   assert.equal(parsed.sysctlOnly, true);
   assert.equal(parsed.commands.length, 3);
   assert.doesNotMatch(parsed.commands.join("\n"), /fallocate|mkswap|swapon --show/);
+});
+
+test("runSwapPlanCli honors deploy storage reserve for swap headroom", async () => {
+  let stdout = "";
+  let stderr = "";
+  const exitCode = await runSwapPlanCli(
+    ["--json"],
+    {
+      stdout: { write: (chunk: string) => (stdout += chunk) },
+      stderr: { write: (chunk: string) => (stderr += chunk) },
+    },
+    { RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "1536" },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.equal(stderr, "");
+  const parsed = JSON.parse(stdout) as { minFreeAfterMiB: number; commands: string[] };
+  assert.equal(parsed.minFreeAfterMiB, 1_536);
+  assert.match(parsed.commands[0] ?? "", /required_mib=2560/);
 });

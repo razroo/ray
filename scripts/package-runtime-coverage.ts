@@ -1979,6 +1979,7 @@ function validateSwapPlanScript(
     contents.includes("set -e") &&
     contents.includes('swap_tmp="${swap_path}.ray-tmp.$$"') &&
     contents.includes("cleanup_swap_artifacts") &&
+    contents.includes("RAY_DEPLOY_MIN_FREE_STORAGE_MIB") &&
     contents.includes("final_created=0") &&
     contents.includes("swapon_succeeded=0") &&
     contents.includes('sudo ln -- "$swap_tmp" "$swap_path"') &&
@@ -1997,7 +1998,7 @@ function validateSwapPlanScript(
       scriptPath,
       line: workflowLineNumber(lines, "createSwapPlan"),
       message:
-        "Swap planning must check post-create disk headroom, stage swap-file creation through a same-directory temporary file, clean failed activation artifacts, and keep swappiness-only repair available so 4 GB VPS operators do not strand inactive swap files on tiny disks.",
+        "Swap planning must check post-create disk headroom using the deploy storage reserve when configured, stage swap-file creation through a same-directory temporary file, clean failed activation artifacts, and keep swappiness-only repair available so 4 GB VPS operators do not strand inactive swap files on tiny disks.",
     },
   ];
 }

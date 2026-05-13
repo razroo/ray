@@ -241,7 +241,9 @@ the launch-profile preset.
 If doctor reports a missing swap cushion on a 4 GB VPS, run `bun run swap:plan`
 to print guarded commands for creating the default 1 GiB swap file while
 preserving the default 512 MiB free-space cushion on the swap parent filesystem
-and persisting `vm.swappiness=10`. The plan stages the swap file through a
+and persisting `vm.swappiness=10`. If `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` is set,
+the plan uses that value for the free-space cushion unless
+`--min-free-after-mib` is passed. The plan stages the swap file through a
 same-directory temporary path and removes failed activation artifacts before
 they can strand 1 GiB on a tiny disk. Rerun doctor before sustained inference.
 Use `bun run swap:plan -- --min-free-after-mib 1024` when the root filesystem

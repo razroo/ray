@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 const DEFAULT_SWAP_PATH = "/swapfile";
 const DEFAULT_SWAP_SIZE_MIB = 1_024;
 const DEFAULT_MIN_FREE_AFTER_MIB = 512;
+const DEPLOY_MIN_FREE_STORAGE_ENV = "RAY_DEPLOY_MIN_FREE_STORAGE_MIB";
 const DEFAULT_SWAPPINESS = 10;
 const MAX_SWAP_SIZE_MIB = 65_536;
 const MAX_MIN_FREE_AFTER_MIB = 65_536;
@@ -44,7 +45,7 @@ Options:
   --path <path>       Absolute swap file path. Default: ${DEFAULT_SWAP_PATH}
   --size-mib <n>      Swap file size in MiB. Default: ${DEFAULT_SWAP_SIZE_MIB}
   --min-free-after-mib <n>
-                      Required free MiB left on the swap parent filesystem. Default: ${DEFAULT_MIN_FREE_AFTER_MIB}
+                      Required free MiB left on the swap parent filesystem. Default: ${DEPLOY_MIN_FREE_STORAGE_ENV} or ${DEFAULT_MIN_FREE_AFTER_MIB}
   --swappiness <n>    Linux vm.swappiness value from 0 to ${MAX_SWAPPINESS}. Default: ${DEFAULT_SWAPPINESS}
   --sysctl-only       Print only vm.swappiness persistence/apply commands; do not touch swap files.
   --json              Print machine-readable plan JSON.
@@ -136,6 +137,20 @@ function parseMinFreeAfterMiB(value: string): number {
   return parsed;
 }
 
+function parseOptionalMinFreeAfterMiBEnv(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim().length === 0) {
+    return undefined;
+  }
+
+  try {
+    return parseMinFreeAfterMiB(value);
+  } catch {
+    throw new Error(
+      `${DEPLOY_MIN_FREE_STORAGE_ENV} must be an integer from 0 to ${MAX_MIN_FREE_AFTER_MIB} MiB`,
+    );
+  }
+}
+
 function parseSwappiness(value: string): number {
   const normalized = value.trim();
   const parsed = Number(normalized);
@@ -151,13 +166,14 @@ function parseSwappiness(value: string): number {
   return parsed;
 }
 
-export function parseArgs(argv: string[]): SwapPlanArgs {
+export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): SwapPlanArgs {
   assertArgv(argv);
 
+  const envMinFreeAfterMiB = parseOptionalMinFreeAfterMiBEnv(env[DEPLOY_MIN_FREE_STORAGE_ENV]);
   const args: SwapPlanArgs = {
     path: DEFAULT_SWAP_PATH,
     sizeMiB: DEFAULT_SWAP_SIZE_MIB,
-    minFreeAfterMiB: DEFAULT_MIN_FREE_AFTER_MIB,
+    minFreeAfterMiB: envMinFreeAfterMiB ?? DEFAULT_MIN_FREE_AFTER_MIB,
     swappiness: DEFAULT_SWAPPINESS,
     sysctlOnly: false,
     json: false,
@@ -386,9 +402,10 @@ export function formatTextPlan(plan: SwapPlan): string {
 export async function runSwapPlanCli(
   argv = process.argv.slice(2),
   io: Pick<NodeJS.Process, "stdout" | "stderr"> = process,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<number> {
   try {
-    const args = parseArgs(argv);
+    const args = parseArgs(argv, env);
 
     if (args.help) {
       io.stdout.write(HELP);
