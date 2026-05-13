@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -9,6 +9,7 @@ import test from "node:test";
 import { createDefaultConfig } from "@ray/config";
 import {
   appendHistoryOutput,
+  assertBenchmarkLlamaCppLaunchFiles,
   buildAutotuneCandidates,
   buildBenchmarkLlamaCppServerArgs,
   loadBaseline,
@@ -206,6 +207,42 @@ test("buildBenchmarkLlamaCppServerArgs mirrors generated launch profiles", () =>
   assert.match(args.join(" "), /--cache-prompt --cache-reuse 192 --cache-ram 384/);
   assert.match(args.join(" "), /--cont-batching --metrics --slots --warmup/);
   assert.equal(args.at(-1), "--no-mmap");
+});
+
+test("assertBenchmarkLlamaCppLaunchFiles rejects inaccessible backend files", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-benchmark-launch-files-"));
+  t.after(async () => {
+    await chmod(path.join(tempDir, "model.gguf"), 0o644).catch(() => undefined);
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const binaryPath = path.join(tempDir, "llama-server");
+  const modelPath = path.join(tempDir, "model.gguf");
+  await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", { mode: 0o644 });
+  await writeFile(modelPath, "GGUF", { mode: 0o644 });
+
+  const config = createDefaultConfig("1b");
+  if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
+    throw new Error("Expected llama.cpp launch profile");
+  }
+  const launchProfile = {
+    ...config.model.adapter.launchProfile,
+    binaryPath,
+    modelPath,
+  };
+
+  await assert.rejects(
+    () => assertBenchmarkLlamaCppLaunchFiles(launchProfile),
+    /llama\.cpp binary must be executable/,
+  );
+
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o000);
+
+  await assert.rejects(
+    () => assertBenchmarkLlamaCppLaunchFiles(launchProfile),
+    /llama\.cpp GGUF model must be readable/,
+  );
 });
 
 test("loadWorkload rejects oversized benchmark workload files before parsing", async (t) => {

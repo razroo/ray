@@ -1,6 +1,7 @@
 import { access, mkdir, mkdtemp, open, rename, rm, stat, writeFile } from "node:fs/promises";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -2270,8 +2271,7 @@ async function startGateway(configPath: string): Promise<ChildProcess> {
 }
 
 async function startLlamaCppServer(launchProfile: LlamaCppLaunchProfile): Promise<ChildProcess> {
-  await access(launchProfile.binaryPath);
-  await access(launchProfile.modelPath);
+  await assertBenchmarkLlamaCppLaunchFiles(launchProfile);
 
   return await spawnBenchmarkChild(
     "llama.cpp server",
@@ -2284,6 +2284,36 @@ async function startLlamaCppServer(launchProfile: LlamaCppLaunchProfile): Promis
         ...buildLlamaCppEnvironment(launchProfile),
       },
     },
+  );
+}
+
+async function assertBenchmarkPathAccess(
+  filePath: string,
+  label: string,
+  mode: number,
+  expectation: string,
+): Promise<void> {
+  await access(filePath, mode).catch((error: unknown) => {
+    throw new Error(
+      `${label} must be ${expectation} at ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+}
+
+export async function assertBenchmarkLlamaCppLaunchFiles(
+  launchProfile: LlamaCppLaunchProfile,
+): Promise<void> {
+  await assertBenchmarkPathAccess(
+    launchProfile.binaryPath,
+    "llama.cpp binary",
+    constants.X_OK,
+    "executable",
+  );
+  await assertBenchmarkPathAccess(
+    launchProfile.modelPath,
+    "llama.cpp GGUF model",
+    constants.R_OK,
+    "readable",
   );
 }
 
