@@ -82,6 +82,7 @@ type LlamaCppBinaryProbeStatus = "ok" | "failed";
 type GatewayEntrypointStatus = BinaryPreflightStatus;
 type ConfigFileStatus = BinaryPreflightStatus;
 type WorkingDirectoryStatus = "found" | "missing" | "not_directory" | "unreadable";
+type WorkingDirectoryStorageStatus = "available" | "unreadable";
 type EnvFileStatus = "found" | "missing" | "unreadable";
 type ServiceUserStatus = "found" | "missing" | "unreadable";
 type ServiceUserAccessStatus = "ok" | "blocked";
@@ -143,6 +144,9 @@ export interface DeploymentPreflight {
   workingDirectoryError?: string;
   workingDirectoryAccessStatus?: ServiceUserAccessStatus;
   workingDirectoryAccessError?: string;
+  workingDirectoryStorageStatus?: WorkingDirectoryStorageStatus;
+  workingDirectoryAvailableMiB?: number;
+  workingDirectoryStorageError?: string;
   llamaCppBinaryPath?: string;
   llamaCppBinaryStatus?: LlamaCppBinaryStatus;
   llamaCppBinaryError?: string;
@@ -258,6 +262,7 @@ const MAX_CADDY_UPSTREAM_TIMEOUT_MS = 120_000 + CADDY_UPSTREAM_TIMEOUT_GRACE_MS;
 const GATEWAY_MEMORY_HIGH_HEADROOM_MIB = 128;
 const GATEWAY_MEMORY_MAX_HEADROOM_MIB = 384;
 const GATEWAY_MEMORY_SWAP_MAX_MIB = 128;
+const MIN_WORKING_DIRECTORY_FREE_MIB = 512;
 const LLAMA_CPP_MEMORY_HIGH_RATIO = 0.9;
 const LLAMA_CPP_SWAP_MAX_RATIO = 0.25;
 const LLAMA_CPP_MIN_SWAP_MAX_MIB = 256;
@@ -2157,6 +2162,30 @@ export function diagnoseConfig(
             : `Generated systemd WorkingDirectory exists at ${workingDirectoryPath}.`,
       });
     }
+
+    if (preflight.workingDirectoryStatus === "found") {
+      if (preflight.workingDirectoryStorageStatus === "unreadable") {
+        diagnostics.push({
+          level: "error",
+          code: "working_directory_storage_unreadable",
+          message: `Doctor could not inspect free space for the generated systemd WorkingDirectory at ${workingDirectoryPath}${preflight.workingDirectoryStorageError ? ` (${preflight.workingDirectoryStorageError})` : ""}. Verify there is room for the synced Ray checkout, built gateway assets, and Bun production install before restarting ray-gateway.service.`,
+        });
+      } else if (preflight.workingDirectoryAvailableMiB !== undefined) {
+        if (preflight.workingDirectoryAvailableMiB < MIN_WORKING_DIRECTORY_FREE_MIB) {
+          diagnostics.push({
+            level: "error",
+            code: "working_directory_storage_low",
+            message: `The generated systemd WorkingDirectory filesystem has ${formatMiB(preflight.workingDirectoryAvailableMiB)} free at ${workingDirectoryPath}, below the ${formatMiB(MIN_WORKING_DIRECTORY_FREE_MIB)} deployment cushion for the synced Ray checkout, built gateway assets, and Bun production install. Free disk space or move the checkout before restarting ray-gateway.service.`,
+          });
+        } else {
+          diagnostics.push({
+            level: "info",
+            code: "working_directory_storage_ok",
+            message: `The generated systemd WorkingDirectory filesystem has ${formatMiB(preflight.workingDirectoryAvailableMiB)} free at ${workingDirectoryPath}, satisfying the ${formatMiB(MIN_WORKING_DIRECTORY_FREE_MIB)} deployment cushion for the synced Ray checkout, built gateway assets, and Bun production install.`,
+          });
+        }
+      }
+    }
   }
 
   if (strictFilesystem && preflight?.envFileStatus !== undefined) {
@@ -3697,6 +3726,27 @@ async function collectWorkingDirectoryPreflight(
       };
     }
 
+    let storagePreflight: Partial<DeploymentPreflight>;
+    try {
+      const storageStats = await statfs(workingDirectoryPath);
+      const availableMiB = resolveAvailableStorageMiB(storageStats);
+      storagePreflight =
+        availableMiB === undefined
+          ? {
+              workingDirectoryStorageStatus: "unreadable",
+              workingDirectoryStorageError: "free space could not be resolved",
+            }
+          : {
+              workingDirectoryStorageStatus: "available",
+              workingDirectoryAvailableMiB: availableMiB,
+            };
+    } catch (error) {
+      storagePreflight = {
+        workingDirectoryStorageStatus: "unreadable",
+        workingDirectoryStorageError: toErrorMessage(error),
+      };
+    }
+
     const serviceUserAccess = serviceUserIdentity
       ? await verifyServiceUserPathAccess(
           workingDirectoryPath,
@@ -3709,6 +3759,7 @@ async function collectWorkingDirectoryPreflight(
     return {
       workingDirectoryPath,
       workingDirectoryStatus: "found",
+      ...storagePreflight,
       ...(serviceUserAccess
         ? {
             workingDirectoryAccessStatus: serviceUserAccess.status,

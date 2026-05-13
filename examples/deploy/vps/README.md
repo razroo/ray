@@ -427,8 +427,9 @@ artifacts when both `RAY_LLAMA_CPP_BINARY_SOURCE_PATH` and
 `ray deploy doctor` on the VPS before restarting services. Missing API keys,
 missing or corrupt GGUF files,
 memory-fit errors, exhausted async queue storage reserves, unsupported gateway
-runtimes, generated systemd unit verification, and generated Caddyfile
-validation fail before systemd tries to start the generated units. The
+runtimes, low checkout free space for the Bun production install, generated
+systemd unit verification, and generated Caddyfile validation fail before
+systemd tries to start the generated units. The
 configured gateway runtime binary defaults to `/usr/local/bin/bun`. Remote Bun
 helper commands for config inspection, staging-plan rendering, doctor, and
 service rendering run under explicit timeouts; deploy-time GGUF staging gets a

@@ -2242,6 +2242,67 @@ test("diagnoseConfig errors when the generated service user cannot access gatewa
   assert.match(entrypointDiagnostic.message, /read permission/);
 });
 
+test("diagnoseConfig errors when strict working directory storage is below the deploy cushion", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      workingDirectoryPath: "/srv/ray",
+      workingDirectoryStatus: "found",
+      workingDirectoryAvailableMiB: 511,
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "working_directory_storage_low");
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /511 MiB/);
+  assert.match(diagnostic.message, /512 MiB/);
+  assert.match(diagnostic.message, /Bun production install/);
+});
+
+test("diagnoseConfig reports adequate working directory storage for strict deploys", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      workingDirectoryPath: "/srv/ray",
+      workingDirectoryStatus: "found",
+      workingDirectoryAvailableMiB: 512,
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "working_directory_storage_ok");
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+  assert.match(diagnostic.message, /512 MiB/);
+  assert.match(diagnostic.message, /deployment cushion/);
+});
+
+test("diagnoseConfig errors when strict working directory storage cannot be inspected", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      workingDirectoryPath: "/srv/ray",
+      workingDirectoryStatus: "found",
+      workingDirectoryStorageStatus: "unreadable",
+      workingDirectoryStorageError: "statfs failed",
+    },
+  });
+
+  const diagnostic = diagnostics.find(
+    (entry) => entry.code === "working_directory_storage_unreadable",
+  );
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /statfs failed/);
+  assert.match(diagnostic.message, /free space/);
+});
+
 test("diagnoseConfig errors when the generated gateway config is hidden by ProtectHome", () => {
   const config = createDefaultConfig("tiny");
   const diagnostics = diagnoseConfig(config, process.env, undefined, {
@@ -3060,6 +3121,34 @@ test("loadAndDiagnoseDeployment reports async queue storage headroom from the ne
   assert.ok(diagnostic);
   assert.match(diagnostic.message, new RegExp(tempDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(diagnostic.message, /asyncQueue\.minFreeStorageMiB/);
+});
+
+test("loadAndDiagnoseDeployment records working directory storage headroom in strict mode", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-deploy-workdir-storage-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    strictFilesystem: true,
+  });
+
+  assert.equal(inspected.preflight.workingDirectoryPath, tempDir);
+  assert.equal(inspected.preflight.workingDirectoryStatus, "found");
+  assert.equal(inspected.preflight.workingDirectoryStorageStatus, "available");
+  assert.equal(typeof inspected.preflight.workingDirectoryAvailableMiB, "number");
+  assert.ok((inspected.preflight.workingDirectoryAvailableMiB ?? 0) >= 0);
+  assert.ok(
+    inspected.diagnostics.some((entry) =>
+      ["working_directory_storage_ok", "working_directory_storage_low"].includes(entry.code),
+    ),
+  );
 });
 
 test("loadAndDiagnoseDeployment warns when non-strict async queue storage is blocked by an existing file", async (t) => {
