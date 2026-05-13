@@ -507,6 +507,8 @@ test("documented portable 1b dotenv examples resolve to single-slot budgets", as
     }
 
     assert.equal(loaded.config.profile, "1b", example.relativePath);
+    assert.equal(loaded.config.asyncQueue.maxJobs, 128, example.relativePath);
+    assert.equal(loaded.config.asyncQueue.minFreeStorageMiB, 256, example.relativePath);
     assert.equal(loaded.config.scheduler.concurrency, 1, example.relativePath);
     assert.equal(loaded.config.scheduler.maxInflightTokens, 2048, example.relativePath);
     assert.equal(loaded.config.model.adapter.launchProfile.ctxSize, 2048, example.relativePath);

@@ -296,6 +296,7 @@ test("validateConfigFiles accepts every checked-in example config", async () => 
           "async_queue_storage_not_directory",
           "async_queue_storage_unreadable",
           "async_queue_storage_service_user_inaccessible",
+          "async_queue_retained_jobs_exceed_storage_reserve",
         ].includes(diagnostic.code),
       ),
     false,

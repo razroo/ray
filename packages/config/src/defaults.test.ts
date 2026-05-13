@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createDefaultConfig, mergeConfig, resolveAuthApiKeys, sanitizeConfig } from "./index.js";
 
+const ASYNC_QUEUE_PERSISTED_JOB_FILE_LIMIT_MIB = 2;
+
 function assertDefaultPsiThresholds(config: ReturnType<typeof createDefaultConfig>): void {
   assert.equal(config.gracefulDegradation.memoryCgroupPressureRatioThreshold, 0.9);
   assert.equal(config.gracefulDegradation.memoryPsiSomeAvg10Threshold, 10);
@@ -127,7 +129,7 @@ test("sub1b profile defaults to a bounded llama.cpp launch profile", () => {
   assert.equal(config.model.adapter.launchProfile.preset, "single-vps-sub1b-cx23");
   assert.equal(config.model.adapter.launchProfile.cacheRamMiB, 512);
   assert.equal(config.model.adapter.slotSnapshotTimeoutMs, 250);
-  assert.equal(config.asyncQueue.maxJobs, 1_000);
+  assert.equal(config.asyncQueue.maxJobs, 128);
   assert.equal(config.asyncQueue.minFreeStorageMiB, 256);
   assert.equal(config.asyncQueue.completedTtlMs, 86_400_000);
   assert.equal(config.cache.maxBytes, 2 * 1024 * 1024);
@@ -214,6 +216,26 @@ test("1b-8gb profile defaults to a roomier llama.cpp launch profile", () => {
   assert.equal(config.adaptiveTuning.minCompletionTokensPerSecond, 14);
   assert.equal(config.rateLimit.maxKeys, 8192);
   assert.equal(config.cache.maxBytes, 4 * 1024 * 1024);
+});
+
+test("default async queue retention fits the configured storage reserve", () => {
+  for (const profile of [
+    "tiny",
+    "sub1b",
+    "sub1b-cax11",
+    "1b",
+    "1b-8gb",
+    "vps",
+    "balanced",
+  ] as const) {
+    const config = createDefaultConfig(profile);
+
+    assert.ok(
+      config.asyncQueue.maxJobs * ASYNC_QUEUE_PERSISTED_JOB_FILE_LIMIT_MIB <=
+        config.asyncQueue.minFreeStorageMiB,
+      `${profile} asyncQueue.maxJobs should fit asyncQueue.minFreeStorageMiB`,
+    );
+  }
 });
 
 test("remote-backend default profiles keep gateway timeouts above adapter timeouts", () => {

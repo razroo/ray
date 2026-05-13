@@ -124,7 +124,7 @@ function createSub1bDefaults(machineClass: Sub1bMachineClass): RayConfig {
     asyncQueue: {
       enabled: false,
       storageDir: ".ray/async-queue",
-      maxJobs: 1_000,
+      maxJobs: 128,
       minFreeStorageMiB: 256,
       completedTtlMs: 86_400_000,
       pollIntervalMs: 1_000,
@@ -310,7 +310,7 @@ function create1bDefaults(machineClass: OneBMachineClass): RayConfig {
     asyncQueue: {
       enabled: false,
       storageDir: ".ray/async-queue",
-      maxJobs: 1_000,
+      maxJobs: is8gb ? 256 : 128,
       minFreeStorageMiB: is8gb ? 512 : 256,
       completedTtlMs: 86_400_000,
       pollIntervalMs: 1_000,
@@ -423,7 +423,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
     asyncQueue: {
       enabled: false,
       storageDir: ".ray/async-queue",
-      maxJobs: 1_000,
+      maxJobs: 32,
       minFreeStorageMiB: 64,
       completedTtlMs: 86_400_000,
       pollIntervalMs: 500,
@@ -536,7 +536,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
     asyncQueue: {
       enabled: false,
       storageDir: ".ray/async-queue",
-      maxJobs: 1_000,
+      maxJobs: 256,
       minFreeStorageMiB: 512,
       completedTtlMs: 86_400_000,
       pollIntervalMs: 1_000,
@@ -645,7 +645,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
     asyncQueue: {
       enabled: false,
       storageDir: ".ray/async-queue",
-      maxJobs: 2_000,
+      maxJobs: 512,
       minFreeStorageMiB: 1_024,
       completedTtlMs: 86_400_000,
       pollIntervalMs: 1_000,
