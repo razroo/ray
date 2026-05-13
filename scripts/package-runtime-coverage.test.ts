@@ -90,6 +90,20 @@ test("validatePackageRuntimeCoverage accepts current Bun-first workspace manifes
   );
 });
 
+test("validatePackageRuntimeCoverage rejects excessive package inputs before scanning", async () => {
+  await assert.rejects(
+    () =>
+      validatePackageRuntimeCoverage({
+        cwd: repoRoot,
+        packageJsonPaths: Array.from(
+          { length: 129 },
+          (_value, index) => `/tmp/ray-package-${index}/package.json`,
+        ),
+      }),
+    /at most 128 package\.json files/,
+  );
+});
+
 test("validatePackageRuntimeCoverage requires config and Bun cache storage preflight coverage", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-storage-"));
   t.after(async () => {

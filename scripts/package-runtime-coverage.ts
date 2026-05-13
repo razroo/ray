@@ -2434,6 +2434,12 @@ export async function validatePackageRuntimeCoverage(options: {
   packageJsonPaths: string[];
 }): Promise<PackageRuntimeCoverageSummary> {
   const cwd = path.resolve(options.cwd);
+  if (options.packageJsonPaths.length > MAX_PACKAGE_JSON_FILES) {
+    throw new Error(
+      `Package runtime coverage can inspect at most ${MAX_PACKAGE_JSON_FILES} package.json files`,
+    );
+  }
+
   const results: PackageRuntimeCoverageResult[] = [];
   const workflowPaths = await collectWorkflowPaths(cwd);
   const runtimeDocPaths = await collectRuntimeDocPaths(cwd);
