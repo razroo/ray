@@ -709,6 +709,81 @@ test("runBenchmark rejects oversized gateway error responses", async () => {
   );
 });
 
+test("runBenchmark refuses to follow gateway redirects", async () => {
+  let redirectedRequests = 0;
+  let redirectedAuthorization: string | undefined;
+  const redirectedServer = createServer((request, response) => {
+    redirectedRequests += 1;
+    redirectedAuthorization =
+      typeof request.headers.authorization === "string" ? request.headers.authorization : undefined;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify({
+        id: "inf_redirected",
+        output: "redirected",
+        cached: false,
+        deduplicated: false,
+        queueTimeMs: 1,
+        latencyMs: 2,
+        degraded: false,
+        usage: {
+          tokens: {
+            prompt: 1,
+            completion: 1,
+            total: 2,
+          },
+        },
+      }),
+    );
+  });
+
+  await new Promise<void>((resolve) => redirectedServer.listen(0, "127.0.0.1", resolve));
+
+  try {
+    const redirectedAddress = redirectedServer.address();
+    if (!redirectedAddress || typeof redirectedAddress === "string") {
+      throw new Error("Expected a TCP server address");
+    }
+
+    await withTestServer(
+      (_request, response) => {
+        response.writeHead(307, {
+          "content-type": "application/json",
+          location: `http://127.0.0.1:${(redirectedAddress as AddressInfo).port}/v1/infer`,
+        });
+        response.end(JSON.stringify({ error: { code: "redirected" } }));
+      },
+      async (baseUrl) => {
+        await assert.rejects(
+          () =>
+            runBenchmark({
+              baseUrl,
+              workload: [{ input: "ping" }],
+              concurrency: 1,
+              requests: 1,
+              label: "redirect",
+              apiKey: "benchmark-secret",
+            }),
+          /Benchmark request failed with 307/,
+        );
+      },
+    );
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      redirectedServer.close((error) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
+  assert.equal(redirectedRequests, 0);
+  assert.equal(redirectedAuthorization, undefined);
+});
+
 test("runBenchmark rejects oversized and malformed gateway success responses", async () => {
   await withTestServer(
     (_request, response) => {

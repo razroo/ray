@@ -1645,6 +1645,7 @@ async function invoke(
   try {
     response = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/infer`, {
       method: "POST",
+      redirect: "manual",
       signal: AbortSignal.timeout(BENCHMARK_REQUEST_TIMEOUT_MS),
       headers: {
         "content-type": "application/json",
@@ -2185,6 +2186,7 @@ async function waitForHealth(
   while (Date.now() - startedAt < timeoutMs) {
     try {
       const response = await fetch(`${baseUrl.replace(/\/$/, "")}${healthPath}`, {
+        redirect: "manual",
         signal: AbortSignal.timeout(
           Math.min(BENCHMARK_HEALTH_REQUEST_TIMEOUT_MS, Math.max(1, timeoutMs)),
         ),
