@@ -282,6 +282,19 @@ test("gateway parseCliArgs rejects ambiguous or malformed options", () => {
   assert.throws(() => parseCliArgs(["--config", 42] as unknown as string[]), /argv\[1\]/);
 });
 
+test("startGateway rejects malformed warmup retry options before listening", async () => {
+  await assert.rejects(
+    () =>
+      startGateway({
+        config: createDefaultConfig("tiny"),
+        warmupRetry: {
+          initialDelayMs: 0,
+        },
+      }),
+    /warmupRetry\.initialDelayMs/,
+  );
+});
+
 test("gateway closes unfinished request bodies on no-body routes", async (t) => {
   const gateway = createGatewayServer({
     config: createDefaultConfig("tiny"),

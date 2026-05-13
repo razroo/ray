@@ -1160,6 +1160,7 @@ export function createGatewayServer(options: CreateGatewayHandlerOptions): Gatew
 
 export async function startGateway(options: StartGatewayOptions): Promise<GatewayServer> {
   const config = snapshotRayConfig(options.config);
+  const warmupRetry = resolveWarmupRetryOptions(options.warmupRetry);
   const gateway = createGatewayServer({
     ...options,
     config,
@@ -1182,16 +1183,15 @@ export async function startGateway(options: StartGatewayOptions): Promise<Gatewa
     configPath: options.configPath ?? "defaults",
   });
 
-  gateway.warmup = startGatewayWarmup(gateway, options.warmupRetry);
+  gateway.warmup = startGatewayWarmup(gateway, warmupRetry);
 
   return gateway;
 }
 
 function startGatewayWarmup(
   gateway: GatewayServer,
-  retryOptions: GatewayWarmupRetryOptions | undefined,
+  retry: Required<GatewayWarmupRetryOptions>,
 ): GatewayWarmupController {
-  const retry = resolveWarmupRetryOptions(retryOptions);
   let stopped = false;
   let attempts = 0;
   let retryTimer: NodeJS.Timeout | undefined;
