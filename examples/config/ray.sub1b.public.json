@@ -82,7 +82,9 @@
     "enabled": true,
     "queueDepthThreshold": 16,
     "maxPromptChars": 6000,
-    "degradeToMaxTokens": 128
+    "degradeToMaxTokens": 128,
+    "memoryRssThresholdMiB": 512,
+    "cpuThrottledRatioThreshold": 0.2
   },
   "adaptiveTuning": {
     "enabled": true,

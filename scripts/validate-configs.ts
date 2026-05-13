@@ -28,6 +28,11 @@ const MAX_PUBLIC_ASYNC_QUEUE_CALLBACK_ATTEMPTS = 5;
 const MAX_PUBLIC_CACHE_ENTRIES = 512;
 const MAX_PUBLIC_CACHE_BYTES = 4_194_304;
 const MAX_PUBLIC_CACHE_TTL_MS = 120_000;
+const MAX_PUBLIC_DEGRADATION_QUEUE_DEPTH = 20;
+const MAX_PUBLIC_DEGRADATION_PROMPT_CHARS = 8_000;
+const MAX_PUBLIC_DEGRADATION_TOKENS = 160;
+const MAX_PUBLIC_DEGRADATION_MEMORY_RSS_MIB = 768;
+const MAX_PUBLIC_DEGRADATION_CPU_THROTTLED_RATIO = 0.2;
 
 type ConfigRecord = Record<string, unknown>;
 
@@ -319,6 +324,26 @@ function expectPublicConfigPositiveIntegerAtMost(
   );
 }
 
+function expectPublicConfigPositiveNumberAtMost(
+  diagnostics: DeploymentDiagnostic[],
+  config: ConfigRecord,
+  keys: string[],
+  max: number,
+  code: string,
+): void {
+  const actual = getConfigValue(config, keys);
+
+  if (typeof actual === "number" && Number.isFinite(actual) && actual > 0 && actual <= max) {
+    return;
+  }
+
+  pushPublicConfigPolicyError(
+    diagnostics,
+    code,
+    `Public example configs must explicitly declare ${keys.join(".")} as a positive number no greater than ${max}.`,
+  );
+}
+
 async function diagnosePublicConfigPolicy(configPath: string): Promise<DeploymentDiagnostic[]> {
   const diagnostics: DeploymentDiagnostic[] = [];
   const publicFile = path.basename(configPath).endsWith(".public.json");
@@ -547,6 +572,48 @@ async function diagnosePublicConfigPolicy(configPath: string): Promise<Deploymen
     ["cache", "keyStrategy"],
     "input+params",
     "public_config_cache_key_strategy_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["gracefulDegradation", "enabled"],
+    true,
+    "public_config_degradation_enabled_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["gracefulDegradation", "queueDepthThreshold"],
+    MAX_PUBLIC_DEGRADATION_QUEUE_DEPTH,
+    "public_config_degradation_queue_depth_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["gracefulDegradation", "maxPromptChars"],
+    MAX_PUBLIC_DEGRADATION_PROMPT_CHARS,
+    "public_config_degradation_prompt_chars_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["gracefulDegradation", "degradeToMaxTokens"],
+    MAX_PUBLIC_DEGRADATION_TOKENS,
+    "public_config_degradation_tokens_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["gracefulDegradation", "memoryRssThresholdMiB"],
+    MAX_PUBLIC_DEGRADATION_MEMORY_RSS_MIB,
+    "public_config_degradation_memory_rss_explicit",
+  );
+  expectPublicConfigPositiveNumberAtMost(
+    diagnostics,
+    parsed,
+    ["gracefulDegradation", "cpuThrottledRatioThreshold"],
+    MAX_PUBLIC_DEGRADATION_CPU_THROTTLED_RATIO,
+    "public_config_degradation_cpu_throttled_ratio_explicit",
   );
 
   return diagnostics;

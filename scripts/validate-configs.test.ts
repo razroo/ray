@@ -137,6 +137,12 @@ test("validateConfigFiles requires explicit public runtime guardrails", async (t
   assert.ok(codes.includes("public_config_cache_bytes_explicit"));
   assert.ok(codes.includes("public_config_cache_ttl_explicit"));
   assert.ok(codes.includes("public_config_cache_key_strategy_explicit"));
+  assert.ok(codes.includes("public_config_degradation_enabled_explicit"));
+  assert.ok(codes.includes("public_config_degradation_queue_depth_explicit"));
+  assert.ok(codes.includes("public_config_degradation_prompt_chars_explicit"));
+  assert.ok(codes.includes("public_config_degradation_tokens_explicit"));
+  assert.ok(codes.includes("public_config_degradation_memory_rss_explicit"));
+  assert.ok(codes.includes("public_config_degradation_cpu_throttled_ratio_explicit"));
 });
 
 test("validateConfigFiles accepts every checked-in example config", async () => {

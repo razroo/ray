@@ -77,10 +77,12 @@
     "slowRequestThresholdMs": 1800
   },
   "gracefulDegradation": {
+    "enabled": true,
     "queueDepthThreshold": 20,
     "maxPromptChars": 8000,
     "degradeToMaxTokens": 160,
-    "memoryRssThresholdMiB": 768
+    "memoryRssThresholdMiB": 768,
+    "cpuThrottledRatioThreshold": 0.2
   },
   "adaptiveTuning": {
     "queueLatencyThresholdMs": 450,
