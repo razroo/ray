@@ -68,14 +68,21 @@ test("createSwapPlan prints guarded swap-file commands", () => {
   assert.match(plan.commands[0] ?? "", /2048 MiB swap \+ 768 MiB headroom/);
   assert.match(plan.commands[1] ?? "", /timeout 30s sudo test ! -e '\/var\/lib\/ray\/swapfile'/);
   assert.match(plan.commands[1] ?? "", /elif \[ "\$status" -ne 0 \]; then exit "\$status"; fi/);
-  assert.match(
-    plan.commands[2] ?? "",
-    /timeout 300s sudo fallocate -l 2048M '\/var\/lib\/ray\/swapfile'/,
-  );
+  assert.match(plan.commands[2] ?? "", /set -e/);
+  assert.match(plan.commands[2] ?? "", /swap_tmp="\$\{swap_path\}\.ray-tmp\.\$\$"/);
+  assert.match(plan.commands[2] ?? "", /cleanup_swap_artifacts/);
+  assert.match(plan.commands[2] ?? "", /final_created=0/);
+  assert.match(plan.commands[2] ?? "", /swapon_succeeded=0/);
+  assert.match(plan.commands[2] ?? "", /sudo rm -f -- "\$swap_tmp" \|\| true/);
+  assert.match(plan.commands[2] ?? "", /sudo rm -f -- "\$swap_path" \|\| true/);
+  assert.match(plan.commands[2] ?? "", /timeout 300s sudo fallocate -l 2048M "\$swap_tmp"/);
   assert.match(plan.commands[2] ?? "", /timeout 300s sudo dd/);
-  assert.match(plan.commands.join("\n"), /timeout 60s sudo chmod 600 '\/var\/lib\/ray\/swapfile'/);
-  assert.match(plan.commands.join("\n"), /timeout 60s sudo mkswap '\/var\/lib\/ray\/swapfile'/);
-  assert.match(plan.commands.join("\n"), /timeout 60s sudo swapon '\/var\/lib\/ray\/swapfile'/);
+  assert.match(plan.commands[2] ?? "", /timeout 60s sudo chmod 600 "\$swap_tmp"/);
+  assert.match(plan.commands[2] ?? "", /timeout 60s sudo mkswap "\$swap_tmp"/);
+  assert.match(plan.commands[2] ?? "", /timeout 60s sudo ln -- "\$swap_tmp" "\$swap_path"/);
+  assert.match(plan.commands[2] ?? "", /final_created=1/);
+  assert.match(plan.commands[2] ?? "", /timeout 60s sudo swapon "\$swap_path"/);
+  assert.match(plan.commands[2] ?? "", /swapon_succeeded=1/);
   assert.match(plan.commands.join("\n"), /\/var\/lib\/ray\/swapfile none swap sw 0 0/);
   assert.match(plan.commands.join("\n"), /timeout 30s sudo grep -Fq/);
   assert.match(plan.commands.join("\n"), /timeout 60s sudo tee -a \/etc\/fstab/);
@@ -121,7 +128,7 @@ test("createSwapPlan scales creation timeout for large swap files", () => {
     sizeMiB: 16_384,
   });
 
-  assert.match(plan.commands[2] ?? "", /timeout 2048s sudo fallocate -l 16384M '\/swapfile'/);
+  assert.match(plan.commands[2] ?? "", /timeout 2048s sudo fallocate -l 16384M "\$swap_tmp"/);
 });
 
 test("formatTextPlan prints operator-ready swap instructions", () => {

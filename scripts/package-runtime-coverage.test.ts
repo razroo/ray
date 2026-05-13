@@ -42,7 +42,7 @@ test("validatePackageRuntimeCoverage accepts current Bun-first workspace manifes
   assert.ok(summary.packageCount >= 10);
   assert.ok(summary.workflowCount >= 1);
   assert.ok(summary.docCount >= 8);
-  assert.equal(summary.runtimeScriptCount, 2);
+  assert.equal(summary.runtimeScriptCount, 3);
   assert.ok(summary.scriptCount > 0);
   assert.equal(summary.forbiddenLockfiles.length, 0);
   assert.ok(
@@ -78,6 +78,13 @@ test("validatePackageRuntimeCoverage accepts current Bun-first workspace manifes
     summary.results.some(
       (result) =>
         result.packagePath === path.join(repoRoot, "scripts", "model-stage.ts") &&
+        result.kind === "script",
+    ),
+  );
+  assert.ok(
+    summary.results.some(
+      (result) =>
+        result.packagePath === path.join(repoRoot, "scripts", "swap-plan.ts") &&
         result.kind === "script",
     ),
   );
@@ -502,6 +509,56 @@ test("validatePackageRuntimeCoverage requires model staging headroom guards", as
   assert.equal(summary.ok, false);
   assert.equal(summary.runtimeScriptCount, 1);
   assert.ok(codes.includes("model_stage_headroom_guard_missing"));
+});
+
+test("validatePackageRuntimeCoverage requires staged swap activation guards", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-swap-plan-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  await mkdir(path.join(tempDir, "scripts"), { recursive: true });
+  const rootPackageJson = path.join(tempDir, "package.json");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify(
+      {
+        name: "ray-test",
+        packageManager: "bun@1.3.9",
+        engines: {
+          bun: ">=1.3.0",
+        },
+        scripts: {
+          "swap:plan": "bun ./scripts/swap-plan.ts",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    path.join(tempDir, "scripts", "swap-plan.ts"),
+    [
+      "function buildDiskHeadroomCommand() {}",
+      "function createSwapPlan() {",
+      '  return ["fallocate -l 1024M /swapfile", "mkswap /swapfile", "swapon /swapfile"];',
+      "}",
+      'const HELP = "--sysctl-only vm.swappiness";',
+      "",
+    ].join("\n"),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson],
+  });
+  const codes = summary.results.flatMap((result) =>
+    result.diagnostics.map((diagnostic) => diagnostic.code),
+  );
+
+  assert.equal(summary.ok, false);
+  assert.equal(summary.runtimeScriptCount, 1);
+  assert.ok(codes.includes("swap_plan_temp_activation_guard_missing"));
 });
 
 test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", async (t) => {

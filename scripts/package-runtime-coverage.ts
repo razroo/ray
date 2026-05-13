@@ -16,6 +16,7 @@ const DEFAULT_RUNTIME_DOCS = [
 const DEFAULT_RUNTIME_SCRIPTS = [
   "scripts/deploy-storage-preflight.ts",
   "scripts/model-stage.ts",
+  "scripts/swap-plan.ts",
 ] as const;
 const WORKSPACE_RUNTIME_DOC_DIRS = ["apps", "packages"] as const;
 const VPS_TIMEOUT_DOCS = new Set([
@@ -1963,6 +1964,44 @@ function validateModelStageScript(
   ];
 }
 
+function validateSwapPlanScript(
+  scriptPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(scriptPath) !== "swap-plan.ts") {
+    return [];
+  }
+
+  if (
+    contents.includes("buildDiskHeadroomCommand") &&
+    contents.includes("buildSwapActivationCommand") &&
+    contents.includes("set -e") &&
+    contents.includes('swap_tmp="${swap_path}.ray-tmp.$$"') &&
+    contents.includes("cleanup_swap_artifacts") &&
+    contents.includes("final_created=0") &&
+    contents.includes("swapon_succeeded=0") &&
+    contents.includes('sudo ln -- "$swap_tmp" "$swap_path"') &&
+    contents.includes('sudo rm -f -- "$swap_tmp"') &&
+    contents.includes('sudo rm -f -- "$swap_path"') &&
+    contents.includes("vm.swappiness") &&
+    contents.includes("--sysctl-only")
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "swap_plan_temp_activation_guard_missing",
+      scriptPath,
+      line: workflowLineNumber(lines, "createSwapPlan"),
+      message:
+        "Swap planning must check post-create disk headroom, stage swap-file creation through a same-directory temporary file, clean failed activation artifacts, and keep swappiness-only repair available so 4 GB VPS operators do not strand inactive swap files on tiny disks.",
+    },
+  ];
+}
+
 async function validateRuntimeScript(
   scriptPath: string,
 ): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
@@ -1975,6 +2014,7 @@ async function validateRuntimeScript(
   const diagnostics = [
     ...validateDeployStoragePreflightScript(scriptPath, contents, lines),
     ...validateModelStageScript(scriptPath, contents, lines),
+    ...validateSwapPlanScript(scriptPath, contents, lines),
   ];
 
   return {

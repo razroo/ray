@@ -264,6 +264,34 @@ function buildDiskHeadroomCommand(
   return `timeout ${INSPECT_TIMEOUT_SECONDS}s sh -c ${shellQuote(script)}`;
 }
 
+function buildSwapActivationCommand(
+  swapPath: string,
+  sizeMiB: number,
+  createTimeoutSeconds: number,
+): string {
+  const script = [
+    "set -e",
+    `swap_path=${shellQuote(swapPath)}`,
+    'swap_tmp="${swap_path}.ray-tmp.$$"',
+    "final_created=0",
+    "swapon_succeeded=0",
+    `cleanup_swap_artifacts() { timeout ${QUICK_TIMEOUT_SECONDS}s sudo rm -f -- "$swap_tmp" || true; if [ "$final_created" -eq 1 ] && [ "$swapon_succeeded" -ne 1 ]; then timeout ${QUICK_TIMEOUT_SECONDS}s sudo rm -f -- "$swap_path" || true; fi; }`,
+    "trap cleanup_swap_artifacts EXIT",
+    `timeout ${INSPECT_TIMEOUT_SECONDS}s sudo test ! -e "$swap_tmp"`,
+    `if command -v fallocate >/dev/null 2>&1; then timeout ${createTimeoutSeconds}s sudo fallocate -l ${sizeMiB}M "$swap_tmp"; else timeout ${createTimeoutSeconds}s sudo dd if=/dev/zero "of=$swap_tmp" bs=1M count=${sizeMiB} status=progress; fi`,
+    `timeout ${QUICK_TIMEOUT_SECONDS}s sudo chmod 600 "$swap_tmp"`,
+    `timeout ${QUICK_TIMEOUT_SECONDS}s sudo mkswap "$swap_tmp"`,
+    `timeout ${QUICK_TIMEOUT_SECONDS}s sudo ln -- "$swap_tmp" "$swap_path"`,
+    "final_created=1",
+    `timeout ${QUICK_TIMEOUT_SECONDS}s sudo rm -f -- "$swap_tmp"`,
+    `timeout ${QUICK_TIMEOUT_SECONDS}s sudo swapon "$swap_path"`,
+    "swapon_succeeded=1",
+    "trap - EXIT",
+  ].join("; ");
+
+  return `sh -c ${shellQuote(script)}`;
+}
+
 export function createSwapPlan(
   options: {
     path?: string;
@@ -320,10 +348,7 @@ export function createSwapPlan(
       : [
           buildDiskHeadroomCommand(swapPath, sizeMiB, minFreeAfterMiB),
           `timeout ${INSPECT_TIMEOUT_SECONDS}s sudo test ! -e ${quotedPath}; status=$?; if [ "$status" -eq 1 ]; then echo 'Swap file already exists: ${swapPath}' >&2; exit 1; elif [ "$status" -ne 0 ]; then exit "$status"; fi`,
-          `if command -v fallocate >/dev/null 2>&1; then timeout ${createTimeoutSeconds}s sudo fallocate -l ${sizeMiB}M ${quotedPath}; else timeout ${createTimeoutSeconds}s sudo dd if=/dev/zero of=${quotedPath} bs=1M count=${sizeMiB} status=progress; fi`,
-          `timeout ${QUICK_TIMEOUT_SECONDS}s sudo chmod 600 ${quotedPath}`,
-          `timeout ${QUICK_TIMEOUT_SECONDS}s sudo mkswap ${quotedPath}`,
-          `timeout ${QUICK_TIMEOUT_SECONDS}s sudo swapon ${quotedPath}`,
+          buildSwapActivationCommand(swapPath, sizeMiB, createTimeoutSeconds),
           `timeout ${INSPECT_TIMEOUT_SECONDS}s sudo grep -Fq ${shellQuote(fstabLine)} /etc/fstab; status=$?; if [ "$status" -eq 0 ]; then :; elif [ "$status" -eq 1 ]; then printf '%s\\n' ${shellQuote(fstabLine)} | timeout ${QUICK_TIMEOUT_SECONDS}s sudo tee -a /etc/fstab >/dev/null; else exit "$status"; fi`,
           ...sysctlCommands,
           `timeout ${INSPECT_TIMEOUT_SECONDS}s swapon --show`,
