@@ -133,6 +133,88 @@ test("validatePackageRuntimeCoverage requires config and Bun cache storage prefl
   assert.ok(codes.includes("deploy_storage_bun_cache_preflight_missing"));
 });
 
+test("validatePackageRuntimeCoverage requires VPS deploy trigger for storage preflight changes", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-workflow-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const workflowDir = path.join(tempDir, ".github", "workflows");
+  await mkdir(workflowDir, { recursive: true });
+  const rootPackageJson = path.join(tempDir, "package.json");
+  const deployWorkflowPath = path.join(workflowDir, "deploy-vps.yml");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify(
+      {
+        name: "ray-test",
+        packageManager: "bun@1.3.9",
+        engines: {
+          bun: ">=1.3.0",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    deployWorkflowPath,
+    [
+      "name: Deploy VPS",
+      "on:",
+      "  push:",
+      "    branches: [main]",
+      "    paths:",
+      "      - package.json",
+      "      - scripts/model-stage.ts",
+      "env:",
+      "  RAY_DEPLOY_MIN_FREE_STORAGE_MIB: ${{ vars.RAY_DEPLOY_MIN_FREE_STORAGE_MIB }}",
+      "jobs:",
+      "  deploy:",
+      "    steps:",
+      "      - run: |",
+      "          envOverrides.RAY_DEPLOY_MIN_FREE_STORAGE_MIB",
+      "          process.env.RAY_DEPLOY_MIN_FREE_STORAGE_MIB",
+      "          parseOptionalNonNegativeInteger",
+      '          echo "deploy_min_free_storage_mib=$DEPLOY_MIN_FREE_STORAGE_MIB" >> "$GITHUB_OUTPUT"',
+      '          DEPLOY_MIN_FREE_STORAGE_MIB=$(shell_quote "$DEPLOY_MIN_FREE_STORAGE_MIB")',
+      '          DEPLOY_MIN_FREE_STORAGE_MIB=$(shell_quote "$DEPLOY_MIN_FREE_STORAGE_MIB")',
+      "          timeout 30s df -Pm",
+      "          timeout 60s $SUDO install -d -m 0755 /etc/caddy",
+      '          check_free_storage /etc/ray "Ray config directory"',
+      '          check_free_storage /etc/systemd/system "systemd unit directory"',
+      '          check_free_storage /etc/caddy "Caddy config directory"',
+      '          check_free_storage /srv/ray "synced checkout"',
+      '          check_free_storage /var/lib/ray "Ray state"',
+      '          check_free_storage /tmp "temporary directory"',
+      '          check_free_storage /var/tmp "persistent temporary directory"',
+      '          BUN_INSTALL_CACHE_DIR="/srv/ray/.ray/bun-install-cache"',
+      '          check_free_storage "$BUN_INSTALL_CACHE_DIR" "Bun install cache"',
+      '          check_free_storage /srv/ray "Bun production install"',
+      "          /srv/ray/scripts/deploy-storage-preflight.ts --ray-env-file /etc/ray/ray.env",
+      "          Remote deploy preflight requires at least",
+      "          rsync -az --delete ./ ray@example:/srv/ray/",
+      "          /usr/local/bin/bun install --production --frozen-lockfile",
+      "",
+    ].join("\n"),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson],
+  });
+  const diagnostics = summary.results.flatMap((result) => result.diagnostics);
+
+  assert.equal(summary.ok, false);
+  assert.ok(
+    diagnostics.some(
+      (diagnostic) =>
+        diagnostic.code === "workflow_remote_storage_preflight_missing" &&
+        diagnostic.workflowPath === deployWorkflowPath,
+    ),
+  );
+});
+
 test("validatePackageRuntimeCoverage requires deploy storage docs to mention binary path", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-storage-doc-"));
   t.after(async () => {

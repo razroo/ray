@@ -662,6 +662,83 @@ function workflowLineNumber(lines: string[], pattern: string): number | undefine
   return lineIndex >= 0 ? lineIndex + 1 : undefined;
 }
 
+function normalizeWorkflowYamlScalar(value: string): string {
+  const commentIndex = value.search(/\s#/);
+  const uncommented = commentIndex >= 0 ? value.slice(0, commentIndex) : value;
+  const trimmed = uncommented.trim();
+
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+
+  return trimmed;
+}
+
+function workflowPushPathIncludes(lines: string[], expectedPath: string): boolean {
+  let inPush = false;
+  let pushIndent = -1;
+  let inPaths = false;
+  let pathsIndent = -1;
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (trimmed.length === 0 || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    const indent = rawLine.search(/\S/);
+    if (trimmed === "push:") {
+      inPush = true;
+      pushIndent = indent;
+      inPaths = false;
+      pathsIndent = -1;
+      continue;
+    }
+
+    if (inPaths && indent <= pathsIndent && /^[A-Za-z_-]+:/.test(trimmed)) {
+      inPaths = false;
+    }
+
+    if (inPush && indent <= pushIndent && /^[A-Za-z_-]+:/.test(trimmed)) {
+      inPush = false;
+      inPaths = false;
+      pathsIndent = -1;
+    }
+
+    if (!inPush) {
+      continue;
+    }
+
+    const flowPaths = trimmed.match(/^paths:\s*\[(.*)\]\s*$/);
+    if (flowPaths) {
+      return flowPaths[1]
+        .split(",")
+        .map((entry) => normalizeWorkflowYamlScalar(entry))
+        .includes(expectedPath);
+    }
+
+    if (trimmed === "paths:") {
+      inPaths = true;
+      pathsIndent = indent;
+      continue;
+    }
+
+    if (!inPaths) {
+      continue;
+    }
+
+    const pathEntry = trimmed.match(/^-\s+(.+)$/);
+    if (pathEntry && normalizeWorkflowYamlScalar(pathEntry[1]) === expectedPath) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function workflowCommandContinuationIncludes(
   lines: string[],
   index: number,
@@ -860,7 +937,7 @@ function validateDeployWorkflowStoragePreflight(
     contents.includes(
       "RAY_DEPLOY_MIN_FREE_STORAGE_MIB: ${{ vars.RAY_DEPLOY_MIN_FREE_STORAGE_MIB }}",
     ) &&
-    contents.includes("scripts/deploy-storage-preflight.ts") &&
+    workflowPushPathIncludes(lines, "scripts/deploy-storage-preflight.ts") &&
     contents.includes("envOverrides.RAY_DEPLOY_MIN_FREE_STORAGE_MIB") &&
     contents.includes("process.env.RAY_DEPLOY_MIN_FREE_STORAGE_MIB") &&
     contents.includes("parseOptionalNonNegativeInteger") &&
