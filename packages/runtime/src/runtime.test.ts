@@ -66,6 +66,96 @@ test("runtime snapshots config at construction", async () => {
   assert.equal(runtime.config.gracefulDegradation.maxPromptChars, 8);
 });
 
+test("runtime deduplicates successful provider warmup work", async () => {
+  let warmCalls = 0;
+  let releaseWarm: (() => void) | undefined;
+  const blockedWarm = new Promise<void>((resolve) => {
+    releaseWarm = resolve;
+  });
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "warm-model",
+    capabilities: {
+      streaming: false,
+      quantized: false,
+      localBackend: true,
+    },
+    async warm() {
+      warmCalls += 1;
+      await blockedWarm;
+    },
+    async infer(request) {
+      return {
+        output: request.input,
+      };
+    },
+  };
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    model: {
+      warmOnBoot: true,
+    },
+  });
+  const runtime = createRayRuntime(config, { provider });
+
+  const first = runtime.warm();
+  const second = runtime.warm();
+  await waitForCondition(() => warmCalls === 1);
+
+  const warmingHealth = await runtime.health();
+  assert.equal(warmingHealth.status, "degraded");
+  assert.equal(warmingHealth.provider.status, "warming");
+
+  releaseWarm?.();
+  await Promise.all([first, second]);
+  await runtime.warm();
+
+  const readyHealth = await runtime.health();
+  assert.equal(warmCalls, 1);
+  assert.equal(readyHealth.status, "ok");
+  assert.equal(readyHealth.provider.status, "ready");
+});
+
+test("runtime retries provider warmup after a failed attempt", async () => {
+  let warmCalls = 0;
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "retry-warm-model",
+    capabilities: {
+      streaming: false,
+      quantized: false,
+      localBackend: true,
+    },
+    async warm() {
+      warmCalls += 1;
+      if (warmCalls === 1) {
+        throw new Error("backend still starting");
+      }
+    },
+    async infer(request) {
+      return {
+        output: request.input,
+      };
+    },
+  };
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    model: {
+      warmOnBoot: true,
+    },
+  });
+  const runtime = createRayRuntime(config, { provider });
+
+  await assert.rejects(() => runtime.warm(), /backend still starting/);
+  const failedHealth = await runtime.health();
+  assert.equal(failedHealth.status, "unavailable");
+  assert.equal(failedHealth.provider.status, "unavailable");
+
+  await runtime.warm();
+  const readyHealth = await runtime.health();
+  assert.equal(warmCalls, 2);
+  assert.equal(readyHealth.status, "ok");
+  assert.equal(readyHealth.provider.status, "ready");
+});
+
 test("runtime clamps output under configured process RSS pressure", async () => {
   let observedMaxTokens = 0;
   const provider: ModelProvider = {

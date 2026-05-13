@@ -3325,6 +3325,7 @@ export class RayRuntime {
   private readonly familyCompletionHistory = new Map<string, FamilyCompletionHistory>();
   private readonly startedAt = Date.now();
   private warmState: WarmState = "idle";
+  private warmInFlight: Promise<void> | undefined;
   private lastWarmError: string | undefined;
   private providerHealthCache: CachedProviderHealth | undefined;
   private providerHealthInFlight: Promise<ProviderHealthSnapshot> | undefined;
@@ -3384,10 +3385,31 @@ export class RayRuntime {
       return;
     }
 
+    if (this.warmState === "ready") {
+      return;
+    }
+
+    if (this.warmInFlight) {
+      return this.warmInFlight;
+    }
+
+    const warmPromise = this.runProviderWarm();
+    this.warmInFlight = warmPromise;
+
+    try {
+      await warmPromise;
+    } finally {
+      if (this.warmInFlight === warmPromise) {
+        this.warmInFlight = undefined;
+      }
+    }
+  }
+
+  private async runProviderWarm(): Promise<void> {
     this.warmState = "warming";
 
     try {
-      await this.provider.warm();
+      await this.provider.warm?.();
       this.warmState = "ready";
       this.lastWarmError = undefined;
       this.providerHealthCache = {
