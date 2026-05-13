@@ -41,9 +41,14 @@ test("validatePackageRuntimeCoverage accepts current Bun-first workspace manifes
   assert.equal(summary.ok, true);
   assert.ok(summary.packageCount >= 10);
   assert.ok(summary.workflowCount >= 1);
-  assert.ok(summary.docCount >= 5);
+  assert.ok(summary.docCount >= 7);
   assert.ok(summary.scriptCount > 0);
   assert.equal(summary.forbiddenLockfiles.length, 0);
+  assert.ok(
+    summary.results.some(
+      (result) => result.packagePath === path.join(repoRoot, "apps/control-panel/README.md"),
+    ),
+  );
   assert.ok(
     summary.results.some(
       (result) => result.packagePath === path.join(repoRoot, "packages/sdk/README.md"),
@@ -65,10 +70,12 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   });
 
   const appDir = path.join(tempDir, "apps", "gateway");
+  const packageDocDir = path.join(tempDir, "packages", "sdk");
   const workflowDir = path.join(tempDir, ".github", "workflows");
   const vpsDocDir = path.join(tempDir, "examples", "deploy", "vps");
   const integrationDocDir = path.join(tempDir, "docs", "integrations");
   await mkdir(appDir, { recursive: true });
+  await mkdir(packageDocDir, { recursive: true });
   await mkdir(workflowDir, { recursive: true });
   await mkdir(vpsDocDir, { recursive: true });
   await mkdir(integrationDocDir, { recursive: true });
@@ -178,6 +185,10 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
     path.join(tempDir, "docs", "release-checklist.md"),
     ["# Release checklist", "", "```bash", "npm run test", "```", ""].join("\n"),
   );
+  await writeFile(
+    path.join(packageDocDir, "README.md"),
+    ["# SDK", "", "```bash", "npm install @razroo/ray-sdk", "```", ""].join("\n"),
+  );
 
   const summary = await validatePackageRuntimeCoverage({
     cwd: tempDir,
@@ -221,7 +232,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("vps_readme_ray_service_suffix_missing"));
   assert.ok(codes.includes("vps_readme_ray_helper_timeout_missing"));
   assert.ok(codes.includes("runtime_doc_bun_script_missing"));
-  assert.equal(codes.filter((code) => code === "non_bun_runtime_doc_command").length, 4);
+  assert.equal(codes.filter((code) => code === "non_bun_runtime_doc_command").length, 5);
   assert.ok(codes.includes("non_bun_lockfile_present"));
 });
 
@@ -510,6 +521,30 @@ test("validatePackageRuntimeCoverage rejects excessive workflow manifests while 
   await assert.rejects(
     () => validatePackageRuntimeCoverage({ cwd: tempDir, packageJsonPaths: [rootPackageJson] }),
     /Repository must contain at most 64 GitHub workflow files/,
+  );
+});
+
+test("validatePackageRuntimeCoverage rejects excessive workspace README discovery", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-readmes-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const packagesDir = path.join(tempDir, "packages");
+  await mkdir(packagesDir, { recursive: true });
+  const rootPackageJson = path.join(tempDir, "package.json");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify({ name: "ray-test", packageManager: "bun@1.3.0", engines: { bun: ">=1.3" } }),
+  );
+
+  for (let index = 0; index < 513; index += 1) {
+    await mkdir(path.join(packagesDir, `package-${String(index).padStart(3, "0")}`));
+  }
+
+  await assert.rejects(
+    () => validatePackageRuntimeCoverage({ cwd: tempDir, packageJsonPaths: [rootPackageJson] }),
+    /Workspace runtime doc discovery visited more than 512 entries in packages/,
   );
 });
 

@@ -10,8 +10,8 @@ const DEFAULT_RUNTIME_DOCS = [
   "docs/integrations/razroo-email-ai.md",
   "docs/portable-1b.md",
   "docs/release-checklist.md",
-  "packages/sdk/README.md",
 ] as const;
+const WORKSPACE_RUNTIME_DOC_DIRS = ["apps", "packages"] as const;
 const VPS_TIMEOUT_DOCS = new Set([
   "examples/deploy/vps/README.md",
   "docs/integrations/razroo-email-ai.md",
@@ -28,6 +28,7 @@ const MAX_WORKFLOW_BYTES = 512 * 1024;
 const MAX_WORKFLOW_FILES = 64;
 const MAX_WORKFLOW_DIRECTORY_ENTRIES = 1_024;
 const MAX_RUNTIME_DOC_BYTES = 512 * 1024;
+const MAX_WORKSPACE_RUNTIME_DOC_DIRECTORY_ENTRIES = 512;
 const skipDirectoryNames = new Set([".git", ".ray", "dist", "node_modules"]);
 const forbiddenLockfiles = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"] as const;
 const forbiddenPackageManagerPattern =
@@ -341,12 +342,76 @@ async function collectWorkflowPaths(cwd: string): Promise<string[]> {
   }
 }
 
+async function collectWorkspaceReadmeDocPaths(
+  cwd: string,
+  workspaceDir: string,
+): Promise<string[]> {
+  const workspacePath = path.join(cwd, workspaceDir);
+  const docPaths: string[] = [];
+  let directory: Awaited<ReturnType<typeof opendir>> | undefined;
+  let entryCount = 0;
+
+  try {
+    directory = await opendir(workspacePath);
+    for await (const entry of directory) {
+      entryCount += 1;
+      if (entryCount > MAX_WORKSPACE_RUNTIME_DOC_DIRECTORY_ENTRIES) {
+        throw new Error(
+          `Workspace runtime doc discovery visited more than ${MAX_WORKSPACE_RUNTIME_DOC_DIRECTORY_ENTRIES} entries in ${workspaceDir}`,
+        );
+      }
+
+      if (!entry.isDirectory() || skipDirectoryNames.has(entry.name)) {
+        continue;
+      }
+
+      const docPath = path.join(workspacePath, entry.name, "README.md");
+      assertDiscoveryPathWithinLimit(cwd, docPath);
+      if (await pathExists(docPath)) {
+        docPaths.push(docPath);
+      }
+    }
+
+    return docPaths.sort();
+  } catch (error) {
+    const code =
+      error !== null && typeof error === "object" && "code" in error
+        ? (error as { code?: string }).code
+        : undefined;
+
+    if (code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  } finally {
+    if (directory) {
+      try {
+        await directory.close();
+      } catch {
+        // The async iterator closes the directory after normal completion.
+      }
+    }
+  }
+}
+
 async function collectRuntimeDocPaths(cwd: string): Promise<string[]> {
   const docPaths: string[] = [];
-  for (const docRel of DEFAULT_RUNTIME_DOCS) {
-    const docPath = path.join(cwd, docRel);
-    if (await pathExists(docPath)) {
+  const seenDocPaths = new Set<string>();
+  const addDocPath = async (docPath: string): Promise<void> => {
+    if (!seenDocPaths.has(docPath) && (await pathExists(docPath))) {
+      seenDocPaths.add(docPath);
       docPaths.push(docPath);
+    }
+  };
+
+  for (const docRel of DEFAULT_RUNTIME_DOCS) {
+    await addDocPath(path.join(cwd, docRel));
+  }
+
+  for (const workspaceDir of WORKSPACE_RUNTIME_DOC_DIRS) {
+    for (const docPath of await collectWorkspaceReadmeDocPaths(cwd, workspaceDir)) {
+      await addDocPath(docPath);
     }
   }
 
