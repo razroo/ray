@@ -292,6 +292,8 @@ const GATEWAY_MEMORY_MAX_HEADROOM_MIB = 384;
 const GATEWAY_MEMORY_SWAP_MAX_MIB = 128;
 const GATEWAY_CACHE_MAX_BYTES_WARN_RATIO = 0.2;
 const GATEWAY_CACHE_MAX_BYTES_WARN_MIN_MIB = 128;
+const GATEWAY_SCHEDULER_BUFFER_WARN_RATIO = 0.15;
+const GATEWAY_SCHEDULER_BUFFER_WARN_MIN_MIB = 96;
 const MIN_WORKING_DIRECTORY_FREE_MIB = 512;
 const LLAMA_CPP_MEMORY_HIGH_RATIO = 0.9;
 const LLAMA_CPP_SWAP_MAX_RATIO = 0.25;
@@ -1543,10 +1545,7 @@ export function estimateLlamaCppMemoryFit(
       Math.max(1, launchProfile.parallel) *
       estimateKvBytesPerToken(launchProfile.preset),
   );
-  const schedulerBufferMiB = bytesToMiBRoundedUp(
-    (config.scheduler.maxQueuedTokens + config.scheduler.maxInflightTokens) *
-      SCHEDULER_BYTES_PER_TOKEN,
-  );
+  const schedulerBufferMiB = estimateSchedulerBufferMiB(config);
   const runtimeMiB = LLAMA_CPP_RUNTIME_RESERVE_MIB;
   const reserveMiB = resolveSystemReserveMiB(preflight.memoryBudgetMiB);
   const gatewayMemoryMaxMiB = resolveGatewayMemoryControls(config).memoryMaxMiB;
@@ -1589,6 +1588,20 @@ function resolveGatewayCacheMaxBytesWarnThresholdMiB(gatewayMemoryMaxMiB: number
   return Math.max(
     GATEWAY_CACHE_MAX_BYTES_WARN_MIN_MIB,
     Math.floor(gatewayMemoryMaxMiB * GATEWAY_CACHE_MAX_BYTES_WARN_RATIO),
+  );
+}
+
+function resolveGatewaySchedulerBufferWarnThresholdMiB(gatewayMemoryMaxMiB: number): number {
+  return Math.max(
+    GATEWAY_SCHEDULER_BUFFER_WARN_MIN_MIB,
+    Math.floor(gatewayMemoryMaxMiB * GATEWAY_SCHEDULER_BUFFER_WARN_RATIO),
+  );
+}
+
+function estimateSchedulerBufferMiB(config: Pick<RayConfig, "scheduler">): number {
+  return bytesToMiBRoundedUp(
+    (config.scheduler.maxQueuedTokens + config.scheduler.maxInflightTokens) *
+      SCHEDULER_BYTES_PER_TOKEN,
   );
 }
 
@@ -2824,6 +2837,21 @@ export function diagnoseConfig(
         level: "warn",
         code: "cache_max_bytes_high_for_gateway_memory",
         message: `cache.maxBytes allows the in-process gateway cache to grow to ${formatMiB(cacheMaxMiB)}, above the ${formatMiB(cacheMaxBytesWarnThresholdMiB)} small-VPS warning threshold for the generated gateway MemoryMax of ${formatMiB(gatewayMemoryMaxMiB)}. Lower RAY_CACHE_MAX_BYTES so result caching does not compete with request handling and graceful degradation headroom.`,
+      });
+    }
+  }
+
+  {
+    const gatewayMemoryMaxMiB = resolveGatewayMemoryControls(config).memoryMaxMiB;
+    const schedulerBufferMiB = estimateSchedulerBufferMiB(config);
+    const schedulerBufferWarnThresholdMiB =
+      resolveGatewaySchedulerBufferWarnThresholdMiB(gatewayMemoryMaxMiB);
+
+    if (schedulerBufferMiB > schedulerBufferWarnThresholdMiB) {
+      diagnostics.push({
+        level: "warn",
+        code: "scheduler_token_buffer_high_for_gateway_memory",
+        message: `scheduler.maxQueuedTokens and scheduler.maxInflightTokens allow about ${formatMiB(schedulerBufferMiB)} of token-buffered gateway work, above the ${formatMiB(schedulerBufferWarnThresholdMiB)} small-VPS warning threshold for the generated gateway MemoryMax of ${formatMiB(gatewayMemoryMaxMiB)}. Lower the scheduler token budgets so queued and in-flight work cannot crowd out request handling, cache, and graceful degradation headroom.`,
       });
     }
   }

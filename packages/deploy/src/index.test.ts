@@ -634,6 +634,33 @@ test("diagnoseConfig warns when gateway cache budget is high for generated memor
   assert.match(diagnostic.message, /generated gateway MemoryMax of 896 MiB/);
 });
 
+test("diagnoseConfig warns when scheduler token buffers are high for gateway memory", () => {
+  const defaultConfig = createDefaultConfig("1b");
+  assert.ok(
+    !diagnoseConfig(defaultConfig, process.env).some(
+      (entry) => entry.code === "scheduler_token_buffer_high_for_gateway_memory",
+    ),
+  );
+
+  const config = mergeConfig(defaultConfig, {
+    scheduler: {
+      maxQueuedTokens: 262_144,
+      maxInflightTokens: 65_536,
+    },
+  });
+
+  const diagnostic = diagnoseConfig(config, process.env).find(
+    (entry) => entry.code === "scheduler_token_buffer_high_for_gateway_memory",
+  );
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /scheduler\.maxQueuedTokens/);
+  assert.match(diagnostic.message, /scheduler\.maxInflightTokens/);
+  assert.match(diagnostic.message, /240 MiB/);
+  assert.match(diagnostic.message, /generated gateway MemoryMax of 896 MiB/);
+});
+
 test("diagnoseConfig surfaces invalid auth key material without retaining secrets", () => {
   const config = mergeConfig(createDefaultConfig("vps"), {
     auth: {
