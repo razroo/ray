@@ -58,6 +58,11 @@
     "maxJobs": 1000,
     "minFreeStorageMiB": 512,
     "completedTtlMs": 86400000,
+    "pollIntervalMs": 1000,
+    "dispatchConcurrency": 1,
+    "maxAttempts": 3,
+    "callbackTimeoutMs": 5000,
+    "maxCallbackAttempts": 5,
     "callbackAllowPrivateNetwork": false,
     "callbackAllowedHosts": []
   },

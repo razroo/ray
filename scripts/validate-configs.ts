@@ -20,6 +20,11 @@ const PUBLIC_ASYNC_QUEUE_STORAGE_DIR = "/var/lib/ray/async-queue";
 const MAX_PUBLIC_ASYNC_QUEUE_JOBS = 2_000;
 const MAX_PUBLIC_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB = 1_024;
 const MAX_PUBLIC_ASYNC_QUEUE_COMPLETED_TTL_MS = 604_800_000;
+const MAX_PUBLIC_ASYNC_QUEUE_POLL_INTERVAL_MS = 5_000;
+const MAX_PUBLIC_ASYNC_QUEUE_DISPATCH_CONCURRENCY = 1;
+const MAX_PUBLIC_ASYNC_QUEUE_ATTEMPTS = 5;
+const MAX_PUBLIC_ASYNC_QUEUE_CALLBACK_TIMEOUT_MS = 10_000;
+const MAX_PUBLIC_ASYNC_QUEUE_CALLBACK_ATTEMPTS = 5;
 
 type ConfigRecord = Record<string, unknown>;
 
@@ -456,6 +461,41 @@ async function diagnosePublicConfigPolicy(configPath: string): Promise<Deploymen
     ["asyncQueue", "completedTtlMs"],
     MAX_PUBLIC_ASYNC_QUEUE_COMPLETED_TTL_MS,
     "public_config_async_queue_completed_ttl_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["asyncQueue", "pollIntervalMs"],
+    MAX_PUBLIC_ASYNC_QUEUE_POLL_INTERVAL_MS,
+    "public_config_async_queue_poll_interval_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["asyncQueue", "dispatchConcurrency"],
+    MAX_PUBLIC_ASYNC_QUEUE_DISPATCH_CONCURRENCY,
+    "public_config_async_queue_dispatch_concurrency_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["asyncQueue", "maxAttempts"],
+    MAX_PUBLIC_ASYNC_QUEUE_ATTEMPTS,
+    "public_config_async_queue_max_attempts_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["asyncQueue", "callbackTimeoutMs"],
+    MAX_PUBLIC_ASYNC_QUEUE_CALLBACK_TIMEOUT_MS,
+    "public_config_async_queue_callback_timeout_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["asyncQueue", "maxCallbackAttempts"],
+    MAX_PUBLIC_ASYNC_QUEUE_CALLBACK_ATTEMPTS,
+    "public_config_async_queue_callback_attempts_explicit",
   );
   expectPublicConfigValue(
     diagnostics,
