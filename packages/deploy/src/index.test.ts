@@ -767,6 +767,8 @@ test("renderEnvironmentFileExample documents deploy-time overrides", () => {
   assert.match(envFile, /RAY_DEPLOY_SERVICE_USER=ray/);
   assert.match(envFile, /RAY_DEPLOY_DOMAIN=ray\.local/);
   assert.match(envFile, /RAY_DEPLOY_MEMORY_MIB=4096/);
+  assert.match(envFile, /RAY_DEPLOY_MIN_FREE_STORAGE_MIB=1024/);
+  assert.match(envFile, /RAY_DEPLOY_READY_TIMEOUT_SECONDS=120/);
   assert.match(envFile, /RAY_GATEWAY_RUNTIME_BINARY=\/usr\/local\/bin\/bun/);
   assert.match(envFile, /RAY_DEPLOY_CADDY_BINARY=\/usr\/bin\/caddy/);
 });

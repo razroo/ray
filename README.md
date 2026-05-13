@@ -226,6 +226,8 @@ Common portable deploy and model overrides can live in `/etc/ray/ray.env`, so op
 RAY_DEPLOY_SERVICE_USER=ray
 RAY_DEPLOY_DOMAIN=ray.local
 RAY_DEPLOY_MEMORY_MIB=4096
+RAY_DEPLOY_MIN_FREE_STORAGE_MIB=1024
+RAY_DEPLOY_READY_TIMEOUT_SECONDS=120
 RAY_GATEWAY_RUNTIME_BINARY=/usr/local/bin/bun
 RAY_DEPLOY_CADDY_BINARY=/usr/bin/caddy
 RAY_MODEL_ID=local-1b-q4
