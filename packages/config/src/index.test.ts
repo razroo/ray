@@ -128,6 +128,39 @@ test("loadRayConfig accepts every checked-in example config", async () => {
   }
 });
 
+test("loadRayConfig rejects duplicate adapter header names", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-config-duplicate-headers-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = JSON.parse(
+    await readFile(join(process.cwd(), "examples/config/ray.vps.json"), "utf8"),
+  ) as {
+    model: {
+      adapter: {
+        headers?: Record<string, string>;
+      };
+    };
+  };
+  config.model.adapter.headers = {
+    "x-ray-upstream": "one",
+    "X-Ray-Upstream": "two",
+  };
+
+  const configPath = join(tempDir, "ray.duplicate-headers.json");
+  await writeFile(configPath, JSON.stringify(config), "utf8");
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath,
+      env: {},
+    }),
+    /model\.adapter\.headers must not contain duplicate header name "X-Ray-Upstream"/,
+  );
+});
+
 test("loadRayConfig accepts the cax11 sub1b launch preset", async () => {
   const loaded = await loadRayConfig({
     cwd: process.cwd(),

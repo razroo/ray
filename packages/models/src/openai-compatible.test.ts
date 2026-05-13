@@ -214,6 +214,20 @@ test("adapterRequest rejects invalid direct adapter config before dispatch", asy
         {
           baseUrl: "http://127.0.0.1:8080",
           timeoutMs: 500,
+          headers: { "x-ray-test": "one", "X-Ray-Test": "two" },
+        },
+        "/health",
+        {},
+      ),
+    /adapter\.headers must not contain duplicate header name "X-Ray-Test"/,
+  );
+
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: "http://127.0.0.1:8080",
+          timeoutMs: 500,
           headers: { "Content-Length": "10" },
         },
         "/health",
@@ -414,6 +428,15 @@ test("adapterRequest validates per-request headers before dispatch", async (t) =
         headers: { "Content-Length": "10" },
       }),
     /adapter\.request\.headers\.Content-Length must not use a transport-controlled header name/,
+  );
+
+  await assert.rejects(
+    () =>
+      adapterRequest(adapter, "/health", {
+        method: "GET",
+        headers: { "x-ray-request": "one", "X-Ray-Request": "two" },
+      }),
+    /adapter\.request\.headers must not contain duplicate header name "X-Ray-Request"/,
   );
 
   await assert.rejects(

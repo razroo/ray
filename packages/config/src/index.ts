@@ -1901,6 +1901,7 @@ function assertStringRecord(
 function assertHttpHeaderRecord(value: Record<string, string>, label: string): void {
   assertStringRecord(value, label);
 
+  const seenHeaderNames = new Set<string>();
   for (const [key, entry] of Object.entries(value)) {
     if (!HTTP_HEADER_NAME_PATTERN.test(key)) {
       throw new RayError(`${label} names must be valid HTTP header token strings`, {
@@ -1910,7 +1911,17 @@ function assertHttpHeaderRecord(value: Record<string, string>, label: string): v
       });
     }
 
-    if (reservedAdapterHeaderNames.has(key.toLowerCase())) {
+    const normalizedKey = key.toLowerCase();
+    if (seenHeaderNames.has(normalizedKey)) {
+      throw new RayError(`${label} must not contain duplicate header name "${key}"`, {
+        code: "config_validation_error",
+        status: 500,
+        details: { key },
+      });
+    }
+    seenHeaderNames.add(normalizedKey);
+
+    if (reservedAdapterHeaderNames.has(normalizedKey)) {
       throw new RayError(`${label}.${key} must not use a transport-controlled header name`, {
         code: "config_validation_error",
         status: 500,

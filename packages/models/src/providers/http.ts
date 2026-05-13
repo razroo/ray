@@ -265,6 +265,7 @@ function assertHeaderRecord(value: Record<string, string> | undefined, label: st
     throw new RangeError(`${label} must contain at most ${MAX_ADAPTER_HEADERS} entries`);
   }
 
+  const seenHeaderNames = new Set<string>();
   for (const [key, entry] of entries) {
     assertSafeRecordKey(key, label);
 
@@ -280,7 +281,13 @@ function assertHeaderRecord(value: Record<string, string> | undefined, label: st
       throw new TypeError(`${label} names must be valid bounded HTTP token strings`);
     }
 
-    if (reservedAdapterHeaderNames.has(key.toLowerCase())) {
+    const normalizedKey = key.toLowerCase();
+    if (seenHeaderNames.has(normalizedKey)) {
+      throw new TypeError(`${label} must not contain duplicate header name "${key}"`);
+    }
+    seenHeaderNames.add(normalizedKey);
+
+    if (reservedAdapterHeaderNames.has(normalizedKey)) {
       throw new TypeError(`${label}.${key} must not use a transport-controlled header name`);
     }
 
