@@ -682,11 +682,17 @@ export async function createModelStagePlan(options: {
   sourcePath?: string;
   sha256?: string;
 }): Promise<ModelStagePlan> {
-  const cwd = path.resolve(options.cwd);
-  const env = await loadStageEnvironment(options.env ?? process.env, options.envFile);
+  const cwdValue = normalizeOptionalPath(options.cwd, "cwd");
+  const configPath = normalizeOptionalPath(options.configPath, "configPath");
+  const envFile = options.envFile ? normalizeOptionalPath(options.envFile, "envFile") : undefined;
+  const cwd = path.resolve(cwdValue);
+  const env = await loadStageEnvironment(
+    options.env ?? process.env,
+    envFile ? path.resolve(cwd, envFile) : undefined,
+  );
   const loaded = await loadRayConfig({
     cwd,
-    configPath: options.configPath,
+    configPath,
     env,
   });
   const adapter = loaded.config.model.adapter;
@@ -763,7 +769,7 @@ export async function createModelStagePlan(options: {
   ]);
 
   const planWithoutCommands: Omit<ModelStagePlan, "commands"> = {
-    configPath: loaded.configPath ?? path.resolve(cwd, options.configPath),
+    configPath: loaded.configPath ?? path.resolve(cwd, configPath),
     profile: loaded.config.profile,
     modelId: loaded.config.model.id,
     adapterKind: adapter.kind,

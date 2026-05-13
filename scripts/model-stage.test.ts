@@ -339,6 +339,33 @@ test("createModelStagePlan reads staging sources and checksums from env", async 
   assert.match(plan.commands.join("\n"), /timeout 30s df -Pm '\/var\/lib\/ray\/models'/);
 });
 
+test("createModelStagePlan rejects oversized direct paths before loading inputs", async () => {
+  const oversizedPath = "x".repeat(4_097);
+
+  await assert.rejects(
+    createModelStagePlan({
+      cwd: oversizedPath,
+      configPath: "./examples/config/ray.1b.generic.public.json",
+    }),
+    /cwd must be at most 4096 bytes/,
+  );
+  await assert.rejects(
+    createModelStagePlan({
+      cwd: repoRoot,
+      configPath: oversizedPath,
+    }),
+    /configPath must be at most 4096 bytes/,
+  );
+  await assert.rejects(
+    createModelStagePlan({
+      cwd: repoRoot,
+      configPath: "./examples/config/ray.1b.generic.public.json",
+      envFile: oversizedPath,
+    }),
+    /envFile must be at most 4096 bytes/,
+  );
+});
+
 test("createModelStagePlan rejects oversized staging paths before rendering commands", async () => {
   await assert.rejects(
     createModelStagePlan({
