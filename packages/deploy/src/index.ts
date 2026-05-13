@@ -4126,7 +4126,11 @@ async function collectGatewayRuntimePreflight(
       : undefined;
     const versionPreflight =
       strictFilesystem && runtimeKind
-        ? await collectGatewayRuntimeVersionPreflight(runtimeBinary, runtimeKind)
+        ? await collectGatewayRuntimeVersionPreflight(
+            runtimeBinary,
+            runtimeKind,
+            serviceUserIdentity,
+          )
         : runtimeKind
           ? { gatewayRuntimeKind: runtimeKind }
           : {};
@@ -4161,54 +4165,66 @@ async function collectGatewayRuntimePreflight(
 async function collectGatewayRuntimeVersionPreflight(
   runtimeBinary: string,
   runtimeKind: GatewayRuntimeKind,
+  serviceUserIdentity: ServiceUserIdentity | undefined,
 ): Promise<Partial<DeploymentPreflight>> {
+  const serviceIdentity = resolveChildProcessServiceIdentity(serviceUserIdentity);
+  const basePreflight = {
+    gatewayRuntimeKind: runtimeKind,
+  };
+
   return await new Promise<Partial<DeploymentPreflight>>((resolve) => {
-    execFile(
-      runtimeBinary,
-      ["--version"],
-      {
-        timeout: GATEWAY_RUNTIME_VERSION_TIMEOUT_MS,
-        maxBuffer: GATEWAY_RUNTIME_VERSION_MAX_BUFFER_BYTES,
-        windowsHide: true,
-      },
-      (error, stdout, stderr) => {
-        const output = `${stdout}\n${stderr}`.trim();
-        const basePreflight = {
-          gatewayRuntimeKind: runtimeKind,
-        };
+    try {
+      execFile(
+        runtimeBinary,
+        ["--version"],
+        {
+          timeout: GATEWAY_RUNTIME_VERSION_TIMEOUT_MS,
+          maxBuffer: GATEWAY_RUNTIME_VERSION_MAX_BUFFER_BYTES,
+          windowsHide: true,
+          ...(serviceIdentity ? serviceIdentity : {}),
+        },
+        (error, stdout, stderr) => {
+          const output = `${stdout}\n${stderr}`.trim();
 
-        if (error) {
+          if (error) {
+            resolve({
+              ...basePreflight,
+              gatewayRuntimeVersionStatus: "unreadable",
+              gatewayRuntimeVersionError: output
+                ? `${toErrorMessage(error)}; output: ${truncateRuntimeVersionOutput(output)}`
+                : toErrorMessage(error),
+            });
+            return;
+          }
+
+          const parsed = parseRuntimeVersion(output);
+          if (!parsed) {
+            resolve({
+              ...basePreflight,
+              gatewayRuntimeVersionStatus: "unreadable",
+              gatewayRuntimeVersionError: output
+                ? `could not parse version output: ${truncateRuntimeVersionOutput(output)}`
+                : "runtime produced no version output",
+            });
+            return;
+          }
+
+          const minimum = minimumGatewayRuntimeVersion(runtimeKind);
           resolve({
             ...basePreflight,
-            gatewayRuntimeVersionStatus: "unreadable",
-            gatewayRuntimeVersionError: output
-              ? `${toErrorMessage(error)}; output: ${truncateRuntimeVersionOutput(output)}`
-              : toErrorMessage(error),
+            gatewayRuntimeVersion: parsed.raw,
+            gatewayRuntimeVersionStatus:
+              compareRuntimeVersions(parsed.tuple, minimum.tuple) < 0 ? "too_old" : "ok",
           });
-          return;
-        }
-
-        const parsed = parseRuntimeVersion(output);
-        if (!parsed) {
-          resolve({
-            ...basePreflight,
-            gatewayRuntimeVersionStatus: "unreadable",
-            gatewayRuntimeVersionError: output
-              ? `could not parse version output: ${truncateRuntimeVersionOutput(output)}`
-              : "runtime produced no version output",
-          });
-          return;
-        }
-
-        const minimum = minimumGatewayRuntimeVersion(runtimeKind);
-        resolve({
-          ...basePreflight,
-          gatewayRuntimeVersion: parsed.raw,
-          gatewayRuntimeVersionStatus:
-            compareRuntimeVersions(parsed.tuple, minimum.tuple) < 0 ? "too_old" : "ok",
-        });
-      },
-    );
+        },
+      );
+    } catch (error) {
+      resolve({
+        ...basePreflight,
+        gatewayRuntimeVersionStatus: "unreadable",
+        gatewayRuntimeVersionError: toErrorMessage(error),
+      });
+    }
   });
 }
 

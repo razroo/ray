@@ -3460,6 +3460,70 @@ test("loadAndDiagnoseDeployment reports an executable gateway runtime in strict 
   assert.match(versionDiagnostic.message, /Bun version 1\.3\.9/);
 });
 
+test("loadAndDiagnoseDeployment runs gateway runtime version probe as the service user", async (t) => {
+  if (
+    typeof process.getuid !== "function" ||
+    typeof process.getgid !== "function" ||
+    process.getuid() === 0
+  ) {
+    return;
+  }
+
+  const tempDir = await mkRayDeployTempDir("ray-deploy-runtime-service-user-");
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const runtimePath = join(tempDir, "bun");
+  await writeFile(runtimePath, "#!/bin/sh\necho 1.3.9\n");
+  await chmod(runtimePath, 0o755);
+
+  const serviceUid = process.getuid() === 65_534 ? 65_533 : 65_534;
+  const serviceGid = process.getgid() === 65_534 ? 65_533 : 65_534;
+  const passwdPath = join(tempDir, "passwd");
+  const groupPath = join(tempDir, "group");
+  await writeFile(
+    passwdPath,
+    `rayprobe:x:${serviceUid}:${serviceGid}:Ray probe:/nonexistent:/usr/sbin/nologin\n`,
+  );
+  await writeFile(groupPath, `rayprobe:x:${serviceGid}:\n`);
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const originalGetuid = process.getuid;
+  Object.defineProperty(process, "getuid", {
+    value: () => 0,
+    configurable: true,
+  });
+  t.after(() => {
+    Object.defineProperty(process, "getuid", {
+      value: originalGetuid,
+      configurable: true,
+    });
+  });
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    runtimeBinary: runtimePath,
+    user: "rayprobe",
+    strictFilesystem: true,
+    hostFiles: {
+      passwd: passwdPath,
+      group: groupPath,
+    },
+  });
+
+  assert.equal(inspected.preflight.gatewayRuntimeBinaryStatus, "found");
+  assert.equal(inspected.preflight.gatewayRuntimeVersionStatus, "unreadable");
+  assert.match(
+    inspected.preflight.gatewayRuntimeVersionError ?? "",
+    /EPERM|operation not permitted|permission/i,
+  );
+});
+
 test("loadAndDiagnoseDeployment errors when the configured Bun runtime is too old in strict mode", async (t) => {
   const tempDir = await mkRayDeployTempDir("ray-deploy-runtime-old-");
   t.after(async () => {
