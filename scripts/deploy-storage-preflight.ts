@@ -8,7 +8,12 @@ const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_STORAGE_PATHS = 16;
 const MAX_STORAGE_PATH_BYTES = 4_096;
 const BYTES_PER_MIB = 1024 * 1024;
-const DEFAULT_STORAGE_PATHS = ["/srv/ray", "/var/lib/ray", "/tmp"] as const;
+const DEFAULT_STORAGE_PATHS = [
+  "/srv/ray",
+  "/srv/ray/.ray/bun-install-cache",
+  "/var/lib/ray",
+  "/tmp",
+] as const;
 
 interface DeployStoragePreflightArgs {
   paths: string[];
@@ -37,7 +42,7 @@ Usage:
   bun ./scripts/deploy-storage-preflight.ts [options]
 
 Options:
-  --path <path>          Absolute path to check. Repeatable. Defaults to /srv/ray, /var/lib/ray, and /tmp.
+  --path <path>          Absolute path to check. Repeatable. Defaults to /srv/ray, /srv/ray/.ray/bun-install-cache, /var/lib/ray, and /tmp.
   --min-free-mib <n>    Required free storage in MiB. Default: RAY_DEPLOY_MIN_FREE_STORAGE_MIB or ${DEFAULT_MIN_FREE_STORAGE_MIB}. Use 0 to skip the threshold.
   --json                Print machine-readable summary JSON.
   -h, --help            Show this help.

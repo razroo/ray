@@ -17,7 +17,12 @@ function missingPathError(path: string): NodeJS.ErrnoException {
 }
 
 test("parseArgs accepts deploy storage preflight options", () => {
-  assert.deepEqual(parseArgs([], {}).paths, ["/srv/ray", "/var/lib/ray", "/tmp"]);
+  assert.deepEqual(parseArgs([], {}).paths, [
+    "/srv/ray",
+    "/srv/ray/.ray/bun-install-cache",
+    "/var/lib/ray",
+    "/tmp",
+  ]);
   assert.equal(parseArgs([], { RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "2048" }).minFreeStorageMiB, 2048);
   assert.deepEqual(parseArgs(["--path", "/srv/ray", "--path", "/var/lib/ray"]).paths, [
     "/srv/ray",
