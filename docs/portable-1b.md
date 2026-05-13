@@ -164,8 +164,9 @@ timeout 60s sudo /usr/local/bin/bun run deploy:storage -- --ray-env-file /etc/ra
 It checks the checkout, repo-scoped Bun install cache, Ray state, `/tmp`, and
 `/var/tmp` volumes with the same `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` threshold
 used by the deploy workflow without shell-sourcing the rest of the env file.
-When the env file sets a custom `RAY_MODEL_PATH`, `RAY_LLAMA_CPP_MODEL_PATH`, or
-`RAY_ASYNC_QUEUE_STORAGE_DIR`, the preflight checks those volumes too.
+When the env file sets a custom `RAY_MODEL_PATH`, `RAY_LLAMA_CPP_MODEL_PATH`,
+`RAY_LLAMA_CPP_BINARY_PATH`, or `RAY_ASYNC_QUEUE_STORAGE_DIR`, the preflight
+checks those volumes too.
 Use the same `sudo /usr/local/bin/bun run` form for other manual helpers that
 load a root-owned `0600` `/etc/ray/ray.env`.
 
@@ -182,9 +183,9 @@ timeout 300s sudo /usr/local/bin/bun run model:stage:1b:8gb:generic -- --ray-env
 Add `--sha256 <expected-hex-digest>` when the model source publishes a checksum.
 Add `--binary-sha256 <expected-hex-digest>` when the compiled `llama-server`
 source publishes or produces a checksum. The output includes the resolved binary
-and model paths, install commands, checksum commands, model target storage
-headroom, GGUF header check, ownership, service-user execute/read tests, a
-bounded `llama-server --help` startup probe, and generated launch-flag support
+and model paths, install commands, checksum commands, binary and model target
+storage headroom, GGUF header check, ownership, service-user execute/read tests,
+a bounded `llama-server --help` startup probe, and generated launch-flag support
 checks. Printed install commands copy through same-directory `.ray-stage-*` temp
 files and only move them into place after the temp artifact passes service-user
 checks, so an interrupted copy does not replace the last working binary or GGUF.
@@ -202,9 +203,11 @@ Use `--apply` on the VPS after reviewing those source paths to verify and stage
 the configured `llama-server` and GGUF into their resolved target locations,
 then run the staged `llama-server --help` and launch-flag support probe as the
 service identity. Apply checks that the model source has a GGUF header and that
-the model target filesystem can hold the GGUF source while keeping a 256 MiB
-post-copy reserve, then verifies that the generated service identity can read
-the installed GGUF.
+the binary target filesystem can hold the `llama-server` source while keeping a
+64 MiB post-copy reserve and the model target filesystem can hold the GGUF
+source while keeping a 256 MiB post-copy reserve, then verifies that the
+generated service identity can execute the installed binary and read the
+installed GGUF.
 
 Set `RAY_AUTH_API_KEY_ENV` when an existing secret manager or deployment workflow
 uses a different environment variable for the Bearer keys.

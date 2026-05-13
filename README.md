@@ -367,9 +367,11 @@ Use `--apply` on the VPS after reviewing those source paths to verify and copy
 the artifacts into the resolved binary and model locations with the generated
 service ownership, then run the staged `llama-server --help` and launch-flag
 support probe as that service identity. Apply checks that the model source has a
-GGUF header and that the target model filesystem can hold the GGUF source while
-keeping a 256 MiB post-copy reserve, then verifies that the generated service
-identity can read the installed GGUF.
+GGUF header, that the binary target filesystem can hold the `llama-server`
+source while keeping a 64 MiB post-copy reserve, and that the target model
+filesystem can hold the GGUF source while keeping a 256 MiB post-copy reserve,
+then verifies that the generated service identity can execute the installed
+binary and read the installed GGUF.
 
 Deployment walkthrough: [examples/deploy/vps/README.md](examples/deploy/vps/README.md).
 

@@ -893,7 +893,7 @@ function validateDeployWorkflowStoragePreflight(
       workflowPath,
       line: workflowLineNumber(lines, "RAY_DEPLOY_MIN_FREE_STORAGE_MIB"),
       message:
-        "VPS deploy workflow must preflight remote free storage before package bootstrap, repository sync follow-up, config/unit/Caddy writes, Bun install-cache use, Bun production install, and env-file model or async-queue storage use so small VPS disks fail clearly before deploy work fills them.",
+        "VPS deploy workflow must preflight remote free storage before package bootstrap, repository sync follow-up, config/unit/Caddy writes, Bun install-cache use, Bun production install, and env-file model, llama.cpp binary, or async-queue storage use so small VPS disks fail clearly before deploy work fills them.",
     },
   ];
 }
@@ -1918,6 +1918,32 @@ function collectDocumentedBunRunScripts(line: string): string[] {
   );
 }
 
+function validateDeployStoragePreflightDoc(
+  docPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (
+    !contents.includes("deploy:storage") ||
+    !contents.includes("RAY_MODEL_PATH") ||
+    !contents.includes("RAY_ASYNC_QUEUE_STORAGE_DIR") ||
+    contents.includes("RAY_LLAMA_CPP_BINARY_PATH")
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "runtime_doc_deploy_storage_binary_path_missing",
+      docPath,
+      line: workflowLineNumber(lines, "RAY_MODEL_PATH"),
+      message:
+        "Runtime docs that list env-file deploy storage paths must include RAY_LLAMA_CPP_BINARY_PATH along with model and async-queue paths so manual small-VPS preflight guidance matches the deploy-storage helper.",
+    },
+  ];
+}
+
 async function validateRuntimeDoc(
   docPath: string,
   options: {
@@ -1931,6 +1957,8 @@ async function validateRuntimeDoc(
   const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
   const lines = contents.split(/\r?\n/);
   let inShellBlock = false;
+
+  diagnostics.push(...validateDeployStoragePreflightDoc(docPath, contents, lines));
 
   if (options.enforceReleaseGateSmokeDocs) {
     for (const scriptName of RELEASE_GATE_SMOKE_SCRIPTS) {

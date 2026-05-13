@@ -133,6 +133,58 @@ test("validatePackageRuntimeCoverage requires config and Bun cache storage prefl
   assert.ok(codes.includes("deploy_storage_bun_cache_preflight_missing"));
 });
 
+test("validatePackageRuntimeCoverage requires deploy storage docs to mention binary path", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-storage-doc-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  await mkdir(path.join(tempDir, "docs"), { recursive: true });
+  const rootPackageJson = path.join(tempDir, "package.json");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify(
+      {
+        name: "ray-test",
+        packageManager: "bun@1.3.9",
+        engines: {
+          bun: ">=1.3.0",
+        },
+        scripts: {
+          "deploy:storage": "bun ./scripts/deploy-storage-preflight.ts",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    path.join(tempDir, "docs", "portable-1b.md"),
+    [
+      "# Portable 1B",
+      "",
+      "```bash",
+      "timeout 60s sudo /usr/local/bin/bun run deploy:storage -- --ray-env-file /etc/ray/ray.env",
+      "```",
+      "",
+      "When the env file sets a custom `RAY_MODEL_PATH`, `RAY_LLAMA_CPP_MODEL_PATH`, or",
+      "`RAY_ASYNC_QUEUE_STORAGE_DIR`, the preflight checks those volumes too.",
+      "",
+    ].join("\n"),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson],
+  });
+  const codes = summary.results.flatMap((result) =>
+    result.diagnostics.map((diagnostic) => diagnostic.code),
+  );
+
+  assert.equal(summary.ok, false);
+  assert.ok(codes.includes("runtime_doc_deploy_storage_binary_path_missing"));
+});
+
 test("validatePackageRuntimeCoverage requires model staging headroom guards", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-model-stage-"));
   t.after(async () => {

@@ -133,8 +133,8 @@ The current repo makes this concrete through:
 
 - profile-specific concurrency, queue, token, cache, and timeout budgets for 4 GB and 8 GB VPS classes
 - backend-aware health, warmup, llama.cpp launch presets, and GGUF path/header diagnostics
-- deploy preflight checks and generated systemd memory/swap ceilings for systemd host and generated unit-file readiness, Caddy host and generated reverse-proxy config readiness, profile architecture compatibility, backend binary startup, memory fit, service-user access, Bun runtime compatibility, checkout storage headroom, model files, async queue storage, and swap cushion
-- model staging plans that install the llama.cpp binary and GGUF, verify source GGUF headers and target storage headroom, then smoke-test the staged binary before service restart
+- deploy preflight checks and generated systemd memory/swap ceilings for systemd host and generated unit-file readiness, Caddy host and generated reverse-proxy config readiness, profile architecture compatibility, backend binary startup, memory fit, service-user access, Bun runtime compatibility, checkout storage headroom, model files, llama.cpp binary path storage, async queue storage, and swap cushion
+- model staging plans that install the llama.cpp binary and GGUF, verify source GGUF headers and binary/GGUF target storage headroom, then smoke-test the staged binary before service restart
 
 ### Degradation is a feature, not an afterthought
 
