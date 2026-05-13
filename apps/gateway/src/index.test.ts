@@ -1006,6 +1006,55 @@ test("startGateway exposes liveness while provider warmup fails in the backgroun
   );
 });
 
+test("startGateway stops async queue work when the HTTP listener fails", async (t) => {
+  const blocker = createServer();
+  await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", resolve));
+  t.after(() => blocker.close());
+
+  const address = blocker.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  let started = 0;
+  let stopped = 0;
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    server: {
+      port: address.port,
+    },
+  });
+  const jobQueue = {
+    async start() {
+      started += 1;
+    },
+    async stop() {
+      stopped += 1;
+    },
+  } as unknown as DurableInferenceQueue;
+  const logger = {
+    debug() {},
+    info() {},
+    warn() {},
+    error() {},
+  } as unknown as Logger;
+
+  await assert.rejects(
+    () =>
+      startGateway({
+        config,
+        jobQueue,
+        logger,
+      }),
+    (error: unknown) => {
+      assert.equal((error as { code?: string }).code, "EADDRINUSE");
+      return true;
+    },
+  );
+
+  assert.equal(started, 1);
+  assert.equal(stopped, 1);
+});
+
 test("gateway logs client request failures as warnings without stacks", async (t) => {
   const config = createDefaultConfig("tiny");
   const warnings: Array<{ message: string; fields: LogFields | undefined }> = [];

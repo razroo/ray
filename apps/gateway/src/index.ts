@@ -1104,9 +1104,12 @@ export async function startGateway(options: StartGatewayOptions): Promise<Gatewa
 
   await gateway.jobQueue?.start();
 
-  await new Promise<void>((resolve) => {
-    gateway.server.listen(config.server.port, config.server.host, resolve);
-  });
+  try {
+    await listenGatewayServer(gateway.server, config.server.port, config.server.host);
+  } catch (error) {
+    await stopGatewayJobQueueAfterListenFailure(gateway, error);
+    throw error;
+  }
 
   gateway.logger.info("gateway listening", {
     host: config.server.host,
@@ -1123,6 +1126,41 @@ export async function startGateway(options: StartGatewayOptions): Promise<Gatewa
   });
 
   return gateway;
+}
+
+function listenGatewayServer(server: Server, port: number, host: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      server.off("error", onError);
+      server.off("listening", onListening);
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onListening = () => {
+      cleanup();
+      resolve();
+    };
+
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, host);
+  });
+}
+
+async function stopGatewayJobQueueAfterListenFailure(
+  gateway: GatewayServer,
+  listenError: unknown,
+): Promise<void> {
+  try {
+    await gateway.jobQueue?.stop();
+  } catch (error) {
+    gateway.logger.error("gateway async queue cleanup failed after listen error", {
+      listenError: serializeError(listenError),
+      error: serializeError(error),
+    });
+  }
 }
 
 export async function stopGateway(
