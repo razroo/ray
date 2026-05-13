@@ -999,6 +999,38 @@ test("readCgroupMemorySnapshot skips oversized cgroup memory files", async (t) =
   assert.equal(snapshot, undefined);
 });
 
+test("readCgroupMemorySnapshot skips oversized direct paths before telemetry reads", async () => {
+  const oversizedPath = "x".repeat(4_097);
+  const directPathCalls: string[] = [];
+
+  const directPathSnapshot = await readCgroupMemorySnapshot({
+    procSelfCgroupPath: oversizedPath,
+    readTextFile: async (filePath) => {
+      directPathCalls.push(filePath);
+      throw new Error("unexpected read");
+    },
+  });
+
+  assert.equal(directPathSnapshot, undefined);
+  assert.deepEqual(directPathCalls, []);
+
+  const rootCalls: string[] = [];
+  const rootSnapshot = await readCgroupMemorySnapshot({
+    procSelfCgroupPath: "self-cgroup",
+    cgroupV2Root: oversizedPath,
+    readTextFile: async (filePath) => {
+      rootCalls.push(filePath);
+      if (filePath === "self-cgroup") {
+        return "0::/ray.slice/ray-gateway.service\n";
+      }
+      throw new Error("unexpected telemetry read");
+    },
+  });
+
+  assert.equal(rootSnapshot, undefined);
+  assert.deepEqual(rootCalls, ["self-cgroup"]);
+});
+
 test("readCgroupCpuSnapshot reads unified cgroup cpu.stat files", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-cgroup-cpu-"));
   t.after(async () => {
@@ -1087,6 +1119,25 @@ test("readCgroupCpuSnapshot skips oversized cgroup cpu files", async (t) => {
   assert.equal(snapshot, undefined);
 });
 
+test("readCgroupCpuSnapshot skips oversized proc cgroup paths before telemetry reads", async () => {
+  const calls: string[] = [];
+
+  const snapshot = await readCgroupCpuSnapshot({
+    procSelfCgroupPath: "self-cgroup",
+    cgroupV2Root: "/sys/fs/cgroup",
+    readTextFile: async (filePath) => {
+      calls.push(filePath);
+      if (filePath === "self-cgroup") {
+        return `0::/${"a".repeat(4_097)}\n`;
+      }
+      throw new Error("unexpected telemetry read");
+    },
+  });
+
+  assert.equal(snapshot, undefined);
+  assert.deepEqual(calls, ["self-cgroup"]);
+});
+
 test("readLinuxPressureSnapshot reads bounded PSI files", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-linux-pressure-"));
   t.after(async () => {
@@ -1140,6 +1191,23 @@ test("readLinuxPressureSnapshot skips oversized PSI files", async (t) => {
 
   assert.equal(snapshot?.memory, undefined);
   assert.equal(snapshot?.cpu?.someAvg10, 1);
+});
+
+test("readLinuxPressureSnapshot skips oversized direct paths before telemetry reads", async () => {
+  const calls: string[] = [];
+
+  const snapshot = await readLinuxPressureSnapshot({
+    memoryPressurePath: "x".repeat(4_097),
+    cpuPressurePath: "cpu-pressure",
+    readTextFile: async (filePath) => {
+      calls.push(filePath);
+      return "some avg10=1.00 avg60=1.00 avg300=1.00 total=1\n";
+    },
+  });
+
+  assert.equal(snapshot?.memory, undefined);
+  assert.equal(snapshot?.cpu?.someAvg10, 1);
+  assert.deepEqual(calls, ["cpu-pressure"]);
 });
 
 test("runtime collected metrics refresh live queue and cgroup pressure gauges", async () => {

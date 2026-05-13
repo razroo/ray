@@ -219,6 +219,7 @@ const CGROUP_V1_CPU_ROOT = "/sys/fs/cgroup/cpu";
 const PROC_SELF_CGROUP = "/proc/self/cgroup";
 const PROC_PRESSURE_MEMORY = "/proc/pressure/memory";
 const PROC_PRESSURE_CPU = "/proc/pressure/cpu";
+const MAX_CGROUP_PATH_BYTES = 4_096;
 const MAX_CGROUP_TEXT_FILE_BYTES = 64 * 1024;
 const CGROUP_MEMORY_CACHE_TTL_MS = 250;
 const CGROUP_CPU_CACHE_TTL_MS = 250;
@@ -1353,6 +1354,14 @@ function resolveSaturationRatio(value: number, capacity: number): number {
   return Number((value / Math.max(1, capacity)).toFixed(4));
 }
 
+function isBoundedRuntimeTelemetryPath(value: string): boolean {
+  return (
+    value.length > 0 &&
+    !/[\0\r\n]/.test(value) &&
+    Buffer.byteLength(value, "utf8") <= MAX_CGROUP_PATH_BYTES
+  );
+}
+
 async function readTextFileBounded(filePath: string, maxBytes: number): Promise<string> {
   let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
 
@@ -1607,11 +1616,23 @@ function parseLinuxPressureFile(raw: string): LinuxPressureResourceSnapshot | un
 }
 
 function resolveCgroupFile(root: string, cgroupPath: string, fileName: string): string | undefined {
+  if (
+    !isBoundedRuntimeTelemetryPath(root) ||
+    !isBoundedRuntimeTelemetryPath(cgroupPath) ||
+    !isBoundedRuntimeTelemetryPath(fileName)
+  ) {
+    return undefined;
+  }
+
   const resolvedRoot = path.resolve(root);
   const relativeCgroupPath = cgroupPath === "/" ? "" : cgroupPath.replace(/^\/+/, "");
   const resolvedPath = path.resolve(resolvedRoot, relativeCgroupPath, fileName);
 
   if (resolvedPath === resolvedRoot || !resolvedPath.startsWith(`${resolvedRoot}${path.sep}`)) {
+    return undefined;
+  }
+
+  if (!isBoundedRuntimeTelemetryPath(resolvedPath)) {
     return undefined;
   }
 
@@ -1771,10 +1792,15 @@ export async function readCgroupMemorySnapshot(
   options: CgroupMemoryReaderOptions = {},
 ): Promise<CgroupMemorySnapshot | undefined> {
   const readTextFile = options.readTextFile ?? defaultReadTextFile;
+  const procSelfCgroupPath = options.procSelfCgroupPath ?? PROC_SELF_CGROUP;
   let procCgroup: string;
 
+  if (!isBoundedRuntimeTelemetryPath(procSelfCgroupPath)) {
+    return undefined;
+  }
+
   try {
-    procCgroup = await readTextFile(options.procSelfCgroupPath ?? PROC_SELF_CGROUP);
+    procCgroup = await readTextFile(procSelfCgroupPath);
   } catch {
     return undefined;
   }
@@ -1905,10 +1931,15 @@ export async function readCgroupCpuSnapshot(
   options: CgroupCpuReaderOptions = {},
 ): Promise<CgroupCpuSnapshot | undefined> {
   const readTextFile = options.readTextFile ?? defaultReadTextFile;
+  const procSelfCgroupPath = options.procSelfCgroupPath ?? PROC_SELF_CGROUP;
   let procCgroup: string;
 
+  if (!isBoundedRuntimeTelemetryPath(procSelfCgroupPath)) {
+    return undefined;
+  }
+
   try {
-    procCgroup = await readTextFile(options.procSelfCgroupPath ?? PROC_SELF_CGROUP);
+    procCgroup = await readTextFile(procSelfCgroupPath);
   } catch {
     return undefined;
   }
@@ -1958,13 +1989,19 @@ export async function readLinuxPressureSnapshot(
   options: LinuxPressureReaderOptions = {},
 ): Promise<LinuxPressureSnapshot | undefined> {
   const readTextFile = options.readTextFile ?? defaultReadTextFile;
+  const memoryPressurePath = options.memoryPressurePath ?? PROC_PRESSURE_MEMORY;
+  const cpuPressurePath = options.cpuPressurePath ?? PROC_PRESSURE_CPU;
   const [memory, cpu] = await Promise.all([
-    readTextFile(options.memoryPressurePath ?? PROC_PRESSURE_MEMORY)
-      .then(parseLinuxPressureFile)
-      .catch(() => undefined),
-    readTextFile(options.cpuPressurePath ?? PROC_PRESSURE_CPU)
-      .then(parseLinuxPressureFile)
-      .catch(() => undefined),
+    isBoundedRuntimeTelemetryPath(memoryPressurePath)
+      ? readTextFile(memoryPressurePath)
+          .then(parseLinuxPressureFile)
+          .catch(() => undefined)
+      : undefined,
+    isBoundedRuntimeTelemetryPath(cpuPressurePath)
+      ? readTextFile(cpuPressurePath)
+          .then(parseLinuxPressureFile)
+          .catch(() => undefined)
+      : undefined,
   ]);
   const snapshot: LinuxPressureSnapshot = {
     ...(memory ? { memory } : {}),
