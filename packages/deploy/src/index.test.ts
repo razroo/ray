@@ -768,6 +768,34 @@ test("diagnoseConfig warns when scheduler token buffers are high for gateway mem
   assert.match(diagnostic.message, /generated gateway MemoryMax of 896 MiB/);
 });
 
+test("diagnoseConfig warns when request body buffering is high for gateway memory", () => {
+  const defaultConfig = createDefaultConfig("1b");
+  assert.ok(
+    !diagnoseConfig(defaultConfig, process.env).some(
+      (entry) => entry.code === "request_body_buffer_high_for_gateway_memory",
+    ),
+  );
+
+  const config = mergeConfig(defaultConfig, {
+    server: {
+      requestBodyLimitBytes: 1_048_576,
+    },
+  });
+
+  const diagnostic = diagnoseConfig(config, process.env).find(
+    (entry) => entry.code === "request_body_buffer_high_for_gateway_memory",
+  );
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /server\.requestBodyLimitBytes/);
+  assert.match(diagnostic.message, /scheduler\.maxQueue \(40\)/);
+  assert.match(diagnostic.message, /scheduler\.concurrency \(1\)/);
+  assert.match(diagnostic.message, /41 MiB/);
+  assert.match(diagnostic.message, /RAY_REQUEST_BODY_LIMIT_BYTES/);
+  assert.match(diagnostic.message, /generated gateway MemoryMax of 896 MiB/);
+});
+
 test("diagnoseConfig warns when scheduler concurrency exceeds host CPUs", () => {
   const config = mergeConfig(createDefaultConfig("vps"), {
     scheduler: {

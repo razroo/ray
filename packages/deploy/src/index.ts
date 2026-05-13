@@ -297,6 +297,8 @@ const GATEWAY_RATE_LIMIT_KEY_STORE_WARN_RATIO = 0.02;
 const GATEWAY_RATE_LIMIT_KEY_STORE_WARN_MIN_MIB = 16;
 const GATEWAY_SCHEDULER_BUFFER_WARN_RATIO = 0.15;
 const GATEWAY_SCHEDULER_BUFFER_WARN_MIN_MIB = 96;
+const GATEWAY_REQUEST_BODY_BUFFER_WARN_RATIO = 0.04;
+const GATEWAY_REQUEST_BODY_BUFFER_WARN_MIN_MIB = 32;
 const ASYNC_QUEUE_PERSISTED_JOB_FILE_LIMIT_BYTES = 2 * 1024 * 1024;
 const MIN_WORKING_DIRECTORY_FREE_MIB = 512;
 const LLAMA_CPP_MEMORY_HIGH_RATIO = 0.9;
@@ -1613,10 +1615,24 @@ function resolveGatewaySchedulerBufferWarnThresholdMiB(gatewayMemoryMaxMiB: numb
   );
 }
 
+function resolveGatewayRequestBodyBufferWarnThresholdMiB(gatewayMemoryMaxMiB: number): number {
+  return Math.max(
+    GATEWAY_REQUEST_BODY_BUFFER_WARN_MIN_MIB,
+    Math.floor(gatewayMemoryMaxMiB * GATEWAY_REQUEST_BODY_BUFFER_WARN_RATIO),
+  );
+}
+
 function estimateSchedulerBufferMiB(config: Pick<RayConfig, "scheduler">): number {
   return bytesToMiBRoundedUp(
     (config.scheduler.maxQueuedTokens + config.scheduler.maxInflightTokens) *
       SCHEDULER_BYTES_PER_TOKEN,
+  );
+}
+
+function estimateRequestBodyBufferMiB(config: Pick<RayConfig, "scheduler" | "server">): number {
+  return bytesToMiBRoundedUp(
+    config.server.requestBodyLimitBytes *
+      (config.scheduler.maxQueue + config.scheduler.concurrency),
   );
 }
 
@@ -2967,6 +2983,21 @@ export function diagnoseConfig(
         level: "warn",
         code: "scheduler_token_buffer_high_for_gateway_memory",
         message: `scheduler.maxQueuedTokens and scheduler.maxInflightTokens allow about ${formatMiB(schedulerBufferMiB)} of token-buffered gateway work, above the ${formatMiB(schedulerBufferWarnThresholdMiB)} small-VPS warning threshold for the generated gateway MemoryMax of ${formatMiB(gatewayMemoryMaxMiB)}. Lower the scheduler token budgets so queued and in-flight work cannot crowd out request handling, cache, and graceful degradation headroom.`,
+      });
+    }
+  }
+
+  {
+    const gatewayMemoryMaxMiB = resolveGatewayMemoryControls(config).memoryMaxMiB;
+    const requestBodyBufferMiB = estimateRequestBodyBufferMiB(config);
+    const requestBodyBufferWarnThresholdMiB =
+      resolveGatewayRequestBodyBufferWarnThresholdMiB(gatewayMemoryMaxMiB);
+
+    if (requestBodyBufferMiB > requestBodyBufferWarnThresholdMiB) {
+      diagnostics.push({
+        level: "warn",
+        code: "request_body_buffer_high_for_gateway_memory",
+        message: `server.requestBodyLimitBytes allows about ${formatMiB(requestBodyBufferMiB)} of request-body buffering at scheduler.maxQueue (${config.scheduler.maxQueue}) plus scheduler.concurrency (${config.scheduler.concurrency}), above the ${formatMiB(requestBodyBufferWarnThresholdMiB)} small-VPS warning threshold for the generated gateway MemoryMax of ${formatMiB(gatewayMemoryMaxMiB)}. Lower RAY_REQUEST_BODY_LIMIT_BYTES so slow or oversized uploads cannot crowd out request handling, cache, and graceful degradation headroom.`,
       });
     }
   }
