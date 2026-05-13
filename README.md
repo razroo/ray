@@ -305,6 +305,10 @@ The GitHub VPS workflow also honors `RAY_DEPLOY_DOMAIN`,
 `RAY_GATEWAY_RUNTIME_BINARY`, and `RAY_DEPLOY_CADDY_BINARY` from
 `RAY_ENV_FILE_CONTENTS` before repository variables when wiring remote
 prerequisites, doctor, render, readiness waits, and generated service commands.
+When those CLI-consumed settings come from repository variables instead, the
+workflow appends the resolved non-secret values to `/etc/ray/ray.env` when they
+are absent so later manual `doctor`, `render`, and `model:stage` runs read the
+same service user, domain, memory target, and runtime paths.
 
 Create `/var/lib/ray/models` on the VPS and put the GGUF at `RAY_MODEL_PATH`
 before starting the generated llama.cpp service or running doctor.

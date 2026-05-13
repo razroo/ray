@@ -730,12 +730,27 @@ jobs:
           else
             printf 'RAY_LOG_LEVEL=info\n' | timeout 60s $SUDO install -m 0600 -o root -g root /dev/stdin /etc/ray/ray.env
           fi
-          if [ -n "${RAY_DEPLOY_MEMORY_MIB:-}" ] && ! timeout 30s $SUDO grep -Eq '^RAY_DEPLOY_MEMORY_MIB=' /etc/ray/ray.env; then
+
+          append_ray_env_default() {
+            local key="$1"
+            local value="$2"
+            if [ -z "${value:-}" ]; then
+              return 0
+            fi
+            if timeout 30s $SUDO grep -Eq "^${key}=" /etc/ray/ray.env; then
+              return 0
+            fi
             if [ -s /etc/ray/ray.env ] && [ -n "$(timeout 30s $SUDO tail -c 1 /etc/ray/ray.env)" ]; then
               printf '\n' | timeout 60s $SUDO tee -a /etc/ray/ray.env >/dev/null
             fi
-            printf 'RAY_DEPLOY_MEMORY_MIB=%s\n' "$RAY_DEPLOY_MEMORY_MIB" | timeout 60s $SUDO tee -a /etc/ray/ray.env >/dev/null
-          fi
+            printf '%s=%s\n' "$key" "$value" | timeout 60s $SUDO tee -a /etc/ray/ray.env >/dev/null
+          }
+
+          append_ray_env_default RAY_DEPLOY_SERVICE_USER "$SERVICE_USER"
+          append_ray_env_default RAY_DEPLOY_DOMAIN "$DEPLOY_DOMAIN"
+          append_ray_env_default RAY_DEPLOY_MEMORY_MIB "${RAY_DEPLOY_MEMORY_MIB:-}"
+          append_ray_env_default RAY_GATEWAY_RUNTIME_BINARY "$GATEWAY_RUNTIME_BINARY"
+          append_ray_env_default RAY_DEPLOY_CADDY_BINARY "${CADDY_BINARY:-}"
           timeout 60s $SUDO chmod 600 /etc/ray/ray.env
 
           LLAMA_CONFIG_STATUS=0

@@ -778,6 +778,48 @@ function validateDeployWorkflowReadyTimeoutEnvOverride(
   ];
 }
 
+function validateDeployWorkflowResolvedEnvPersistence(
+  workflowPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  if (!contents.includes("/etc/ray/ray.env")) {
+    return [];
+  }
+
+  if (
+    contents.includes("append_ray_env_default()") &&
+    contents.includes('append_ray_env_default RAY_DEPLOY_SERVICE_USER "$SERVICE_USER"') &&
+    contents.includes('append_ray_env_default RAY_DEPLOY_DOMAIN "$DEPLOY_DOMAIN"') &&
+    contents.includes(
+      'append_ray_env_default RAY_DEPLOY_MEMORY_MIB "${RAY_DEPLOY_MEMORY_MIB:-}"',
+    ) &&
+    contents.includes(
+      'append_ray_env_default RAY_GATEWAY_RUNTIME_BINARY "$GATEWAY_RUNTIME_BINARY"',
+    ) &&
+    contents.includes('append_ray_env_default RAY_DEPLOY_CADDY_BINARY "${CADDY_BINARY:-}"') &&
+    contents.includes("timeout 30s $SUDO grep -Eq") &&
+    contents.includes("timeout 60s $SUDO tee -a /etc/ray/ray.env")
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "workflow_resolved_env_persistence_missing",
+      workflowPath,
+      line: workflowLineNumber(lines, "/etc/ray/ray.env"),
+      message:
+        "VPS deploy workflow must persist resolved non-secret deploy settings into /etc/ray/ray.env when absent so later doctor, render, and model-stage runs use the same service user, domain, memory target, and runtime paths.",
+    },
+  ];
+}
+
 function validateDeployWorkflowCaddyBinaryGuards(
   workflowPath: string,
   contents: string,
@@ -1382,6 +1424,7 @@ async function validateWorkflow(
   diagnostics.push(...validateDeployWorkflowCaddyEnvOverrides(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowMemoryEnvOverride(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowReadyTimeoutEnvOverride(workflowPath, contents, lines));
+  diagnostics.push(...validateDeployWorkflowResolvedEnvPersistence(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowCaddyBinaryGuards(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowServiceUserGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowNumericServiceUserGuard(workflowPath, contents, lines));
