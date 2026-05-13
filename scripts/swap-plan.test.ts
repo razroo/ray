@@ -40,6 +40,7 @@ test("parseArgs rejects malformed swap plan argv", () => {
   assert.throws(() => parseArgs(["--path"]), /--path requires a value/);
   assert.throws(() => parseArgs(["--path", "swapfile"]), /swap path must be absolute/);
   assert.throws(() => parseArgs(["--path", "/var/lib/ray/swap file"]), /must not contain/);
+  assert.throws(() => parseArgs(["--path", `/${"a".repeat(4096)}`]), /at most 4096 bytes/);
   assert.throws(() => parseArgs(["--path", "/"]), /must point to a file/);
   assert.throws(() => parseArgs(["--size-mib", "0"]), /integer from 1/);
   assert.throws(() => parseArgs(["--size-mib", "65537"]), /integer from 1/);

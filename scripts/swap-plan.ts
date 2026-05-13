@@ -11,6 +11,7 @@ const MAX_MIN_FREE_AFTER_MIB = 65_536;
 const MAX_SWAPPINESS = 200;
 const MAX_CLI_ARGS = 10;
 const MAX_CLI_ARG_BYTES = 4_096;
+const MAX_SWAP_PATH_BYTES = 4_096;
 const MIN_CREATE_TIMEOUT_SECONDS = 300;
 const MAX_CREATE_TIMEOUT_SECONDS = 7_200;
 const CREATE_TIMEOUT_MIB_PER_SECOND = 8;
@@ -91,6 +92,10 @@ function normalizeSwapPath(value: string): string {
 
   if (/[\0\r\n\s]/.test(value)) {
     throw new Error("swap path must not contain whitespace or control characters");
+  }
+
+  if (Buffer.byteLength(value, "utf8") > MAX_SWAP_PATH_BYTES) {
+    throw new Error(`swap path must be at most ${MAX_SWAP_PATH_BYTES} bytes`);
   }
 
   if (!path.posix.isAbsolute(value)) {
