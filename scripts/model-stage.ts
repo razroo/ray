@@ -22,6 +22,7 @@ import { parseEnvironmentFile } from "../packages/deploy/src/cli.ts";
 import {
   buildLlamaCppLaunchArgs,
   estimateLlamaCppMemoryFit,
+  evaluateLlamaCppSystemdMemoryFloor,
 } from "../packages/deploy/src/index.ts";
 
 const DEFAULT_CONFIG_PATH = "./examples/config/ray.sub1b.public.json";
@@ -673,6 +674,12 @@ export async function createModelStagePlan(options: {
     resolvePresetMemoryBudgetMiB(adapter.launchProfile.preset);
   const memoryBudgetSource =
     memoryBudgetOverrideMiB !== undefined ? ("env" as const) : ("config" as const);
+  const memoryFloor = evaluateLlamaCppSystemdMemoryFloor(loaded.config, memoryBudgetMiB);
+  if (!memoryFloor.ok) {
+    throw new Error(
+      `The ${memoryBudgetMiB} MiB ${memoryBudgetSource} memory target cannot fit the generated systemd cgroup floor before staging: system reserve=${memoryFloor.reserveMiB} MiB, gateway MemoryMax=${memoryFloor.gatewayMemoryMaxMiB} MiB, and llama.cpp backend minimum MemoryMax=${memoryFloor.backendMinimumMemoryMaxMiB} MiB. Raise RAY_DEPLOY_MEMORY_MIB before staging this VPS profile.`,
+    );
+  }
   const memoryEstimate = estimateLlamaCppMemoryFit(loaded.config, adapter.launchProfile, {
     memoryBudgetMiB,
     memoryBudgetSource: memoryBudgetSource === "env" ? "override" : "preset",

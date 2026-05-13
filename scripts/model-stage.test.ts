@@ -353,6 +353,19 @@ test("createModelStagePlan rejects malformed deploy memory env", async () => {
   );
 });
 
+test("createModelStagePlan rejects deploy memory targets below generated cgroup floors", async () => {
+  await assert.rejects(
+    createModelStagePlan({
+      cwd: repoRoot,
+      configPath: "./examples/config/ray.1b.generic.public.json",
+      env: {
+        RAY_DEPLOY_MEMORY_MIB: "1024",
+      },
+    }),
+    /cannot fit the generated systemd cgroup floor before staging/,
+  );
+});
+
 test("formatTextPlan prints an operator-ready staging plan", async () => {
   const plan = await createModelStagePlan({
     cwd: repoRoot,
@@ -561,7 +574,7 @@ test("checkModelStageSources rejects GGUF sources that exceed the memory target"
     cwd: tempDir,
     configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
     env: {
-      RAY_DEPLOY_MEMORY_MIB: "1024",
+      RAY_DEPLOY_MEMORY_MIB: "2300",
     },
     binarySourcePath: "./llama-server",
     sourcePath: "./model.gguf",

@@ -204,6 +204,15 @@ export interface LlamaCppMemoryEstimate {
   projectedWorkingSetMiB: number;
 }
 
+export interface LlamaCppSystemdMemoryFloor {
+  memoryBudgetMiB: number;
+  reserveMiB: number;
+  gatewayMemoryMaxMiB: number;
+  backendMinimumMemoryMaxMiB: number;
+  minimumMemoryBudgetMiB: number;
+  ok: boolean;
+}
+
 export interface DiagnoseConfigOptions {
   preflight?: DeploymentPreflight;
   strictFilesystem?: boolean;
@@ -1397,6 +1406,26 @@ function getPresetMemoryBudgetMiB(preset: LlamaCppLaunchProfile["preset"]): numb
 
 function resolveSystemReserveMiB(memoryBudgetMiB: number): number {
   return Math.max(MIN_SYSTEM_RESERVE_MIB, Math.ceil(memoryBudgetMiB * SYSTEM_RESERVE_RATIO));
+}
+
+export function evaluateLlamaCppSystemdMemoryFloor(
+  config: RayConfig,
+  memoryBudgetMiB: number,
+): LlamaCppSystemdMemoryFloor {
+  assertPositiveIntegerAtMost(memoryBudgetMiB, "memoryBudgetMiB", MAX_SYSTEMD_MEMORY_MIB);
+
+  const reserveMiB = resolveSystemReserveMiB(memoryBudgetMiB);
+  const gatewayMemoryMaxMiB = resolveGatewayMemoryControls(config).memoryMaxMiB;
+  const minimumMemoryBudgetMiB = reserveMiB + gatewayMemoryMaxMiB + LLAMA_CPP_MIN_MEMORY_MAX_MIB;
+
+  return {
+    memoryBudgetMiB,
+    reserveMiB,
+    gatewayMemoryMaxMiB,
+    backendMinimumMemoryMaxMiB: LLAMA_CPP_MIN_MEMORY_MAX_MIB,
+    minimumMemoryBudgetMiB,
+    ok: memoryBudgetMiB >= minimumMemoryBudgetMiB,
+  };
 }
 
 function collectHostCpuCount(): number | undefined {
@@ -3281,23 +3310,20 @@ export function diagnoseConfig(
       }
 
       if (preflight?.memoryBudgetMiB !== undefined) {
-        const reserveMiB = resolveSystemReserveMiB(preflight.memoryBudgetMiB);
-        const gatewayMemoryMaxMiB = resolveGatewayMemoryControls(config).memoryMaxMiB;
-        const minimumMemoryBudgetMiB =
-          reserveMiB + gatewayMemoryMaxMiB + LLAMA_CPP_MIN_MEMORY_MAX_MIB;
+        const memoryFloor = evaluateLlamaCppSystemdMemoryFloor(config, preflight.memoryBudgetMiB);
 
-        if (preflight.memoryBudgetMiB < minimumMemoryBudgetMiB) {
+        if (!memoryFloor.ok) {
           diagnostics.push({
             level: "error",
             code: "memory_budget_below_systemd_floor",
             message: `The ${formatMiB(
               preflight.memoryBudgetMiB,
             )} deploy memory target cannot fit the generated systemd cgroup floor: system reserve=${formatMiB(
-              reserveMiB,
+              memoryFloor.reserveMiB,
             )}, gateway MemoryMax=${formatMiB(
-              gatewayMemoryMaxMiB,
+              memoryFloor.gatewayMemoryMaxMiB,
             )}, and llama.cpp backend minimum MemoryMax=${formatMiB(
-              LLAMA_CPP_MIN_MEMORY_MAX_MIB,
+              memoryFloor.backendMinimumMemoryMaxMiB,
             )}. Raise RAY_DEPLOY_MEMORY_MIB or --memory-mib before rendering this VPS profile.`,
           });
         }
