@@ -232,6 +232,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("release_gate_public_auth_validate_missing"));
   assert.ok(codes.includes("release_gate_tiny_gateway_smoke_missing"));
   assert.ok(codes.includes("release_gate_tiny_public_smoke_missing"));
+  assert.ok(codes.includes("release_gate_tiny_async_smoke_missing"));
   assert.equal(codes.filter((code) => code === "non_bun_package_manager_script").length, 4);
   assert.equal(codes.filter((code) => code === "non_bun_workflow_package_manager").length, 2);
   assert.ok(codes.includes("workflow_bun_install_frozen_lockfile_missing"));

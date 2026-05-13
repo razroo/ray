@@ -1,4 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
 import { createServer as createTcpServer } from "node:net";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadRayConfig } from "../packages/config/src/index.ts";
@@ -9,11 +11,12 @@ import type { Logger } from "../packages/telemetry/src/index.ts";
 const DEFAULT_CONFIG_PATH = "./examples/config/ray.tiny.json";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_TIMEOUT_MS = 10_000;
-const MAX_CLI_ARGS = 14;
+const MAX_CLI_ARGS = 16;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_TEXT_BYTES = 256 * 1024;
 const PUBLIC_SAFETY_API_KEY = "ray-gateway-smoke";
+const ASYNC_QUEUE_JOB_INPUT = "Async queue smoke.";
 
 export interface GatewaySmokeArgs {
   cwd: string;
@@ -22,6 +25,7 @@ export interface GatewaySmokeArgs {
   port?: number;
   timeoutMs: number;
   publicSafety: boolean;
+  asyncQueue: boolean;
   json: boolean;
   help: boolean;
 }
@@ -35,9 +39,18 @@ export interface GatewayPublicSafetySummary {
   rateLimitStatus: number;
 }
 
+export interface GatewayAsyncQueueSummary {
+  createStatus: number;
+  jobId: string;
+  location: string;
+  finalStatus: string;
+  pollCount: number;
+  outputChars: number;
+}
+
 export interface GatewaySmokeSummary {
   ok: boolean;
-  mode: "basic" | "public-safety";
+  mode: "basic" | "public-safety" | "async-queue";
   configPath: string;
   profile: string;
   modelId: string;
@@ -49,6 +62,7 @@ export interface GatewaySmokeSummary {
   inferStatus: number;
   outputChars: number;
   publicSafety?: GatewayPublicSafetySummary;
+  asyncQueue?: GatewayAsyncQueueSummary;
 }
 
 interface JsonResponse {
@@ -73,6 +87,7 @@ Options:
   --port <port>        TCP port to bind. Default: reserve an ephemeral port.
   --timeout-ms <ms>    Per-check timeout budget. Default: ${DEFAULT_TIMEOUT_MS}
   --public-safety      Enable auth and rate limiting, then verify public-facing route guards.
+  --async-queue        Enable the durable queue, then verify /v1/jobs submit and status flow.
   --json               Print machine-readable summary JSON.
   -h, --help           Show this help.
 `;
@@ -141,6 +156,7 @@ export function parseArgs(argv: string[]): GatewaySmokeArgs {
     host: DEFAULT_HOST,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     publicSafety: false,
+    asyncQueue: false,
     json: false,
     help: false,
   };
@@ -192,6 +208,11 @@ export function parseArgs(argv: string[]): GatewaySmokeArgs {
       continue;
     }
 
+    if (current === "--async-queue") {
+      args.asyncQueue = true;
+      continue;
+    }
+
     if (current === "-h" || current === "--help") {
       args.help = true;
       continue;
@@ -202,6 +223,10 @@ export function parseArgs(argv: string[]): GatewaySmokeArgs {
     }
 
     throw new Error(`Unexpected positional argument: ${current ?? ""}`);
+  }
+
+  if (args.publicSafety && args.asyncQueue) {
+    throw new Error("--public-safety and --async-queue cannot be combined");
   }
 
   return args;
@@ -272,6 +297,23 @@ function enablePublicSafetyConfig(config: RayConfig): RayConfig {
   return next;
 }
 
+function enableAsyncQueueConfig(config: RayConfig, storageDir: string): RayConfig {
+  const next = structuredClone(config) as RayConfig;
+  next.asyncQueue.enabled = true;
+  next.asyncQueue.storageDir = storageDir;
+  next.asyncQueue.maxJobs = 16;
+  next.asyncQueue.minFreeStorageMiB = 1;
+  next.asyncQueue.completedTtlMs = 60_000;
+  next.asyncQueue.pollIntervalMs = 20;
+  next.asyncQueue.dispatchConcurrency = 1;
+  next.asyncQueue.maxAttempts = 2;
+  next.asyncQueue.callbackTimeoutMs = 1_000;
+  next.asyncQueue.maxCallbackAttempts = 2;
+  next.asyncQueue.callbackAllowPrivateNetwork = false;
+  next.asyncQueue.callbackAllowedHosts = [];
+  return next;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -282,6 +324,44 @@ function requireInferenceOutput(payload: unknown): string {
   }
 
   return payload.output;
+}
+
+function requireStringField(payload: unknown, field: string, label: string): string {
+  if (!isRecord(payload) || typeof payload[field] !== "string" || payload[field].length === 0) {
+    throw new Error(`${label} returned a JSON payload without a non-empty ${field} string`);
+  }
+
+  return payload[field];
+}
+
+function requireAsyncJobAccepted(payload: unknown): {
+  id: string;
+  status: string;
+  location: string;
+} {
+  const id = requireStringField(payload, "id", "/v1/jobs");
+  const status = requireStringField(payload, "status", "/v1/jobs");
+  const location = requireStringField(payload, "location", "/v1/jobs");
+
+  if (!location.startsWith("/v1/jobs/")) {
+    throw new Error(`/v1/jobs returned unexpected location: ${location}`);
+  }
+
+  return { id, status, location };
+}
+
+function requireAsyncJobSnapshot(payload: unknown): {
+  status: string;
+  output?: string;
+} {
+  const status = requireStringField(payload, "status", "async job status");
+  const result = isRecord(payload) ? payload.result : undefined;
+  const output = isRecord(result) && typeof result.output === "string" ? result.output : undefined;
+
+  return {
+    status,
+    ...(output !== undefined ? { output } : {}),
+  };
 }
 
 async function fetchJson(
@@ -507,6 +587,81 @@ async function smokePublicSafety(options: { baseUrl: string; timeoutMs: number }
   };
 }
 
+async function smokeAsyncQueue(options: {
+  baseUrl: string;
+  timeoutMs: number;
+}): Promise<GatewayAsyncQueueSummary> {
+  const createResponse = await fetchJson(
+    `${options.baseUrl}/v1/jobs`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        input: ASYNC_QUEUE_JOB_INPUT,
+        maxTokens: 16,
+      }),
+    },
+    options.timeoutMs,
+    "/v1/jobs",
+  );
+
+  if (createResponse.status !== 202) {
+    throw new Error(`/v1/jobs returned HTTP ${createResponse.status}, expected HTTP 202`);
+  }
+
+  const accepted = requireAsyncJobAccepted(createResponse.payload);
+  let pollCount = 0;
+  let lastStatus = accepted.status;
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < options.timeoutMs) {
+    const remainingMs = Math.max(1, options.timeoutMs - (Date.now() - startedAt));
+    const statusResponse = await fetchJson(
+      `${options.baseUrl}${accepted.location}`,
+      { method: "GET" },
+      Math.min(1_000, remainingMs),
+      accepted.location,
+    );
+
+    if (statusResponse.status !== 200) {
+      throw new Error(
+        `${accepted.location} returned HTTP ${statusResponse.status}, expected HTTP 200`,
+      );
+    }
+
+    pollCount += 1;
+    const snapshot = requireAsyncJobSnapshot(statusResponse.payload);
+    lastStatus = snapshot.status;
+
+    if (snapshot.status === "succeeded") {
+      if (!snapshot.output || snapshot.output.length === 0) {
+        throw new Error("async queue smoke completed without a non-empty result output string");
+      }
+
+      return {
+        createStatus: createResponse.status,
+        jobId: accepted.id,
+        location: accepted.location,
+        finalStatus: snapshot.status,
+        pollCount,
+        outputChars: snapshot.output.length,
+      };
+    }
+
+    if (snapshot.status === "failed" || snapshot.status === "cancelled") {
+      throw new Error(`async queue smoke finished with status ${snapshot.status}`);
+    }
+
+    await sleep(25);
+  }
+
+  throw new Error(
+    `async queue smoke did not finish within ${options.timeoutMs}ms; last status was ${lastStatus}`,
+  );
+}
+
 export async function smokeGateway(options: {
   cwd: string;
   configPath: string;
@@ -514,10 +669,13 @@ export async function smokeGateway(options: {
   port?: number;
   timeoutMs?: number;
   publicSafety?: boolean;
+  asyncQueue?: boolean;
 }): Promise<GatewaySmokeSummary> {
   const cwd = path.resolve(options.cwd);
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const configEnv = Object.create(null) as NodeJS.ProcessEnv;
+  let asyncStorageDir: string | undefined;
+  let gateway: Awaited<ReturnType<typeof startGateway>> | undefined;
   const loaded = await loadRayConfig({
     cwd,
     configPath: options.configPath,
@@ -525,20 +683,28 @@ export async function smokeGateway(options: {
   });
   const port = options.port ?? (await reserveTcpPort(options.host));
   const baseConfig = cloneConfigForSmoke(loaded.config, options.host, port);
-  const config = options.publicSafety ? enablePublicSafetyConfig(baseConfig) : baseConfig;
+  if (options.asyncQueue) {
+    asyncStorageDir = await mkdtemp(path.join(tmpdir(), "ray-gateway-smoke-async-"));
+  }
+  const config = options.publicSafety
+    ? enablePublicSafetyConfig(baseConfig)
+    : options.asyncQueue && asyncStorageDir
+      ? enableAsyncQueueConfig(baseConfig, asyncStorageDir)
+      : baseConfig;
   const baseUrl = `http://${formatHostForUrl(options.host)}:${port}`;
-  const gateway = await startGateway({
-    config,
-    configPath: loaded.configPath,
-    logger: silentLogger,
-    env: options.publicSafety ? { RAY_API_KEYS: PUBLIC_SAFETY_API_KEY } : configEnv,
-    warmupRetry: {
-      initialDelayMs: 100,
-      maxDelayMs: 250,
-    },
-  });
 
   try {
+    gateway = await startGateway({
+      config,
+      configPath: loaded.configPath,
+      logger: silentLogger,
+      env: options.publicSafety ? { RAY_API_KEYS: PUBLIC_SAFETY_API_KEY } : configEnv,
+      warmupRetry: {
+        initialDelayMs: 100,
+        maxDelayMs: 250,
+      },
+    });
+
     if (options.publicSafety) {
       const publicSafety = await smokePublicSafety({
         baseUrl,
@@ -559,6 +725,42 @@ export async function smokeGateway(options: {
         inferStatus: publicSafety.inferStatus,
         outputChars: publicSafety.outputChars,
         publicSafety: publicSafety.summary,
+      };
+    }
+
+    if (options.asyncQueue) {
+      const livez = await fetchJson(
+        `${baseUrl}/livez`,
+        { method: "GET" },
+        timeoutMs,
+        "/livez async queue",
+      );
+      assertStatusOk(livez, "/livez async queue");
+      const readyz = await waitForStatusOk(
+        `${baseUrl}/readyz`,
+        { method: "GET" },
+        timeoutMs,
+        "/readyz async queue",
+      );
+      const asyncQueue = await smokeAsyncQueue({
+        baseUrl,
+        timeoutMs,
+      });
+
+      return {
+        ok: true,
+        mode: "async-queue",
+        configPath: loaded.configPath ?? path.resolve(cwd, options.configPath),
+        profile: config.profile,
+        modelId: config.model.id,
+        host: options.host,
+        port,
+        baseUrl,
+        livezStatus: livez.status,
+        readyzStatus: readyz.status,
+        inferStatus: asyncQueue.createStatus,
+        outputChars: asyncQueue.outputChars,
+        asyncQueue,
       };
     }
 
@@ -604,7 +806,12 @@ export async function smokeGateway(options: {
       outputChars: output.length,
     };
   } finally {
-    await stopGateway(gateway, { timeoutMs: 1_000 });
+    if (gateway) {
+      await stopGateway(gateway, { timeoutMs: 1_000 });
+    }
+    if (asyncStorageDir) {
+      await rm(asyncStorageDir, { recursive: true, force: true });
+    }
   }
 }
 
@@ -625,8 +832,15 @@ export function formatTextSummary(cwd: string, summary: GatewaySmokeSummary): st
     `- model: ${summary.modelId}`,
     `- livez: HTTP ${summary.livezStatus}`,
     `- readyz: HTTP ${summary.readyzStatus}`,
-    `- infer: HTTP ${summary.inferStatus}, outputChars=${summary.outputChars}`,
   ];
+
+  if (summary.asyncQueue) {
+    lines.push(
+      `- async job: HTTP ${summary.asyncQueue.createStatus}, polls=${summary.asyncQueue.pollCount}, status=${summary.asyncQueue.finalStatus}, outputChars=${summary.asyncQueue.outputChars}`,
+    );
+  } else {
+    lines.push(`- infer: HTTP ${summary.inferStatus}, outputChars=${summary.outputChars}`);
+  }
 
   if (summary.publicSafety) {
     lines.push(
@@ -662,6 +876,7 @@ export async function runGatewaySmokeCli(
       ...(args.port ? { port: args.port } : {}),
       timeoutMs: args.timeoutMs,
       publicSafety: args.publicSafety,
+      asyncQueue: args.asyncQueue,
     });
 
     io.stdout.write(
