@@ -819,6 +819,35 @@ function validateDeployWorkflowRemoteBunCommandGuards(
   return diagnostics;
 }
 
+function validateDeployWorkflowBunVersionProbeGuards(
+  workflowPath: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+    if (
+      /(?:"\$binary"|\$binary|\/usr\/local\/bin\/bun|\bbun)\s+--version\b/.test(line) &&
+      !line.includes("timeout ")
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_bun_version_probe_unbounded",
+        workflowPath,
+        line: index + 1,
+        message:
+          "VPS deploy workflow Bun version probes must run under timeout so a broken runtime binary cannot hang deploy bootstrap before doctor runs.",
+      });
+    }
+  }
+
+  return diagnostics;
+}
+
 function validateDeployWorkflowRootCommandGuards(
   workflowPath: string,
   lines: string[],
@@ -976,6 +1005,7 @@ async function validateWorkflow(
   diagnostics.push(...validateDeployWorkflowServiceCommandGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRemoteBunInstallGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRemoteBunCommandGuards(workflowPath, lines));
+  diagnostics.push(...validateDeployWorkflowBunVersionProbeGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRootCommandGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRayEnvReadGuards(workflowPath, lines));
 
