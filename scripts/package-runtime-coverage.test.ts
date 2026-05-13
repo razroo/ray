@@ -328,6 +328,66 @@ test("validatePackageRuntimeCoverage matches release gate smoke steps exactly", 
   assert.ok(!codes.includes("release_gate_public_auth_validate_missing"));
 });
 
+test("validatePackageRuntimeCoverage requires release docs to list every tiny smoke", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-doc-smokes-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const rootPackageJson = path.join(tempDir, "package.json");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify(
+      {
+        name: "ray-test",
+        packageManager: "bun@1.3.9",
+        engines: {
+          bun: ">=1.3.0",
+        },
+        scripts: {
+          "release:gate": [
+            "RAY_API_KEYS=smoke bun run validate:config:public",
+            "bun run smoke:tiny",
+            "bun run smoke:tiny:public",
+            "bun run smoke:tiny:async",
+            "bun run smoke:tiny:public-async",
+          ].join(" && "),
+          "smoke:tiny": "bun ./scripts/gateway-smoke.ts",
+          "smoke:tiny:public": "bun ./scripts/gateway-smoke.ts --public-safety",
+          "smoke:tiny:async": "bun ./scripts/gateway-smoke.ts --async-queue",
+          "smoke:tiny:public-async": "bun ./scripts/gateway-smoke.ts --public-safety --async-queue",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    path.join(tempDir, "README.md"),
+    [
+      "# Ray test",
+      "",
+      "`release:gate` runs `bun run smoke:tiny`, `bun run smoke:tiny:public`, and `bun run smoke:tiny:async`.",
+      "",
+    ].join("\n"),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson],
+  });
+  const diagnostics = summary.results.flatMap((result) => result.diagnostics);
+
+  assert.equal(summary.ok, false);
+  assert.ok(
+    diagnostics.some(
+      (diagnostic) =>
+        diagnostic.code === "runtime_doc_release_gate_smoke_missing" &&
+        diagnostic.message.includes("smoke:tiny:public-async"),
+    ),
+  );
+});
+
 test("validatePackageRuntimeCoverage requires timeouts for VPS Ray helper aliases", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-vps-timeout-"));
   t.after(async () => {

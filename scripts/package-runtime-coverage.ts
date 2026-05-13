@@ -6,6 +6,7 @@ const DEFAULT_ROOT_PACKAGE_JSON = "package.json";
 const DEFAULT_WORKFLOW_DIR = ".github/workflows";
 const DEFAULT_RUNTIME_DOCS = [
   "README.md",
+  "docs/branch-protection.md",
   "examples/deploy/vps/README.md",
   "docs/integrations/razroo-email-ai.md",
   "docs/npm-publishing.md",
@@ -18,6 +19,18 @@ const VPS_TIMEOUT_DOCS = new Set([
   "docs/integrations/razroo-email-ai.md",
   "docs/portable-1b.md",
 ]);
+const RELEASE_GATE_DOCS = new Set([
+  "README.md",
+  "docs/branch-protection.md",
+  "docs/npm-publishing.md",
+  "docs/release-checklist.md",
+]);
+const RELEASE_GATE_SMOKE_SCRIPTS = [
+  "smoke:tiny",
+  "smoke:tiny:public",
+  "smoke:tiny:async",
+  "smoke:tiny:public-async",
+] as const;
 const MAX_CLI_ARGS = 8;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_PACKAGE_JSON_BYTES = 512 * 1024;
@@ -1751,6 +1764,7 @@ async function validateRuntimeDoc(
   docPath: string,
   options: {
     enforceExplicitRayServiceUnits: boolean;
+    enforceReleaseGateSmokeDocs: boolean;
     enforceVpsTimeouts: boolean;
     rootScripts: Record<string, string>;
   },
@@ -1759,6 +1773,19 @@ async function validateRuntimeDoc(
   const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
   const lines = contents.split(/\r?\n/);
   let inShellBlock = false;
+
+  if (options.enforceReleaseGateSmokeDocs) {
+    for (const scriptName of RELEASE_GATE_SMOKE_SCRIPTS) {
+      if (!contents.includes(scriptName)) {
+        diagnostics.push({
+          level: "error",
+          code: "runtime_doc_release_gate_smoke_missing",
+          docPath,
+          message: `Release-gate docs must mention bun run ${scriptName} so operator-facing quality docs stay aligned with release:gate.`,
+        });
+      }
+    }
+  }
 
   for (const [index, rawLine] of lines.entries()) {
     if (isShellFenceStart(rawLine)) {
@@ -2042,6 +2069,7 @@ export async function validatePackageRuntimeCoverage(options: {
       const docRelPath = displayPath(cwd, docPath);
       const { lineCount, diagnostics } = await validateRuntimeDoc(docPath, {
         enforceExplicitRayServiceUnits: VPS_TIMEOUT_DOCS.has(docRelPath),
+        enforceReleaseGateSmokeDocs: RELEASE_GATE_DOCS.has(docRelPath),
         enforceVpsTimeouts: VPS_TIMEOUT_DOCS.has(docRelPath),
         rootScripts,
       });
