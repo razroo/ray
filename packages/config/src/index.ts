@@ -449,6 +449,10 @@ function isLlamaCppLaunchPreset(value: string): value is LlamaCppLaunchProfile["
   return llamaCppLaunchPresets.has(value as LlamaCppLaunchProfile["preset"]);
 }
 
+function firstNonEmptyEnvValue(...values: Array<string | undefined>): string | undefined {
+  return values.find((value): value is string => isNonEmptyString(value));
+}
+
 function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig {
   const next = structuredClone(config);
   const host = env.RAY_HOST;
@@ -782,11 +786,13 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
 
   if (next.model.adapter.kind === "openai-compatible" || next.model.adapter.kind === "llama.cpp") {
     const adapterBaseUrl =
-      env.RAY_MODEL_BASE_URL ??
-      (next.model.adapter.kind === "llama.cpp" ? env.RAY_LLAMA_CPP_BASE_URL : undefined);
+      next.model.adapter.kind === "llama.cpp"
+        ? firstNonEmptyEnvValue(env.RAY_MODEL_BASE_URL, env.RAY_LLAMA_CPP_BASE_URL)
+        : env.RAY_MODEL_BASE_URL;
     const adapterModelRef =
-      env.RAY_MODEL_REF ??
-      (next.model.adapter.kind === "llama.cpp" ? env.RAY_LLAMA_CPP_MODEL_REF : undefined);
+      next.model.adapter.kind === "llama.cpp"
+        ? firstNonEmptyEnvValue(env.RAY_MODEL_REF, env.RAY_LLAMA_CPP_MODEL_REF)
+        : env.RAY_MODEL_REF;
     const adapterApiKeyEnv = env.RAY_MODEL_API_KEY_ENV;
     const adapterTimeoutMs = parsePositiveInteger(env.RAY_MODEL_TIMEOUT_MS, "RAY_MODEL_TIMEOUT_MS");
 
@@ -849,7 +855,7 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
   if (next.model.adapter.kind === "llama.cpp" && next.model.adapter.launchProfile) {
     const profile = next.model.adapter.launchProfile;
     const binaryPath = env.RAY_LLAMA_CPP_BINARY_PATH;
-    const modelPath = env.RAY_MODEL_PATH ?? env.RAY_LLAMA_CPP_MODEL_PATH;
+    const modelPath = firstNonEmptyEnvValue(env.RAY_MODEL_PATH, env.RAY_LLAMA_CPP_MODEL_PATH);
     const alias = env.RAY_LLAMA_CPP_ALIAS;
     const llamaHost = env.RAY_LLAMA_CPP_HOST;
     const llamaPort = parseTcpPort(env.RAY_LLAMA_CPP_PORT, "RAY_LLAMA_CPP_PORT");

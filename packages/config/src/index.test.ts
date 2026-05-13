@@ -453,6 +453,36 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
   assert.equal(loaded.config.rateLimit.trustProxyHeaders, false);
 });
 
+test("loadRayConfig falls back to llama.cpp aliases when generic model env values are blank", async () => {
+  const loaded = await loadRayConfig({
+    cwd: process.cwd(),
+    configPath: "./examples/config/ray.1b.json",
+    env: {
+      RAY_MODEL_BASE_URL: " ",
+      RAY_LLAMA_CPP_BASE_URL: "http://127.0.0.1:19090",
+      RAY_LLAMA_CPP_PORT: "19090",
+      RAY_MODEL_REF: "",
+      RAY_LLAMA_CPP_MODEL_REF: "local-blank-fallback",
+      RAY_MODEL_PATH: " ",
+      RAY_LLAMA_CPP_MODEL_PATH: "/models/local-blank-fallback.gguf",
+    },
+  });
+
+  if (
+    loaded.config.model.adapter.kind !== "llama.cpp" ||
+    !loaded.config.model.adapter.launchProfile
+  ) {
+    throw new Error("Expected a llama.cpp launch profile");
+  }
+
+  assert.equal(loaded.config.model.adapter.baseUrl, "http://127.0.0.1:19090");
+  assert.equal(loaded.config.model.adapter.modelRef, "local-blank-fallback");
+  assert.equal(
+    loaded.config.model.adapter.launchProfile.modelPath,
+    "/models/local-blank-fallback.gguf",
+  );
+});
+
 test("loadRayConfig brackets IPv6 llama.cpp launch hosts when deriving base URLs", async () => {
   const loaded = await loadRayConfig({
     cwd: process.cwd(),

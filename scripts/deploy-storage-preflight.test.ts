@@ -128,7 +128,16 @@ test("loadDeployStoragePreflightArgs applies bounded ray env file thresholds", a
   assert.equal(explicitPath.minFreeStorageMiB, 2048);
   assert.equal(explicitPath.minFreeStorageMiBSource, "env-file");
 
-  await writeFile(envFile, "RAY_LLAMA_CPP_MODEL_PATH=/mnt/ray/models/fallback.gguf\n");
+  await writeFile(
+    envFile,
+    [
+      'RAY_MODEL_PATH=" "',
+      "RAY_LLAMA_CPP_MODEL_PATH=/mnt/ray/models/fallback.gguf",
+      'RAY_LLAMA_CPP_BINARY_PATH=" "',
+      'RAY_ASYNC_QUEUE_STORAGE_DIR=""',
+      "",
+    ].join("\n"),
+  );
   const fromFallbackModelPath = await loadDeployStoragePreflightArgs(
     ["--ray-env-file", envFile],
     {},

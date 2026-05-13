@@ -174,6 +174,10 @@ function appendUniqueStoragePaths(paths: string[], extraPaths: string[]): string
   return merged;
 }
 
+function isNonEmptyEnvValue(value: string | undefined): value is string {
+  return value !== undefined && value.trim().length > 0;
+}
+
 export function parseArgs(
   argv: string[],
   env: NodeJS.ProcessEnv = process.env,
@@ -383,20 +387,23 @@ function parseDeployStorageEnvironmentFile(contents: string): DeployStorageEnvir
   const storagePaths: string[] = [];
   const configuredModelPath = values.get("RAY_MODEL_PATH");
   const fallbackModelPath = values.get("RAY_LLAMA_CPP_MODEL_PATH");
-  const modelPath = configuredModelPath ?? fallbackModelPath;
-  const modelPathLabel =
-    configuredModelPath === undefined ? "RAY_LLAMA_CPP_MODEL_PATH" : "RAY_MODEL_PATH";
-  if (modelPath !== undefined && modelPath.length > 0) {
+  const modelPath = isNonEmptyEnvValue(configuredModelPath)
+    ? configuredModelPath
+    : fallbackModelPath;
+  const modelPathLabel = isNonEmptyEnvValue(configuredModelPath)
+    ? "RAY_MODEL_PATH"
+    : "RAY_LLAMA_CPP_MODEL_PATH";
+  if (isNonEmptyEnvValue(modelPath)) {
     storagePaths.push(normalizeStoragePath(modelPath, modelPathLabel));
   }
 
   const llamaCppBinaryPath = values.get("RAY_LLAMA_CPP_BINARY_PATH");
-  if (llamaCppBinaryPath !== undefined && llamaCppBinaryPath.length > 0) {
+  if (isNonEmptyEnvValue(llamaCppBinaryPath)) {
     storagePaths.push(normalizeStoragePath(llamaCppBinaryPath, "RAY_LLAMA_CPP_BINARY_PATH"));
   }
 
   const asyncQueueStorageDir = values.get("RAY_ASYNC_QUEUE_STORAGE_DIR");
-  if (asyncQueueStorageDir !== undefined && asyncQueueStorageDir.length > 0) {
+  if (isNonEmptyEnvValue(asyncQueueStorageDir)) {
     storagePaths.push(normalizeStoragePath(asyncQueueStorageDir, "RAY_ASYNC_QUEUE_STORAGE_DIR"));
   }
 
