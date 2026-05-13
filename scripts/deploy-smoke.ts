@@ -16,6 +16,7 @@ const EXTRA_DEPLOY_CONFIG_FILES = ["ray.vps.json", "ray.balanced.json"] as const
 const STATIC_EXAMPLE_WORKING_DIRECTORY = "/srv/ray";
 const STATIC_EXAMPLE_CONFIG_PATH = "/etc/ray/ray.json";
 const MAX_CONFIG_FILES = 128;
+const MAX_DEPLOY_SMOKE_CONFIGS = MAX_CONFIG_FILES + EXTRA_DEPLOY_CONFIG_FILES.length;
 const MAX_CLI_ARGS = 24;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_STATIC_EXAMPLE_BYTES = 256 * 1024;
@@ -263,6 +264,10 @@ export async function smokeDeployConfigs(options: {
   systemdEnvFile: string;
   env?: NodeJS.ProcessEnv;
 }): Promise<DeploySmokeSummary> {
+  if (options.configPaths.length > MAX_DEPLOY_SMOKE_CONFIGS) {
+    throw new Error(`Deploy smoke can inspect at most ${MAX_DEPLOY_SMOKE_CONFIGS} config files`);
+  }
+
   const env = buildSmokeDeployEnv(options.env ?? process.env);
   const results: DeploySmokeResult[] = [];
 

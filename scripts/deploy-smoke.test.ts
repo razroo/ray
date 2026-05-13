@@ -88,6 +88,24 @@ test("collectPublicConfigPaths rejects excessive public configs while streaming"
   );
 });
 
+test("smokeDeployConfigs rejects excessive config inputs before rendering", async () => {
+  await assert.rejects(
+    () =>
+      smokeDeployConfigs({
+        cwd: process.cwd(),
+        configPaths: Array.from(
+          { length: 131 },
+          (_value, index) => `/tmp/ray-deploy-${index}.json`,
+        ),
+        domain: "ray.example.com",
+        runtimeBinary: "/usr/local/bin/bun",
+        serviceUser: "ray",
+        systemdEnvFile: "/etc/ray/ray.env",
+      }),
+    /at most 130 config files/,
+  );
+});
+
 test("smokeDeployConfigs renders every checked-in deploy smoke profile", async () => {
   const cwd = process.cwd();
   const configPaths = await collectDeploySmokeConfigPaths(cwd, "examples/config");
