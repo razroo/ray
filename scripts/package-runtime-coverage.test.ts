@@ -104,7 +104,23 @@ test("validatePackageRuntimeCoverage rejects excessive package inputs before sca
   );
 });
 
-test("validatePackageRuntimeCoverage rejects oversized direct paths before scanning", async () => {
+test("validatePackageRuntimeCoverage rejects malformed direct paths before scanning", async () => {
+  await assert.rejects(
+    () =>
+      validatePackageRuntimeCoverage({
+        cwd: " /srv/ray",
+        packageJsonPaths: [path.join(repoRoot, "package.json")],
+      }),
+    /cwd must be a path without surrounding whitespace/,
+  );
+  await assert.rejects(
+    () =>
+      validatePackageRuntimeCoverage({
+        cwd: repoRoot,
+        packageJsonPaths: ["package.json\n"],
+      }),
+    /packageJsonPaths\[0\] must not contain control characters/,
+  );
   await assert.rejects(
     () =>
       validatePackageRuntimeCoverage({

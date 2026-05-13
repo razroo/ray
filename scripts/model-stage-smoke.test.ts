@@ -55,7 +55,25 @@ test("smokeModelStages rejects excessive config inputs before rendering", async 
   );
 });
 
-test("smokeModelStages rejects oversized direct path inputs before rendering", async () => {
+test("smokeModelStages rejects malformed direct path inputs before rendering", async () => {
+  await assert.rejects(
+    () =>
+      smokeModelStages({
+        cwd: " /srv/ray",
+        configPaths: [],
+        serviceUser: "ray",
+      }),
+    /cwd must be a path without surrounding whitespace/,
+  );
+  await assert.rejects(
+    () =>
+      smokeModelStages({
+        cwd: process.cwd(),
+        configPaths: ["examples/config/ray.sub1b.public.json\n"],
+        serviceUser: "ray",
+      }),
+    /configPaths\[0\] must not contain control characters/,
+  );
   await assert.rejects(
     () =>
       smokeModelStages({

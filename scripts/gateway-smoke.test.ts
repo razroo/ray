@@ -143,7 +143,25 @@ test("fetchText refuses to follow smoke probe redirects", async (t) => {
   assert.equal(redirectedAuthorization, undefined);
 });
 
-test("smokeGateway rejects oversized direct paths before startup", async () => {
+test("smokeGateway rejects malformed direct paths before startup", async () => {
+  await assert.rejects(
+    () =>
+      smokeGateway({
+        cwd: " /srv/ray",
+        configPath: "./examples/config/ray.tiny.json",
+        host: "127.0.0.1",
+      }),
+    /cwd must be a path without surrounding whitespace/,
+  );
+  await assert.rejects(
+    () =>
+      smokeGateway({
+        cwd: repoRoot,
+        configPath: "./examples/config/ray.tiny.json\n",
+        host: "127.0.0.1",
+      }),
+    /configPath must not contain control characters/,
+  );
   await assert.rejects(
     () =>
       smokeGateway({

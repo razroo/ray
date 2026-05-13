@@ -106,7 +106,25 @@ test("validateDeployScriptCoverage rejects excessive config inputs before matchi
   );
 });
 
-test("validateDeployScriptCoverage rejects oversized direct paths before matching scripts", () => {
+test("validateDeployScriptCoverage rejects malformed direct paths before matching scripts", () => {
+  assert.throws(
+    () =>
+      validateDeployScriptCoverage({
+        cwd: " /srv/ray",
+        configPaths: [],
+        scripts: {},
+      }),
+    /cwd must be a path without surrounding whitespace/,
+  );
+  assert.throws(
+    () =>
+      validateDeployScriptCoverage({
+        cwd: process.cwd(),
+        configPaths: ["examples/config/ray.sub1b.public.json\n"],
+        scripts: {},
+      }),
+    /configPaths\[0\] must not contain control characters/,
+  );
   assert.throws(
     () =>
       validateDeployScriptCoverage({

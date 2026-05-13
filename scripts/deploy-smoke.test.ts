@@ -106,7 +106,31 @@ test("smokeDeployConfigs rejects excessive config inputs before rendering", asyn
   );
 });
 
-test("smokeDeployConfigs rejects oversized direct path inputs before rendering", async () => {
+test("smokeDeployConfigs rejects malformed direct path inputs before rendering", async () => {
+  await assert.rejects(
+    () =>
+      smokeDeployConfigs({
+        cwd: " /srv/ray",
+        configPaths: [],
+        domain: "ray.example.com",
+        runtimeBinary: "/usr/local/bin/bun",
+        serviceUser: "ray",
+        systemdEnvFile: "/etc/ray/ray.env",
+      }),
+    /cwd must be a path without surrounding whitespace/,
+  );
+  await assert.rejects(
+    () =>
+      smokeDeployConfigs({
+        cwd: process.cwd(),
+        configPaths: [],
+        domain: "ray.example.com",
+        runtimeBinary: "/usr/local/bin/bun\n",
+        serviceUser: "ray",
+        systemdEnvFile: "/etc/ray/ray.env",
+      }),
+    /runtimeBinary must not contain control characters/,
+  );
   await assert.rejects(
     () =>
       smokeDeployConfigs({

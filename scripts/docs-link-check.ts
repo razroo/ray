@@ -107,6 +107,10 @@ function assertDocsPathValue(value: unknown, label: string): asserts value is st
     throw new Error(`${label} must not contain control characters`);
   }
 
+  if (value.trim() !== value) {
+    throw new Error(`${label} must be a path without surrounding whitespace`);
+  }
+
   if (Buffer.byteLength(value, "utf8") > MAX_DISCOVERY_PATH_BYTES) {
     throw new Error(`${label} must be at most ${MAX_DISCOVERY_PATH_BYTES} bytes`);
   }

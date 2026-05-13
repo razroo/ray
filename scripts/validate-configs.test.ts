@@ -76,7 +76,11 @@ test("collectConfigPaths rejects excessive configs while streaming", async (t) =
   );
 });
 
-test("collectConfigPaths rejects oversized direct paths before reading directories", async () => {
+test("collectConfigPaths rejects malformed direct paths before reading directories", async () => {
+  await assert.rejects(
+    () => collectConfigPaths(process.cwd(), " examples/config"),
+    /configDir must be a path without surrounding whitespace/,
+  );
   await assert.rejects(
     () => collectConfigPaths(process.cwd(), `configs/${"a".repeat(4096)}`),
     /configDir must be at most 4096 bytes/,
@@ -97,7 +101,15 @@ test("validateConfigFiles rejects excessive config inputs before rendering", asy
   );
 });
 
-test("validateConfigFiles rejects oversized direct paths before rendering", async () => {
+test("validateConfigFiles rejects malformed direct paths before rendering", async () => {
+  await assert.rejects(
+    () =>
+      validateConfigFiles({
+        cwd: process.cwd(),
+        configPaths: ["examples/config/ray.tiny.json\n"],
+      }),
+    /configPaths\[0\] must not contain control characters/,
+  );
   await assert.rejects(
     () =>
       validateConfigFiles({
