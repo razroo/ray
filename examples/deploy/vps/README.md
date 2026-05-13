@@ -439,9 +439,9 @@ passes `RAY_DEPLOY_CADDY_BINARY` through remote doctor, render, and generated
 Caddyfile validation when a custom Caddy path is configured. Missing API keys,
 missing or corrupt GGUF files,
 memory-fit errors, exhausted async queue storage reserves, unsupported gateway
-runtimes, low checkout free space for the Bun production install, generated
-systemd unit verification, and generated Caddyfile validation fail before
-systemd tries to start the generated units. The
+runtimes, unsupported generated llama.cpp launch flags, low checkout free space
+for the Bun production install, generated systemd unit verification, and
+generated Caddyfile validation fail before systemd tries to start the generated units. The
 configured gateway runtime binary defaults to `/usr/local/bin/bun`. Remote Bun
 helper commands for config inspection, staging-plan rendering, doctor, and
 service rendering run under explicit timeouts; deploy-time GGUF staging gets a
@@ -502,7 +502,7 @@ file, package metadata, and the llama.cpp staging helper used during deploy.
 - The generated gateway unit intentionally does not set `MemoryDenyWriteExecute=true`; Bun and Node can need executable memory for their JavaScript runtimes. Keep that directive limited to native backend units such as the generated `ray-llama-cpp.service`.
 - Keep generated-service paths out of `/home`, `/root`, `/run/user`, `/tmp`, and `/var/tmp`; the units use `ProtectHome=true` and `PrivateTmp=true`, so put the checkout under `/srv/ray`, config under `/etc/ray`, GGUF files under `/var/lib/ray/models`, and `llama-server` plus Bun under `/usr/local/bin`.
 - Use `bun run model:stage*` after writing `/etc/ray/ray.env` to stage `llama-server` and the GGUF at the resolved paths before restarting the generated backend unit. Printed staging commands are timeout-bounded, check the apparent GGUF size against the deploy memory target and target disk headroom before replacing either target, stage through same-directory `.ray-stage-*` temp files before replacement, and the env file can also carry optional staging source paths and checksums for concrete deploy-workflow plans.
-- Config loading rejects unresolved relative `model.adapter.launchProfile.binaryPath` values before render; doctor then verifies that the resolved path points at an executable `llama-server` and that the generated service user can execute it and read the GGUF model before the generated backend service is restarted.
+- Config loading rejects unresolved relative `model.adapter.launchProfile.binaryPath` values before render; doctor then verifies that the resolved path points at an executable `llama-server`, that its help output lists the generated launch flags, and that the generated service user can execute it and read the GGUF model before the generated backend service is restarted.
 - Keep `cacheRamMiB` pinned for `llama.cpp`. The upstream default is too large for a 4 GB VPS.
 - Tune `scheduler.concurrency` conservatively. Tiny hardware collapses faster from overcommit than underutilization.
 - Keep `RAY_LLAMA_CPP_THREADS` and `RAY_LLAMA_CPP_THREADS_BATCH` at or below the VPS vCPU count. Doctor records detected host CPU count and warns when the launch profile overcommits compute threads.

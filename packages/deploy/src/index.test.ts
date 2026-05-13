@@ -25,6 +25,29 @@ import {
 } from "./index.js";
 
 const repoRoot = process.cwd();
+const compatibleLlamaCppHelp = [
+  "--model",
+  "--alias",
+  "--host",
+  "--port",
+  "--ctx-size",
+  "--parallel",
+  "--threads",
+  "--threads-batch",
+  "--threads-http",
+  "--batch-size",
+  "--ubatch-size",
+  "--cache-prompt",
+  "--cache-reuse",
+  "--cache-ram",
+  "--cont-batching",
+  "--metrics",
+  "--slots",
+  "--warmup",
+  "--kv-unified",
+  "--cache-idle-slots",
+  "--context-shift",
+].join("\n");
 
 async function mkRayDeployTempDir(prefix: string): Promise<string> {
   // Linux CI checkouts usually live under /home, and tmpdir() is /tmp; both are
@@ -3213,7 +3236,7 @@ test("loadAndDiagnoseDeployment reports an executable llama.cpp binary in strict
   const modelPath = join(tempDir, "model.gguf");
   const binaryPath = join(tempDir, "llama-server");
   await writeFile(modelPath, "GGUF");
-  await writeFile(binaryPath, "#!/bin/sh\n");
+  await writeFile(binaryPath, `#!/bin/sh\ncat <<'EOF'\n${compatibleLlamaCppHelp}\nEOF\n`);
   await chmod(binaryPath, 0o755);
 
   const config = createDefaultConfig("1b");
@@ -3244,6 +3267,53 @@ test("loadAndDiagnoseDeployment reports an executable llama.cpp binary in strict
   );
   assert.ok(probeDiagnostic);
   assert.equal(probeDiagnostic.level, "info");
+  assert.equal(inspected.preflight.llamaCppBinaryLaunchFlagsStatus, "ok");
+  const launchFlagsDiagnostic = inspected.diagnostics.find(
+    (entry) => entry.code === "llama_binary_launch_flags_ok",
+  );
+  assert.ok(launchFlagsDiagnostic);
+  assert.equal(launchFlagsDiagnostic.level, "info");
+});
+
+test("loadAndDiagnoseDeployment errors when llama.cpp binary lacks generated launch flags", async (t) => {
+  const tempDir = await mkRayDeployTempDir("ray-deploy-llama-binary-flags-");
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const modelPath = join(tempDir, "model.gguf");
+  const binaryPath = join(tempDir, "llama-server");
+  await writeFile(modelPath, "GGUF");
+  await writeFile(binaryPath, "#!/bin/sh\nprintf '%s\\n' '--model' '--host' '--port'\n");
+  await chmod(binaryPath, 0o755);
+
+  const config = createDefaultConfig("1b");
+  if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
+    throw new Error("Expected llama.cpp launch profile");
+  }
+  config.model.adapter.launchProfile.binaryPath = binaryPath;
+  config.model.adapter.launchProfile.modelPath = modelPath;
+
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    strictFilesystem: true,
+    memoryBudgetMiB: 4_096,
+  });
+
+  assert.equal(inspected.preflight.llamaCppBinaryProbeStatus, "ok");
+  assert.equal(inspected.preflight.llamaCppBinaryLaunchFlagsStatus, "unsupported");
+  assert.ok(inspected.preflight.llamaCppBinaryUnsupportedLaunchFlags?.includes("--ctx-size"));
+  const diagnostic = inspected.diagnostics.find(
+    (entry) => entry.code === "llama_binary_launch_flags_unsupported",
+  );
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /--ctx-size/);
+  assert.match(diagnostic.message, /newer compatible llama-server/);
 });
 
 test("loadAndDiagnoseDeployment errors when the configured llama.cpp binary fails startup probe", async (t) => {

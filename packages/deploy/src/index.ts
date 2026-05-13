@@ -84,6 +84,7 @@ type CaddyRuntimeStatus = "available" | "missing" | "unreadable";
 type CaddyConfigStatus = "valid" | "invalid" | "unreadable";
 type LlamaCppBinaryStatus = BinaryPreflightStatus;
 type LlamaCppBinaryProbeStatus = "ok" | "failed";
+type LlamaCppBinaryLaunchFlagsStatus = "ok" | "unsupported";
 type GatewayEntrypointStatus = BinaryPreflightStatus;
 type ConfigFileStatus = BinaryPreflightStatus;
 type WorkingDirectoryStatus = "found" | "missing" | "not_directory" | "unreadable";
@@ -157,6 +158,8 @@ export interface DeploymentPreflight {
   llamaCppBinaryError?: string;
   llamaCppBinaryProbeStatus?: LlamaCppBinaryProbeStatus;
   llamaCppBinaryProbeError?: string;
+  llamaCppBinaryLaunchFlagsStatus?: LlamaCppBinaryLaunchFlagsStatus;
+  llamaCppBinaryUnsupportedLaunchFlags?: string[];
   llamaCppBinaryAccessStatus?: ServiceUserAccessStatus;
   llamaCppBinaryAccessError?: string;
   envFilePath?: string;
@@ -246,6 +249,7 @@ const CADDY_VALIDATE_TIMEOUT_MS = 10_000;
 const CADDY_VALIDATE_MAX_BUFFER_BYTES = 64 * 1024;
 const LLAMA_CPP_BINARY_PROBE_TIMEOUT_MS = 10_000;
 const LLAMA_CPP_BINARY_PROBE_MAX_BUFFER_BYTES = 64 * 1024;
+const MAX_LLAMA_CPP_UNSUPPORTED_LAUNCH_FLAGS = 32;
 const HOST_PASSWD_PATH = "/etc/passwd";
 const HOST_GROUP_PATH = "/etc/group";
 const HOST_MEMINFO_PATH = "/proc/meminfo";
@@ -1591,6 +1595,40 @@ export function buildLlamaCppLaunchArgs(profile: LlamaCppLaunchProfile): string[
   ];
 }
 
+function extractLlamaCppLaunchFlagTokens(args: string[]): string[] {
+  const flags = new Set<string>();
+
+  for (const arg of args) {
+    if (arg.startsWith("--")) {
+      const [flag] = arg.split("=", 1);
+      if (flag && flag.length > 2) {
+        flags.add(flag);
+      }
+      continue;
+    }
+
+    if (/^-[A-Za-z]/.test(arg)) {
+      flags.add(arg);
+    }
+  }
+
+  return [...flags].sort();
+}
+
+function detectUnsupportedLlamaCppLaunchFlags(
+  launchProfile: LlamaCppLaunchProfile,
+  helpOutput: string,
+): string[] {
+  const launchFlags = extractLlamaCppLaunchFlagTokens([
+    ...buildLlamaCppLaunchArgs(launchProfile),
+    ...(launchProfile.extraArgs ?? []),
+  ]);
+
+  return launchFlags
+    .filter((flag) => !helpOutput.includes(flag))
+    .slice(0, MAX_LLAMA_CPP_UNSUPPORTED_LAUNCH_FLAGS);
+}
+
 export function renderSystemdService(options: SystemdServiceOptions): string {
   assertOptionsObject(options, "Systemd service options");
 
@@ -2922,6 +2960,22 @@ export function diagnoseConfig(
               code: "llama_binary_probe_ok",
               message: `llama.cpp binary starts successfully with --help at ${binaryPath}.`,
             });
+
+            if (preflight.llamaCppBinaryLaunchFlagsStatus === "unsupported") {
+              const unsupportedFlags = preflight.llamaCppBinaryUnsupportedLaunchFlags ?? [];
+              diagnostics.push({
+                level: "error",
+                code: "llama_binary_launch_flags_unsupported",
+                message: `The configured llama.cpp binary at ${binaryPath} starts, but its --help output does not list generated launch flag(s): ${unsupportedFlags.join(", ")}. Stage a newer compatible llama-server or remove unsupported non-profile extraArgs before restarting ray-llama-cpp.service.`,
+              });
+            } else if (preflight.llamaCppBinaryLaunchFlagsStatus === "ok") {
+              diagnostics.push({
+                level: "info",
+                code: "llama_binary_launch_flags_ok",
+                message:
+                  "llama.cpp binary help output lists every generated launch flag for the configured launch profile.",
+              });
+            }
           }
         }
       }
@@ -4256,7 +4310,7 @@ async function collectLlamaCppBinaryPreflight(
       ? await verifyServiceUserPathAccess(binaryPath, serviceUserIdentity, 0o1, "execute")
       : undefined;
     const probePreflight = strictFilesystem
-      ? await collectLlamaCppBinaryProbePreflight(binaryPath)
+      ? await collectLlamaCppBinaryProbePreflight(binaryPath, launchProfile)
       : {};
 
     return {
@@ -4328,6 +4382,7 @@ async function collectGgufModelFileFormatPreflight(
 
 async function collectLlamaCppBinaryProbePreflight(
   binaryPath: string,
+  launchProfile: LlamaCppLaunchProfile,
 ): Promise<Partial<DeploymentPreflight>> {
   return await new Promise<Partial<DeploymentPreflight>>((resolve) => {
     execFile(
@@ -4351,8 +4406,14 @@ async function collectLlamaCppBinaryProbePreflight(
           return;
         }
 
+        const unsupportedLaunchFlags = detectUnsupportedLlamaCppLaunchFlags(launchProfile, output);
+
         resolve({
           llamaCppBinaryProbeStatus: "ok",
+          llamaCppBinaryLaunchFlagsStatus: unsupportedLaunchFlags.length > 0 ? "unsupported" : "ok",
+          ...(unsupportedLaunchFlags.length > 0
+            ? { llamaCppBinaryUnsupportedLaunchFlags: unsupportedLaunchFlags }
+            : {}),
         });
       },
     );
