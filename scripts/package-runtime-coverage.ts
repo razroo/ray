@@ -13,7 +13,10 @@ const DEFAULT_RUNTIME_DOCS = [
   "docs/portable-1b.md",
   "docs/release-checklist.md",
 ] as const;
-const DEFAULT_RUNTIME_SCRIPTS = ["scripts/deploy-storage-preflight.ts"] as const;
+const DEFAULT_RUNTIME_SCRIPTS = [
+  "scripts/deploy-storage-preflight.ts",
+  "scripts/model-stage.ts",
+] as const;
 const WORKSPACE_RUNTIME_DOC_DIRS = ["apps", "packages"] as const;
 const VPS_TIMEOUT_DOCS = new Set([
   "examples/deploy/vps/README.md",
@@ -1770,6 +1773,46 @@ function validateDeployStoragePreflightScript(
   ];
 }
 
+function validateModelStageScript(
+  scriptPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(scriptPath) !== "model-stage.ts") {
+    return [];
+  }
+
+  if (
+    contents.includes("MIN_BINARY_STAGE_FREE_AFTER_COPY_MIB") &&
+    contents.includes("MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB") &&
+    contents.includes("evaluateModelStageStorageHeadroom") &&
+    contents.includes("assertBinaryStageStorageHeadroom") &&
+    contents.includes("assertModelStageStorageHeadroom") &&
+    contents.includes("df -Pm") &&
+    contents.includes("RAY_DEPLOY_MEMORY_MIB") &&
+    contents.includes("evaluateModelStageMemoryFit") &&
+    contents.includes("assertGgufMagicHeader") &&
+    contents.includes("assertLlamaCppBinarySupportsLaunchFlags") &&
+    contents.includes("copyFileAtomicUnlessSame") &&
+    contents.includes(".ray-stage-") &&
+    contents.includes("--ray-env-file") &&
+    contents.includes("readEnvironmentFileBounded")
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "model_stage_headroom_guard_missing",
+      scriptPath,
+      line: workflowLineNumber(lines, "ModelStageStorageHeadroom"),
+      message:
+        "Model staging must guard binary and GGUF target storage headroom, generated backend MemoryMax fit, GGUF headers, generated llama.cpp launch flags, bounded env-file reads, and same-directory atomic replacement before a small VPS replaces working artifacts.",
+    },
+  ];
+}
+
 async function validateRuntimeScript(
   scriptPath: string,
 ): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
@@ -1779,7 +1822,10 @@ async function validateRuntimeScript(
     "runtime script",
   );
   const lines = contents.split(/\r?\n/);
-  const diagnostics = [...validateDeployStoragePreflightScript(scriptPath, contents, lines)];
+  const diagnostics = [
+    ...validateDeployStoragePreflightScript(scriptPath, contents, lines),
+    ...validateModelStageScript(scriptPath, contents, lines),
+  ];
 
   return {
     lineCount: lines.length,
