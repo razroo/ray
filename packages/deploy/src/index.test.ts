@@ -772,7 +772,18 @@ test("diagnoseConfig warns when IP rate-limit proxy header posture is unsafe", (
 
 test("diagnoseConfig warns when API-key rate limiting runs without auth", () => {
   const defaultConfig = createDefaultConfig("vps");
-  const defaultDiagnostic = diagnoseConfig(defaultConfig, process.env).find(
+  assert.ok(
+    !diagnoseConfig(defaultConfig, process.env).some(
+      (entry) => entry.code === "rate_limit_api_key_strategy_without_auth",
+    ),
+  );
+
+  const apiKeyStrategyConfig = mergeConfig(defaultConfig, {
+    rateLimit: {
+      keyStrategy: "ip+api-key",
+    },
+  });
+  const defaultDiagnostic = diagnoseConfig(apiKeyStrategyConfig, process.env).find(
     (entry) => entry.code === "rate_limit_api_key_strategy_without_auth",
   );
 
@@ -1046,7 +1057,7 @@ test("renderEnvironmentFileExample documents gateway behavior switches", () => {
   assert.match(envFile, /RAY_RATE_LIMIT_WINDOW_MS=60000/);
   assert.match(envFile, /RAY_RATE_LIMIT_MAX_REQUESTS=75/);
   assert.match(envFile, /RAY_RATE_LIMIT_MAX_KEYS=4096/);
-  assert.match(envFile, /RAY_RATE_LIMIT_KEY_STRATEGY=ip\+api-key/);
+  assert.match(envFile, /^# RAY_RATE_LIMIT_KEY_STRATEGY=ip$/m);
   assert.match(envFile, /RAY_RATE_LIMIT_TRUST_PROXY_HEADERS=true/);
   assert.match(envFile, /RAY_SCHEDULER_MAX_QUEUE=40/);
   assert.match(envFile, /RAY_SCHEDULER_MAX_QUEUED_TOKENS=18000/);

@@ -47,7 +47,7 @@
     "enabled": true,
     "windowMs": 60000,
     "maxRequests": 90,
-    "keyStrategy": "ip+api-key",
+    "keyStrategy": "ip",
     "trustProxyHeaders": true
   }
 }

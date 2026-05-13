@@ -92,7 +92,7 @@
     "enabled": true,
     "windowMs": 60000,
     "maxRequests": 120,
-    "keyStrategy": "ip+api-key",
+    "keyStrategy": "ip",
     "trustProxyHeaders": true
   },
   "tags": {

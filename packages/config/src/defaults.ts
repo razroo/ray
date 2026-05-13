@@ -190,7 +190,7 @@ function createSub1bDefaults(machineClass: Sub1bMachineClass): RayConfig {
       windowMs: 60_000,
       maxRequests: machineClass === "cax11" ? 90 : 120,
       maxKeys: 4_096,
-      keyStrategy: "ip+api-key",
+      keyStrategy: "ip",
       trustProxyHeaders: true,
     },
     tags: {
@@ -376,7 +376,7 @@ function create1bDefaults(machineClass: OneBMachineClass): RayConfig {
       windowMs: 60_000,
       maxRequests: is8gb ? 150 : 75,
       maxKeys: is8gb ? 8_192 : 4_096,
-      keyStrategy: "ip+api-key",
+      keyStrategy: "ip",
       trustProxyHeaders: true,
     },
     tags: {
@@ -602,7 +602,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       windowMs: 60_000,
       maxRequests: 90,
       maxKeys: 4_096,
-      keyStrategy: "ip+api-key",
+      keyStrategy: "ip",
       trustProxyHeaders: true,
     },
     tags: {
@@ -711,7 +711,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       windowMs: 60_000,
       maxRequests: 180,
       maxKeys: 8_192,
-      keyStrategy: "ip+api-key",
+      keyStrategy: "ip",
       trustProxyHeaders: true,
     },
     tags: {

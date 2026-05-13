@@ -267,6 +267,15 @@ test("single-node default profiles keep prompt and adaptive caps enabled", () =>
   }
 });
 
+test("unauthenticated default profiles use IP rate-limit keys", () => {
+  for (const profile of ["sub1b", "sub1b-cax11", "1b", "1b-8gb", "vps", "balanced"] as const) {
+    const config = createDefaultConfig(profile);
+
+    assert.equal(config.auth.enabled, false, `${profile} auth`);
+    assert.equal(config.rateLimit.keyStrategy, "ip", `${profile} rate-limit key strategy`);
+  }
+});
+
 test("resolveAuthApiKeys parses comma and newline separated values", () => {
   const config = mergeConfig(createDefaultConfig("tiny"), {
     auth: {
