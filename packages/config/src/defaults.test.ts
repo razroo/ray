@@ -231,6 +231,20 @@ test("remote-backend default profiles keep gateway timeouts above adapter timeou
   }
 });
 
+test("single-node default profiles keep prompt and adaptive caps enabled", () => {
+  for (const profile of ["sub1b", "sub1b-cax11", "1b", "1b-8gb", "vps", "balanced"] as const) {
+    const config = createDefaultConfig(profile);
+
+    assert.equal(config.promptCompiler.enabled, true, `${profile} prompt compiler`);
+    assert.equal(config.adaptiveTuning.enabled, true, `${profile} adaptive tuning`);
+    assert.equal(
+      config.adaptiveTuning.learnedFamilyCapEnabled,
+      true,
+      `${profile} learned family caps`,
+    );
+  }
+});
+
 test("resolveAuthApiKeys parses comma and newline separated values", () => {
   const config = mergeConfig(createDefaultConfig("tiny"), {
     auth: {

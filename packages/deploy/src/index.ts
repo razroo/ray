@@ -2384,6 +2384,33 @@ export function diagnoseConfig(
     });
   }
 
+  if (!config.promptCompiler.enabled) {
+    diagnostics.push({
+      level: "warn",
+      code: "prompt_compiler_disabled",
+      message:
+        "Prompt compilation is disabled. Single-node VPS deployments should keep prompt normalization and prompt-family grouping enabled so repeated or oversized prompts waste less context and learned output caps stay effective.",
+    });
+  }
+
+  if (config.profile !== "tiny") {
+    if (!config.adaptiveTuning.enabled) {
+      diagnostics.push({
+        level: "warn",
+        code: "adaptive_tuning_disabled",
+        message:
+          "Adaptive tuning is disabled. Single-node VPS deployments should keep latency and throughput based output caps enabled so slow backends shed optional completion work under pressure.",
+      });
+    } else if (!config.adaptiveTuning.learnedFamilyCapEnabled) {
+      diagnostics.push({
+        level: "warn",
+        code: "adaptive_learned_caps_disabled",
+        message:
+          "Adaptive learned family caps are disabled. Repeated prompt families can keep requesting larger completions than they usually need, which wastes tokens and queue time on small VPS backends.",
+      });
+    }
+  }
+
   if (!gatewayBindsLoopback) {
     diagnostics.push({
       level: "error",

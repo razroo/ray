@@ -580,7 +580,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       familyMetadataKeys: ["promptFamily", "taskTemplate", "template", "useCase"],
     },
     adaptiveTuning: {
-      enabled: false,
+      enabled: true,
       sampleSize: 32,
       queueLatencyThresholdMs: 400,
       minCompletionTokensPerSecond: 18,
@@ -689,7 +689,7 @@ const profileDefaults: Record<RayProfile, RayConfig> = {
       familyMetadataKeys: ["promptFamily", "taskTemplate", "template", "useCase"],
     },
     adaptiveTuning: {
-      enabled: false,
+      enabled: true,
       sampleSize: 48,
       queueLatencyThresholdMs: 500,
       minCompletionTokensPerSecond: 18,

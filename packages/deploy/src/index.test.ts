@@ -563,6 +563,38 @@ test("diagnoseConfig flags unsafe public deployment defaults", () => {
   assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "graceful_degradation_disabled"));
 });
 
+test("diagnoseConfig warns when VPS prompt and adaptive caps are disabled", () => {
+  const disabledConfig = mergeConfig(createDefaultConfig("vps"), {
+    promptCompiler: {
+      enabled: false,
+    },
+    adaptiveTuning: {
+      enabled: false,
+    },
+  });
+  const disabledDiagnostics = diagnoseConfig(disabledConfig, process.env);
+
+  assert.ok(
+    disabledDiagnostics.some((diagnostic) => diagnostic.code === "prompt_compiler_disabled"),
+  );
+  assert.ok(
+    disabledDiagnostics.some((diagnostic) => diagnostic.code === "adaptive_tuning_disabled"),
+  );
+
+  const learnedCapsConfig = mergeConfig(createDefaultConfig("vps"), {
+    adaptiveTuning: {
+      enabled: true,
+      learnedFamilyCapEnabled: false,
+    },
+  });
+  const learnedCapsDiagnostic = diagnoseConfig(learnedCapsConfig, process.env).find(
+    (diagnostic) => diagnostic.code === "adaptive_learned_caps_disabled",
+  );
+
+  assert.ok(learnedCapsDiagnostic);
+  assert.equal(learnedCapsDiagnostic.level, "warn");
+});
+
 test("diagnoseConfig warns when IP rate-limit proxy header posture is unsafe", () => {
   const publicBindConfig = mergeConfig(createDefaultConfig("vps"), {
     server: {
