@@ -132,9 +132,10 @@ timeout 60s sudo chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/
 The `umask 022` keeps the checkout, built files, and Bun-installed dependencies
 readable by the generated service user without a recursive permission walk over
 `node_modules`.
-The storage preflight checks `/srv/ray`, `/var/lib/ray`, and `/tmp` before the
-Bun install expands dependencies; set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` to raise
-or lower the default 1024 MiB threshold.
+The storage preflight checks `/srv/ray`, `/var/lib/ray`, `/tmp`, and the
+repo-scoped Bun install cache at `/srv/ray/.ray/bun-install-cache` before the Bun
+install expands dependencies; set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` to raise or
+lower the default 1024 MiB threshold.
 
 ### 4. Place the config
 
@@ -408,7 +409,7 @@ Optional repository variables:
 - `RAY_DEPLOY_SERVICE_USER` — generated non-root systemd service account name or numeric UID, defaults to `ray`; workflow deploys create missing named users, numeric UIDs must already resolve to an account on the VPS, and local deploy CLI runs also honor this value from the process env or `--ray-env-file` when `--user` is omitted
 - `RAY_DEPLOY_DOMAIN` — Caddy site address to render, defaults to `ray.local`; set it to the real public DNS name before installing Caddy because render/doctor warn on local placeholder addresses; local deploy CLI runs honor this value from the process env or `--ray-env-file` when `--domain` is omitted, and workflow deploys honor it from `RAY_ENV_FILE_CONTENTS` before repository variables
 - `RAY_DEPLOY_MEMORY_MIB` — optional VPS memory class used by workflow doctor/render and model staging when `/etc/ray/ray.env` does not already set it; local deploy CLI runs honor this value from the process env or `--ray-env-file` when `--memory-mib` is omitted, and workflow deploys validate and honor it from `RAY_ENV_FILE_CONTENTS` before repository variables. Render, doctor, and model staging reject targets too small to fit the generated systemd memory floors.
-- `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` — minimum free storage the workflow requires before remote package bootstrap, checkout sync follow-up, and Bun production install, defaults to `1024`; set to `0` only when intentionally skipping the deploy storage preflight
+- `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` — minimum free storage the workflow requires before remote package bootstrap, checkout sync follow-up, Bun install-cache use, and Bun production install, defaults to `1024`; set to `0` only when intentionally skipping the deploy storage preflight
 - `RAY_DEPLOY_INSTALL_CADDY` — set to `true` to install and reload the generated Caddyfile; requires `RAY_DEPLOY_DOMAIN` to be a real public DNS name, not `ray.local`, `localhost`, loopback, or another `.local` placeholder; workflow deploys honor this value from `RAY_ENV_FILE_CONTENTS` before repository variables
 - `RAY_CONFIG_PATH` — repo-relative config path to install, defaults to `./examples/config/ray.sub1b.public.json`; the workflow rejects absolute paths, path traversal, and paths excluded from repo sync before opening SSH
 - `RAY_GATEWAY_RUNTIME_BINARY` — absolute JavaScript runtime path rendered into `ray-gateway.service`, defaults to `/usr/local/bin/bun`; the deploy CLI and workflow reject relative paths, paths under `/home`, `/root`, or `/run/user` because generated units use `ProtectHome=true`, and paths under `/tmp` or `/var/tmp` because generated units use `PrivateTmp=true`
@@ -466,8 +467,8 @@ The workflow validates the deploy SSH user and configured gateway runtime path
 after applying env-file overrides and before opening SSH, checks that
 `RAY_DEPLOY_KNOWN_HOSTS` contains an entry for the configured host and SSH port,
 requires the resolved `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` headroom on the remote
-root, `/srv/ray`, `/var/lib/ray`, and `/tmp` volumes before bootstrap follow-up
-or Bun production install can consume more disk,
+root, `/srv/ray`, `/var/lib/ray`, `/tmp`, and repo-scoped Bun install-cache
+paths before bootstrap follow-up or Bun production install can consume more disk,
 installs missing remote deploy prerequisites such as `curl`, `ca-certificates`,
 `unzip`, and `rsync`, refreshes `/usr/local/bin/bun` when it is missing or older
 than the repo's supported Bun runtime, copies that refreshed Bun to custom
@@ -486,10 +487,12 @@ for the Bun production install, generated systemd unit verification, and
 generated Caddyfile validation fail before systemd tries to start the generated units. The
 configured gateway runtime binary defaults to `/usr/local/bin/bun`. The workflow
 only changes ownership on the checkout root, sets service-readable checkout
-modes during rsync, removes stale `node_modules` under a timeout, and runs the
-remote Bun production install with `umask 022` so old dev dependencies do not
-accumulate even when ownership changed, and deploys do not recursively chown or
-chmod the synced repository. Remote Bun helper commands for config inspection,
+modes during rsync, removes stale `node_modules` under a timeout, pins
+`BUN_INSTALL_CACHE_DIR` under `/srv/ray/.ray/bun-install-cache`, and runs the
+remote Bun production install with `umask 022` so old dev dependencies and
+home-directory cache growth do not accumulate even when ownership changed, and
+deploys do not recursively chown or chmod the synced repository. Remote Bun
+helper commands for config inspection,
 staging-plan rendering, doctor, and service rendering run under explicit
 timeouts; deploy-time GGUF staging gets a
 longer bounded copy window, and each remote SSH session has its own wall-clock

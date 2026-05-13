@@ -851,9 +851,12 @@ jobs:
 
           cd /srv/ray
           umask 022
+          export BUN_INSTALL_CACHE_DIR="/srv/ray/.ray/bun-install-cache"
+          timeout 60s mkdir -p "$BUN_INSTALL_CACHE_DIR"
           if [ -d node_modules ]; then
             timeout 120s $SUDO rm -rf node_modules
           fi
+          check_free_storage "$BUN_INSTALL_CACHE_DIR" "Bun install cache"
           check_free_storage /srv/ray "Bun production install"
           timeout 300s /usr/local/bin/bun install --production --frozen-lockfile --ignore-scripts
 

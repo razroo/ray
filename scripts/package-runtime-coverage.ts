@@ -863,6 +863,8 @@ function validateDeployWorkflowStoragePreflight(
     contents.includes('check_free_storage /srv/ray "synced checkout"') &&
     contents.includes('check_free_storage /var/lib/ray "Ray state"') &&
     contents.includes('check_free_storage /tmp "temporary directory"') &&
+    contents.includes('BUN_INSTALL_CACHE_DIR="/srv/ray/.ray/bun-install-cache"') &&
+    contents.includes('check_free_storage "$BUN_INSTALL_CACHE_DIR" "Bun install cache"') &&
     contents.includes('check_free_storage /srv/ray "Bun production install"') &&
     contents.includes("Remote deploy preflight requires at least")
   ) {
@@ -876,7 +878,7 @@ function validateDeployWorkflowStoragePreflight(
       workflowPath,
       line: workflowLineNumber(lines, "RAY_DEPLOY_MIN_FREE_STORAGE_MIB"),
       message:
-        "VPS deploy workflow must preflight remote free storage before package bootstrap, repository sync follow-up, and Bun production install so small VPS disks fail clearly before deploy work fills them.",
+        "VPS deploy workflow must preflight remote free storage before package bootstrap, repository sync follow-up, Bun install-cache use, and Bun production install so small VPS disks fail clearly before deploy work fills them.",
     },
   ];
 }
