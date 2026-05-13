@@ -226,7 +226,9 @@ test("validatePackageRuntimeCoverage requires timeouts for VPS Ray helper aliase
   });
 
   const vpsDocDir = path.join(tempDir, "examples", "deploy", "vps");
+  const integrationDocDir = path.join(tempDir, "docs", "integrations");
   await mkdir(vpsDocDir, { recursive: true });
+  await mkdir(integrationDocDir, { recursive: true });
   const rootPackageJson = path.join(tempDir, "package.json");
   await writeFile(
     rootPackageJson,
@@ -239,6 +241,7 @@ test("validatePackageRuntimeCoverage requires timeouts for VPS Ray helper aliase
           "benchmark:assert:cx23:1b": "bun ./scripts/benchmark.ts",
           "deploy:smoke": "bun ./scripts/deploy-smoke.ts",
           "doctor:1b:generic": "bun packages/deploy/dist/cli.js doctor",
+          "doctor:hetzner-email-ai": "bun packages/deploy/dist/cli.js doctor",
           "model:stage:1b:generic": "bun packages/deploy/dist/cli.js model-stage",
           "validate:config:all": "bun ./scripts/validate-configs.ts --all",
         },
@@ -261,6 +264,10 @@ test("validatePackageRuntimeCoverage requires timeouts for VPS Ray helper aliase
       "",
     ].join("\n"),
   );
+  await writeFile(
+    path.join(integrationDocDir, "razroo-email-ai.md"),
+    ["# Integration", "", "```bash", "bun run doctor:hetzner-email-ai", "```", ""].join("\n"),
+  );
 
   const summary = await validatePackageRuntimeCoverage({
     cwd: tempDir,
@@ -273,8 +280,17 @@ test("validatePackageRuntimeCoverage requires timeouts for VPS Ray helper aliase
 
   assert.equal(summary.ok, false);
   assert.deepEqual(
-    timeoutDiagnostics.map((diagnostic) => diagnostic.line),
-    [4, 6],
+    timeoutDiagnostics
+      .map((diagnostic) => [
+        diagnostic.docPath ? path.relative(tempDir, diagnostic.docPath) : "",
+        diagnostic.line,
+      ])
+      .sort(),
+    [
+      ["docs/integrations/razroo-email-ai.md", 4],
+      ["examples/deploy/vps/README.md", 4],
+      ["examples/deploy/vps/README.md", 6],
+    ],
   );
 });
 

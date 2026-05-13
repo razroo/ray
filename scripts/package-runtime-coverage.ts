@@ -11,7 +11,11 @@ const DEFAULT_RUNTIME_DOCS = [
   "docs/portable-1b.md",
   "docs/release-checklist.md",
 ] as const;
-const VPS_TIMEOUT_DOCS = new Set(["examples/deploy/vps/README.md", "docs/portable-1b.md"]);
+const VPS_TIMEOUT_DOCS = new Set([
+  "examples/deploy/vps/README.md",
+  "docs/integrations/razroo-email-ai.md",
+  "docs/portable-1b.md",
+]);
 const MAX_CLI_ARGS = 8;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_PACKAGE_JSON_BYTES = 512 * 1024;

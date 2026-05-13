@@ -25,7 +25,7 @@ For below-1B split-role experiments, use [ray.sub1b.classifier.json](../../examp
 ## Local development (this repo)
 
 ```bash
-bun run build
+timeout 300s bun run build
 bun run dev:hetzner-email-ai
 ```
 
@@ -34,9 +34,9 @@ Ensure an OpenAI-compatible backend is up at the URL in `model.adapter` before s
 ## Public VPS deploy helpers
 
 ```bash
-bun run render:service:hetzner-email-ai
-bun run model:stage:hetzner-email-ai
-bun run doctor:hetzner-email-ai
+timeout 300s bun run render:service:hetzner-email-ai
+timeout 300s bun run model:stage:hetzner-email-ai
+timeout 300s bun run doctor:hetzner-email-ai
 ```
 
 The render and doctor aliases use the public Hetzner CX23/Qwen profile with a 4 GB memory budget and `/etc/ray/ray.env`. Render the units before copying them to the VPS, stage the llama.cpp binary and GGUF with the generated model staging plan, then run doctor on the VPS after `/etc/ray/ray.env` and the configured model files are in place.
@@ -73,10 +73,10 @@ If `razroo-email-ai` checks availability before sending inference, point a proce
 Benchmark the 1B email path with:
 
 ```bash
-bun run benchmark:assert:cx23:1b
-bun run benchmark:assert:8gb:1b
-bun run benchmark:1b:prompt-formats
-bun run autotune:1b
+timeout 1800s bun run benchmark:assert:cx23:1b
+timeout 1800s bun run benchmark:assert:8gb:1b
+timeout 3600s bun run benchmark:1b:prompt-formats
+timeout 7200s bun run autotune:1b
 ```
 
 The workload in [email-1b-workload.jsonl](../../examples/workloads/email-1b-workload.jsonl) exercises cold outreach, follow-up, reply classification, reply rewrite, and a direct section-generation prompt shaped like the app's product flow. It asserts JSON validity for classification and rejects common prompt echo, stop-token leakage, and generic email filler. Benchmark runs can append JSONL history under `.ray/benchmarks/history` so prompt/config changes can be compared over time. Autotune limits scheduler sweeps to the 64 closest candidates by default; pass `--autotune-max-candidates <n>` only when the VPS can afford a longer search.
