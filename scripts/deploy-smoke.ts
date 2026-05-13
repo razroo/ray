@@ -1,4 +1,4 @@
-import { open, opendir } from "node:fs/promises";
+import { access, open, opendir } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { renderDeploymentBundle, type DeploymentDiagnostic } from "../packages/deploy/src/index.ts";
@@ -12,6 +12,7 @@ const STATIC_EXAMPLE_CONFIG = "examples/config/ray.sub1b.public.json";
 const STATIC_EXAMPLE_GATEWAY_SERVICE = "examples/deploy/vps/ray-gateway.service";
 const STATIC_EXAMPLE_LLAMA_CPP_SERVICE = "examples/deploy/vps/ray-llama-cpp.service";
 const STATIC_EXAMPLE_CADDYFILE = "examples/deploy/vps/Caddyfile";
+const EXTRA_DEPLOY_CONFIG_FILES = ["ray.vps.json"] as const;
 const STATIC_EXAMPLE_WORKING_DIRECTORY = "/srv/ray";
 const STATIC_EXAMPLE_CONFIG_PATH = "/etc/ray/ray.json";
 const MAX_CONFIG_FILES = 128;
@@ -61,14 +62,14 @@ export interface DeployStaticExampleResult {
   errorCount: number;
 }
 
-const HELP = `Dry-run public Ray VPS deployment bundles.
+const HELP = `Dry-run Ray VPS deployment bundles.
 
 Usage:
   bun ./scripts/deploy-smoke.ts [options]
 
 Options:
   --cwd <path>                 Repository root. Default: current directory.
-  --config-dir <path>          Directory containing public JSON config files. Default: ${DEFAULT_CONFIG_DIR}
+  --config-dir <path>          Directory containing deploy JSON config files. Default: ${DEFAULT_CONFIG_DIR}
   --domain <host>              Caddy site address to render. Default: ${DEFAULT_DOMAIN}
   --gateway-runtime <path>     Runtime path rendered into ray-gateway.service. Default: ${DEFAULT_RUNTIME_BINARY}
   --user <name>                systemd service user to render. Default: ${DEFAULT_SERVICE_USER}
@@ -225,6 +226,32 @@ export async function collectPublicConfigPaths(cwd: string, configDir: string): 
   }
 
   return configPaths;
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function collectDeploySmokeConfigPaths(
+  cwd: string,
+  configDir: string,
+): Promise<string[]> {
+  const configPaths = new Set(await collectPublicConfigPaths(cwd, configDir));
+  const absoluteConfigDir = path.resolve(cwd, configDir);
+
+  for (const configFile of EXTRA_DEPLOY_CONFIG_FILES) {
+    const configPath = path.join(absoluteConfigDir, configFile);
+    if (await pathExists(configPath)) {
+      configPaths.add(configPath);
+    }
+  }
+
+  return [...configPaths].sort();
 }
 
 export async function smokeDeployConfigs(options: {
@@ -489,7 +516,7 @@ export function formatTextSummary(
   options: { verbose?: boolean } = {},
 ): string {
   const lines = [
-    `Rendered ${summary.configCount} public Ray deploy profile${summary.configCount === 1 ? "" : "s"}:`,
+    `Rendered ${summary.configCount} Ray deploy profile${summary.configCount === 1 ? "" : "s"}:`,
   ];
 
   for (const result of summary.results) {
@@ -545,7 +572,7 @@ export async function runDeploySmokeCli(
     }
 
     const cwd = path.resolve(args.cwd);
-    const configPaths = await collectPublicConfigPaths(cwd, args.configDir);
+    const configPaths = await collectDeploySmokeConfigPaths(cwd, args.configDir);
     const deploySummary = await smokeDeployConfigs({
       cwd,
       configPaths,

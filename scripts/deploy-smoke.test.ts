@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  collectDeploySmokeConfigPaths,
   collectPublicConfigPaths,
   formatTextSummary,
   parseArgs,
@@ -87,9 +88,9 @@ test("collectPublicConfigPaths rejects excessive public configs while streaming"
   );
 });
 
-test("smokeDeployConfigs renders every checked-in public deploy profile", async () => {
+test("smokeDeployConfigs renders every checked-in deploy smoke profile", async () => {
   const cwd = process.cwd();
-  const configPaths = await collectPublicConfigPaths(cwd, "examples/config");
+  const configPaths = await collectDeploySmokeConfigPaths(cwd, "examples/config");
   const summary = await smokeDeployConfigs({
     cwd,
     configPaths,
@@ -106,12 +107,15 @@ test("smokeDeployConfigs renders every checked-in public deploy profile", async 
 
   assert.equal(summary.ok, true);
   assert.equal(summary.errorCount, 0);
-  assert.ok(summary.configCount >= 7);
+  assert.ok(summary.configCount >= 8);
   assert.ok(summary.warningCount > 0);
-  assert.ok(
-    summary.results.every((result) =>
-      result.diagnostics.some((diagnostic) => diagnostic.code === "auth_keys_unverified"),
-    ),
+  assert.equal(
+    summary.results
+      .filter((result) => result.configPath.endsWith(".public.json"))
+      .every((result) =>
+        result.diagnostics.some((diagnostic) => diagnostic.code === "auth_keys_unverified"),
+      ),
+    true,
   );
   assert.equal(
     summary.results
@@ -141,7 +145,16 @@ test("smokeDeployConfigs renders every checked-in public deploy profile", async 
         result.hasLlamaCppService,
     ),
   );
+  assert.ok(
+    summary.results.some(
+      (result) =>
+        result.configPath.endsWith("ray.vps.json") &&
+        result.profile === "vps" &&
+        !result.hasLlamaCppService,
+    ),
+  );
   const compactSummary = formatTextSummary(cwd, summary);
+  assert.match(compactSummary, /Rendered \d+ Ray deploy profiles/);
   assert.match(compactSummary, /gatewaySwapMax=128MiB/);
   assert.match(compactSummary, /llamaSwapMax=\d+MiB/);
   assert.match(compactSummary, /Run with --verbose to print warning diagnostics/);
