@@ -35,8 +35,8 @@ Ensure an OpenAI-compatible backend is up at the URL in `model.adapter` before s
 
 ```bash
 timeout 300s bun run render:service:hetzner-email-ai
-timeout 300s bun run model:stage:hetzner-email-ai
-timeout 300s bun run doctor:hetzner-email-ai
+timeout 300s sudo /usr/local/bin/bun run model:stage:hetzner-email-ai
+timeout 300s sudo /usr/local/bin/bun run doctor:hetzner-email-ai
 ```
 
 The render and doctor aliases use the public Hetzner CX23/Qwen profile with a 4 GB memory budget and `/etc/ray/ray.env`. Render the units before copying them to the VPS, stage the llama.cpp binary and GGUF with the generated model staging plan, then run doctor on the VPS after `/etc/ray/ray.env` and the configured model files are in place.

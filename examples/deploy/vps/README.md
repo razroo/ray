@@ -85,7 +85,7 @@ After `/etc/ray/ray.env` contains the final model overrides, print the exact
 staging commands from the same resolved config:
 
 ```bash
-timeout 300s bun run model:stage:1b:generic -- --ray-env-file /etc/ray/ray.env --binary-source ./llama-server --source ./local-1b-q4.gguf
+timeout 300s sudo /usr/local/bin/bun run model:stage:1b:generic -- --ray-env-file /etc/ray/ray.env --binary-source ./llama-server --source ./local-1b-q4.gguf
 ```
 
 Add `--sha256 <expected-hex-digest>` when the model publisher provides one, and
@@ -139,6 +139,8 @@ process env or pass `--ray-env-file /etc/ray/ray.env` to raise or lower the
 default 1024 MiB threshold without shell-sourcing the rest of the env file. When
 that env file sets a custom `RAY_MODEL_PATH`, `RAY_LLAMA_CPP_MODEL_PATH`, or
 `RAY_ASYNC_QUEUE_STORAGE_DIR`, the preflight checks those volumes too.
+Use `sudo /usr/local/bin/bun run deploy:storage -- --ray-env-file /etc/ray/ray.env`
+when the env file is installed as root-owned `0600`.
 
 ### 4. Place the config
 
@@ -328,7 +330,7 @@ written into the unit; keep `--ray-env-file` for render or doctor runs that
 should load and validate a real env file.
 
 ```bash
-timeout 120s bun packages/deploy/dist/cli.js render \
+timeout 120s sudo /usr/local/bin/bun packages/deploy/dist/cli.js render \
   --cwd /srv/ray \
   --config /etc/ray/ray.json \
   --gateway-runtime-binary /usr/local/bin/bun \

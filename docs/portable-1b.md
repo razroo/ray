@@ -158,7 +158,7 @@ Before building or installing production dependencies on the VPS, run the manual
 storage preflight:
 
 ```bash
-timeout 60s bun run deploy:storage -- --ray-env-file /etc/ray/ray.env
+timeout 60s sudo /usr/local/bin/bun run deploy:storage -- --ray-env-file /etc/ray/ray.env
 ```
 
 It checks the checkout, repo-scoped Bun install cache, Ray state, `/tmp`, and
@@ -166,6 +166,8 @@ It checks the checkout, repo-scoped Bun install cache, Ray state, `/tmp`, and
 used by the deploy workflow without shell-sourcing the rest of the env file.
 When the env file sets a custom `RAY_MODEL_PATH`, `RAY_LLAMA_CPP_MODEL_PATH`, or
 `RAY_ASYNC_QUEUE_STORAGE_DIR`, the preflight checks those volumes too.
+Use the same `sudo /usr/local/bin/bun run` form for other manual helpers that
+load a root-owned `0600` `/etc/ray/ray.env`.
 
 Create `/var/lib/ray/models` on the VPS and place the GGUF at `RAY_MODEL_PATH`
 before starting the generated llama.cpp service or running doctor.
@@ -173,8 +175,8 @@ before starting the generated llama.cpp service or running doctor.
 Print the exact staging commands for the resolved config and env-file values:
 
 ```bash
-timeout 300s bun run model:stage:1b:generic -- --ray-env-file /etc/ray/ray.env --binary-source ./llama-server --source ./local-1b-q4.gguf
-timeout 300s bun run model:stage:1b:8gb:generic -- --ray-env-file /etc/ray/ray.env --binary-source ./llama-server --source ./local-1b-q4.gguf
+timeout 300s sudo /usr/local/bin/bun run model:stage:1b:generic -- --ray-env-file /etc/ray/ray.env --binary-source ./llama-server --source ./local-1b-q4.gguf
+timeout 300s sudo /usr/local/bin/bun run model:stage:1b:8gb:generic -- --ray-env-file /etc/ray/ray.env --binary-source ./llama-server --source ./local-1b-q4.gguf
 ```
 
 Add `--sha256 <expected-hex-digest>` when the model source publishes a checksum.
@@ -224,8 +226,8 @@ thresholds through the 8 GB generic profile before adding more overrides. Use
 Run the doctor command on the target machine after the GGUF exists and `/etc/ray/ray.env` is populated:
 
 ```bash
-timeout 300s bun run doctor:1b:generic
-timeout 300s bun run doctor:1b:8gb:generic
+timeout 300s sudo /usr/local/bin/bun run doctor:1b:generic
+timeout 300s sudo /usr/local/bin/bun run doctor:1b:8gb:generic
 ```
 
 Doctor checks auth/env readiness, env-file permissions, systemd host readiness and generated unit-file verification, Caddy availability and generated Caddyfile validation for the reverse proxy (`caddy` on `PATH`, `RAY_DEPLOY_CADDY_BINARY`, or `--caddy-binary`), generated systemd user readiness, service-user access to the rendered config file, Bun runtime (`/usr/local/bin/bun` by default, `RAY_GATEWAY_RUNTIME_BINARY`, or `--gateway-runtime-binary`) including service-user-scoped Bun/Node version compatibility, generated WorkingDirectory access and free-space headroom for the synced checkout and Bun production install, built gateway entrypoint and configured-runtime importability, `llama-server` binary service-user startup and generated launch-flag support, GGUF model file presence and header, and async queue storage, launch profile consistency, architecture compatibility for ARM CAX11 versus x64 CX23 sub-1B profiles, generated gateway and llama.cpp paths that would be hidden by `ProtectHome=true` or `PrivateTmp=true`, gateway cache, rate-limit key, scheduler token-buffer, and request-body admission budgets against generated `MemoryMax`, scheduler concurrency against detected host vCPUs, deploy memory overrides that exceed detected host RAM, projected memory fit against the generated backend `MemoryMax`, memory targets too small for the generated systemd cgroup floors, async queue storage headroom, swap cushion, and `vm.swappiness` for the 4 GB llama.cpp profile before the service starts.

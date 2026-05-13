@@ -457,6 +457,27 @@ async function readEnvironmentFileBounded(envFile: string): Promise<string> {
   }
 }
 
+function getNodeErrorCode(error: unknown): string | undefined {
+  return error !== null && typeof error === "object" && "code" in error
+    ? (error as { code?: string }).code
+    : undefined;
+}
+
+function formatEnvironmentFileReadError(envFile: string, error: unknown): Error {
+  const code = getNodeErrorCode(error);
+  if (code === "ENOENT") {
+    return new Error(`Env file not found: ${envFile}`);
+  }
+
+  if (code === "EACCES" || code === "EPERM") {
+    return new Error(
+      `Env file is not readable: ${envFile}. Run this helper with privileges that can read the root-owned Ray env file, for example with sudo on a VPS.`,
+    );
+  }
+
+  return error instanceof Error ? error : new Error(String(error));
+}
+
 async function loadEnvironment(options: CliOptions): Promise<NodeJS.ProcessEnv> {
   if (!options.envFile) {
     return process.env;
@@ -466,14 +487,7 @@ async function loadEnvironment(options: CliOptions): Promise<NodeJS.ProcessEnv> 
   try {
     contents = await readEnvironmentFileBounded(options.envFile);
   } catch (error) {
-    const code =
-      error !== null && typeof error === "object" && "code" in error
-        ? (error as { code?: string }).code
-        : undefined;
-    if (code === "ENOENT") {
-      throw new Error(`Env file not found: ${options.envFile}`);
-    }
-    throw error;
+    throw formatEnvironmentFileReadError(options.envFile, error);
   }
 
   return {

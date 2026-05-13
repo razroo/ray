@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -143,6 +143,16 @@ test("loadDeployStoragePreflightArgs rejects malformed ray env file thresholds",
     () => loadDeployStoragePreflightArgs(["--ray-env-file", join(tempDir, "missing.env")], {}),
     /Env file not found:/,
   );
+
+  if (process.getuid?.() !== 0) {
+    await writeFile(envFile, "RAY_DEPLOY_MIN_FREE_STORAGE_MIB=1024\n");
+    await chmod(envFile, 0o000);
+    await assert.rejects(
+      () => loadDeployStoragePreflightArgs(["--ray-env-file", envFile], {}),
+      /Env file is not readable: .*Run this helper with privileges/,
+    );
+    await chmod(envFile, 0o600);
+  }
 
   await writeFile(envFile, "RAY_MODEL_PATH=models/local.gguf\n");
   await assert.rejects(

@@ -329,6 +329,9 @@ workflow appends the resolved non-secret values to `/etc/ray/ray.env` when they
 are absent so later manual `doctor`, `render`, and `model:stage` runs read the
 same service user, domain, memory target, storage cushion, readiness timeout,
 and runtime paths.
+Because `/etc/ray/ray.env` should usually be `0600` and root-owned, run manual
+helpers that read it with privileges that can read that file, for example
+`sudo /usr/local/bin/bun run ... -- --ray-env-file /etc/ray/ray.env`.
 Set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` when the workflow or manual
 `bun run deploy:storage -- --ray-env-file /etc/ray/ray.env` check should require
 more or less than the default 1024 MiB free on the root, checkout, Ray state,
@@ -342,7 +345,7 @@ want to skip that preflight.
 Create `/var/lib/ray/models` on the VPS and put the GGUF at `RAY_MODEL_PATH`
 before starting the generated llama.cpp service or running doctor.
 
-Use `bun run model:stage -- --config ./examples/config/ray.1b.generic.public.json --ray-env-file /etc/ray/ray.env --binary-source ./llama-server --source ./local-1b-q4.gguf`
+Use `sudo /usr/local/bin/bun run model:stage -- --config ./examples/config/ray.1b.generic.public.json --ray-env-file /etc/ray/ray.env --binary-source ./llama-server --source ./local-1b-q4.gguf`
 to print the exact install, ownership, optional checksum, target storage-headroom,
 GGUF header, and service-user read/execute plus `llama-server --help` startup
 and generated launch-flag support checks for the resolved `llama-server` and

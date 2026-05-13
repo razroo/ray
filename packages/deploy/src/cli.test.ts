@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -421,6 +421,27 @@ test("runCli rejects missing explicit env files", async () => {
   await assert.rejects(
     () => runCli(["render", "--ray-env-file", "missing.ray.env"]),
     /Env file not found:/,
+  );
+});
+
+test("runCli reports unreadable explicit env files", async (t) => {
+  if (process.getuid?.() === 0) {
+    t.skip("root can read files without owner read bits");
+    return;
+  }
+
+  const tempDir = await mkRayDeployTempDir("ray-deploy-env-unreadable-");
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(envFile, "RAY_API_KEYS=secret\n");
+  await chmod(envFile, 0o000);
+
+  await assert.rejects(
+    () => runCli(["render", "--ray-env-file", envFile]),
+    /Env file is not readable: .*Run this helper with privileges/,
   );
 });
 

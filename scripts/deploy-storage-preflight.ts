@@ -290,6 +290,11 @@ async function readEnvironmentFileBounded(envFile: string): Promise<string> {
     if (code === "ENOENT") {
       throw new Error(`Env file not found: ${envFile}`);
     }
+    if (code === "EACCES" || code === "EPERM") {
+      throw new Error(
+        `Env file is not readable: ${envFile}. Run this helper with privileges that can read the root-owned Ray env file, for example with sudo on a VPS.`,
+      );
+    }
     throw error;
   } finally {
     await fileHandle?.close().catch(() => undefined);

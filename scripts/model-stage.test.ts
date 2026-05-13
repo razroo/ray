@@ -1017,6 +1017,44 @@ test("runModelStageCli loads ray env file overrides", async (t) => {
   assert.equal(parsed.serviceUser, "rayenv");
 });
 
+test("runModelStageCli reports unreadable ray env files", async (t) => {
+  if (process.getuid?.() === 0) {
+    t.skip("root can read files without owner read bits");
+    return;
+  }
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-env-unreadable-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const envFile = path.join(tempDir, "ray.env");
+  await writeFile(envFile, "RAY_MODEL_ID=secret\n", "utf8");
+  await chmod(envFile, 0o000);
+
+  let stdout = "";
+  let stderr = "";
+  const exitCode = await runModelStageCli(
+    [
+      "--cwd",
+      repoRoot,
+      "--config",
+      "./examples/config/ray.1b.generic.public.json",
+      "--env-file",
+      envFile,
+    ],
+    {
+      stdout: { write: (chunk: string) => (stdout += chunk) },
+      stderr: { write: (chunk: string) => (stderr += chunk) },
+    },
+    {},
+  );
+
+  assert.equal(exitCode, 1);
+  assert.equal(stdout, "");
+  assert.match(stderr, /Env file is not readable: .*Run this helper with privileges/);
+});
+
 test("runModelStageCli can print commands only", async () => {
   let stdout = "";
   let stderr = "";
