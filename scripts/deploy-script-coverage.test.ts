@@ -91,6 +91,21 @@ test("validateDeployScriptCoverage accepts every checked-in public deploy profil
   assert.match(formatTextSummary(cwd, summary), /Summary: errors=0/);
 });
 
+test("validateDeployScriptCoverage rejects excessive config inputs before matching scripts", async () => {
+  assert.throws(
+    () =>
+      validateDeployScriptCoverage({
+        cwd: process.cwd(),
+        configPaths: Array.from(
+          { length: 131 },
+          (_value, index) => `/tmp/ray-deploy-script-${index}.json`,
+        ),
+        scripts: {},
+      }),
+    /at most 130 config files/,
+  );
+});
+
 test("validateDeployScriptCoverage catches missing and mistargeted package aliases", async () => {
   const cwd = process.cwd();
   const configPaths = await collectDeployScriptConfigPaths(cwd, "examples/config");

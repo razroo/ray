@@ -5,6 +5,7 @@ import { collectPublicConfigPaths } from "./deploy-smoke.ts";
 
 const DEFAULT_CONFIG_DIR = "examples/config";
 const DEFAULT_PACKAGE_JSON = "package.json";
+const MAX_PUBLIC_CONFIG_FILES = 128;
 const MAX_CLI_ARGS = 12;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_PACKAGE_JSON_BYTES = 512 * 1024;
@@ -121,6 +122,10 @@ const DEPLOY_PROFILE_SCRIPT_MATRIX: ProfileScriptSpec[] = [
     doctor: "doctor:balanced",
   },
 ];
+
+const MAX_DEPLOY_SCRIPT_CONFIGS =
+  MAX_PUBLIC_CONFIG_FILES +
+  DEPLOY_PROFILE_SCRIPT_MATRIX.filter((spec) => !spec.configFile.endsWith(".public.json")).length;
 
 const HELP = `Validate package scripts for Ray deploy profiles.
 
@@ -407,6 +412,12 @@ export function validateDeployScriptCoverage(options: {
   configPaths: string[];
   scripts: Record<string, string>;
 }): DeployScriptCoverageSummary {
+  if (options.configPaths.length > MAX_DEPLOY_SCRIPT_CONFIGS) {
+    throw new Error(
+      `Deploy script coverage can inspect at most ${MAX_DEPLOY_SCRIPT_CONFIGS} config files`,
+    );
+  }
+
   const configByName = new Map(
     options.configPaths.map((configPath) => [path.basename(configPath), configPath]),
   );
