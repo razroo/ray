@@ -200,6 +200,18 @@ function getDeclaredContentLength(response: Response): number | undefined {
   return /^\d+$/.test(normalized) && Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
+function isJsonContentType(contentType: string): boolean {
+  const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  const [type, subtype, extra] = mediaType.split("/");
+
+  return (
+    type === "application" &&
+    extra === undefined &&
+    subtype !== undefined &&
+    (subtype === "json" || subtype.endsWith("+json"))
+  );
+}
+
 function stringifyRequestBody(value: unknown, limitBytes: number): string {
   let body: string;
 
@@ -300,6 +312,30 @@ async function readResponseTextLimited(
     bytesRead,
     limitBytes,
   };
+}
+
+function assertJsonResponseContentType(response: Response, pathname: string): void {
+  const contentType = response.headers.get("content-type") ?? "";
+
+  if (isJsonContentType(contentType)) {
+    return;
+  }
+
+  throw new Error(
+    `Ray response for ${pathname} must use application/json or application/*+json content type (received ${contentType || "missing"})`,
+  );
+}
+
+function parseJsonResponse<T>(text: string, pathname: string): T {
+  try {
+    return JSON.parse(text) as T;
+  } catch (error) {
+    throw new Error(
+      `Ray response for ${pathname} must be valid JSON: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 }
 
 export class RayClient {
@@ -403,7 +439,8 @@ export class RayClient {
         throw new Error(`Ray response exceeded ${body.limitBytes} bytes`);
       }
 
-      return JSON.parse(body.text) as T;
+      assertJsonResponseContentType(response, pathname);
+      return parseJsonResponse<T>(body.text, pathname);
     } catch (error) {
       if (controller.signal.aborted) {
         const reason = controller.signal.reason;

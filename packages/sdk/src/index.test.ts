@@ -158,6 +158,99 @@ test("RayClient fetches unauthenticated readiness snapshots", async (t) => {
   assert.deepEqual(readiness.reasons, ["queue_pressure"]);
 });
 
+test("RayClient accepts structured JSON response media types", async (t) => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/vnd.ray+json; charset=utf-8" });
+    response.end(
+      JSON.stringify({
+        status: "ok",
+        service: "ray-gateway",
+        providerStatus: "ready",
+        queueDepth: 0,
+        inFlight: 0,
+        pressure: {
+          queue: false,
+          preparation: false,
+          memory: false,
+          cpu: false,
+          asyncQueue: false,
+          rateLimit: false,
+          gatewayHttp: false,
+        },
+        reasons: [],
+      }),
+    );
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const client = new RayClient({
+    baseUrl: `http://127.0.0.1:${address.port}`,
+  });
+  const readiness = await client.readyz();
+
+  assert.equal(readiness.status, "ok");
+});
+
+test("RayClient rejects successful non-JSON responses before parsing", async (t) => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/plain; note=application/json" });
+    response.end(JSON.stringify({ status: "ok" }));
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const client = new RayClient({
+    baseUrl: `http://127.0.0.1:${address.port}`,
+  });
+
+  await assert.rejects(
+    () => client.readyz(),
+    /must use application\/json or application\/\*\+json content type/,
+  );
+});
+
+test("RayClient reports malformed successful JSON responses with route context", async (t) => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    response.end("{");
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const client = new RayClient({
+    baseUrl: `http://127.0.0.1:${address.port}`,
+  });
+
+  await assert.rejects(
+    () => client.readyz(),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /Ray response for \/readyz must be valid JSON/);
+      assert.match(error.message, /JSON/);
+      return true;
+    },
+  );
+});
+
 test("RayClient times out stalled requests", async (t) => {
   const server = createServer((_request, response) => {
     setTimeout(() => {
