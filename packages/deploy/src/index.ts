@@ -2940,21 +2940,35 @@ export function diagnoseConfig(
       message:
         "Inference rate limiting is disabled. Public endpoints should have a bounded request budget.",
     });
-  } else if (rateLimitKeyUsesClientIp(config.rateLimit)) {
-    if (config.rateLimit.trustProxyHeaders && !gatewayBindsLoopback) {
+  } else {
+    if (
+      !config.auth.enabled &&
+      (config.rateLimit.keyStrategy === "api-key" || config.rateLimit.keyStrategy === "ip+api-key")
+    ) {
       diagnostics.push({
         level: "warn",
-        code: "rate_limit_proxy_headers_public_bind",
+        code: "rate_limit_api_key_strategy_without_auth",
         message:
-          "rateLimit.trustProxyHeaders is enabled while server.host is not loopback. Direct clients can spoof X-Forwarded-For and evade IP-based rate limits; bind Ray to 127.0.0.1 behind Caddy or disable proxy-header trust for direct exposure.",
+          "rateLimit.keyStrategy uses API keys while auth.enabled is false. Ray ignores unverified bearer tokens for rate-limit keys, so this deployment falls back to IP-only rate limiting; enable auth or use RAY_RATE_LIMIT_KEY_STRATEGY=ip to make the public request budget explicit.",
       });
-    } else if (!config.rateLimit.trustProxyHeaders && gatewayBindsLoopback) {
-      diagnostics.push({
-        level: "warn",
-        code: "rate_limit_proxy_headers_disabled",
-        message:
-          "rateLimit.trustProxyHeaders is disabled while server.host is loopback. Generated VPS deployments normally receive traffic through Caddy, so IP-based rate limits will see the proxy address instead of the client unless proxy headers are trusted.",
-      });
+    }
+
+    if (rateLimitKeyUsesClientIp(config.rateLimit)) {
+      if (config.rateLimit.trustProxyHeaders && !gatewayBindsLoopback) {
+        diagnostics.push({
+          level: "warn",
+          code: "rate_limit_proxy_headers_public_bind",
+          message:
+            "rateLimit.trustProxyHeaders is enabled while server.host is not loopback. Direct clients can spoof X-Forwarded-For and evade IP-based rate limits; bind Ray to 127.0.0.1 behind Caddy or disable proxy-header trust for direct exposure.",
+        });
+      } else if (!config.rateLimit.trustProxyHeaders && gatewayBindsLoopback) {
+        diagnostics.push({
+          level: "warn",
+          code: "rate_limit_proxy_headers_disabled",
+          message:
+            "rateLimit.trustProxyHeaders is disabled while server.host is loopback. Generated VPS deployments normally receive traffic through Caddy, so IP-based rate limits will see the proxy address instead of the client unless proxy headers are trusted.",
+        });
+      }
     }
   }
 

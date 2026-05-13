@@ -770,6 +770,31 @@ test("diagnoseConfig warns when IP rate-limit proxy header posture is unsafe", (
   );
 });
 
+test("diagnoseConfig warns when API-key rate limiting runs without auth", () => {
+  const defaultConfig = createDefaultConfig("vps");
+  const defaultDiagnostic = diagnoseConfig(defaultConfig, process.env).find(
+    (entry) => entry.code === "rate_limit_api_key_strategy_without_auth",
+  );
+
+  assert.ok(defaultDiagnostic);
+  assert.equal(defaultDiagnostic.level, "warn");
+  assert.match(defaultDiagnostic.message, /rateLimit\.keyStrategy/);
+  assert.match(defaultDiagnostic.message, /auth\.enabled is false/);
+  assert.match(defaultDiagnostic.message, /falls back to IP-only rate limiting/);
+
+  const authConfig = mergeConfig(defaultConfig, {
+    auth: {
+      enabled: true,
+    },
+  });
+
+  assert.ok(
+    !diagnoseConfig(authConfig, {
+      RAY_API_KEYS: "test-key",
+    }).some((entry) => entry.code === "rate_limit_api_key_strategy_without_auth"),
+  );
+});
+
 test("diagnoseConfig warns when gateway cache budget is high for generated memory limits", () => {
   const defaultConfig = createDefaultConfig("1b");
   assert.ok(
