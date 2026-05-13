@@ -1729,7 +1729,7 @@ function applyAdaptiveTuning(
 
   const appliedMaxTokens = clamp(
     Math.floor(request.maxTokens * (1 - reductionRatio)),
-    config.adaptiveTuning.minOutputTokens,
+    Math.min(config.adaptiveTuning.minOutputTokens, request.maxTokens),
     request.maxTokens,
   );
 
@@ -1804,7 +1804,7 @@ function applyLearnedOutputCap(
     (ordered[index] ?? request.maxTokens) + config.adaptiveTuning.learnedCapHeadroomTokens;
   const appliedMaxTokens = clamp(
     learnedCapTokens,
-    config.adaptiveTuning.minOutputTokens,
+    Math.min(config.adaptiveTuning.minOutputTokens, request.maxTokens),
     request.maxTokens,
   );
 

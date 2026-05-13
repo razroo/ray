@@ -2377,6 +2377,125 @@ test("runtime adaptively reduces maxTokens when observed throughput drops", asyn
   assert.deepEqual(observedMaxTokens, [128, 96]);
 });
 
+test("runtime keeps adaptive tuning below-min token requests stable", async () => {
+  const observedMaxTokens: number[] = [];
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "adaptive-small-budget-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async infer(request) {
+      observedMaxTokens.push(request.maxTokens);
+      return {
+        output: "ok",
+        diagnostics: {
+          timings: {
+            completionTokensPerSecond: 5,
+          },
+        },
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(
+    mergeConfig(createDefaultConfig("tiny"), {
+      adaptiveTuning: {
+        enabled: true,
+        sampleSize: 4,
+        queueLatencyThresholdMs: 1_000,
+        minCompletionTokensPerSecond: 10,
+        maxOutputReductionRatio: 0.5,
+        minOutputTokens: 32,
+      },
+    }),
+    { provider },
+  );
+
+  await runtime.infer({
+    input: "prime adaptive sample",
+    maxTokens: 64,
+    cache: false,
+  });
+  const result = await runtime.infer({
+    input: "small request",
+    maxTokens: 16,
+    cache: false,
+  });
+
+  assert.equal(result.output, "ok");
+  assert.equal(result.diagnostics?.adaptiveTuning?.reduced, false);
+  assert.deepEqual(observedMaxTokens, [64, 16]);
+});
+
+test("runtime keeps learned caps below-min token requests stable", async () => {
+  const observedMaxTokens: number[] = [];
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "learned-cap-small-budget-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async infer(request) {
+      observedMaxTokens.push(request.maxTokens);
+      return {
+        output: "ok",
+        usage: {
+          tokens: {
+            prompt: 8,
+            completion: 4,
+            total: 12,
+          },
+        },
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(
+    mergeConfig(createDefaultConfig("tiny"), {
+      adaptiveTuning: {
+        learnedCapMinSamples: 2,
+        learnedCapHeadroomTokens: 4,
+        minOutputTokens: 32,
+      },
+    }),
+    { provider },
+  );
+
+  await runtime.infer({
+    input: "family sample one",
+    maxTokens: 64,
+    cache: false,
+    metadata: {
+      promptFamily: "small-budget-family",
+    },
+  });
+  await runtime.infer({
+    input: "family sample two",
+    maxTokens: 64,
+    cache: false,
+    metadata: {
+      promptFamily: "small-budget-family",
+    },
+  });
+  const result = await runtime.infer({
+    input: "family small request",
+    maxTokens: 16,
+    cache: false,
+    metadata: {
+      promptFamily: "small-budget-family",
+    },
+  });
+
+  assert.equal(result.output, "ok");
+  assert.equal(result.diagnostics?.learnedOutputCap?.applied, false);
+  assert.deepEqual(observedMaxTokens, [64, 64, 16]);
+});
+
 test("runtime bounds learned output family history across unique prompt families", async () => {
   const provider: ModelProvider = {
     kind: "llama.cpp",
