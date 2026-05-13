@@ -1846,6 +1846,28 @@ test("loadRayConfig rejects invalid adapter base URLs", async (t) => {
     }),
     /model\.adapter\.baseUrl must not include a query string or fragment/,
   );
+
+  const gatewayLoopConfigPath = join(tempDir, "ray.gateway-loop.invalid.json");
+  await writeFile(
+    gatewayLoopConfigPath,
+    JSON.stringify({
+      profile: "vps",
+      model: {
+        adapter: {
+          baseUrl: "http://localhost:3000",
+        },
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: gatewayLoopConfigPath,
+      env: {},
+    }),
+    /model\.adapter\.baseUrl must not point at server\.host\/server\.port/,
+  );
 });
 
 test("loadRayConfig accepts sub1b email classifier variant", async () => {

@@ -1223,7 +1223,7 @@ function assertTcpPort(value: number, label: string): void {
   }
 }
 
-function assertHttpBaseUrl(value: string, label: string): void {
+function assertHttpBaseUrl(value: string, label: string): URL {
   let parsed: URL;
   try {
     parsed = new URL(value);
@@ -1258,6 +1258,92 @@ function assertHttpBaseUrl(value: string, label: string): void {
       details: { value },
     });
   }
+
+  return parsed;
+}
+
+function getUrlPort(url: URL): number {
+  if (url.port) {
+    return Number(url.port);
+  }
+
+  return url.protocol === "https:" ? 443 : 80;
+}
+
+function normalizeHostLiteral(value: string): string {
+  const trimmed = value.trim().toLowerCase();
+  return trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+}
+
+function isLoopbackHost(value: string): boolean {
+  const host = normalizeHostLiteral(value);
+
+  if (host === "localhost" || host === "::1" || host === "0:0:0:0:0:0:0:1") {
+    return true;
+  }
+
+  if (isIP(host) === 4) {
+    const firstOctet = Number(host.split(".")[0]);
+    return firstOctet === 127;
+  }
+
+  return false;
+}
+
+function isWildcardBindHost(value: string): boolean {
+  const host = normalizeHostLiteral(value);
+  return host === "0.0.0.0" || host === "::" || host === "0:0:0:0:0:0:0:0";
+}
+
+function localBindHostsOverlap(left: string, right: string): boolean {
+  const leftHost = normalizeHostLiteral(left);
+  const rightHost = normalizeHostLiteral(right);
+
+  if (isWildcardBindHost(leftHost) || isWildcardBindHost(rightHost)) {
+    return true;
+  }
+
+  if (leftHost === rightHost) {
+    return true;
+  }
+
+  return (
+    (leftHost === "localhost" || rightHost === "localhost") &&
+    isLoopbackHost(leftHost) &&
+    isLoopbackHost(rightHost)
+  );
+}
+
+function assertAdapterDoesNotTargetGateway(
+  config: RayConfig,
+  adapterBaseUrl: URL,
+  label: string,
+): void {
+  if (getUrlPort(adapterBaseUrl) !== config.server.port) {
+    return;
+  }
+
+  const gatewayHost = normalizeHostLiteral(config.server.host);
+  const adapterHost = normalizeHostLiteral(adapterBaseUrl.hostname);
+  if (
+    (!isLoopbackHost(adapterHost) && adapterHost !== gatewayHost) ||
+    !localBindHostsOverlap(gatewayHost, adapterHost)
+  ) {
+    return;
+  }
+
+  throw new RayError(
+    `${label} must not point at server.host/server.port because that would recursively call the Ray gateway instead of the model backend`,
+    {
+      code: "config_validation_error",
+      status: 500,
+      details: {
+        baseUrl: adapterBaseUrl.toString(),
+        serverHost: config.server.host,
+        serverPort: config.server.port,
+      },
+    },
+  );
 }
 
 function assertRequestBodyLimitBytes(value: number): void {
@@ -2166,7 +2252,8 @@ function validateConfig(config: RayConfig): RayConfig {
       "model.adapter.apiKeyEnv",
     );
 
-    assertHttpBaseUrl(config.model.adapter.baseUrl, "model.adapter.baseUrl");
+    const adapterBaseUrl = assertHttpBaseUrl(config.model.adapter.baseUrl, "model.adapter.baseUrl");
+    assertAdapterDoesNotTargetGateway(config, adapterBaseUrl, "model.adapter.baseUrl");
     assertPositiveIntegerAtMost(
       config.model.adapter.timeoutMs,
       "model.adapter.timeoutMs",
@@ -2212,7 +2299,8 @@ function validateConfig(config: RayConfig): RayConfig {
       "model.adapter.apiKeyEnv",
     );
 
-    assertHttpBaseUrl(config.model.adapter.baseUrl, "model.adapter.baseUrl");
+    const adapterBaseUrl = assertHttpBaseUrl(config.model.adapter.baseUrl, "model.adapter.baseUrl");
+    assertAdapterDoesNotTargetGateway(config, adapterBaseUrl, "model.adapter.baseUrl");
     assertPositiveIntegerAtMost(
       config.model.adapter.timeoutMs,
       "model.adapter.timeoutMs",
