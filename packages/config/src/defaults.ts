@@ -85,6 +85,14 @@ function createSub1bDefaults(machineClass: Sub1bMachineClass): RayConfig {
       contextWindow: 8192,
       warmOnBoot: true,
       maxOutputTokens: 256,
+      operational: {
+        recommendedPromptFormat: "native-template",
+        supportsJsonMode: true,
+        tokensPerSecondTarget: machineClass === "cax11" ? 10 : 14,
+        memoryClassMiB: 4096,
+        preferredCtxSize: launchProfile.ctxSize,
+        chatTemplateKnown: true,
+      },
       adapter: {
         kind: "llama.cpp",
         baseUrl: "http://127.0.0.1:8081",

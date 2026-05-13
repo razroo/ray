@@ -123,6 +123,12 @@ test("validateConfigFiles requires explicit public runtime guardrails", async (t
   assert.ok(codes.includes("public_config_model_context_window_explicit"));
   assert.ok(codes.includes("public_config_model_warm_on_boot_explicit"));
   assert.ok(codes.includes("public_config_model_output_tokens_explicit"));
+  assert.ok(codes.includes("public_config_model_operational_prompt_format_explicit"));
+  assert.ok(codes.includes("public_config_model_operational_json_mode_explicit"));
+  assert.ok(codes.includes("public_config_model_operational_tps_explicit"));
+  assert.ok(codes.includes("public_config_model_operational_memory_class_explicit"));
+  assert.ok(codes.includes("public_config_model_operational_ctx_size_explicit"));
+  assert.ok(codes.includes("public_config_model_operational_chat_template_explicit"));
   assert.ok(codes.includes("public_config_model_adapter_kind_explicit"));
   assert.ok(codes.includes("public_config_model_adapter_base_url_explicit"));
   assert.ok(codes.includes("public_config_model_adapter_ref_explicit"));

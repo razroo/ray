@@ -13,6 +13,9 @@ const MAX_CLI_ARGS = 16;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_PUBLIC_MODEL_CONTEXT_WINDOW = 8_192;
 const MAX_PUBLIC_MODEL_OUTPUT_TOKENS = 256;
+const MAX_PUBLIC_MODEL_OPERATIONAL_TOKENS_PER_SECOND = 18;
+const MAX_PUBLIC_MODEL_OPERATIONAL_MEMORY_CLASS_MIB = 8_192;
+const MAX_PUBLIC_MODEL_OPERATIONAL_CTX_SIZE = 4_096;
 const MAX_PUBLIC_REQUEST_BODY_LIMIT_BYTES = 64_000;
 const MAX_PUBLIC_RATE_LIMIT_WINDOW_MS = 3_600_000;
 const MAX_PUBLIC_RATE_LIMIT_REQUESTS = 300;
@@ -501,6 +504,48 @@ async function diagnosePublicConfigPolicy(configPath: string): Promise<Deploymen
     ["model", "maxOutputTokens"],
     MAX_PUBLIC_MODEL_OUTPUT_TOKENS,
     "public_config_model_output_tokens_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["model", "operational", "recommendedPromptFormat"],
+    "native-template",
+    "public_config_model_operational_prompt_format_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["model", "operational", "supportsJsonMode"],
+    true,
+    "public_config_model_operational_json_mode_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["model", "operational", "tokensPerSecondTarget"],
+    MAX_PUBLIC_MODEL_OPERATIONAL_TOKENS_PER_SECOND,
+    "public_config_model_operational_tps_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["model", "operational", "memoryClassMiB"],
+    MAX_PUBLIC_MODEL_OPERATIONAL_MEMORY_CLASS_MIB,
+    "public_config_model_operational_memory_class_explicit",
+  );
+  expectPublicConfigPositiveIntegerAtMost(
+    diagnostics,
+    parsed,
+    ["model", "operational", "preferredCtxSize"],
+    MAX_PUBLIC_MODEL_OPERATIONAL_CTX_SIZE,
+    "public_config_model_operational_ctx_size_explicit",
+  );
+  expectPublicConfigValue(
+    diagnostics,
+    parsed,
+    ["model", "operational", "chatTemplateKnown"],
+    true,
+    "public_config_model_operational_chat_template_explicit",
   );
   expectPublicConfigValue(
     diagnostics,

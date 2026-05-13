@@ -12,6 +12,14 @@
     "contextWindow": 8192,
     "warmOnBoot": true,
     "maxOutputTokens": 256,
+    "operational": {
+      "recommendedPromptFormat": "native-template",
+      "supportsJsonMode": true,
+      "tokensPerSecondTarget": 10,
+      "memoryClassMiB": 4096,
+      "preferredCtxSize": 3072,
+      "chatTemplateKnown": true
+    },
     "adapter": {
       "kind": "llama.cpp",
       "baseUrl": "http://127.0.0.1:8081",

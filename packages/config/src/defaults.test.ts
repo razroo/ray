@@ -108,6 +108,9 @@ test("sub1b profile defaults to a bounded llama.cpp launch profile", () => {
 
   assert.equal(config.profile, "sub1b");
   assert.equal(config.model.adapter.kind, "llama.cpp");
+  assert.equal(config.model.operational?.tokensPerSecondTarget, 14);
+  assert.equal(config.model.operational?.memoryClassMiB, 4096);
+  assert.equal(config.model.operational?.preferredCtxSize, 3072);
 
   if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
     throw new Error("Expected a llama.cpp launch profile");
@@ -131,6 +134,9 @@ test("sub1b-cax11 profile defaults to the ARM single-slot llama.cpp launch profi
 
   assert.equal(config.profile, "sub1b-cax11");
   assert.equal(config.model.adapter.kind, "llama.cpp");
+  assert.equal(config.model.operational?.tokensPerSecondTarget, 10);
+  assert.equal(config.model.operational?.memoryClassMiB, 4096);
+  assert.equal(config.model.operational?.preferredCtxSize, 3072);
 
   if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
     throw new Error("Expected a llama.cpp launch profile");
