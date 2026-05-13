@@ -1,8 +1,12 @@
-import { stat, statfs } from "node:fs/promises";
+import { open, stat, statfs } from "node:fs/promises";
 import path from "node:path";
 
 const DEFAULT_MIN_FREE_STORAGE_MIB = 1_024;
 const MAX_MIN_FREE_STORAGE_MIB = 1_048_576;
+const MAX_ENV_FILE_BYTES = 64 * 1024;
+const MAX_ENV_ENTRIES = 512;
+const MAX_ENV_KEY_CHARS = 128;
+const MAX_ENV_VALUE_BYTES = MAX_ENV_FILE_BYTES;
 const MAX_CLI_ARGS = 40;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_STORAGE_PATHS = 16;
@@ -15,9 +19,11 @@ const DEFAULT_STORAGE_PATHS = [
   "/tmp",
 ] as const;
 
-interface DeployStoragePreflightArgs {
+export interface DeployStoragePreflightArgs {
   paths: string[];
   minFreeStorageMiB: number;
+  minFreeStorageMiBSource: "default" | "env" | "env-file" | "flag";
+  envFile?: string;
   json: boolean;
   help: boolean;
 }
@@ -44,6 +50,8 @@ Usage:
 Options:
   --path <path>          Absolute path to check. Repeatable. Defaults to /srv/ray, /srv/ray/.ray/bun-install-cache, /var/lib/ray, and /tmp.
   --min-free-mib <n>    Required free storage in MiB. Default: RAY_DEPLOY_MIN_FREE_STORAGE_MIB or ${DEFAULT_MIN_FREE_STORAGE_MIB}. Use 0 to skip the threshold.
+  --env-file <path>      Load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from a bounded dotenv file unless --min-free-mib is set.
+  --ray-env-file <path>  Alias for --env-file.
   --json                Print machine-readable summary JSON.
   -h, --help            Show this help.
 `;
@@ -98,6 +106,18 @@ function parseNonNegativeInteger(value: string | undefined, label: string): numb
   return parsed;
 }
 
+function normalizeOptionalPath(value: string, label: string): string {
+  if (value.length === 0 || value.trim() !== value) {
+    throw new Error(`${label} must be a non-empty path without surrounding whitespace`);
+  }
+
+  if (value.includes("\0") || value.includes("\n") || value.includes("\r")) {
+    throw new Error(`${label} must not contain control characters`);
+  }
+
+  return value;
+}
+
 function normalizeStoragePath(value: string): string {
   if (value.length === 0 || value.trim() !== value) {
     throw new Error(
@@ -127,11 +147,14 @@ export function parseArgs(
   assertArgv(argv);
 
   const paths: string[] = [];
-  let minFreeStorageMiB =
-    parseNonNegativeInteger(
-      env.RAY_DEPLOY_MIN_FREE_STORAGE_MIB,
-      "RAY_DEPLOY_MIN_FREE_STORAGE_MIB",
-    ) ?? DEFAULT_MIN_FREE_STORAGE_MIB;
+  const envMinFreeStorageMiB = parseNonNegativeInteger(
+    env.RAY_DEPLOY_MIN_FREE_STORAGE_MIB,
+    "RAY_DEPLOY_MIN_FREE_STORAGE_MIB",
+  );
+  let minFreeStorageMiB = envMinFreeStorageMiB ?? DEFAULT_MIN_FREE_STORAGE_MIB;
+  let minFreeStorageMiBSource: DeployStoragePreflightArgs["minFreeStorageMiBSource"] =
+    envMinFreeStorageMiB === undefined ? "default" : "env";
+  let envFile: string | undefined;
   let json = false;
   let help = false;
 
@@ -151,6 +174,13 @@ export function parseArgs(
       minFreeStorageMiB =
         parseNonNegativeInteger(requireFlagValue(current, argv[index + 1]), current) ??
         DEFAULT_MIN_FREE_STORAGE_MIB;
+      minFreeStorageMiBSource = "flag";
+      index += 1;
+      continue;
+    }
+
+    if (current === "--env-file" || current === "--ray-env-file") {
+      envFile = normalizeOptionalPath(requireFlagValue(current, argv[index + 1]), current);
       index += 1;
       continue;
     }
@@ -175,8 +205,161 @@ export function parseArgs(
   return {
     paths: paths.length > 0 ? paths : [...DEFAULT_STORAGE_PATHS],
     minFreeStorageMiB,
+    minFreeStorageMiBSource,
+    ...(envFile ? { envFile } : {}),
     json,
     help,
+  };
+}
+
+function decodeDoubleQuotedEnvValue(value: string): string {
+  return value.replace(/\\(["\\nrt])/g, (_match, escaped: string) => {
+    if (escaped === "n") {
+      return "\n";
+    }
+
+    if (escaped === "r") {
+      return "\r";
+    }
+
+    if (escaped === "t") {
+      return "\t";
+    }
+
+    return escaped;
+  });
+}
+
+async function readEnvironmentFileBounded(envFile: string): Promise<string> {
+  let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
+
+  try {
+    fileHandle = await open(envFile, "r");
+    const stats = await fileHandle.stat();
+
+    if (!stats.isFile()) {
+      throw new Error(`Env file path must be a file: ${envFile}`);
+    }
+
+    if (stats.size > MAX_ENV_FILE_BYTES) {
+      throw new Error(`Env file must be at most ${MAX_ENV_FILE_BYTES} bytes: ${envFile}`);
+    }
+
+    const contents = await fileHandle.readFile("utf8");
+    if (Buffer.byteLength(contents, "utf8") > MAX_ENV_FILE_BYTES) {
+      throw new Error(`Env file must be at most ${MAX_ENV_FILE_BYTES} bytes: ${envFile}`);
+    }
+
+    return contents;
+  } catch (error) {
+    const code =
+      error !== null && typeof error === "object" && "code" in error
+        ? (error as { code?: string }).code
+        : undefined;
+    if (code === "ENOENT") {
+      throw new Error(`Env file not found: ${envFile}`);
+    }
+    throw error;
+  } finally {
+    await fileHandle?.close().catch(() => undefined);
+  }
+}
+
+function parseDeployMinFreeStorageFromEnvironmentFile(contents: string): number | undefined {
+  if (typeof contents !== "string") {
+    throw new Error("Env file contents must be a string");
+  }
+
+  if (Buffer.byteLength(contents, "utf8") > MAX_ENV_FILE_BYTES) {
+    throw new Error(`Env file contents must be at most ${MAX_ENV_FILE_BYTES} bytes`);
+  }
+
+  const lines = contents.split(/\r?\n/);
+  let entries = 0;
+  let minFreeStorageMiB: number | undefined;
+
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+
+    if (line.length === 0 || line.startsWith("#")) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex <= 0) {
+      throw new Error(`Invalid env file line ${index + 1}: expected KEY=value`);
+    }
+
+    const key = line.slice(0, separatorIndex).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error(`Invalid env file line ${index + 1}: invalid variable name`);
+    }
+
+    if (key.length > MAX_ENV_KEY_CHARS) {
+      throw new Error(
+        `Invalid env file line ${index + 1}: variable name must be at most ${MAX_ENV_KEY_CHARS} characters`,
+      );
+    }
+
+    entries += 1;
+    if (entries > MAX_ENV_ENTRIES) {
+      throw new Error(`Env file must contain at most ${MAX_ENV_ENTRIES} variables`);
+    }
+
+    const rawValue = line.slice(separatorIndex + 1).trim();
+    let value = rawValue;
+    const startsDoubleQuote = rawValue.startsWith('"');
+    const endsDoubleQuote = rawValue.endsWith('"');
+    const startsSingleQuote = rawValue.startsWith("'");
+    const endsSingleQuote = rawValue.endsWith("'");
+
+    if (startsDoubleQuote !== endsDoubleQuote || startsSingleQuote !== endsSingleQuote) {
+      throw new Error(`Invalid env file line ${index + 1}: unterminated quoted value`);
+    }
+
+    if (startsDoubleQuote || startsSingleQuote) {
+      value = rawValue.slice(1, -1);
+      if (startsDoubleQuote) {
+        value = decodeDoubleQuotedEnvValue(value);
+      }
+    }
+
+    if (Buffer.byteLength(value, "utf8") > MAX_ENV_VALUE_BYTES) {
+      throw new Error(
+        `Invalid env file line ${index + 1}: value must be at most ${MAX_ENV_VALUE_BYTES} bytes`,
+      );
+    }
+
+    if (key === "RAY_DEPLOY_MIN_FREE_STORAGE_MIB") {
+      minFreeStorageMiB = parseNonNegativeInteger(value, key);
+    }
+  }
+
+  return minFreeStorageMiB;
+}
+
+export async function loadDeployStoragePreflightArgs(
+  argv: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<DeployStoragePreflightArgs> {
+  const args = parseArgs(argv, env);
+
+  if (!args.envFile || args.help || args.minFreeStorageMiBSource === "flag") {
+    return args;
+  }
+
+  const envFileMinFreeStorageMiB = parseDeployMinFreeStorageFromEnvironmentFile(
+    await readEnvironmentFileBounded(args.envFile),
+  );
+
+  if (envFileMinFreeStorageMiB === undefined) {
+    return args;
+  }
+
+  return {
+    ...args,
+    minFreeStorageMiB: envFileMinFreeStorageMiB,
+    minFreeStorageMiBSource: "env-file",
   };
 }
 
@@ -290,7 +473,7 @@ export async function runDeployStoragePreflightCli(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<number> {
   try {
-    const args = parseArgs(argv, env);
+    const args = await loadDeployStoragePreflightArgs(argv, env);
 
     if (args.help) {
       io.stdout.write(HELP);

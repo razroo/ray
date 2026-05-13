@@ -158,12 +158,12 @@ Before building or installing production dependencies on the VPS, run the manual
 storage preflight:
 
 ```bash
-timeout 60s bun run deploy:storage
+timeout 60s bun run deploy:storage -- --ray-env-file /etc/ray/ray.env
 ```
 
 It checks the checkout, repo-scoped Bun install cache, Ray state, and temp
 volumes with the same `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` threshold used by the
-deploy workflow.
+deploy workflow without shell-sourcing the rest of the env file.
 
 Create `/var/lib/ray/models` on the VPS and place the GGUF at `RAY_MODEL_PATH`
 before starting the generated llama.cpp service or running doctor.

@@ -1736,7 +1736,10 @@ function validateDeployStoragePreflightScript(
     contents.includes('"/var/lib/ray"') &&
     contents.includes('"/tmp"') &&
     contents.includes("DEFAULT_STORAGE_PATHS") &&
-    contents.includes("RAY_DEPLOY_MIN_FREE_STORAGE_MIB")
+    contents.includes("RAY_DEPLOY_MIN_FREE_STORAGE_MIB") &&
+    contents.includes("--ray-env-file") &&
+    contents.includes("loadDeployStoragePreflightArgs") &&
+    contents.includes("readEnvironmentFileBounded")
   ) {
     return [];
   }
@@ -1748,7 +1751,7 @@ function validateDeployStoragePreflightScript(
       scriptPath,
       line: workflowLineNumber(lines, "DEFAULT_STORAGE_PATHS"),
       message:
-        "Manual deploy storage preflight must check /srv/ray/.ray/bun-install-cache by default so operator-run Bun installs use the same disk headroom guard as the VPS deploy workflow.",
+        "Manual deploy storage preflight must check /srv/ray/.ray/bun-install-cache by default and load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from --ray-env-file so operator-run Bun installs use the same disk headroom guard as the VPS deploy workflow.",
     },
   ];
 }

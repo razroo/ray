@@ -319,11 +319,12 @@ workflow appends the resolved non-secret values to `/etc/ray/ray.env` when they
 are absent so later manual `doctor`, `render`, and `model:stage` runs read the
 same service user, domain, memory target, storage cushion, readiness timeout,
 and runtime paths.
-Set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` when the workflow should require more or
-less than the default 1024 MiB free on the root, checkout, Ray state, temp, and
-repo-scoped Bun install-cache volumes before package bootstrap, rsync follow-up,
-or the remote Bun production install. Set it to `0` only when you intentionally
-want to skip that preflight.
+Set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` when the workflow or manual
+`bun run deploy:storage -- --ray-env-file /etc/ray/ray.env` check should require
+more or less than the default 1024 MiB free on the root, checkout, Ray state,
+temp, and repo-scoped Bun install-cache volumes before package bootstrap, rsync
+follow-up, or the remote Bun production install. Set it to `0` only when you
+intentionally want to skip that preflight.
 
 Create `/var/lib/ray/models` on the VPS and put the GGUF at `RAY_MODEL_PATH`
 before starting the generated llama.cpp service or running doctor.

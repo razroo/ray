@@ -134,8 +134,9 @@ readable by the generated service user without a recursive permission walk over
 `node_modules`.
 The storage preflight checks `/srv/ray`, `/var/lib/ray`, `/tmp`, and the
 repo-scoped Bun install cache at `/srv/ray/.ray/bun-install-cache` before the Bun
-install expands dependencies; set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` to raise or
-lower the default 1024 MiB threshold.
+install expands dependencies; set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` in the
+process env or pass `--ray-env-file /etc/ray/ray.env` to raise or lower the
+default 1024 MiB threshold without shell-sourcing the rest of the env file.
 
 ### 4. Place the config
 
