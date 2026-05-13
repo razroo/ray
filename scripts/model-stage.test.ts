@@ -339,6 +339,30 @@ test("createModelStagePlan reads staging sources and checksums from env", async 
   assert.match(plan.commands.join("\n"), /timeout 30s df -Pm '\/var\/lib\/ray\/models'/);
 });
 
+test("createModelStagePlan rejects malformed staging source paths from env", async () => {
+  await assert.rejects(
+    createModelStagePlan({
+      cwd: repoRoot,
+      configPath: "./examples/config/ray.1b.generic.public.json",
+      env: {
+        RAY_MODEL_SOURCE_PATH: " /tmp/ray-artifacts/local-1b-q4.gguf",
+      },
+    }),
+    /RAY_MODEL_SOURCE_PATH must be a non-empty path without surrounding whitespace/,
+  );
+
+  await assert.rejects(
+    createModelStagePlan({
+      cwd: repoRoot,
+      configPath: "./examples/config/ray.1b.generic.public.json",
+      env: {
+        RAY_LLAMA_CPP_BINARY_SOURCE_PATH: "/tmp/ray-artifacts\n/llama-server",
+      },
+    }),
+    /RAY_LLAMA_CPP_BINARY_SOURCE_PATH must not contain control characters/,
+  );
+});
+
 test("createModelStagePlan rejects oversized direct paths before loading inputs", async () => {
   const oversizedPath = "x".repeat(4_097);
 

@@ -309,6 +309,14 @@ function normalizeOptionalPath(value: string, label: string): string {
   return value;
 }
 
+function readNonEmptyPathEnvValue(value: string | undefined, label: string): string | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+
+  return normalizeOptionalPath(value, label);
+}
+
 function normalizeSha256(value: string, label: string): string {
   const normalized = value.trim().toLowerCase();
   if (!SHA256_PATTERN.test(normalized)) {
@@ -712,23 +720,22 @@ export async function createModelStagePlan(options: {
   );
   const modelPath = normalizeOptionalPath(adapter.launchProfile.modelPath, "model path");
   const binaryPath = normalizeOptionalPath(adapter.launchProfile.binaryPath, "binary path");
-  const binarySourcePathValue =
-    options.binarySourcePath ?? readNonEmptyEnvValue(env[BINARY_SOURCE_ENV]);
   const binarySha256Value = options.binarySha256 ?? readNonEmptyEnvValue(env[BINARY_SHA256_ENV]);
-  const sourcePathValue = options.sourcePath ?? readNonEmptyEnvValue(env[MODEL_SOURCE_ENV]);
   const sha256Value = options.sha256 ?? readNonEmptyEnvValue(env[MODEL_SHA256_ENV]);
-  const binarySourcePath = binarySourcePathValue
-    ? normalizeOptionalPath(binarySourcePathValue, "binary source path")
-    : undefined;
+  const binarySourcePath =
+    options.binarySourcePath !== undefined
+      ? normalizeOptionalPath(options.binarySourcePath, "binary source path")
+      : readNonEmptyPathEnvValue(env[BINARY_SOURCE_ENV], BINARY_SOURCE_ENV);
   const binarySha256 = binarySha256Value
     ? normalizeSha256(
         binarySha256Value,
         options.binarySha256 ? "--binary-sha256" : BINARY_SHA256_ENV,
       )
     : undefined;
-  const sourcePath = sourcePathValue
-    ? normalizeOptionalPath(sourcePathValue, "source path")
-    : undefined;
+  const sourcePath =
+    options.sourcePath !== undefined
+      ? normalizeOptionalPath(options.sourcePath, "source path")
+      : readNonEmptyPathEnvValue(env[MODEL_SOURCE_ENV], MODEL_SOURCE_ENV);
   const sha256 = sha256Value
     ? normalizeSha256(sha256Value, options.sha256 ? "--sha256" : MODEL_SHA256_ENV)
     : undefined;
