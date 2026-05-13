@@ -1047,6 +1047,38 @@ function validateDeployWorkflowBunVersionProbeGuards(
   return diagnostics;
 }
 
+function validateDeployWorkflowGatewayRuntimeBunInstall(
+  workflowPath: string,
+  contents: string,
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  if (!contents.includes("GATEWAY_RUNTIME_BINARY")) {
+    return [];
+  }
+
+  if (
+    contents.includes('basename "${GATEWAY_RUNTIME_BINARY:-}"') &&
+    contents.includes("tr '[:upper:]' '[:lower:]'") &&
+    contents.includes('[ "${GATEWAY_RUNTIME_BINARY:-}" != "/usr/local/bin/bun" ]') &&
+    contents.includes('install -D -m 0755 /usr/local/bin/bun "$GATEWAY_RUNTIME_BINARY"')
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "workflow_gateway_runtime_bun_install_missing",
+      workflowPath,
+      message:
+        "VPS deploy workflow must copy the refreshed /usr/local/bin/bun to custom Bun gateway runtime paths so --gateway-runtime-binary does not point generated services at a stale or missing Bun binary.",
+    },
+  ];
+}
+
 function validateDeployWorkflowRootCommandGuards(
   workflowPath: string,
   lines: string[],
@@ -1208,6 +1240,7 @@ async function validateWorkflow(
   diagnostics.push(...validateDeployWorkflowRemoteBunInstallGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRemoteBunCommandGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowBunVersionProbeGuards(workflowPath, lines));
+  diagnostics.push(...validateDeployWorkflowGatewayRuntimeBunInstall(workflowPath, contents));
   diagnostics.push(...validateDeployWorkflowRootCommandGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRayEnvReadGuards(workflowPath, lines));
 

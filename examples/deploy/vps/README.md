@@ -432,9 +432,10 @@ before opening SSH, checks that `RAY_DEPLOY_KNOWN_HOSTS` contains an entry for
 the configured host and SSH port,
 installs missing remote deploy prerequisites such as `curl`, `ca-certificates`,
 `unzip`, and `rsync`, refreshes `/usr/local/bin/bun` when it is missing or older
-than the repo's supported Bun runtime, prints the resolved llama.cpp binary and
-GGUF staging plan for llama.cpp deploy configs, verifies and stages source
-artifacts when both `RAY_LLAMA_CPP_BINARY_SOURCE_PATH` and
+than the repo's supported Bun runtime, copies that refreshed Bun to custom
+`RAY_GATEWAY_RUNTIME_BINARY` paths whose filename is `bun`, prints the resolved
+llama.cpp binary and GGUF staging plan for llama.cpp deploy configs, verifies
+and stages source artifacts when both `RAY_LLAMA_CPP_BINARY_SOURCE_PATH` and
 `RAY_MODEL_SOURCE_PATH` are set in `/etc/ray/ray.env`, then runs
 `ray deploy doctor` on the VPS before restarting services. It validates and
 passes `RAY_DEPLOY_CADDY_BINARY` through remote doctor, render, and generated

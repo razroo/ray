@@ -611,38 +611,46 @@ jobs:
             local install_bun_version="1.3.9"
             local current_version
             current_version="$(bun_runtime_version /usr/local/bin/bun)"
-            if bun_version_at_least "$current_version" "$minimum_bun_version"; then
-              return
-            fi
+            if ! bun_version_at_least "$current_version" "$minimum_bun_version"; then
+              if [ -n "$current_version" ]; then
+                echo "Updating /usr/local/bin/bun from $current_version to Bun ${install_bun_version}+."
+              else
+                echo "Installing Bun ${install_bun_version}+ at /usr/local/bin/bun."
+              fi
 
-            if [ -n "$current_version" ]; then
-              echo "Updating /usr/local/bin/bun from $current_version to Bun ${install_bun_version}+."
-            else
-              echo "Installing Bun ${install_bun_version}+ at /usr/local/bin/bun."
-            fi
+              local candidate=""
+              candidate="$(command -v bun 2>/dev/null || true)"
+              if [ -n "$candidate" ] && [ "$candidate" != "/usr/local/bin/bun" ]; then
+                local candidate_version
+                candidate_version="$(bun_runtime_version "$candidate")"
+                if bun_version_at_least "$candidate_version" "$minimum_bun_version"; then
+                  timeout 60s $SUDO install -m 0755 "$candidate" /usr/local/bin/bun
+                fi
+              fi
 
-            local candidate=""
-            candidate="$(command -v bun 2>/dev/null || true)"
-            if [ -n "$candidate" ] && [ "$candidate" != "/usr/local/bin/bun" ]; then
-              local candidate_version
-              candidate_version="$(bun_runtime_version "$candidate")"
-              if bun_version_at_least "$candidate_version" "$minimum_bun_version"; then
-                timeout 60s $SUDO install -m 0755 "$candidate" /usr/local/bin/bun
-                return
+              current_version="$(bun_runtime_version /usr/local/bin/bun)"
+              if ! bun_version_at_least "$current_version" "$minimum_bun_version"; then
+                curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 https://bun.sh/install | timeout 300s bash -s "bun-v${install_bun_version}"
+                if [ ! -x "$HOME/.bun/bin/bun" ]; then
+                  echo "Bun install completed but $HOME/.bun/bin/bun was not found."
+                  exit 1
+                fi
+                current_version="$(bun_runtime_version "$HOME/.bun/bin/bun")"
+                if ! bun_version_at_least "$current_version" "$minimum_bun_version"; then
+                  echo "Bun install produced unsupported version: ${current_version:-unknown}."
+                  exit 1
+                fi
+                timeout 60s $SUDO install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
               fi
             fi
 
-            curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 https://bun.sh/install | timeout 300s bash -s "bun-v${install_bun_version}"
-            if [ ! -x "$HOME/.bun/bin/bun" ]; then
-              echo "Bun install completed but $HOME/.bun/bin/bun was not found."
-              exit 1
-            fi
-            current_version="$(bun_runtime_version "$HOME/.bun/bin/bun")"
-            if ! bun_version_at_least "$current_version" "$minimum_bun_version"; then
-              echo "Bun install produced unsupported version: ${current_version:-unknown}."
-              exit 1
-            fi
-            timeout 60s $SUDO install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
+            case "$(basename "${GATEWAY_RUNTIME_BINARY:-}" | tr '[:upper:]' '[:lower:]')" in
+              bun|bun.exe)
+                if [ "${GATEWAY_RUNTIME_BINARY:-}" != "/usr/local/bin/bun" ]; then
+                  timeout 60s $SUDO install -D -m 0755 /usr/local/bin/bun "$GATEWAY_RUNTIME_BINARY"
+                fi
+                ;;
+            esac
           }
 
           ensure_bun_runtime
