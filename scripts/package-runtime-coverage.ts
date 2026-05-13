@@ -477,6 +477,12 @@ function isVpsRuntimeCurlCommand(line: string): boolean {
   );
 }
 
+function hasDocumentationDomainCallbackUrl(line: string): boolean {
+  return /["']callbackUrl["']\s*:\s*["']https?:\/\/(?:[^/."']+\.)?example\.(?:com|net|org)\b/i.test(
+    line,
+  );
+}
+
 function workflowWindowIncludes(lines: string[], index: number, pattern: string): boolean {
   const start = Math.max(0, index - 2);
   const end = Math.min(lines.length, index + 3);
@@ -1187,6 +1193,17 @@ async function validateRuntimeDoc(
         line: index + 1,
         message:
           "Runtime docs must not tell operators to use pnpm/yarn/npx or npm install/run/test. Use bun, bunx, or a direct binary instead.",
+      });
+    }
+
+    if (hasDocumentationDomainCallbackUrl(line)) {
+      diagnostics.push({
+        level: "error",
+        code: "runtime_doc_example_callback_url",
+        docPath,
+        line: index + 1,
+        message:
+          "Runtime docs must not put documentation-domain callbackUrl values in executable examples. Omit callbackUrl or use an operator-owned endpoint.",
       });
     }
 

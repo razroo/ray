@@ -361,6 +361,47 @@ test("validatePackageRuntimeCoverage requires bounded curl probes in runtime doc
   );
 });
 
+test("validatePackageRuntimeCoverage rejects documentation-domain callback URLs in executable docs", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-callback-url-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const rootPackageJson = path.join(tempDir, "package.json");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify({
+      name: "ray-test",
+      packageManager: "bun@1.3.0",
+      engines: { bun: ">=1.3" },
+    }),
+  );
+  await writeFile(
+    path.join(tempDir, "README.md"),
+    [
+      "# Readme",
+      "",
+      "```bash",
+      "curl -fsS --connect-timeout 2 --max-time 30 http://127.0.0.1:3000/v1/jobs \\",
+      "  -H 'content-type: application/json' \\",
+      '  -d \'{"input":"Draft","callbackUrl":"https://example.com/ray-callback"}\'',
+      "```",
+      "",
+    ].join("\n"),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson],
+  });
+  const diagnostics = summary.results.flatMap((result) => result.diagnostics);
+
+  assert.equal(summary.ok, false);
+  assert.ok(
+    diagnostics.some((diagnostic) => diagnostic.code === "runtime_doc_example_callback_url"),
+  );
+});
+
 test("validatePackageRuntimeCoverage rejects oversized runtime coverage inputs", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-size-"));
   t.after(async () => {

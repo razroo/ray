@@ -31,11 +31,12 @@ const job = await client.createJob({
   input: "Draft a short follow-up email body.",
   seed: 17,
   stop: ["\n\n"],
-  callbackUrl: "https://example.com/ray-callback",
 });
 
 const finalJob = await client.job(job.id);
 ```
+
+Pass `callbackUrl` only when it points to an endpoint you operate.
 
 See the gateway routes under `apps/gateway` and shared types in `@razroo/ray-core` for request and response shapes.
 
