@@ -92,11 +92,12 @@ Add `--sha256 <expected-hex-digest>` when the model publisher provides one, and
 `--binary-sha256 <expected-hex-digest>` when the compiled `llama-server` source
 has a checksum. The helper does not download models or binaries; it keeps the
 operator's chosen sources explicit and prints the install, ownership, checksum,
-apparent-size memory and disk-headroom, GGUF header, and service-user
-read/execute-test commands needed before doctor or systemd restart. Printed
-install commands copy through same-directory `.ray-stage-*` temp files and only
-move them into place after the temp artifact passes service-user checks, so an
-interrupted copy does not replace the last working binary or GGUF.
+apparent-size memory and disk-headroom, GGUF header, service-user
+read/execute-test, and generated launch-flag support commands needed before
+doctor or systemd restart. Printed install commands copy through same-directory
+`.ray-stage-*` temp files and only move them into place after the temp artifact
+passes service-user checks, so an interrupted copy does not replace the last
+working binary or GGUF.
 The same values may live in `/etc/ray/ray.env` as
 `RAY_LLAMA_CPP_BINARY_SOURCE_PATH`, `RAY_LLAMA_CPP_BINARY_SHA256`,
 `RAY_MODEL_SOURCE_PATH`, and `RAY_MODEL_SHA256`; source/checksum CLI flags
@@ -104,12 +105,13 @@ override env-file values when both are present.
 Add `--commands-only` when you want reviewed shell commands without the
 explanatory staging summary.
 Add `--check-sources` when the source artifacts are already on the VPS and you
-want the helper to verify file access, binary startup, GGUF header, and any
-provided checksums before printing the staging plan.
+want the helper to verify file access, binary startup, generated launch-flag
+support, GGUF header, and any provided checksums before printing the staging
+plan.
 Add `--apply` on the VPS after reviewing those source paths to verify and stage
 the configured `llama-server` and GGUF into their resolved target locations,
-then run the staged `llama-server --help` probe and installed GGUF read check as
-the service identity.
+then run the staged `llama-server --help` launch-flag probe and installed GGUF
+read check as the service identity.
 
 On an 8 GB node, [ray.1b.8gb.generic.public.json](../../config/ray.1b.8gb.generic.public.json) raises context to `4096`, batch threads to `4`, cache RAM to `768` MiB, async queue storage headroom to `512` MiB, and gateway RSS degradation headroom to `768` MiB, and uses two parallel slots. Set `RAY_PROFILE=1b-8gb` when selecting those defaults without a JSON config file. The Qwen-specific [ray.1b.public.json](../../config/ray.1b.public.json) and [ray.1b.8gb.public.json](../../config/ray.1b.8gb.public.json) profiles are reference baselines for benchmark reproducibility.
 
@@ -501,7 +503,7 @@ file, package metadata, and the llama.cpp staging helper used during deploy.
 - The generated systemd units also drop Linux capabilities, restrict address families to local/IP sockets, deny namespace creation and realtime scheduling, and hide host identity, host devices, and kernel controls. Keep custom service overrides equally narrow unless a backend explicitly needs broader access.
 - The generated gateway unit intentionally does not set `MemoryDenyWriteExecute=true`; Bun and Node can need executable memory for their JavaScript runtimes. Keep that directive limited to native backend units such as the generated `ray-llama-cpp.service`.
 - Keep generated-service paths out of `/home`, `/root`, `/run/user`, `/tmp`, and `/var/tmp`; the units use `ProtectHome=true` and `PrivateTmp=true`, so put the checkout under `/srv/ray`, config under `/etc/ray`, GGUF files under `/var/lib/ray/models`, and `llama-server` plus Bun under `/usr/local/bin`.
-- Use `bun run model:stage*` after writing `/etc/ray/ray.env` to stage `llama-server` and the GGUF at the resolved paths before restarting the generated backend unit. Printed staging commands are timeout-bounded, check the apparent GGUF size against the deploy memory target and target disk headroom before replacing either target, stage through same-directory `.ray-stage-*` temp files before replacement, and the env file can also carry optional staging source paths and checksums for concrete deploy-workflow plans.
+- Use `bun run model:stage*` after writing `/etc/ray/ray.env` to stage `llama-server` and the GGUF at the resolved paths before restarting the generated backend unit. Printed staging commands are timeout-bounded, check generated launch-flag support, check the apparent GGUF size against the deploy memory target and target disk headroom before replacing either target, stage through same-directory `.ray-stage-*` temp files before replacement, and the env file can also carry optional staging source paths and checksums for concrete deploy-workflow plans.
 - Config loading rejects unresolved relative `model.adapter.launchProfile.binaryPath` values before render; doctor then verifies that the resolved path points at an executable `llama-server`, that its help output lists the generated launch flags, and that the generated service user can execute it and read the GGUF model before the generated backend service is restarted.
 - Keep `cacheRamMiB` pinned for `llama.cpp`. The upstream default is too large for a 4 GB VPS.
 - Tune `scheduler.concurrency` conservatively. Tiny hardware collapses faster from overcommit than underutilization.

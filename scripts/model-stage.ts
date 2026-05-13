@@ -19,7 +19,10 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { loadRayConfig } from "../packages/config/src/index.ts";
 import { parseEnvironmentFile } from "../packages/deploy/src/cli.ts";
-import { estimateLlamaCppMemoryFit } from "../packages/deploy/src/index.ts";
+import {
+  buildLlamaCppLaunchArgs,
+  estimateLlamaCppMemoryFit,
+} from "../packages/deploy/src/index.ts";
 
 const DEFAULT_CONFIG_PATH = "./examples/config/ray.sub1b.public.json";
 const DEFAULT_SERVICE_USER = "ray";
@@ -44,6 +47,7 @@ const GGUF_MAGIC = "GGUF";
 const LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS = 10;
 const LLAMA_CPP_BINARY_SMOKE_TIMEOUT_MS = LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS * 1000;
 const LLAMA_CPP_BINARY_SMOKE_MAX_BUFFER_BYTES = 64 * 1024;
+const MAX_LLAMA_CPP_UNSUPPORTED_LAUNCH_FLAGS = 32;
 const STAGE_INSPECT_TIMEOUT_SECONDS = 30;
 const STAGE_QUICK_TIMEOUT_SECONDS = 60;
 const STAGE_BINARY_COPY_TIMEOUT_SECONDS = 120;
@@ -103,6 +107,7 @@ export interface ModelStagePlan {
   memoryBudgetSource?: "env" | "config";
   safeMemoryBudgetMiB?: number;
   nonModelWorkingSetMiB?: number;
+  requiredLaunchFlags: string[];
   commands: string[];
 }
 
@@ -407,6 +412,66 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
+function extractLlamaCppLaunchFlagTokens(args: string[]): string[] {
+  const flags = new Set<string>();
+
+  for (const arg of args) {
+    if (arg.startsWith("--")) {
+      const [flag] = arg.split("=", 1);
+      if (flag && flag.length > 2) {
+        flags.add(flag);
+      }
+      continue;
+    }
+
+    if (/^-[A-Za-z]/.test(arg)) {
+      flags.add(arg);
+    }
+  }
+
+  return [...flags].sort();
+}
+
+function detectUnsupportedLlamaCppLaunchFlags(
+  requiredLaunchFlags: string[],
+  helpOutput: string,
+): string[] {
+  return requiredLaunchFlags
+    .filter((flag) => !helpOutput.includes(flag))
+    .slice(0, MAX_LLAMA_CPP_UNSUPPORTED_LAUNCH_FLAGS);
+}
+
+function assertLlamaCppBinarySupportsLaunchFlags(
+  helpOutput: string,
+  requiredLaunchFlags: string[],
+  binaryPath: string,
+  label: string,
+): void {
+  const unsupportedLaunchFlags = detectUnsupportedLlamaCppLaunchFlags(
+    requiredLaunchFlags,
+    helpOutput,
+  );
+
+  if (unsupportedLaunchFlags.length === 0) {
+    return;
+  }
+
+  throw new Error(
+    `${label} help output does not list generated launch flag(s) at ${binaryPath}: ${unsupportedLaunchFlags.join(", ")}`,
+  );
+}
+
+function buildShellLaunchFlagSupportCheck(helpVariable: string, requiredLaunchFlags: string[]) {
+  return requiredLaunchFlags
+    .map(
+      (flag) =>
+        `case "$${helpVariable}" in *${shellQuote(flag)}*) ;; *) printf '%s\\n' ${shellQuote(
+          `llama-server help output does not list generated launch flag: ${flag}`,
+        )} >&2; exit 1;; esac`,
+    )
+    .join("; ");
+}
+
 function atomicStageTempTemplate(targetPath: string): string {
   return path.join(
     path.dirname(targetPath),
@@ -461,6 +526,12 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
   )})" || exit "$?"; test "\${binary_source_bytes:-0}" -le ${MAX_LLAMA_CPP_BINARY_SOURCE_BYTES} || { printf '%s\\n' ${shellQuote(
     `llama-server source must be at most ${MAX_LLAMA_CPP_BINARY_SOURCE_MIB} MiB before copying to ${plan.binaryPath}.`,
   )} >&2; exit 1; }`;
+  const binarySourceLaunchFlagPreflight = `binary_help="$(timeout ${LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS}s ${shellQuote(
+    binarySourcePath,
+  )} --help 2>&1)" || { status="$?"; printf '%s\\n' "$binary_help" >&2; exit "$status"; }; ${buildShellLaunchFlagSupportCheck(
+    "binary_help",
+    plan.requiredLaunchFlags,
+  )}`;
   const binaryChecksumPreflight = plan.binarySha256
     ? `printf '%s  %s\\n' ${shellQuote(plan.binarySha256)} ${shellQuote(binarySourcePath)} | timeout ${STAGE_BINARY_CHECKSUM_TIMEOUT_SECONDS}s sha256sum -c -`
     : undefined;
@@ -494,9 +565,12 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
     binarySourcePath,
   )} "${binaryTemp}" && timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s sudo -u ${shellQuote(
     plan.serviceUser,
-  )} test -x "${binaryTemp}" && timeout ${STAGE_SERVICE_PROBE_TIMEOUT_SECONDS}s sudo -u ${shellQuote(
+  )} test -x "${binaryTemp}" && binary_help="$(timeout ${STAGE_SERVICE_PROBE_TIMEOUT_SECONDS}s sudo -u ${shellQuote(
     plan.serviceUser,
-  )} timeout ${LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS}s "${binaryTemp}" --help >/dev/null && timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo mv -f -- "${binaryTemp}" ${shellQuote(
+  )} timeout ${LLAMA_CPP_BINARY_SMOKE_TIMEOUT_SECONDS}s "${binaryTemp}" --help 2>&1)" && ${buildShellLaunchFlagSupportCheck(
+    "binary_help",
+    plan.requiredLaunchFlags,
+  )} && timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo mv -f -- "${binaryTemp}" ${shellQuote(
     plan.binaryPath,
   )} && trap - EXIT )`;
   const modelAtomicInstall = `( model_tmp="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s sudo mktemp ${shellQuote(
@@ -521,6 +595,7 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
     `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo install -d -m 0755 ${shellQuote(plan.modelDirectory)}`,
     binarySourcePreflight,
     ...(binaryChecksumPreflight ? [binaryChecksumPreflight] : []),
+    binarySourceLaunchFlagPreflight,
     ...(modelMemoryPreflight ? [modelMemoryPreflight] : []),
     modelStoragePreflight,
     modelFormatPreflight,
@@ -603,6 +678,10 @@ export async function createModelStagePlan(options: {
     memoryBudgetSource: memoryBudgetSource === "env" ? "override" : "preset",
     modelFileBytes: 0,
   });
+  const requiredLaunchFlags = extractLlamaCppLaunchFlagTokens([
+    ...buildLlamaCppLaunchArgs(adapter.launchProfile),
+    ...(adapter.launchProfile.extraArgs ?? []),
+  ]);
 
   const planWithoutCommands: Omit<ModelStagePlan, "commands"> = {
     configPath: loaded.configPath ?? path.resolve(cwd, options.configPath),
@@ -631,6 +710,7 @@ export async function createModelStagePlan(options: {
           nonModelWorkingSetMiB: memoryEstimate.projectedWorkingSetMiB,
         }
       : {}),
+    requiredLaunchFlags,
   };
 
   return {
@@ -689,6 +769,10 @@ export function formatTextPlan(cwd: string, plan: ModelStagePlan): string {
       `- memory target: ${plan.memoryBudgetMiB} MiB ${plan.memoryBudgetSource} target, ${plan.safeMemoryBudgetMiB} MiB safe budget, ${plan.nonModelWorkingSetMiB} MiB non-model working set`,
     );
   }
+
+  lines.push(
+    `- required llama.cpp launch flags: ${plan.requiredLaunchFlags.length} checked against --help output`,
+  );
 
   lines.push("", "Run on the VPS:");
   for (const command of plan.commands) {
@@ -829,7 +913,13 @@ export async function checkModelStageSources(cwd: string, plan: ModelStagePlan):
       `llama-server source is not executable at ${binarySourcePath}: ${error instanceof Error ? error.message : String(error)}`,
     );
   });
-  await assertLlamaCppBinaryStarts(binarySourcePath, "llama-server source");
+  const binaryHelp = await assertLlamaCppBinaryStarts(binarySourcePath, "llama-server source");
+  assertLlamaCppBinarySupportsLaunchFlags(
+    binaryHelp,
+    plan.requiredLaunchFlags,
+    binarySourcePath,
+    "llama-server source",
+  );
   await assertGgufMagicHeader(modelSourcePath, "GGUF source");
 
   if (plan.sha256) {
@@ -1161,14 +1251,16 @@ async function assertLlamaCppBinaryStarts(
   binaryPath: string,
   label: string,
   serviceIdentity?: { uid: number; gid: number },
-): Promise<void> {
+): Promise<string> {
   try {
-    await execFileAsync(binaryPath, ["--help"], {
+    const { stdout, stderr } = await execFileAsync(binaryPath, ["--help"], {
       timeout: LLAMA_CPP_BINARY_SMOKE_TIMEOUT_MS,
       maxBuffer: LLAMA_CPP_BINARY_SMOKE_MAX_BUFFER_BYTES,
       encoding: "utf8",
       ...(serviceIdentity ? { uid: serviceIdentity.uid, gid: serviceIdentity.gid } : {}),
     });
+
+    return `${stdout}\n${stderr}`;
   } catch (error) {
     const output = getFailedProcessOutput(error);
     throw new Error(
@@ -1229,7 +1321,16 @@ export async function applyModelStagePlan(
         await assertSha256(tempPath, plan.binarySha256, "staged llama-server binary");
       }
       await access(tempPath, constants.X_OK);
-      await assertLlamaCppBinaryStarts(tempPath, "staged llama-server binary", { uid, gid });
+      const binaryHelp = await assertLlamaCppBinaryStarts(tempPath, "staged llama-server binary", {
+        uid,
+        gid,
+      });
+      assertLlamaCppBinarySupportsLaunchFlags(
+        binaryHelp,
+        plan.requiredLaunchFlags,
+        tempPath,
+        "staged llama-server binary",
+      );
     },
   );
   if (!copiedBinary) {
@@ -1238,10 +1339,20 @@ export async function applyModelStagePlan(
       await assertSha256(binaryTargetPath, plan.binarySha256, "installed llama-server binary");
     }
     await access(binaryTargetPath, constants.X_OK);
-    await assertLlamaCppBinaryStarts(binaryTargetPath, "installed llama-server binary", {
-      uid,
-      gid,
-    });
+    const binaryHelp = await assertLlamaCppBinaryStarts(
+      binaryTargetPath,
+      "installed llama-server binary",
+      {
+        uid,
+        gid,
+      },
+    );
+    assertLlamaCppBinarySupportsLaunchFlags(
+      binaryHelp,
+      plan.requiredLaunchFlags,
+      binaryTargetPath,
+      "installed llama-server binary",
+    );
   }
 
   if (path.resolve(modelSourcePath) !== path.resolve(modelTargetPath)) {

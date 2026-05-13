@@ -35,6 +35,30 @@ const MiB = 1024 * 1024;
 const ampleApplyStorage = {
   resolveAvailableStorageMiB: () => 1024,
 };
+const compatibleLlamaCppHelp = [
+  "--model",
+  "--alias",
+  "--host",
+  "--port",
+  "--ctx-size",
+  "--parallel",
+  "--threads",
+  "--threads-batch",
+  "--threads-http",
+  "--batch-size",
+  "--ubatch-size",
+  "--cache-prompt",
+  "--cache-reuse",
+  "--cache-ram",
+  "--cont-batching",
+  "--metrics",
+  "--slots",
+  "--warmup",
+  "--kv-unified",
+  "--cache-idle-slots",
+  "--context-shift",
+].join("\n");
+const compatibleLlamaServerScript = `#!/bin/sh\ncat <<'EOF'\n${compatibleLlamaCppHelp}\nEOF\n`;
 
 function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
@@ -205,18 +229,39 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
   assert.equal(plan.memoryBudgetSource, "config");
   assert.equal(plan.safeMemoryBudgetMiB, 3276);
   assert.equal(plan.nonModelWorkingSetMiB, 1135);
-  assert.deepEqual(plan.commands, [
-    "timeout 60s sudo install -d -m 0755 '/usr/local/bin'",
-    "timeout 60s sudo install -d -m 0755 '/var/lib/ray/models'",
-    `binary_source_bytes="$(timeout 30s stat -c %s -- './bin/llama-server')" || exit "$?"; test "\${binary_source_bytes:-0}" -le 536870912 || { printf '%s\\n' 'llama-server source must be at most 512 MiB before copying to /usr/local/bin/llama-server.' >&2; exit 1; }`,
-    "printf '%s  %s\\n' 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' './bin/llama-server' | timeout 120s sha256sum -c -",
-    `source_bytes="$(timeout 30s stat -c %s -- './models/portable-1b.gguf')" || exit "$?"; source_mib="$(((\${source_bytes:-0} + 1048575) / 1048576))"; test "$source_mib" -ge 1 || source_mib=1; projected_mib="$((source_mib + 1135))"; test "$projected_mib" -le 3276 || { printf '%s\\n' "Projected llama.cpp working set would be \${projected_mib} MiB, above the safe budget of 3276 MiB on the 4096 MiB config memory target. Use a smaller GGUF or reduce cache/context before staging." >&2; exit 1; }`,
-    `source_bytes="$(timeout 30s stat -c %s -- './models/portable-1b.gguf')" || exit "$?"; df_output="$(timeout 30s df -Pm '/var/lib/ray/models')" || exit "$?"; source_mib="$(((\${source_bytes:-0} + 1048575) / 1048576))"; test "$source_mib" -ge 1 || source_mib=1; required_mib="$((source_mib + 256))"; available_mib="$(printf '%s\\n' "$df_output" | awk 'NR==2 {print $4}')"; test "\${available_mib:-0}" -ge "\${required_mib:-0}" || { printf '%s\\n' 'Not enough free space in /var/lib/ray/models: keep at least 256 MiB free after copying the GGUF.' >&2; exit 1; }`,
-    `magic="$(timeout 30s head -c 4 -- './models/portable-1b.gguf')" || exit "$?"; test "$magic" = 'GGUF' || { printf '%s\\n' 'GGUF source does not start with the GGUF header: ./models/portable-1b.gguf' >&2; exit 1; }`,
-    "printf '%s  %s\\n' 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' './models/portable-1b.gguf' | timeout 1800s sha256sum -c -",
-    `( binary_tmp="$(timeout 30s sudo mktemp '/usr/local/bin/.ray-stage-llama-server.XXXXXX')" && cleanup_binary_tmp() { timeout 30s sudo rm -f -- "$binary_tmp"; } && trap cleanup_binary_tmp EXIT && timeout 120s sudo install -m 0755 -- './bin/llama-server' "$binary_tmp" && timeout 30s sudo -u 'rayops' test -x "$binary_tmp" && timeout 20s sudo -u 'rayops' timeout 10s "$binary_tmp" --help >/dev/null && timeout 60s sudo mv -f -- "$binary_tmp" '/usr/local/bin/llama-server' && trap - EXIT )`,
-    `( model_tmp="$(timeout 30s sudo mktemp '/var/lib/ray/models/.ray-stage-portable-1b.gguf.XXXXXX')" && cleanup_model_tmp() { timeout 30s sudo rm -f -- "$model_tmp"; } && trap cleanup_model_tmp EXIT && timeout 1800s sudo install -m 0640 -- './models/portable-1b.gguf' "$model_tmp" && { model_magic="$(timeout 30s sudo head -c 4 -- "$model_tmp")" || exit "$?"; test "$model_magic" = 'GGUF' || { printf '%s\\n' 'Staged GGUF copy does not start with the GGUF header before replacing /var/lib/ray/models/portable-1b.gguf.' >&2; exit 1; }; } && timeout 60s sudo chown 'rayops:rayops' "$model_tmp" && timeout 30s sudo -u 'rayops' test -r "$model_tmp" && timeout 60s sudo mv -f -- "$model_tmp" '/var/lib/ray/models/portable-1b.gguf' && trap - EXIT )`,
-  ]);
+  assert.ok(plan.requiredLaunchFlags.includes("--ctx-size"));
+  assert.ok(plan.requiredLaunchFlags.includes("--cache-ram"));
+  assert.equal(plan.commands[0], "timeout 60s sudo install -d -m 0755 '/usr/local/bin'");
+  assert.equal(plan.commands[1], "timeout 60s sudo install -d -m 0755 '/var/lib/ray/models'");
+  const commandsText = plan.commands.join("\n");
+  assert.match(commandsText, /timeout 30s stat -c %s -- '\.\/bin\/llama-server'/);
+  assert.match(
+    commandsText,
+    /printf '%s {2}%s\\n' 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' '\.\/bin\/llama-server' \| timeout 120s sha256sum -c -/,
+  );
+  assert.match(commandsText, /binary_help="\$\(timeout 10s '\.\/bin\/llama-server' --help 2>&1\)"/);
+  assert.match(commandsText, /generated launch flag: --ctx-size/);
+  assert.match(commandsText, /Projected llama\.cpp working set would be/);
+  assert.match(commandsText, /timeout 30s df -Pm '\/var\/lib\/ray\/models'/);
+  assert.match(commandsText, /GGUF source does not start with the GGUF header/);
+  assert.match(
+    commandsText,
+    /printf '%s {2}%s\\n' 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' '\.\/models\/portable-1b\.gguf' \| timeout 1800s sha256sum -c -/,
+  );
+  assert.match(commandsText, /sudo mktemp '\/usr\/local\/bin\/\.ray-stage-llama-server\.XXXXXX'/);
+  assert.match(
+    commandsText,
+    /timeout 120s sudo install -m 0755 -- '\.\/bin\/llama-server' "\$binary_tmp"/,
+  );
+  assert.match(commandsText, /timeout 20s sudo -u 'rayops' timeout 10s "\$binary_tmp" --help 2>&1/);
+  assert.match(
+    commandsText,
+    /sudo mktemp '\/var\/lib\/ray\/models\/\.ray-stage-portable-1b\.gguf\.XXXXXX'/,
+  );
+  assert.match(
+    commandsText,
+    /timeout 1800s sudo install -m 0640 -- '\.\/models\/portable-1b\.gguf' "\$model_tmp"/,
+  );
 });
 
 test("createModelStagePlan reads staging sources and checksums from env", async () => {
@@ -323,7 +368,8 @@ test("formatTextPlan prints an operator-ready staging plan", async () => {
     text,
     /timeout 120s sudo install -m 0755 -- '\/path\/to\/llama-server' "\$binary_tmp"/,
   );
-  assert.match(text, /timeout 20s sudo -u 'ray' timeout 10s "\$binary_tmp" --help >\/dev\/null/);
+  assert.match(text, /timeout 20s sudo -u 'ray' timeout 10s "\$binary_tmp" --help 2>&1/);
+  assert.match(text, /required llama\.cpp launch flags: \d+ checked against --help output/);
   assert.match(text, /target GGUF: \/var\/lib\/ray\/models\/qwen2\.5-0\.5b-instruct-q4_k_m\.gguf/);
   assert.match(text, /memory target: 4096 MiB config target/);
   assert.match(text, /Projected llama\.cpp working set would be/);
@@ -354,7 +400,8 @@ test("formatCommandPlan prints shell commands only", async () => {
   assert.equal(text, plan.commands.join("\n"));
   assert.doesNotMatch(text, /Ray llama\.cpp artifact staging plan/);
   assert.match(text, /^timeout 60s sudo install -d -m 0755/);
-  assert.match(text, /timeout 20s sudo -u 'ray' timeout 10s "\$binary_tmp" --help >\/dev\/null/);
+  assert.match(text, /timeout 20s sudo -u 'ray' timeout 10s "\$binary_tmp" --help 2>&1/);
+  assert.match(text, /generated launch flag: --ctx-size/);
   assert.match(text, /timeout 30s head -c 4 -- '\.\/model\.gguf'/);
   assert.match(text, /timeout 30s sudo -u 'ray' test -r "\$model_tmp"/);
 });
@@ -367,7 +414,7 @@ test("checkModelStageSources verifies concrete artifact inputs", async (t) => {
 
   const binaryPath = path.join(tempDir, "llama-server");
   const modelPath = path.join(tempDir, "model.gguf");
-  const binaryContents = "#!/bin/sh\nexit 0\n";
+  const binaryContents = compatibleLlamaServerScript;
   const modelContents = "GGUF";
   await writeFile(binaryPath, binaryContents, "utf8");
   await writeFile(modelPath, modelContents, "utf8");
@@ -414,6 +461,33 @@ test("checkModelStageSources rejects source binaries that fail the startup probe
   );
 });
 
+test("checkModelStageSources rejects source binaries without generated launch flags", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-source-flags-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const binaryPath = path.join(tempDir, "llama-server");
+  const modelPath = path.join(tempDir, "model.gguf");
+  await writeFile(binaryPath, "#!/bin/sh\nprintf '%s\\n' '--model' '--host' '--port'\n", "utf8");
+  await writeFile(modelPath, "GGUF", "utf8");
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o644);
+
+  const plan = await createModelStagePlan({
+    cwd: tempDir,
+    configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
+    env: {},
+    binarySourcePath: "./llama-server",
+    sourcePath: "./model.gguf",
+  });
+
+  await assert.rejects(
+    checkModelStageSources(tempDir, plan),
+    /llama-server source help output does not list generated launch flag\(s\).*--ctx-size/s,
+  );
+});
+
 test("checkModelStageSources verifies binary checksums before startup probes", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-source-sha-before-probe-"));
   t.after(async () => {
@@ -450,7 +524,7 @@ test("checkModelStageSources rejects oversized source binaries before startup pr
 
   const binaryPath = path.join(tempDir, "llama-server");
   const modelPath = path.join(tempDir, "model.gguf");
-  await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
+  await writeFile(binaryPath, compatibleLlamaServerScript, "utf8");
   await truncate(binaryPath, 512 * MiB + 1);
   await writeFile(modelPath, "GGUF", "utf8");
   await chmod(binaryPath, 0o755);
@@ -478,7 +552,7 @@ test("checkModelStageSources rejects GGUF sources that exceed the memory target"
 
   const binaryPath = path.join(tempDir, "llama-server");
   const modelPath = path.join(tempDir, "model.gguf");
-  await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
+  await writeFile(binaryPath, compatibleLlamaServerScript, "utf8");
   await writeFile(modelPath, "GGUF", "utf8");
   await chmod(binaryPath, 0o755);
   await chmod(modelPath, 0o644);
@@ -507,7 +581,7 @@ test("checkModelStageSources rejects model sources without a GGUF header", async
 
   const binaryPath = path.join(tempDir, "llama-server");
   const modelPath = path.join(tempDir, "model.gguf");
-  await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
+  await writeFile(binaryPath, compatibleLlamaServerScript, "utf8");
   await writeFile(modelPath, "NOPE", "utf8");
   await chmod(binaryPath, 0o755);
   await chmod(modelPath, 0o644);
@@ -580,7 +654,7 @@ test("applyModelStagePlan installs verified artifacts into the resolved target p
   const modelPath = path.join(tempDir, "sources", "model.gguf");
   const binaryTarget = path.join(tempDir, "target", "bin", "llama-server");
   const modelTarget = path.join(tempDir, "target", "models", "model.gguf");
-  const binaryContents = "#!/bin/sh\nexit 0\n";
+  const binaryContents = compatibleLlamaServerScript;
   const modelContents = "GGUF";
   await mkdir(path.join(tempDir, "sources"), { recursive: true });
   await writeFile(binaryPath, binaryContents, "utf8");
@@ -642,7 +716,7 @@ test("applyModelStagePlan rejects low target storage before copying models", asy
   const modelTarget = path.join(tempDir, "target", "models", "model.gguf");
 
   await mkdir(path.join(tempDir, "sources"), { recursive: true });
-  await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
+  await writeFile(binaryPath, compatibleLlamaServerScript, "utf8");
   await writeFile(modelPath, "GGUF", "utf8");
   await chmod(binaryPath, 0o755);
   await chmod(modelPath, 0o644);
@@ -690,7 +764,7 @@ test("applyModelStagePlan atomically replaces GGUF target symlinks", async (t) =
   const linkedVictim = path.join(tempDir, "victim.gguf");
   await mkdir(path.join(tempDir, "sources"), { recursive: true });
   await mkdir(path.dirname(modelTarget), { recursive: true });
-  await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
+  await writeFile(binaryPath, compatibleLlamaServerScript, "utf8");
   await writeFile(modelPath, "GGUFnew-model", "utf8");
   await writeFile(linkedVictim, "GGUFexisting-model", "utf8");
   await symlink(linkedVictim, modelTarget);
@@ -739,7 +813,7 @@ test("applyModelStagePlan removes stale atomic stage temp files before copying",
 
   await mkdir(path.join(tempDir, "sources"), { recursive: true });
   await mkdir(modelTargetDir, { recursive: true });
-  await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
+  await writeFile(binaryPath, compatibleLlamaServerScript, "utf8");
   await writeFile(modelPath, "GGUFnew-model", "utf8");
   await writeFile(staleTemp, "stale partial copy", "utf8");
   await writeFile(freshTemp, "fresh partial copy", "utf8");
@@ -788,7 +862,7 @@ test("applyModelStagePlan rejects bloated model target directories before temp c
 
   await mkdir(path.join(tempDir, "sources"), { recursive: true });
   await mkdir(modelTargetDir, { recursive: true });
-  await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
+  await writeFile(binaryPath, compatibleLlamaServerScript, "utf8");
   await writeFile(modelPath, "GGUFnew-model", "utf8");
   await chmod(binaryPath, 0o755);
   await chmod(modelPath, 0o644);
@@ -980,7 +1054,11 @@ test("runModelStageCli can apply verified artifacts", async (t) => {
   });
 
   await mkdir(path.join(tempDir, "sources"), { recursive: true });
-  await writeFile(path.join(tempDir, "sources", "llama-server"), "#!/bin/sh\nexit 0\n", "utf8");
+  await writeFile(
+    path.join(tempDir, "sources", "llama-server"),
+    compatibleLlamaServerScript,
+    "utf8",
+  );
   await writeFile(path.join(tempDir, "sources", "model.gguf"), "GGUF", "utf8");
   await chmod(path.join(tempDir, "sources", "llama-server"), 0o755);
 
@@ -1042,7 +1120,7 @@ test("runModelStageCli checks source artifacts before printing", async (t) => {
 
   const binaryPath = path.join(tempDir, "llama-server");
   const modelPath = path.join(tempDir, "model.gguf");
-  await writeFile(binaryPath, "#!/bin/sh\nexit 0\n", "utf8");
+  await writeFile(binaryPath, compatibleLlamaServerScript, "utf8");
   await writeFile(modelPath, "GGUF", "utf8");
   await chmod(binaryPath, 0o755);
   await chmod(modelPath, 0o644);
