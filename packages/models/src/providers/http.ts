@@ -603,6 +603,18 @@ function getDeclaredContentLength(response: Response): number | undefined {
   return /^\d+$/.test(normalized) && Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
+function isJsonContentType(contentType: string): boolean {
+  const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  const [type, subtype, extra] = mediaType.split("/");
+
+  return (
+    type === "application" &&
+    extra === undefined &&
+    subtype !== undefined &&
+    (subtype === "json" || subtype.endsWith("+json"))
+  );
+}
+
 function getRequestBodyLength(body: RequestInit["body"]): number | undefined {
   if (body === undefined || body === null) {
     return 0;
@@ -723,6 +735,23 @@ export async function assertDeclaredResponseBodyWithinLimit(
   });
 }
 
+function parseBackendJsonResponse(body: string, contentType: string, pathname: string): unknown {
+  try {
+    return JSON.parse(body) as unknown;
+  } catch (error) {
+    throw new RayError("The backend returned invalid JSON", {
+      code: "provider_invalid_response",
+      status: 502,
+      details: {
+        pathname,
+        contentType,
+        bodyBytes: Buffer.byteLength(body, "utf8"),
+        error: toErrorMessage(error),
+      },
+    });
+  }
+}
+
 export async function adapterRequest(
   adapter: HttpAdapterConfig,
   pathname: string,
@@ -809,8 +838,8 @@ export async function adapterRequest(
     const body = await readResponseBodyLimited(response, BACKEND_RESPONSE_BODY_LIMIT_BYTES);
     assertResponseBodyWithinLimit(body, contentType);
 
-    if (contentType.includes("application/json")) {
-      return JSON.parse(body.body) as unknown;
+    if (isJsonContentType(contentType)) {
+      return parseBackendJsonResponse(body.body, contentType, pathname);
     }
 
     return body.body;

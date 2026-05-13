@@ -728,6 +728,82 @@ test("adapterRequest refuses to follow backend redirects off the configured orig
   assert.equal(redirectedRequests, 0);
 });
 
+test("adapterRequest parses only JSON response media types", async (t) => {
+  const server = createServer((request, response) => {
+    if (request.url === "/structured") {
+      response.writeHead(200, { "content-type": "application/vnd.openai+json; charset=utf-8" });
+      response.end(JSON.stringify({ ok: true }));
+      return;
+    }
+
+    response.writeHead(200, { "content-type": "text/plain; note=application/json" });
+    response.end(JSON.stringify({ ok: false }));
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const adapter = {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    timeoutMs: 500,
+  };
+
+  const structured = await adapterRequest(adapter, "/structured", { method: "GET" });
+  assert.deepEqual(structured, { ok: true });
+
+  const text = await adapterRequest(adapter, "/plain", { method: "GET" });
+  assert.equal(text, JSON.stringify({ ok: false }));
+});
+
+test("adapterRequest reports malformed backend JSON as an invalid response", async (t) => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    response.end("{");
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: `http://127.0.0.1:${address.port}`,
+          timeoutMs: 500,
+        },
+        "/v1/chat/completions",
+        { method: "POST" },
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_invalid_response");
+      assert.match(error.message, /invalid JSON/);
+
+      const details = (error as { details?: unknown }).details;
+      assert.ok(details && typeof details === "object" && !Array.isArray(details));
+      assert.equal((details as { pathname?: unknown }).pathname, "/v1/chat/completions");
+      assert.equal(
+        (details as { contentType?: unknown }).contentType,
+        "application/json; charset=utf-8",
+      );
+      assert.equal((details as { bodyBytes?: unknown }).bodyBytes, 1);
+      assert.match(String((details as { error?: unknown }).error), /JSON/);
+
+      return true;
+    },
+  );
+});
+
 test("adapterRequest rejects oversized successful response bodies", async (t) => {
   const server = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/plain" });

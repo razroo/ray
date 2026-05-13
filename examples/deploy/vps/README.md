@@ -565,6 +565,7 @@ file, package metadata, and the llama.cpp staging helper used during deploy.
 - For the `vps` and `balanced` OpenAI-compatible profiles, keep `model.adapter.baseUrl` on loopback unless you intentionally leave the one-box topology; doctor warns when those profiles point at a remote backend because Ray is no longer fronting a local self-hosted model.
 - Point OpenAI-compatible `model.adapter.baseUrl` at the backend origin or reverse-proxy prefix before `/v1`; Ray appends `/v1/models` and `/v1/chat/completions` itself, and doctor warns when the base URL already ends in `/v1`.
 - Backend adapter requests do not follow redirects; fix any 30x response at the local model server or reverse proxy instead of depending on Ray to chase it.
+- Return `application/json` or `application/*+json` from JSON-speaking backends; malformed JSON under those media types is treated as an invalid backend response, while other successful media types are passed through as text.
 - Let Ray be the public inference surface.
 - Keep the Ray gateway bound to localhost and expose it through Caddy or nginx.
 - Set `RAY_DEPLOY_DOMAIN` or pass `--domain` with the real public DNS name before installing the generated Caddyfile; render and doctor warn when the generated site address is still `ray.local`, `localhost`, loopback, or another `.local` placeholder.
