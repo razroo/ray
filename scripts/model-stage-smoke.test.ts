@@ -55,6 +55,18 @@ test("smokeModelStages rejects excessive config inputs before rendering", async 
   );
 });
 
+test("smokeModelStages rejects oversized direct path inputs before rendering", async () => {
+  await assert.rejects(
+    () =>
+      smokeModelStages({
+        cwd: process.cwd(),
+        configPaths: [`/${"a".repeat(4096)}`],
+        serviceUser: "ray",
+      }),
+    /configPaths\[0\] must be at most 4096 bytes/,
+  );
+});
+
 test("smokeModelStages renders every checked-in public staging plan", async () => {
   const cwd = process.cwd();
   const configPaths = await collectPublicConfigPaths(cwd, "examples/config");

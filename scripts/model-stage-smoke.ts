@@ -8,6 +8,7 @@ const DEFAULT_SERVICE_USER = "ray";
 const MAX_CLI_ARGS = 14;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_MODEL_STAGE_SMOKE_CONFIGS = 128;
+const MAX_MODEL_STAGE_SMOKE_PATH_BYTES = 4_096;
 const SYSTEMD_PRINCIPAL_PATTERN = /^(?:[A-Za-z_][A-Za-z0-9_-]{0,30}|[0-9]{1,10})$/;
 
 export interface ModelStageSmokeArgs {
@@ -95,6 +96,20 @@ function normalizeServicePrincipal(value: string, label: string): string {
   }
 
   return value;
+}
+
+function assertModelStageSmokePathValue(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty path`);
+  }
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} must not contain control characters`);
+  }
+
+  if (Buffer.byteLength(value, "utf8") > MAX_MODEL_STAGE_SMOKE_PATH_BYTES) {
+    throw new Error(`${label} must be at most ${MAX_MODEL_STAGE_SMOKE_PATH_BYTES} bytes`);
+  }
 }
 
 export function parseArgs(argv: string[]): ModelStageSmokeArgs {
@@ -187,6 +202,11 @@ export async function smokeModelStages(options: {
     throw new Error(
       `Model stage smoke can inspect at most ${MAX_MODEL_STAGE_SMOKE_CONFIGS} config files`,
     );
+  }
+
+  assertModelStageSmokePathValue(options.cwd, "cwd");
+  for (const [index, configPath] of options.configPaths.entries()) {
+    assertModelStageSmokePathValue(configPath, `configPaths[${index}]`);
   }
 
   const results: ModelStageSmokeResult[] = [];
