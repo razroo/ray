@@ -43,6 +43,7 @@ Aligned with [roadmap Phase 1 exit criteria](roadmap.md) and day-one operator ex
    bun run deploy:smoke
    bun run deploy:scripts
    bun run package:runtime
+   bun run docs:links
    bun run model:stage:smoke
    RAY_API_KEYS=smoke bun run validate:config:public
    ```
