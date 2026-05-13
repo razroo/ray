@@ -42,6 +42,7 @@ const MAX_DEPLOY_ENV_VALUE_CHARS = MAX_DEPLOY_ENV_FILE_BYTES;
 const unsafeDeployEnvKeys = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_DEPLOY_CLI_ARGS = 64;
 const MAX_DEPLOY_CLI_ARG_BYTES = 4_096;
+const MAX_DEPLOY_PATH_BYTES = 4_096;
 const SYSTEMD_USER_PATTERN = /^(?:[A-Za-z_][A-Za-z0-9_-]{0,30}|[0-9]{1,10})$/;
 const DEFAULT_CONFIG_PATH = "./examples/config/ray.sub1b.public.json";
 const RESERVED_DEPLOY_STAGING_PREFIX = ".ray-deploy-";
@@ -140,6 +141,12 @@ function parseServiceUserValue(value: string, label: string): string {
   return value;
 }
 
+function assertDeployPathBytes(value: string, label: string): void {
+  if (Buffer.byteLength(value, "utf8") > MAX_DEPLOY_PATH_BYTES) {
+    throw new Error(`${label} must be at most ${MAX_DEPLOY_PATH_BYTES} bytes`);
+  }
+}
+
 export function normalizeRepoConfigPath(value: string, label = "config path"): RepoConfigPath {
   if (typeof value !== "string") {
     throw new Error(`${label} must be a string`);
@@ -154,6 +161,8 @@ export function normalizeRepoConfigPath(value: string, label = "config path"): R
   if (value.includes("\0")) {
     throw new Error(`${label} must not contain NUL bytes`);
   }
+
+  assertDeployPathBytes(value, label);
 
   if (value.includes("\\")) {
     throw new Error(`${label} must use forward slashes`);
@@ -227,6 +236,8 @@ function normalizeAbsoluteBinaryPath(value: string, label: string): string {
   if (/[\0\r\n]/.test(value)) {
     throw new Error(`${label} must not contain control characters`);
   }
+
+  assertDeployPathBytes(value, label);
 
   if (!path.posix.isAbsolute(value)) {
     throw new Error(`${label} must be an absolute path`);

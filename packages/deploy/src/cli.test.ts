@@ -109,6 +109,10 @@ test("normalizeRepoConfigPath rejects paths that cannot be synced to the VPS", (
     () => normalizeRepoConfigPath(" examples/config/ray.json", "RAY_CONFIG_PATH"),
     /without leading or trailing whitespace/,
   );
+  assert.throws(
+    () => normalizeRepoConfigPath(`examples/${"a".repeat(4096)}.json`, "RAY_CONFIG_PATH"),
+    /RAY_CONFIG_PATH must be at most 4096 bytes/,
+  );
 });
 
 test("normalizeGatewayRuntimeBinaryPath resolves deploy runtime paths", () => {
@@ -156,6 +160,14 @@ test("normalizeGatewayRuntimeBinaryPath rejects paths hidden from systemd servic
         "RAY_GATEWAY_RUNTIME_BINARY",
       ),
     /control characters/,
+  );
+  assert.throws(
+    () => normalizeGatewayRuntimeBinaryPath(`/${"a".repeat(4096)}`, "RAY_GATEWAY_RUNTIME_BINARY"),
+    /RAY_GATEWAY_RUNTIME_BINARY must be at most 4096 bytes/,
+  );
+  assert.throws(
+    () => normalizeCaddyBinaryPath(`/opt/${"a".repeat(4096)}`, "RAY_DEPLOY_CADDY_BINARY"),
+    /RAY_DEPLOY_CADDY_BINARY must be at most 4096 bytes/,
   );
 });
 
