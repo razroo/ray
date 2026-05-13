@@ -52,6 +52,13 @@ test("collectMarkdownPaths finds checked-in docs while skipping generated direct
   assert.deepEqual(docs, ["README.md", path.join("docs", "guide.md")]);
 });
 
+test("collectMarkdownPaths rejects oversized direct roots before reading directories", async () => {
+  await assert.rejects(
+    () => collectMarkdownPaths(`/${"a".repeat(4096)}`),
+    /cwd must be at most 4096 bytes/,
+  );
+});
+
 test("validateDocsLinks accepts current checked-in local Markdown links", async () => {
   const summary = await validateDocsLinks({ cwd: repoRoot });
 
@@ -69,6 +76,17 @@ test("validateDocsLinks rejects excessive direct Markdown inputs before reading"
         markdownPaths: Array.from({ length: 513 }, (_value, index) => `/tmp/ray-doc-${index}.md`),
       }),
     /at most 512 Markdown files/,
+  );
+});
+
+test("validateDocsLinks rejects oversized direct Markdown paths before reading", async () => {
+  await assert.rejects(
+    () =>
+      validateDocsLinks({
+        cwd: repoRoot,
+        markdownPaths: [`/${"a".repeat(4096)}`],
+      }),
+    /markdownPaths\[0\] must be at most 4096 bytes/,
   );
 });
 

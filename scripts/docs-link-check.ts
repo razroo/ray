@@ -98,6 +98,20 @@ function requireFlagValue(flag: string, value: string | undefined): string {
   return value;
 }
 
+function assertDocsPathValue(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty path`);
+  }
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} must not contain control characters`);
+  }
+
+  if (Buffer.byteLength(value, "utf8") > MAX_DISCOVERY_PATH_BYTES) {
+    throw new Error(`${label} must be at most ${MAX_DISCOVERY_PATH_BYTES} bytes`);
+  }
+}
+
 export function parseArgs(argv: string[]): DocsLinkCheckArgs {
   assertArgv(argv);
 
@@ -240,6 +254,7 @@ async function collectMarkdownPathsFromDirectory(
 }
 
 export async function collectMarkdownPaths(cwd: string): Promise<string[]> {
+  assertDocsPathValue(cwd, "cwd");
   const resolvedCwd = path.resolve(cwd);
   const state: MarkdownDiscoveryState = {
     root: resolvedCwd,
@@ -446,13 +461,19 @@ export async function validateDocsLinks(options: {
   cwd: string;
   markdownPaths?: string[];
 }): Promise<DocsLinkCheckSummary> {
+  assertDocsPathValue(options.cwd, "cwd");
   const cwd = path.resolve(options.cwd);
   if (options.markdownPaths && options.markdownPaths.length > MAX_MARKDOWN_FILES) {
     throw new Error(`Markdown link check can inspect at most ${MAX_MARKDOWN_FILES} Markdown files`);
   }
 
   const markdownPaths = options.markdownPaths
-    ? options.markdownPaths.map((filePath) => path.resolve(cwd, filePath)).sort()
+    ? options.markdownPaths
+        .map((filePath, index) => {
+          assertDocsPathValue(filePath, `markdownPaths[${index}]`);
+          return path.resolve(cwd, filePath);
+        })
+        .sort()
     : await collectMarkdownPaths(cwd);
 
   const results: DocsLinkCheckResult[] = [];
