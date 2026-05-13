@@ -173,8 +173,8 @@ export function normalizeRepoConfigPath(value: string, label = "config path"): R
     );
   }
 
-  if (value.includes("\0")) {
-    throw new Error(`${label} must not contain NUL bytes`);
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} must not contain control characters`);
   }
 
   assertDeployPathBytes(value, label);

@@ -110,6 +110,10 @@ test("normalizeRepoConfigPath rejects paths that cannot be synced to the VPS", (
     /without leading or trailing whitespace/,
   );
   assert.throws(
+    () => normalizeRepoConfigPath("examples/config\n/ray.json", "RAY_CONFIG_PATH"),
+    /RAY_CONFIG_PATH must not contain control characters/,
+  );
+  assert.throws(
     () => normalizeRepoConfigPath(`examples/${"a".repeat(4096)}.json`, "RAY_CONFIG_PATH"),
     /RAY_CONFIG_PATH must be at most 4096 bytes/,
   );
