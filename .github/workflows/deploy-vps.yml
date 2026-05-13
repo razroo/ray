@@ -20,6 +20,7 @@ on:
       - examples/deploy/vps/**
       - package.json
       - bun.lock
+      - scripts/deploy-storage-preflight.ts
       - scripts/model-stage.ts
       - tsconfig.base.json
       - tsconfig.build.json

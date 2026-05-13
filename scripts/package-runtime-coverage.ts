@@ -860,6 +860,7 @@ function validateDeployWorkflowStoragePreflight(
     contents.includes(
       "RAY_DEPLOY_MIN_FREE_STORAGE_MIB: ${{ vars.RAY_DEPLOY_MIN_FREE_STORAGE_MIB }}",
     ) &&
+    contents.includes("scripts/deploy-storage-preflight.ts") &&
     contents.includes("envOverrides.RAY_DEPLOY_MIN_FREE_STORAGE_MIB") &&
     contents.includes("process.env.RAY_DEPLOY_MIN_FREE_STORAGE_MIB") &&
     contents.includes("parseOptionalNonNegativeInteger") &&
@@ -893,7 +894,7 @@ function validateDeployWorkflowStoragePreflight(
       workflowPath,
       line: workflowLineNumber(lines, "RAY_DEPLOY_MIN_FREE_STORAGE_MIB"),
       message:
-        "VPS deploy workflow must preflight remote free storage before package bootstrap, repository sync follow-up, config/unit/Caddy writes, Bun install-cache use, Bun production install, and env-file model, llama.cpp binary, or async-queue storage use so small VPS disks fail clearly before deploy work fills them.",
+        "VPS deploy workflow must run on deploy-storage-preflight script changes and preflight remote free storage before package bootstrap, repository sync follow-up, config/unit/Caddy writes, Bun install-cache use, Bun production install, and env-file model, llama.cpp binary, or async-queue storage use so small VPS disks fail clearly before deploy work fills them.",
     },
   ];
 }
