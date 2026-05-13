@@ -29,6 +29,8 @@ That keeps the gateway process small while still making self-hosted inference op
 ```bash
 sudo env DEBIAN_FRONTEND=noninteractive timeout 300s apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=60 update
 sudo env DEBIAN_FRONTEND=noninteractive timeout 300s apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=60 install -y --no-install-recommends ca-certificates curl unzip git build-essential caddy
+timeout 120s sudo apt-get clean
+timeout 60s sudo rm -rf /var/lib/apt/lists/*
 BUN_INSTALL="$(mktemp -d "${TMPDIR:-/tmp}/ray-bun-install.XXXXXX")"
 export BUN_INSTALL
 curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 https://bun.sh/install | timeout 300s bash -s "bun-v1.3.9"
@@ -490,8 +492,9 @@ root, `/etc/ray`, `/etc/systemd/system`, `/etc/caddy`, `/srv/ray`,
 repo-scoped Bun install-cache paths before APT bootstrap, bootstrap follow-up,
 config/unit/Caddy writes, or Bun production install can consume more disk,
 installs missing remote deploy prerequisites such as `curl`, `ca-certificates`,
-`unzip`, and `rsync`, refreshes `/usr/local/bin/bun` when it is missing or older
-than the repo's supported Bun runtime, copies that refreshed Bun to custom
+`unzip`, and `rsync`, cleans APT archives and package lists after bootstrap,
+refreshes `/usr/local/bin/bun` when it is missing or older than the repo's
+supported Bun runtime, copies that refreshed Bun to custom
 `RAY_GATEWAY_RUNTIME_BINARY` paths whose filename is `bun`, prints the resolved
 llama.cpp binary and GGUF staging plan for llama.cpp deploy configs, verifies
 and stages source artifacts when both `RAY_LLAMA_CPP_BINARY_SOURCE_PATH` and

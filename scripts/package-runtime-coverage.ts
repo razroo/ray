@@ -1277,6 +1277,7 @@ function validateDeployWorkflowStateOwnershipGuards(
 
 function validateDeployWorkflowAptGuards(
   workflowPath: string,
+  contents: string,
   lines: string[],
 ): PackageRuntimeCoverageDiagnostic[] {
   if (path.basename(workflowPath) !== "deploy-vps.yml") {
@@ -1301,6 +1302,21 @@ function validateDeployWorkflowAptGuards(
           "VPS deploy workflow apt-get update/install calls must set an overall timeout, Acquire::Retries, and Dpkg::Lock::Timeout so package bootstrap cannot hang indefinitely.",
       });
     }
+  }
+
+  if (
+    contents.includes("apt-get") &&
+    (!contents.includes("timeout 120s $SUDO apt-get clean") ||
+      !contents.includes("timeout 60s $SUDO rm -rf /var/lib/apt/lists/*"))
+  ) {
+    diagnostics.push({
+      level: "error",
+      code: "workflow_apt_cache_cleanup_missing",
+      workflowPath,
+      line: workflowLineNumber(lines, "apt-get"),
+      message:
+        "VPS deploy workflow must clean APT archives and package lists under timeouts after package bootstrap so small VPS disks do not keep package-manager residue after missing prerequisites are installed.",
+    });
   }
 
   return diagnostics;
@@ -1798,7 +1814,7 @@ async function validateWorkflow(
   diagnostics.push(...validateDeployWorkflowNumericServiceUserGuard(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowSecretFileInstalls(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowStateOwnershipGuards(workflowPath, lines));
-  diagnostics.push(...validateDeployWorkflowAptGuards(workflowPath, lines));
+  diagnostics.push(...validateDeployWorkflowAptGuards(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowRsyncGuards(workflowPath, lines));
   diagnostics.push(
     ...validateDeployWorkflowCheckoutPermissionGuards(workflowPath, contents, lines),
@@ -2036,6 +2052,31 @@ function validateDeployStoragePreflightDoc(
   ];
 }
 
+function validateVpsAptCleanupDoc(
+  docPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (
+    !contents.includes("apt-get install") ||
+    (contents.includes("timeout 120s sudo apt-get clean") &&
+      contents.includes("timeout 60s sudo rm -rf /var/lib/apt/lists/*"))
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "vps_readme_apt_cache_cleanup_missing",
+      docPath,
+      line: workflowLineNumber(lines, "apt-get install"),
+      message:
+        "VPS deployment docs must clean APT archives and package lists under timeouts after installing base packages so manual setup does not leave package-manager residue on small disks.",
+    },
+  ];
+}
+
 async function validateRuntimeDoc(
   docPath: string,
   options: {
@@ -2051,6 +2092,9 @@ async function validateRuntimeDoc(
   let inShellBlock = false;
 
   diagnostics.push(...validateDeployStoragePreflightDoc(docPath, contents, lines));
+  if (options.enforceVpsTimeouts) {
+    diagnostics.push(...validateVpsAptCleanupDoc(docPath, contents, lines));
+  }
 
   if (options.enforceReleaseGateSmokeDocs) {
     for (const scriptName of RELEASE_GATE_SMOKE_SCRIPTS) {

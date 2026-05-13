@@ -337,8 +337,10 @@ Set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` when the workflow or manual
 more or less than the default 1024 MiB free on the root, APT cache/state,
 `/etc/ray`, `/etc/systemd/system`, `/etc/caddy`, checkout, Ray state, `/tmp`,
 `/var/tmp`, and repo-scoped Bun install-cache volumes before package bootstrap,
-rsync follow-up, config/unit/Caddy writes, or the remote Bun production install. When
-`--ray-env-file` is supplied, the same preflight also checks custom
+rsync follow-up, config/unit/Caddy writes, or the remote Bun production install.
+The workflow cleans APT archives and package lists after missing bootstrap
+packages are installed so package-manager residue does not consume the disk
+cushion. When `--ray-env-file` is supplied, the same preflight also checks custom
 `RAY_MODEL_PATH` or `RAY_LLAMA_CPP_MODEL_PATH`, `RAY_LLAMA_CPP_BINARY_PATH`, and
 `RAY_ASYNC_QUEUE_STORAGE_DIR` volumes. Set it to `0` only when you intentionally
 want to skip that preflight.

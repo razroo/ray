@@ -577,6 +577,8 @@ jobs:
             $SUDO env DEBIAN_FRONTEND=noninteractive timeout 300s apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=60 update
             # shellcheck disable=SC2086
             $SUDO env DEBIAN_FRONTEND=noninteractive timeout 300s apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=60 install -y --no-install-recommends $missing_packages
+            timeout 120s $SUDO apt-get clean
+            timeout 60s $SUDO rm -rf /var/lib/apt/lists/*
           fi
 
           SERVICE_USER="${SERVICE_USER:-ray}"
