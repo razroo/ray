@@ -63,7 +63,7 @@ export interface PackageRuntimeCoverageSummary {
   results: PackageRuntimeCoverageResult[];
 }
 
-const HELP = `Validate Bun-first package and workflow runtime coverage.
+const HELP = `Validate Bun-first package, workflow, and deployment-doc runtime coverage.
 
 Usage:
   bun ./scripts/package-runtime-coverage.ts [options]
