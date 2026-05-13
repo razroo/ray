@@ -29,6 +29,7 @@ const forbiddenPackageManagerPattern =
   /(?:^|[\s;&|()])(?:(?:pnpm|yarn|npx)(?:\s|$)|npm(?:\s+(?:ci|exec|install|publish|run|test)\b|\s*$))/;
 const forbiddenWorkflowPackageManagerPattern =
   /(?:^|[\s:>"'`&;|()])(?:(?:pnpm|yarn|npx)(?:\s|$)|npm\s+(?:ci|exec|install|run|test)\b)/;
+const documentedBunRunScriptPattern = /\bbun\s+run\s+([A-Za-z0-9][A-Za-z0-9:_-]*\*?)/g;
 
 export interface PackageRuntimeCoverageArgs {
   cwd: string;
@@ -1075,11 +1076,18 @@ function referencesImplicitRaySystemdUnit(line: string): boolean {
   return /\b(?:journalctl|systemctl)\b.*\bray-(?:gateway|llama-cpp)(?!\.service)\b/.test(line);
 }
 
+function collectDocumentedBunRunScripts(line: string): string[] {
+  return [...line.matchAll(documentedBunRunScriptPattern)].map((match) =>
+    (match[1] ?? "").replace(/\*$/, ""),
+  );
+}
+
 async function validateRuntimeDoc(
   docPath: string,
   options: {
     enforceExplicitRayServiceUnits: boolean;
     enforceVpsTimeouts: boolean;
+    rootScripts: Record<string, string>;
   },
 ): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
   const contents = await readTextFileBounded(docPath, MAX_RUNTIME_DOC_BYTES, "Runtime doc");
@@ -1099,6 +1107,18 @@ async function validateRuntimeDoc(
     }
 
     const line = rawLine.trim();
+
+    for (const scriptName of collectDocumentedBunRunScripts(line)) {
+      if (scriptName.length > 0 && options.rootScripts[scriptName] === undefined) {
+        diagnostics.push({
+          level: "error",
+          code: "runtime_doc_bun_script_missing",
+          docPath,
+          line: index + 1,
+          message: `Runtime docs reference "bun run ${scriptName}", but root package.json does not define that script.`,
+        });
+      }
+    }
 
     if (
       options.enforceExplicitRayServiceUnits &&
@@ -1206,6 +1226,7 @@ export async function validatePackageRuntimeCoverage(options: {
   const results: PackageRuntimeCoverageResult[] = [];
   const workflowPaths = await collectWorkflowPaths(cwd);
   const runtimeDocPaths = await collectRuntimeDocPaths(cwd);
+  let rootScripts: Record<string, string> = {};
 
   for (const packageJsonPath of options.packageJsonPaths.map((filePath) =>
     path.resolve(filePath),
@@ -1216,6 +1237,9 @@ export async function validatePackageRuntimeCoverage(options: {
       const packageManager =
         typeof parsedPackage.packageManager === "string" ? parsedPackage.packageManager : undefined;
       const scripts = readScripts(parsedPackage);
+      if (packageJsonPath === path.resolve(cwd, DEFAULT_ROOT_PACKAGE_JSON)) {
+        rootScripts = scripts;
+      }
       const diagnostics = [
         ...validateRootPackageManager(cwd, packageJsonPath, parsedPackage),
         ...validateScripts(packageJsonPath, scripts),
@@ -1283,6 +1307,7 @@ export async function validatePackageRuntimeCoverage(options: {
       const { lineCount, diagnostics } = await validateRuntimeDoc(docPath, {
         enforceExplicitRayServiceUnits: VPS_TIMEOUT_DOCS.has(docRelPath),
         enforceVpsTimeouts: VPS_TIMEOUT_DOCS.has(docRelPath),
+        rootScripts,
       });
       results.push({
         kind: "doc",

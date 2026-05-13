@@ -103,7 +103,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   await writeFile(path.join(tempDir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
   await writeFile(
     path.join(tempDir, "README.md"),
-    ["# Ray test", "", "```bash", "pnpm install", "```", ""].join("\n"),
+    ["# Ray test", "", "```bash", "pnpm install", "bun run deploy:smoke", "```", ""].join("\n"),
   );
   await writeFile(
     path.join(workflowDir, "quality.yml"),
@@ -212,6 +212,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("vps_readme_command_timeout_missing"));
   assert.ok(codes.includes("vps_readme_bun_install_unbounded"));
   assert.ok(codes.includes("vps_readme_ray_service_suffix_missing"));
+  assert.ok(codes.includes("runtime_doc_bun_script_missing"));
   assert.equal(codes.filter((code) => code === "non_bun_runtime_doc_command").length, 4);
   assert.ok(codes.includes("non_bun_lockfile_present"));
 });
