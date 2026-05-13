@@ -3,8 +3,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { collectPublicConfigPaths } from "./deploy-smoke.ts";
 import {
+  collectDeployScriptConfigPaths,
   formatTextSummary,
   parseArgs,
   runDeployScriptCoverageCli,
@@ -48,7 +48,7 @@ test("parseArgs rejects malformed deploy script coverage argv", () => {
 
 test("validateDeployScriptCoverage accepts every checked-in public deploy profile", async () => {
   const cwd = process.cwd();
-  const configPaths = await collectPublicConfigPaths(cwd, "examples/config");
+  const configPaths = await collectDeployScriptConfigPaths(cwd, "examples/config");
   const summary = validateDeployScriptCoverage({
     cwd,
     configPaths,
@@ -57,7 +57,7 @@ test("validateDeployScriptCoverage accepts every checked-in public deploy profil
 
   assert.equal(summary.ok, true);
   assert.equal(summary.errorCount, 0);
-  assert.equal(summary.configCount, 7);
+  assert.equal(summary.configCount, 8);
   assert.ok(
     summary.results.some(
       (result) =>
@@ -68,14 +68,25 @@ test("validateDeployScriptCoverage accepts every checked-in public deploy profil
         result.modelStageScript === "model:stage:hetzner-email-ai",
     ),
   );
+  assert.ok(
+    summary.results.some(
+      (result) =>
+        result.configPath.endsWith("ray.vps.json") &&
+        result.renderScript === "render:service:vps" &&
+        result.validateScript === "validate:config:vps" &&
+        result.doctorScript === "doctor:vps" &&
+        result.modelStageScript === undefined,
+    ),
+  );
   assert.match(formatTextSummary(cwd, summary), /Summary: errors=0/);
 });
 
 test("validateDeployScriptCoverage catches missing and mistargeted package aliases", async () => {
   const cwd = process.cwd();
-  const configPaths = await collectPublicConfigPaths(cwd, "examples/config");
+  const configPaths = await collectDeployScriptConfigPaths(cwd, "examples/config");
   const scripts = await loadPackageScripts();
   delete scripts["doctor:1b:generic"];
+  delete scripts["doctor:vps"];
   scripts["validate:config:1b:8gb:generic:public"] =
     "bun ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.1b.public.json";
   scripts["model:stage:hetzner-email-ai"] =
@@ -101,7 +112,7 @@ test("runDeployScriptCoverageCli prints JSON output", async () => {
   assert.equal(stderr, "");
   const parsed = JSON.parse(stdout) as { ok: boolean; configCount: number };
   assert.equal(parsed.ok, true);
-  assert.equal(parsed.configCount, 7);
+  assert.equal(parsed.configCount, 8);
 });
 
 test("runDeployScriptCoverageCli rejects oversized package manifests", async (t) => {

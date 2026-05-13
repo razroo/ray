@@ -1,4 +1,4 @@
-import { open } from "node:fs/promises";
+import { access, open } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { collectPublicConfigPaths } from "./deploy-smoke.ts";
@@ -16,7 +16,7 @@ interface ProfileScriptSpec {
   render: string;
   validate: string;
   doctor: string;
-  modelStage: string;
+  modelStage?: string;
   memoryMiB?: number;
   modelStageUsesDefaultConfig?: boolean;
 }
@@ -52,7 +52,7 @@ export interface DeployScriptCoverageSummary {
   results: DeployScriptCoverageResult[];
 }
 
-const PUBLIC_PROFILE_SCRIPT_MATRIX: ProfileScriptSpec[] = [
+const DEPLOY_PROFILE_SCRIPT_MATRIX: ProfileScriptSpec[] = [
   {
     configFile: "ray.sub1b.public.json",
     render: "render:service",
@@ -108,16 +108,22 @@ const PUBLIC_PROFILE_SCRIPT_MATRIX: ProfileScriptSpec[] = [
     modelStage: "model:stage:1b:8gb:generic",
     memoryMiB: 8_192,
   },
+  {
+    configFile: "ray.vps.json",
+    render: "render:service:vps",
+    validate: "validate:config:vps",
+    doctor: "doctor:vps",
+  },
 ];
 
-const HELP = `Validate package scripts for public Ray deploy profiles.
+const HELP = `Validate package scripts for Ray deploy profiles.
 
 Usage:
   bun ./scripts/deploy-script-coverage.ts [options]
 
 Options:
   --cwd <path>           Repository root. Default: current directory.
-  --config-dir <path>    Directory containing public JSON config files. Default: ${DEFAULT_CONFIG_DIR}
+  --config-dir <path>    Directory containing deploy JSON config files. Default: ${DEFAULT_CONFIG_DIR}
   --package-json <path>  package.json path. Default: ${DEFAULT_PACKAGE_JSON}
   --json                 Print machine-readable summary JSON.
   -h, --help             Show this help.
@@ -252,6 +258,32 @@ async function readPackageScripts(packageJsonPath: string): Promise<Record<strin
   return result;
 }
 
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function collectDeployScriptConfigPaths(
+  cwd: string,
+  configDir: string,
+): Promise<string[]> {
+  const configPaths = new Set(await collectPublicConfigPaths(cwd, configDir));
+  const absoluteConfigDir = path.resolve(cwd, configDir);
+
+  for (const spec of DEPLOY_PROFILE_SCRIPT_MATRIX) {
+    const configPath = path.join(absoluteConfigDir, spec.configFile);
+    if (await pathExists(configPath)) {
+      configPaths.add(configPath);
+    }
+  }
+
+  return [...configPaths].sort();
+}
+
 function displayPath(cwd: string, configPath: string): string {
   const relativePath = path.relative(cwd, configPath);
   return relativePath && !relativePath.startsWith("..") && !path.isAbsolute(relativePath)
@@ -272,7 +304,7 @@ function scriptCommandPrefix(kind: ScriptKind): string {
   }
 }
 
-function expectedScriptName(spec: ProfileScriptSpec, kind: ScriptKind): string {
+function expectedScriptName(spec: ProfileScriptSpec, kind: ScriptKind): string | undefined {
   switch (kind) {
     case "render":
       return spec.render;
@@ -299,6 +331,10 @@ function validateProfileScript(
   kind: ScriptKind,
 ): DeployScriptCoverageDiagnostic[] {
   const scriptName = expectedScriptName(spec, kind);
+  if (scriptName === undefined) {
+    return [];
+  }
+
   const command = scripts[scriptName];
   const diagnostics: DeployScriptCoverageDiagnostic[] = [];
 
@@ -369,26 +405,28 @@ export function validateDeployScriptCoverage(options: {
     options.configPaths.map((configPath) => [path.basename(configPath), configPath]),
   );
   const specByConfig = new Map(
-    PUBLIC_PROFILE_SCRIPT_MATRIX.map((spec) => [spec.configFile, spec] as const),
+    DEPLOY_PROFILE_SCRIPT_MATRIX.map((spec) => [spec.configFile, spec] as const),
   );
   const results: DeployScriptCoverageResult[] = [];
 
-  for (const spec of PUBLIC_PROFILE_SCRIPT_MATRIX) {
+  for (const spec of DEPLOY_PROFILE_SCRIPT_MATRIX) {
     const configPath = configByName.get(spec.configFile);
     const diagnostics: DeployScriptCoverageDiagnostic[] = [];
 
     if (!configPath) {
       diagnostics.push({
         level: "error",
-        code: "public_config_missing",
-        message: `Expected public config ${spec.configFile} was not found.`,
+        code: "deploy_config_missing",
+        message: `Expected deploy config ${spec.configFile} was not found.`,
       });
     }
 
     diagnostics.push(...validateProfileScript(options.scripts, spec, "render"));
     diagnostics.push(...validateProfileScript(options.scripts, spec, "validate"));
     diagnostics.push(...validateProfileScript(options.scripts, spec, "doctor"));
-    diagnostics.push(...validateProfileScript(options.scripts, spec, "modelStage"));
+    if (spec.modelStage !== undefined) {
+      diagnostics.push(...validateProfileScript(options.scripts, spec, "modelStage"));
+    }
 
     results.push({
       configPath: configPath ?? path.join(options.cwd, DEFAULT_CONFIG_DIR, spec.configFile),
@@ -435,17 +473,21 @@ export function validateDeployScriptCoverage(options: {
 
 export function formatTextSummary(cwd: string, summary: DeployScriptCoverageSummary): string {
   const lines = [
-    `Validated deploy script coverage for ${summary.configCount} public Ray deploy profile${summary.configCount === 1 ? "" : "s"}:`,
+    `Validated deploy script coverage for ${summary.configCount} Ray deploy profile${summary.configCount === 1 ? "" : "s"}:`,
   ];
 
   for (const result of summary.results) {
     const status = result.errorCount > 0 ? "FAIL" : "OK";
-    const scripts =
-      result.renderScript && result.validateScript && result.doctorScript && result.modelStageScript
-        ? ` render=${result.renderScript} validate=${result.validateScript} doctor=${result.doctorScript} modelStage=${result.modelStageScript}`
-        : "";
+    const scripts = [
+      result.renderScript ? `render=${result.renderScript}` : undefined,
+      result.validateScript ? `validate=${result.validateScript}` : undefined,
+      result.doctorScript ? `doctor=${result.doctorScript}` : undefined,
+      result.modelStageScript ? `modelStage=${result.modelStageScript}` : undefined,
+    ]
+      .filter((entry) => entry !== undefined)
+      .join(" ");
     lines.push(
-      `- ${status} ${displayPath(cwd, result.configPath)}${scripts} errors=${result.errorCount}`,
+      `- ${status} ${displayPath(cwd, result.configPath)}${scripts.length > 0 ? ` ${scripts}` : ""} errors=${result.errorCount}`,
     );
 
     for (const diagnostic of result.diagnostics) {
@@ -470,7 +512,7 @@ export async function runDeployScriptCoverageCli(
     }
 
     const cwd = path.resolve(args.cwd);
-    const configPaths = await collectPublicConfigPaths(cwd, args.configDir);
+    const configPaths = await collectDeployScriptConfigPaths(cwd, args.configDir);
     const scripts = await readPackageScripts(path.resolve(cwd, args.packageJson));
     const summary = validateDeployScriptCoverage({ cwd, configPaths, scripts });
     io.stdout.write(
