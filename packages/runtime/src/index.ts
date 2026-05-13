@@ -3852,6 +3852,7 @@ export class RayRuntime {
         cpuPressureDegraded.degraded,
     };
     const tuned = applyAdaptiveTuning(this.config, degraded.request, this.recentAdaptiveSamples);
+    const effectiveLane = resolveScheduleLane(this.config, tuned.request);
     const runtimeDiagnostics: InferenceDiagnostics = {
       degradation: buildDegradationDiagnostics({
         promptLengthDegraded: promptLengthDegraded.degraded,
@@ -3922,7 +3923,7 @@ export class RayRuntime {
         requestId,
         startedAt,
         compiled.affinityKey,
-        compiled.lane,
+        effectiveLane,
       );
 
       if (preparation?.slotSnapshots) {
@@ -3931,12 +3932,13 @@ export class RayRuntime {
       }
 
       const requestForProvider = preparation?.request ?? tuned.request;
+      const scheduledLane = preparation?.lane ?? effectiveLane;
       const providerContextBase = {
         requestId,
         config: this.config,
         startedAt,
         affinityKey: compiled.affinityKey,
-        lane: preparation?.lane ?? compiled.lane,
+        lane: scheduledLane,
         ...(preparation ? { preparation } : {}),
       };
       const handler = (signal: AbortSignal) =>
@@ -3958,7 +3960,7 @@ export class RayRuntime {
           ? {
               key: dedupeKey,
               affinityKey: preparation?.affinityKey ?? compiled.affinityKey,
-              lane: preparation?.lane ?? compiled.lane,
+              lane: scheduledLane,
               costTokens: requestCostTokens,
               handler,
               ...(preparation?.preferredSlot !== undefined
@@ -3967,7 +3969,7 @@ export class RayRuntime {
             }
           : {
               affinityKey: preparation?.affinityKey ?? compiled.affinityKey,
-              lane: preparation?.lane ?? compiled.lane,
+              lane: scheduledLane,
               costTokens: requestCostTokens,
               handler,
               ...(preparation?.preferredSlot !== undefined
@@ -4010,7 +4012,7 @@ export class RayRuntime {
       this.recordAdaptiveSample(scheduled.queueTimeMs, providerResult.diagnostics);
       this.recordFamilyCompletion(
         compiled.affinityKey,
-        compiled.lane,
+        scheduledLane,
         this.resolveCompletionTokens(payload.usage),
       );
 

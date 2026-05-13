@@ -223,6 +223,7 @@ test("runtime retries provider warmup after a failed attempt", async () => {
 
 test("runtime clamps output under configured process RSS pressure", async () => {
   let observedMaxTokens = 0;
+  let observedLane: string | undefined;
   const provider: ModelProvider = {
     kind: "mock",
     modelId: "memory-pressure-model",
@@ -231,8 +232,9 @@ test("runtime clamps output under configured process RSS pressure", async () => 
       quantized: false,
       localBackend: true,
     },
-    async infer(request) {
+    async infer(request, context) {
       observedMaxTokens = request.maxTokens;
+      observedLane = context.lane;
       return {
         output: "degraded",
       };
@@ -265,6 +267,7 @@ test("runtime clamps output under configured process RSS pressure", async () => 
   const metrics = runtime.metricsSnapshot();
 
   assert.equal(observedMaxTokens, 32);
+  assert.equal(observedLane, "short");
   assert.equal(result.degraded, true);
   assert.equal(result.diagnostics?.degradation?.applied, true);
   assert.deepEqual(result.diagnostics?.degradation?.reasons, ["memory_pressure"]);
