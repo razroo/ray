@@ -1263,6 +1263,21 @@ async function validateRuntimeDoc(
 
     if (
       options.enforceVpsTimeouts &&
+      /\bgit\s+clone\b/.test(line) &&
+      !/\s--depth(?:=|\s+)/.test(line)
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "vps_readme_git_clone_shallow_missing",
+        docPath,
+        line: index + 1,
+        message:
+          "VPS deployment docs must use shallow git clones so manual checkouts do not spend small-host disk and bandwidth on full history.",
+      });
+    }
+
+    if (
+      options.enforceVpsTimeouts &&
       isVpsReadmeCommandRequiringTimeout(line) &&
       !line.includes("timeout ")
     ) {

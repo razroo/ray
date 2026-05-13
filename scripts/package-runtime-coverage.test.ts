@@ -211,6 +211,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("vps_readme_curl_install_unbounded"));
   assert.ok(codes.includes("vps_readme_apt_get_unbounded"));
   assert.ok(codes.includes("vps_readme_command_timeout_missing"));
+  assert.ok(codes.includes("vps_readme_git_clone_shallow_missing"));
   assert.ok(codes.includes("vps_readme_bun_install_unbounded"));
   assert.ok(codes.includes("vps_readme_ray_service_suffix_missing"));
   assert.ok(codes.includes("vps_readme_ray_helper_timeout_missing"));

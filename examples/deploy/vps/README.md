@@ -106,7 +106,7 @@ On an 8 GB node, [ray.1b.8gb.generic.public.json](../../config/ray.1b.8gb.generi
 ### 3. Build Ray
 
 ```bash
-timeout 300s git clone https://github.com/razroo/ray.git /srv/ray
+timeout 300s git clone --depth 1 https://github.com/razroo/ray.git /srv/ray
 cd /srv/ray
 timeout 300s bun install --frozen-lockfile
 timeout 300s bun run build
