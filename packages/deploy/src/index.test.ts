@@ -2513,6 +2513,8 @@ test("diagnoseConfig errors when the generated service user cannot access gatewa
   );
   assert.ok(importDiagnostic);
   assert.equal(importDiagnostic.level, "error");
+  assert.match(importDiagnostic.message, /bun install --frozen-lockfile/);
+  assert.match(importDiagnostic.message, /bun run build/);
   assert.match(importDiagnostic.message, /bun install --production --frozen-lockfile/);
   assert.match(importDiagnostic.message, /Cannot find package '@ray\/config'/);
 });
@@ -3064,6 +3066,8 @@ test("loadAndDiagnoseDeployment errors when the built gateway cannot import depe
   assert.ok(diagnostic);
   assert.equal(diagnostic.level, "error");
   assert.match(diagnostic.message, /definitely-missing/);
+  assert.match(diagnostic.message, /bun install --frozen-lockfile/);
+  assert.match(diagnostic.message, /bun run build/);
   assert.match(diagnostic.message, /bun install --production --frozen-lockfile/);
 });
 
@@ -3475,7 +3479,11 @@ test("loadAndDiagnoseDeployment runs gateway runtime version probe as the servic
   });
 
   const runtimePath = join(tempDir, "bun");
-  await writeFile(runtimePath, "#!/bin/sh\necho 1.3.9\n");
+  const versionSecretPath = join(tempDir, "runtime-version");
+  const quotedVersionSecretPath = `'${versionSecretPath.replace(/'/g, "'\\''")}'`;
+  await writeFile(versionSecretPath, "1.3.9\n");
+  await chmod(versionSecretPath, 0o600);
+  await writeFile(runtimePath, `#!/bin/sh\ncat ${quotedVersionSecretPath}\n`);
   await chmod(runtimePath, 0o755);
 
   const serviceUid = process.getuid() === 65_534 ? 65_533 : 65_534;
@@ -3520,7 +3528,7 @@ test("loadAndDiagnoseDeployment runs gateway runtime version probe as the servic
   assert.equal(inspected.preflight.gatewayRuntimeVersionStatus, "unreadable");
   assert.match(
     inspected.preflight.gatewayRuntimeVersionError ?? "",
-    /EPERM|operation not permitted|permission/i,
+    /EPERM|operation not permitted|permission|uid/i,
   );
 });
 

@@ -1088,6 +1088,51 @@ function truncateRuntimeVersionOutput(value: string): string {
   return normalized.length > 256 ? `${normalized.slice(0, 256)}...` : normalized;
 }
 
+async function verifyChildProcessServiceIdentity(
+  serviceIdentity: { uid: number; gid: number },
+  serviceUserIdentity: ServiceUserIdentity,
+): Promise<string | undefined> {
+  return await new Promise<string | undefined>((resolve) => {
+    try {
+      execFile(
+        "id",
+        ["-u"],
+        {
+          timeout: GATEWAY_RUNTIME_VERSION_TIMEOUT_MS,
+          maxBuffer: GATEWAY_RUNTIME_VERSION_MAX_BUFFER_BYTES,
+          windowsHide: true,
+          ...serviceIdentity,
+        },
+        (error, stdout, stderr) => {
+          const output = `${stdout}\n${stderr}`.trim();
+          if (error) {
+            resolve(
+              output
+                ? `could not verify gateway runtime version probe service user "${serviceUserIdentity.name}": ${toErrorMessage(error)}; output: ${truncateRuntimeVersionOutput(output)}`
+                : `could not verify gateway runtime version probe service user "${serviceUserIdentity.name}": ${toErrorMessage(error)}`,
+            );
+            return;
+          }
+
+          const actualUid = stdout.trim().split(/\s+/)[0];
+          if (actualUid !== String(serviceIdentity.uid)) {
+            resolve(
+              `gateway runtime version probe ran as uid ${actualUid || "unknown"} instead of uid ${serviceIdentity.uid} for service user "${serviceUserIdentity.name}"`,
+            );
+            return;
+          }
+
+          resolve(undefined);
+        },
+      );
+    } catch (error) {
+      resolve(
+        `could not verify gateway runtime version probe service user "${serviceUserIdentity.name}": ${toErrorMessage(error)}`,
+      );
+    }
+  });
+}
+
 function parseCommandVersionOutput(value: string): string | undefined {
   const firstLine = value
     .split(/\r?\n/)
@@ -2642,7 +2687,7 @@ export function diagnoseConfig(
       diagnostics.push({
         level: "error",
         code: "gateway_entrypoint_import_failed",
-        message: `The configured gateway runtime could not import the built Ray gateway entrypoint${preflight.gatewayEntrypointImportError ? ` (${preflight.gatewayEntrypointImportError})` : ""}. Run timeout 300s bun install --production --frozen-lockfile --ignore-scripts and bun run build in the generated WorkingDirectory before restarting ray-gateway.service.`,
+        message: `The configured gateway runtime could not import the built Ray gateway entrypoint${preflight.gatewayEntrypointImportError ? ` (${preflight.gatewayEntrypointImportError})` : ""}. Run timeout 300s bun install --frozen-lockfile, timeout 300s bun run build, then timeout 300s bun install --production --frozen-lockfile --ignore-scripts in the generated WorkingDirectory before restarting ray-gateway.service.`,
       });
     } else {
       diagnostics.push({
@@ -4171,6 +4216,20 @@ async function collectGatewayRuntimeVersionPreflight(
   const basePreflight = {
     gatewayRuntimeKind: runtimeKind,
   };
+
+  if (serviceIdentity && serviceUserIdentity) {
+    const serviceIdentityError = await verifyChildProcessServiceIdentity(
+      serviceIdentity,
+      serviceUserIdentity,
+    );
+    if (serviceIdentityError) {
+      return {
+        ...basePreflight,
+        gatewayRuntimeVersionStatus: "unreadable",
+        gatewayRuntimeVersionError: serviceIdentityError,
+      };
+    }
+  }
 
   return await new Promise<Partial<DeploymentPreflight>>((resolve) => {
     try {
