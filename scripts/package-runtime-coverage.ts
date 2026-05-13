@@ -831,6 +831,41 @@ function validateDeployWorkflowReadyTimeoutEnvOverride(
   ];
 }
 
+function validateDeployWorkflowReadyzSnapshotLogging(
+  workflowPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  if (
+    contents.includes("ready_snapshot=") &&
+    contents.includes(
+      'ready_snapshot="$(curl -fsS --connect-timeout 2 --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/readyz"',
+    ) &&
+    contents.includes(
+      'ready_snapshot="$(curl -sS --connect-timeout 2 --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/readyz"',
+    ) &&
+    contents.includes("::group::Ray readiness snapshot") &&
+    contents.includes("printf '%s\\n' \"$ready_snapshot\"")
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "workflow_readyz_snapshot_logging_missing",
+      workflowPath,
+      line: workflowLineNumber(lines, "/readyz"),
+      message:
+        "VPS deploy workflow must capture and print the final /readyz snapshot so successful and failed deploy logs include backend, queue, memory, CPU, or async-queue readiness reasons.",
+    },
+  ];
+}
+
 function validateDeployWorkflowResolvedEnvPersistence(
   workflowPath: string,
   contents: string,
@@ -1557,6 +1592,7 @@ async function validateWorkflow(
   diagnostics.push(...validateDeployWorkflowMemoryEnvOverride(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowStoragePreflight(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowReadyTimeoutEnvOverride(workflowPath, contents, lines));
+  diagnostics.push(...validateDeployWorkflowReadyzSnapshotLogging(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowResolvedEnvPersistence(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowCaddyBinaryGuards(workflowPath, contents, lines));
   diagnostics.push(...validateDeployWorkflowServiceUserGuard(workflowPath, contents, lines));

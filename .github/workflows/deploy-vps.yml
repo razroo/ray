@@ -1081,11 +1081,13 @@ jobs:
 
           ready_deadline=$((SECONDS + READY_TIMEOUT_SECONDS))
           ready_status=1
+          ready_snapshot=""
           while [ "$SECONDS" -lt "$ready_deadline" ]; do
-            if curl -fsS --connect-timeout 2 --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/readyz" >/dev/null; then
+            if ready_snapshot="$(curl -fsS --connect-timeout 2 --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/readyz" 2>/dev/null)"; then
               ready_status=0
               break
             fi
+            ready_snapshot="$(curl -sS --connect-timeout 2 --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/readyz" 2>/dev/null || true)"
             sleep 2
           done
 
@@ -1094,12 +1096,20 @@ jobs:
             echo "::group::Ray health snapshots"
             curl -sS --connect-timeout 2 --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/livez" || true
             echo
-            curl -sS --connect-timeout 2 --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/readyz" || true
+            if [ -n "$ready_snapshot" ]; then
+              printf '%s\n' "$ready_snapshot"
+            else
+              curl -sS --connect-timeout 2 --max-time 5 "http://127.0.0.1:${HEALTH_PORT}/readyz" || true
+            fi
             echo
             echo "::endgroup::"
             dump_ray_debug
             exit 1
           fi
+
+          echo "::group::Ray readiness snapshot"
+          printf '%s\n' "$ready_snapshot"
+          echo "::endgroup::"
 
           if [ "${INSTALL_CADDY:-false}" = "true" ]; then
             if ! timeout 60s $SUDO systemctl enable --now caddy; then
