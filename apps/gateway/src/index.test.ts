@@ -937,6 +937,53 @@ test("gateway returns service unavailable when detailed health is unavailable", 
   assert.equal(body.provider.status, "unavailable");
 });
 
+test("gateway keeps readyz unavailable while provider is warming", async (t) => {
+  const config = createDefaultConfig("tiny");
+  const warmingHealth: HealthSnapshot = {
+    status: "degraded",
+    uptimeMs: 250,
+    queueDepth: 0,
+    inFlight: 0,
+    cacheEntries: 0,
+    profile: "tiny",
+    modelId: "warming-model",
+    provider: {
+      status: "warming",
+      checkedAt: new Date().toISOString(),
+    },
+  };
+  const runtime = {
+    async health() {
+      return warmingHealth;
+    },
+  } as unknown as RayRuntime;
+  const gateway = createGatewayServer({
+    config,
+    runtime,
+  });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const readyz = await fetch(`${baseUrl}/readyz`);
+  assert.equal(readyz.status, 503);
+  const readyzBody = (await readyz.json()) as { status: string; provider?: unknown };
+  assert.equal(readyzBody.status, "degraded");
+  assert.equal(readyzBody.provider, undefined);
+
+  const health = await fetch(`${baseUrl}/health`);
+  assert.equal(health.status, 200);
+  const healthBody = (await health.json()) as HealthSnapshot;
+  assert.equal(healthBody.status, "degraded");
+  assert.equal(healthBody.provider.status, "warming");
+});
+
 test("startGateway exposes liveness while provider warmup fails in the background", async (t) => {
   const port = await getAvailablePort();
   const config = mergeConfig(createDefaultConfig("tiny"), {

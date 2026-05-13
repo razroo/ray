@@ -135,6 +135,18 @@ function attachAsyncQueueHealth(
   return health;
 }
 
+function resolveReadyzStatusCode(health: HealthSnapshot): number {
+  if (
+    health.status === "unavailable" ||
+    health.provider.status === "unavailable" ||
+    health.provider.status === "warming"
+  ) {
+    return 503;
+  }
+
+  return 200;
+}
+
 function destroyGatewaySockets(sockets: Iterable<Socket> | undefined): void {
   for (const socket of sockets ?? []) {
     socket.destroy();
@@ -767,15 +779,10 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
         if (jobQueue) {
           attachAsyncQueueHealth(health, await jobQueue.snapshotWithStorage());
         }
-        writeJsonWithoutReadingBody(
-          request,
-          response,
-          health.status === "unavailable" ? 503 : 200,
-          {
-            status: health.status,
-            service: "ray-gateway",
-          },
-        );
+        writeJsonWithoutReadingBody(request, response, resolveReadyzStatusCode(health), {
+          status: health.status,
+          service: "ray-gateway",
+        });
         return;
       }
 
