@@ -520,7 +520,7 @@ jobs:
 
           timeout 60s $SUDO install -d -m 0755 /srv/ray /etc/ray
           timeout 60s $SUDO install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
-          timeout 120s $SUDO chown -R "$DEPLOY_USER:$DEPLOY_GROUP" /srv/ray
+          timeout 60s $SUDO chown "$DEPLOY_USER:$DEPLOY_GROUP" /srv/ray
           timeout 60s $SUDO chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
           ENDSSH
 

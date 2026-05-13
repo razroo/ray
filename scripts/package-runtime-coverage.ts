@@ -983,6 +983,16 @@ function validateDeployWorkflowStateOwnershipGuards(
           "VPS deploy workflow must not recursively chown /var/lib/ray because model files can be multi-GB; chown the state directories directly and let staging own staged artifacts.",
       });
     }
+    if (/\bchown\s+-R\b/.test(line) && line.includes("/srv/ray")) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_recursive_checkout_chown",
+        workflowPath,
+        line: index + 1,
+        message:
+          "VPS deploy workflow must not recursively chown /srv/ray because stale node_modules and built artifacts can be large; chown the checkout root directly and let rsync plus Bun install set service-readable modes.",
+      });
+    }
   }
 
   return diagnostics;

@@ -159,6 +159,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
       "      - run: sudo useradd ray",
       "      - run: sudo apt-get install -y curl",
       "      - run: sudo chown -R ray:ray /var/lib/ray",
+      "      - run: sudo chown -R ray:ray /srv/ray",
       "      - run: rsync -az --delete ./ ray@example:/srv/ray/",
       "      - run: ssh ray@example.com 'bash -s'",
       "      - run: /usr/local/bin/bun install --production --frozen-lockfile --ignore-scripts",
@@ -244,6 +245,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("workflow_numeric_service_user_guard_missing"));
   assert.ok(codes.includes("workflow_secret_file_install_mode_missing"));
   assert.ok(codes.includes("workflow_recursive_state_chown"));
+  assert.ok(codes.includes("workflow_recursive_checkout_chown"));
   assert.ok(codes.includes("workflow_root_command_timeout_missing"));
   assert.ok(codes.includes("workflow_apt_get_unbounded"));
   assert.ok(codes.includes("workflow_rsync_session_timeout_missing"));
