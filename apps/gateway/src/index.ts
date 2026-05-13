@@ -33,6 +33,7 @@ const MAX_GATEWAY_CLI_ARG_BYTES = 8_192;
 const MAX_GATEWAY_CONFIG_PATH_CHARS = 4_096;
 const MAX_GATEWAY_REQUEST_TARGET_CHARS = 8_192;
 const MAX_GATEWAY_HOST_HEADER_CHARS = 512;
+const MAX_GATEWAY_CONTENT_TYPE_CHARS = 256;
 const GATEWAY_HEADERS_TIMEOUT_MS = 15_000;
 const GATEWAY_REQUEST_TIMEOUT_MS = 30_000;
 const GATEWAY_KEEP_ALIVE_TIMEOUT_MS = 5_000;
@@ -559,6 +560,57 @@ function getDeclaredContentLength(request: IncomingMessage): number | undefined 
   return /^\d+$/.test(normalized) && Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
+function createUnsupportedJsonContentTypeError(contentType: string | undefined): RayError {
+  return new RayError("Request content type must be application/json", {
+    code: "unsupported_media_type",
+    status: 415,
+    details: {
+      ...(contentType !== undefined
+        ? { contentType: truncateResponseString(contentType, 128) }
+        : {}),
+      supported: ["application/json", "application/*+json"],
+    },
+  });
+}
+
+function isJsonContentType(contentType: string): boolean {
+  const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  const [type, subtype, extra] = mediaType.split("/");
+
+  return (
+    type === "application" &&
+    extra === undefined &&
+    subtype !== undefined &&
+    (subtype === "json" || subtype.endsWith("+json"))
+  );
+}
+
+function assertJsonContentType(request: IncomingMessage): void {
+  const contentType = request.headers["content-type"];
+
+  if (typeof contentType !== "string" || contentType.trim().length === 0) {
+    throw createUnsupportedJsonContentTypeError(undefined);
+  }
+
+  if (contentType.length > MAX_GATEWAY_CONTENT_TYPE_CHARS) {
+    throw new RayError(
+      `Content-Type header must be at most ${MAX_GATEWAY_CONTENT_TYPE_CHARS} characters`,
+      {
+        code: "unsupported_media_type",
+        status: 415,
+        details: {
+          actualChars: contentType.length,
+          maxChars: MAX_GATEWAY_CONTENT_TYPE_CHARS,
+        },
+      },
+    );
+  }
+
+  if (!isJsonContentType(contentType)) {
+    throw createUnsupportedJsonContentTypeError(contentType);
+  }
+}
+
 function createInvalidGatewayHostHeaderError(): RayError {
   return new RayError("Host header is invalid", {
     code: "invalid_request",
@@ -868,7 +920,8 @@ function shouldCloseRequestAfterReject(request: IncomingMessage, error: RayError
     !request.complete &&
     (error.code === "body_too_large" ||
       error.code === "invalid_request" ||
-      error.code === "request_target_too_large")
+      error.code === "request_target_too_large" ||
+      error.code === "unsupported_media_type")
   );
 }
 
@@ -1055,6 +1108,7 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
           return;
         }
 
+        assertJsonContentType(request);
         const body = (await readJsonBody(
           request,
           config.server.requestBodyLimitBytes,
@@ -1098,6 +1152,7 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
           return;
         }
 
+        assertJsonContentType(request);
         const body = (await readJsonBody(
           request,
           config.server.requestBodyLimitBytes,

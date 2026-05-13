@@ -488,6 +488,100 @@ test("gateway rejects oversized declared request bodies before reading bytes", a
   assert.match(response, /"code": "body_too_large"/);
 });
 
+test("gateway rejects unsupported inference content types before reading bytes", async (t) => {
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    server: {
+      requestBodyLimitBytes: 16,
+    },
+  });
+  const gateway = createGatewayServer({ config });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await readRawUnfinishedRequestResponse(gateway.server, [
+    "POST /v1/infer HTTP/1.1",
+    `Host: 127.0.0.1:${address.port}`,
+    "Content-Type: text/plain",
+    "Content-Length: 17",
+    "",
+    "",
+  ]);
+
+  assert.match(response, /^HTTP\/1\.1 415 /);
+  assert.match(response, /\r\nconnection: close\r\n/i);
+  assert.match(response, /"code": "unsupported_media_type"/);
+});
+
+test("gateway rejects unsupported async job content types before reading bytes", async (t) => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-gateway-media-type-"));
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir,
+    },
+    server: {
+      requestBodyLimitBytes: 16,
+    },
+  });
+  const gateway = createGatewayServer({ config });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    await closeServer(gateway.server);
+    await rm(storageDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await readRawUnfinishedRequestResponse(gateway.server, [
+    "POST /v1/jobs HTTP/1.1",
+    `Host: 127.0.0.1:${address.port}`,
+    "Content-Type: text/plain",
+    "Content-Length: 17",
+    "",
+    "",
+  ]);
+
+  assert.match(response, /^HTTP\/1\.1 415 /);
+  assert.match(response, /\r\nconnection: close\r\n/i);
+  assert.match(response, /"code": "unsupported_media_type"/);
+});
+
+test("gateway accepts structured JSON content types", async (t) => {
+  const gateway = createGatewayServer({
+    config: createDefaultConfig("tiny"),
+  });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/v1/infer`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/vnd.ray+json; charset=utf-8",
+    },
+    body: JSON.stringify({
+      input: "hello",
+    }),
+  });
+
+  assert.equal(response.status, 200);
+});
+
 test("gateway snapshots config at server construction", async (t) => {
   const config = mergeConfig(createDefaultConfig("tiny"), {
     server: {
