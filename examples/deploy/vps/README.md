@@ -29,8 +29,12 @@ That keeps the gateway process small while still making self-hosted inference op
 ```bash
 sudo env DEBIAN_FRONTEND=noninteractive timeout 300s apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=60 update
 sudo env DEBIAN_FRONTEND=noninteractive timeout 300s apt-get -o Acquire::Retries=3 -o Dpkg::Lock::Timeout=60 install -y --no-install-recommends ca-certificates curl unzip git build-essential caddy
+BUN_INSTALL="$(mktemp -d "${TMPDIR:-/tmp}/ray-bun-install.XXXXXX")"
+export BUN_INSTALL
 curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 https://bun.sh/install | timeout 300s bash -s "bun-v1.3.9"
-timeout 60s sudo install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
+timeout 60s sudo install -m 0755 "$BUN_INSTALL/bin/bun" /usr/local/bin/bun
+timeout 60s rm -rf "$BUN_INSTALL"
+unset BUN_INSTALL
 SERVICE_USER="${RAY_DEPLOY_SERVICE_USER:-ray}"
 case "$SERVICE_USER" in
   *[!0-9]*)
@@ -503,11 +507,12 @@ for the Bun production install, generated systemd unit verification, and
 generated Caddyfile validation fail before systemd tries to start the generated units. The
 configured gateway runtime binary defaults to `/usr/local/bin/bun`. The workflow
 only changes ownership on the checkout root, sets service-readable checkout
-modes during rsync, removes stale `node_modules` under a timeout, pins
+modes during rsync, removes stale `node_modules` under a timeout, stages
+fallback Bun installer output in a temporary directory, pins
 `BUN_INSTALL_CACHE_DIR` under `/srv/ray/.ray/bun-install-cache`, and runs the
 remote Bun production install with `umask 022` so old dev dependencies and
-home-directory cache growth do not accumulate even when ownership changed, and
-deploys do not recursively chown or chmod the synced repository. Remote Bun
+home-directory runtime/cache growth do not accumulate even when ownership
+changed, and deploys do not recursively chown or chmod the synced repository. Remote Bun
 helper commands for config inspection,
 staging-plan rendering, doctor, and service rendering run under explicit
 timeouts; deploy-time GGUF staging gets a

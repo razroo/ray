@@ -1573,7 +1573,17 @@ function validateDeployWorkflowGatewayRuntimeBunInstall(
     contents.includes('basename "${GATEWAY_RUNTIME_BINARY:-}"') &&
     contents.includes("tr '[:upper:]' '[:lower:]'") &&
     contents.includes('[ "${GATEWAY_RUNTIME_BINARY:-}" != "/usr/local/bin/bun" ]') &&
-    contents.includes('install -D -m 0755 /usr/local/bin/bun "$GATEWAY_RUNTIME_BINARY"')
+    contents.includes('install -D -m 0755 /usr/local/bin/bun "$GATEWAY_RUNTIME_BINARY"') &&
+    contents.includes(
+      'bun_install_dir="$(timeout 30s mktemp -d "${TMPDIR:-/tmp}/ray-bun-install.XXXXXX")"',
+    ) &&
+    contents.includes('export BUN_INSTALL="$bun_install_dir"') &&
+    contents.includes("https://bun.sh/install | timeout 300s bash -s") &&
+    contents.includes('[ ! -x "$bun_install_dir/bin/bun" ]') &&
+    contents.includes('bun_runtime_version "$bun_install_dir/bin/bun"') &&
+    contents.includes('install -m 0755 "$bun_install_dir/bin/bun" /usr/local/bin/bun') &&
+    contents.includes('timeout 60s rm -rf "$bun_install_dir"') &&
+    contents.includes("unset BUN_INSTALL")
   ) {
     return [];
   }
@@ -1584,7 +1594,7 @@ function validateDeployWorkflowGatewayRuntimeBunInstall(
       code: "workflow_gateway_runtime_bun_install_missing",
       workflowPath,
       message:
-        "VPS deploy workflow must copy the refreshed /usr/local/bin/bun to custom Bun gateway runtime paths so --gateway-runtime-binary does not point generated services at a stale or missing Bun binary.",
+        "VPS deploy workflow must stage fallback Bun installer output in a bounded temporary directory, copy the refreshed /usr/local/bin/bun to custom Bun gateway runtime paths, and clean the temporary install so --gateway-runtime-binary does not point generated services at a stale or missing Bun binary and deploys do not leave Bun payloads in the SSH user's home.",
     },
   ];
 }

@@ -832,17 +832,27 @@ jobs:
 
               current_version="$(bun_runtime_version /usr/local/bin/bun)"
               if ! bun_version_at_least "$current_version" "$minimum_bun_version"; then
-                curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 https://bun.sh/install | timeout 300s bash -s "bun-v${install_bun_version}"
-                if [ ! -x "$HOME/.bun/bin/bun" ]; then
-                  echo "Bun install completed but $HOME/.bun/bin/bun was not found."
+                local bun_install_dir
+                bun_install_dir="$(timeout 30s mktemp -d "${TMPDIR:-/tmp}/ray-bun-install.XXXXXX")"
+                export BUN_INSTALL="$bun_install_dir"
+                if ! curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 https://bun.sh/install | timeout 300s bash -s "bun-v${install_bun_version}"; then
+                  timeout 60s rm -rf "$bun_install_dir" || true
                   exit 1
                 fi
-                current_version="$(bun_runtime_version "$HOME/.bun/bin/bun")"
+                if [ ! -x "$bun_install_dir/bin/bun" ]; then
+                  echo "Bun install completed but $bun_install_dir/bin/bun was not found."
+                  timeout 60s rm -rf "$bun_install_dir" || true
+                  exit 1
+                fi
+                current_version="$(bun_runtime_version "$bun_install_dir/bin/bun")"
                 if ! bun_version_at_least "$current_version" "$minimum_bun_version"; then
                   echo "Bun install produced unsupported version: ${current_version:-unknown}."
+                  timeout 60s rm -rf "$bun_install_dir" || true
                   exit 1
                 fi
-                timeout 60s $SUDO install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
+                timeout 60s $SUDO install -m 0755 "$bun_install_dir/bin/bun" /usr/local/bin/bun
+                timeout 60s rm -rf "$bun_install_dir"
+                unset BUN_INSTALL
               fi
             fi
 
