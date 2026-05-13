@@ -615,6 +615,7 @@ test("renderEnvironmentFileExample documents deploy-time overrides", () => {
   assert.match(envFile, /RAY_DEPLOY_DOMAIN=ray\.local/);
   assert.match(envFile, /RAY_DEPLOY_MEMORY_MIB=4096/);
   assert.match(envFile, /RAY_GATEWAY_RUNTIME_BINARY=\/usr\/local\/bin\/bun/);
+  assert.match(envFile, /RAY_DEPLOY_CADDY_BINARY=\/usr\/bin\/caddy/);
 });
 
 test("renderEnvironmentFileExample documents portable llama.cpp model overrides", () => {

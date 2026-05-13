@@ -219,6 +219,7 @@ const RAY_STATE_DIRECTORY_PATH = "/var/lib/ray";
 const RAY_STATE_DIRECTORY_PARENT_PATH = path.dirname(RAY_STATE_DIRECTORY_PATH);
 const GATEWAY_ENTRYPOINT_RELATIVE_PATH = "apps/gateway/dist/index.js";
 const DEFAULT_GATEWAY_RUNTIME_BINARY = "/usr/local/bin/bun";
+const DEFAULT_CADDY_RUNTIME_BINARY = "/usr/bin/caddy";
 const BINARY_SOURCE_ENV = "RAY_LLAMA_CPP_BINARY_SOURCE_PATH";
 const MODEL_SOURCE_ENV = "RAY_MODEL_SOURCE_PATH";
 const MIN_GATEWAY_BUN_VERSION = "1.3.0";
@@ -1721,6 +1722,7 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
   lines.push("# RAY_DEPLOY_DOMAIN=ray.local");
   lines.push(`# RAY_DEPLOY_MEMORY_MIB=${config.model.operational?.memoryClassMiB ?? ""}`);
   lines.push(`# RAY_GATEWAY_RUNTIME_BINARY=${DEFAULT_GATEWAY_RUNTIME_BINARY}`);
+  lines.push(`# RAY_DEPLOY_CADDY_BINARY=${DEFAULT_CADDY_RUNTIME_BINARY}`);
 
   lines.push("# Optional gateway behavior switches:");
   lines.push(`# RAY_PROFILE=${config.profile}`);
