@@ -57,7 +57,7 @@ test("validateDeployScriptCoverage accepts every checked-in public deploy profil
 
   assert.equal(summary.ok, true);
   assert.equal(summary.errorCount, 0);
-  assert.equal(summary.configCount, 8);
+  assert.equal(summary.configCount, 9);
   assert.ok(
     summary.results.some(
       (result) =>
@@ -75,6 +75,16 @@ test("validateDeployScriptCoverage accepts every checked-in public deploy profil
         result.renderScript === "render:service:vps" &&
         result.validateScript === "validate:config:vps" &&
         result.doctorScript === "doctor:vps" &&
+        result.modelStageScript === undefined,
+    ),
+  );
+  assert.ok(
+    summary.results.some(
+      (result) =>
+        result.configPath.endsWith("ray.balanced.json") &&
+        result.renderScript === "render:service:balanced" &&
+        result.validateScript === "validate:config:balanced" &&
+        result.doctorScript === "doctor:balanced" &&
         result.modelStageScript === undefined,
     ),
   );
@@ -112,7 +122,7 @@ test("runDeployScriptCoverageCli prints JSON output", async () => {
   assert.equal(stderr, "");
   const parsed = JSON.parse(stdout) as { ok: boolean; configCount: number };
   assert.equal(parsed.ok, true);
-  assert.equal(parsed.configCount, 8);
+  assert.equal(parsed.configCount, 9);
 });
 
 test("runDeployScriptCoverageCli rejects oversized package manifests", async (t) => {

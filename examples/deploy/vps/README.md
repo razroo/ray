@@ -405,10 +405,14 @@ RAY_API_KEYS=replace-with-real-key timeout 300s bun run validate:config:cax11:pu
 RAY_API_KEYS=replace-with-real-key timeout 300s bun run validate:config:1b:generic:public
 RAY_API_KEYS=replace-with-real-key timeout 300s bun run validate:config:1b:public
 RAY_API_KEYS=replace-with-real-key timeout 300s bun run validate:config:hetzner:public
+timeout 300s bun run validate:config:vps
+timeout 300s bun run validate:config:balanced
 timeout 300s sudo /usr/local/bin/bun run doctor:1b:generic
 timeout 300s sudo /usr/local/bin/bun run doctor:cax11
 timeout 300s sudo /usr/local/bin/bun run doctor:hetzner-email-ai
 timeout 300s sudo /usr/local/bin/bun run doctor
+timeout 300s sudo /usr/local/bin/bun run doctor:vps
+timeout 300s sudo /usr/local/bin/bun run doctor:balanced
 timeout 1800s bun run benchmark:assert:cx23
 timeout 1800s bun run benchmark:assert:cax11
 timeout 1800s bun run benchmark:assert:cx23:1b

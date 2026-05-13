@@ -31,6 +31,7 @@
     "dev:cax11": "bun --conditions=development ./apps/gateway/src/index.ts --config ./examples/config/ray.sub1b.cax11.json",
     "dev:tiny": "bun --conditions=development ./apps/gateway/src/index.ts --config ./examples/config/ray.tiny.json",
     "dev:vps": "bun --conditions=development ./apps/gateway/src/index.ts --config ./examples/config/ray.vps.json",
+    "dev:balanced": "bun --conditions=development ./apps/gateway/src/index.ts --config ./examples/config/ray.balanced.json",
     "dev:hetzner-email-ai": "bun --conditions=development ./apps/gateway/src/index.ts --config ./examples/config/ray.hetzner-cx23-qwen0.6b.json",
     "dev:hetzner-email-ai:public": "bun --conditions=development ./apps/gateway/src/index.ts --config ./examples/config/ray.hetzner-cx23-qwen0.6b.public.json",
     "start": "bun ./apps/gateway/dist/index.js --config ./examples/config/ray.sub1b.json",
@@ -48,6 +49,7 @@
     "start:cax11": "bun ./apps/gateway/dist/index.js --config ./examples/config/ray.sub1b.cax11.json",
     "start:tiny": "bun ./apps/gateway/dist/index.js --config ./examples/config/ray.tiny.json",
     "start:vps": "bun ./apps/gateway/dist/index.js --config ./examples/config/ray.vps.json",
+    "start:balanced": "bun ./apps/gateway/dist/index.js --config ./examples/config/ray.balanced.json",
     "start:hetzner-email-ai": "bun ./apps/gateway/dist/index.js --config ./examples/config/ray.hetzner-cx23-qwen0.6b.json",
     "start:hetzner-email-ai:public": "bun ./apps/gateway/dist/index.js --config ./examples/config/ray.hetzner-cx23-qwen0.6b.public.json",
     "benchmark": "bun ./scripts/benchmark.ts",
@@ -101,6 +103,7 @@
     "render:service:1b:8gb": "bun ./packages/deploy/dist/cli.js render --cwd . --config ./examples/config/ray.1b.8gb.public.json --systemd-env-file /etc/ray/ray.env --memory-mib 8192",
     "render:service:1b:8gb:generic": "bun ./packages/deploy/dist/cli.js render --cwd . --config ./examples/config/ray.1b.8gb.generic.public.json --systemd-env-file /etc/ray/ray.env --memory-mib 8192",
     "render:service:vps": "bun ./packages/deploy/dist/cli.js render --cwd . --config ./examples/config/ray.vps.json --systemd-env-file /etc/ray/ray.env",
+    "render:service:balanced": "bun ./packages/deploy/dist/cli.js render --cwd . --config ./examples/config/ray.balanced.json --systemd-env-file /etc/ray/ray.env",
     "validate:config": "bun ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.sub1b.json",
     "validate:config:all": "bun ./scripts/validate-configs.ts",
     "validate:config:sub1b:classifier": "bun ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.sub1b.classifier.json",
@@ -117,6 +120,7 @@
     "validate:config:public": "bun ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.sub1b.public.json",
     "validate:config:cax11:public": "bun ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.sub1b.cax11.public.json",
     "validate:config:vps": "bun ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.vps.json",
+    "validate:config:balanced": "bun ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.balanced.json",
     "validate:config:hetzner": "bun ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.hetzner-cx23-qwen0.6b.json",
     "validate:config:hetzner:public": "bun ./packages/deploy/dist/cli.js validate --cwd . --config ./examples/config/ray.hetzner-cx23-qwen0.6b.public.json",
     "doctor": "bun ./packages/deploy/dist/cli.js doctor --cwd . --config ./examples/config/ray.sub1b.public.json --ray-env-file /etc/ray/ray.env",
@@ -126,7 +130,8 @@
     "doctor:1b:generic": "bun ./packages/deploy/dist/cli.js doctor --cwd . --config ./examples/config/ray.1b.generic.public.json --ray-env-file /etc/ray/ray.env --memory-mib 4096",
     "doctor:1b:8gb": "bun ./packages/deploy/dist/cli.js doctor --cwd . --config ./examples/config/ray.1b.8gb.public.json --ray-env-file /etc/ray/ray.env --memory-mib 8192",
     "doctor:1b:8gb:generic": "bun ./packages/deploy/dist/cli.js doctor --cwd . --config ./examples/config/ray.1b.8gb.generic.public.json --ray-env-file /etc/ray/ray.env --memory-mib 8192",
-    "doctor:vps": "bun ./packages/deploy/dist/cli.js doctor --cwd . --config ./examples/config/ray.vps.json --ray-env-file /etc/ray/ray.env"
+    "doctor:vps": "bun ./packages/deploy/dist/cli.js doctor --cwd . --config ./examples/config/ray.vps.json --ray-env-file /etc/ray/ray.env",
+    "doctor:balanced": "bun ./packages/deploy/dist/cli.js doctor --cwd . --config ./examples/config/ray.balanced.json --ray-env-file /etc/ray/ray.env"
   },
   "dependencies": {
     "@ray/config": "workspace:*"

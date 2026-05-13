@@ -107,7 +107,7 @@ test("smokeDeployConfigs renders every checked-in deploy smoke profile", async (
 
   assert.equal(summary.ok, true);
   assert.equal(summary.errorCount, 0);
-  assert.ok(summary.configCount >= 8);
+  assert.ok(summary.configCount >= 9);
   assert.ok(summary.warningCount > 0);
   assert.equal(
     summary.results
@@ -151,6 +151,14 @@ test("smokeDeployConfigs renders every checked-in deploy smoke profile", async (
       (result) =>
         result.configPath.endsWith("ray.vps.json") &&
         result.profile === "vps" &&
+        !result.hasLlamaCppService,
+    ),
+  );
+  assert.ok(
+    summary.results.some(
+      (result) =>
+        result.configPath.endsWith("ray.balanced.json") &&
+        result.profile === "balanced" &&
         !result.hasLlamaCppService,
     ),
   );

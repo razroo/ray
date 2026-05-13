@@ -114,6 +114,12 @@ const DEPLOY_PROFILE_SCRIPT_MATRIX: ProfileScriptSpec[] = [
     validate: "validate:config:vps",
     doctor: "doctor:vps",
   },
+  {
+    configFile: "ray.balanced.json",
+    render: "render:service:balanced",
+    validate: "validate:config:balanced",
+    doctor: "doctor:balanced",
+  },
 ];
 
 const HELP = `Validate package scripts for Ray deploy profiles.
