@@ -37,6 +37,7 @@ RAY_API_KEYS=replace-with-comma-separated-client-api-keys
 RAY_DEPLOY_SERVICE_USER=ray
 RAY_DEPLOY_MEMORY_MIB=4096
 RAY_GATEWAY_RUNTIME_BINARY=/usr/local/bin/bun
+RAY_DEPLOY_CADDY_BINARY=/usr/bin/caddy
 RAY_PROFILE=1b
 RAY_HOST=127.0.0.1
 RAY_PORT=3000
@@ -88,7 +89,7 @@ RAY_REQUEST_BODY_LIMIT_BYTES=48000
 RAY_SCHEDULER_CONCURRENCY=1
 RAY_SCHEDULER_MAX_QUEUE=40
 RAY_SCHEDULER_MAX_QUEUED_TOKENS=18000
-RAY_SCHEDULER_MAX_INFLIGHT_TOKENS=2560
+RAY_SCHEDULER_MAX_INFLIGHT_TOKENS=2048
 RAY_SCHEDULER_REQUEST_TIMEOUT_MS=32000
 RAY_SCHEDULER_DEDUPE_INFLIGHT=true
 RAY_SCHEDULER_BATCH_WINDOW_MS=5
@@ -198,7 +199,7 @@ bun run doctor:1b:generic
 bun run doctor:1b:8gb:generic
 ```
 
-Doctor checks auth/env readiness, env-file permissions, systemd host readiness and generated unit-file verification, Caddy availability and generated Caddyfile validation for the reverse proxy, generated systemd user readiness, service-user access to the rendered config file, Bun runtime (`/usr/local/bin/bun` by default, `RAY_GATEWAY_RUNTIME_BINARY`, or `--gateway-runtime-binary`) including identifiable Bun/Node version compatibility, generated WorkingDirectory, built gateway entrypoint, `llama-server` binary startup, GGUF model file presence and header, and async queue storage, launch profile consistency, architecture compatibility for ARM CAX11 versus x64 CX23 sub-1B profiles, projected memory fit against the selected memory budget, async queue storage headroom, swap cushion, and `vm.swappiness` for the 4 GB llama.cpp profile before the service starts.
+Doctor checks auth/env readiness, env-file permissions, systemd host readiness and generated unit-file verification, Caddy availability and generated Caddyfile validation for the reverse proxy (`caddy` on `PATH`, `RAY_DEPLOY_CADDY_BINARY`, or `--caddy-binary`), generated systemd user readiness, service-user access to the rendered config file, Bun runtime (`/usr/local/bin/bun` by default, `RAY_GATEWAY_RUNTIME_BINARY`, or `--gateway-runtime-binary`) including identifiable Bun/Node version compatibility, generated WorkingDirectory, built gateway entrypoint, `llama-server` binary startup, GGUF model file presence and header, and async queue storage, launch profile consistency, architecture compatibility for ARM CAX11 versus x64 CX23 sub-1B profiles, projected memory fit against the selected memory budget, async queue storage headroom, swap cushion, and `vm.swappiness` for the 4 GB llama.cpp profile before the service starts.
 If doctor reports a missing swap cushion on a 4 GB VPS, run `bun run swap:plan`
 to print guarded commands for creating the default 1 GiB swap file and
 persisting `vm.swappiness=10`, then rerun doctor before sustained inference.

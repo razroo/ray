@@ -453,6 +453,10 @@ test("documented portable 1b dotenv examples resolve to single-slot budgets", as
       relativePath: "examples/deploy/vps/README.md",
       marker: "For portable deployments, keep model-specific",
     },
+    {
+      relativePath: "docs/portable-1b.md",
+      marker: "Keep model-specific and cheap-node sizing values",
+    },
   ];
 
   for (const example of examples) {
