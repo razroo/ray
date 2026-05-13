@@ -855,9 +855,12 @@ function resolveLinuxCpuPressure(
 
 function resolveCgroupMemoryPressure(config: RayConfig, snapshot: MemoryPressureSnapshot): boolean {
   return (
-    snapshot.cgroupMemoryPressureRatio !== undefined &&
-    snapshot.cgroupMemoryPressureRatio >=
-      config.gracefulDegradation.memoryCgroupPressureRatioThreshold
+    (snapshot.cgroupMemoryPressureRatio !== undefined &&
+      snapshot.cgroupMemoryPressureRatio >=
+        config.gracefulDegradation.memoryCgroupPressureRatioThreshold) ||
+    (snapshot.cgroupMemorySwapPressureRatio !== undefined &&
+      snapshot.cgroupMemorySwapPressureRatio >=
+        config.gracefulDegradation.memoryCgroupPressureRatioThreshold)
   );
 }
 
@@ -1064,7 +1067,10 @@ function buildDegradationDiagnostics(options: {
       ? { cgroupMemorySwapLimitMiB: options.memoryPressure.cgroupMemorySwapLimitMiB }
       : {}),
     ...(options.memoryPressure.cgroupMemorySwapPressureRatio !== undefined
-      ? { cgroupMemorySwapPressureRatio: options.memoryPressure.cgroupMemorySwapPressureRatio }
+      ? {
+          cgroupMemorySwapPressureRatio: options.memoryPressure.cgroupMemorySwapPressureRatio,
+          cgroupMemorySwapPressureRatioThreshold: options.memoryCgroupPressureRatioThreshold,
+        }
       : {}),
     ...(options.memoryPressure.cgroupMemoryHighEvents !== undefined
       ? { cgroupMemoryHighEvents: options.memoryPressure.cgroupMemoryHighEvents }
@@ -1206,7 +1212,10 @@ function buildRuntimeHealthDiagnostics(options: {
         ? { cgroupMemorySwapLimitMiB: options.memoryPressure.cgroupMemorySwapLimitMiB }
         : {}),
       ...(options.memoryPressure.cgroupMemorySwapPressureRatio !== undefined
-        ? { cgroupMemorySwapPressureRatio: options.memoryPressure.cgroupMemorySwapPressureRatio }
+        ? {
+            cgroupMemorySwapPressureRatio: options.memoryPressure.cgroupMemorySwapPressureRatio,
+            cgroupMemorySwapPressureRatioThreshold: options.memoryCgroupPressureRatioThreshold,
+          }
         : {}),
       ...(options.memoryPressure.cgroupMemoryHighEvents !== undefined
         ? { cgroupMemoryHighEvents: options.memoryPressure.cgroupMemoryHighEvents }
@@ -4816,10 +4825,6 @@ export class RayRuntime {
         "process.memory.cgroup_pressure_ratio_threshold",
         this.config.gracefulDegradation.memoryCgroupPressureRatioThreshold,
       );
-      this.metrics.gauge(
-        "process.memory.cgroup_pressure",
-        resolveCgroupMemoryPressure(this.config, memoryPressure) ? 1 : 0,
-      );
     }
     if (memoryPressure.cgroupMemorySwapCurrentMiB !== undefined) {
       this.metrics.gauge(
@@ -4837,6 +4842,19 @@ export class RayRuntime {
       this.metrics.gauge(
         "process.memory.cgroup_swap_pressure_ratio",
         memoryPressure.cgroupMemorySwapPressureRatio,
+      );
+      this.metrics.gauge(
+        "process.memory.cgroup_swap_pressure_ratio_threshold",
+        this.config.gracefulDegradation.memoryCgroupPressureRatioThreshold,
+      );
+    }
+    if (
+      memoryPressure.cgroupMemoryPressureRatio !== undefined ||
+      memoryPressure.cgroupMemorySwapPressureRatio !== undefined
+    ) {
+      this.metrics.gauge(
+        "process.memory.cgroup_pressure",
+        resolveCgroupMemoryPressure(this.config, memoryPressure) ? 1 : 0,
       );
     }
     if (memoryPressure.cgroupMemoryHighEvents !== undefined) {

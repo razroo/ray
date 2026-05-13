@@ -353,6 +353,7 @@ test("runtime clamps output under cgroup memory pressure", async () => {
   assert.equal(result.diagnostics?.degradation?.cgroupMemorySwapCurrentMiB, 128);
   assert.equal(result.diagnostics?.degradation?.cgroupMemorySwapLimitMiB, 256);
   assert.equal(result.diagnostics?.degradation?.cgroupMemorySwapPressureRatio, 0.5);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemorySwapPressureRatioThreshold, 0.94);
   assert.equal(result.diagnostics?.degradation?.cgroupMemoryHighEvents, 3);
   assert.equal(result.diagnostics?.degradation?.cgroupMemoryMaxEvents, 2);
   assert.equal(result.diagnostics?.degradation?.cgroupMemoryOomEvents, 1);
@@ -386,6 +387,7 @@ test("runtime clamps output under cgroup memory pressure", async () => {
   assert.equal(health.runtime?.memory.cgroupMemorySwapCurrentMiB, 128);
   assert.equal(health.runtime?.memory.cgroupMemorySwapLimitMiB, 256);
   assert.equal(health.runtime?.memory.cgroupMemorySwapPressureRatio, 0.5);
+  assert.equal(health.runtime?.memory.cgroupMemorySwapPressureRatioThreshold, 0.94);
   assert.equal(health.runtime?.memory.cgroupMemoryHighEvents, 3);
   assert.equal(health.runtime?.memory.cgroupMemoryMaxEvents, 2);
   assert.equal(health.runtime?.memory.cgroupMemoryOomEvents, 1);
@@ -399,12 +401,87 @@ test("runtime clamps output under cgroup memory pressure", async () => {
   assert.equal(metrics.gauges["process.memory.cgroup_swap_current_mib"], 128);
   assert.equal(metrics.gauges["process.memory.cgroup_swap_limit_mib"], 256);
   assert.equal(metrics.gauges["process.memory.cgroup_swap_pressure_ratio"], 0.5);
+  assert.equal(metrics.gauges["process.memory.cgroup_swap_pressure_ratio_threshold"], 0.94);
   assert.equal(metrics.gauges["process.memory.cgroup_high_events"], 3);
   assert.equal(metrics.gauges["process.memory.cgroup_max_events"], 2);
   assert.equal(metrics.gauges["process.memory.cgroup_oom_events"], 1);
   assert.equal(metrics.gauges["process.memory.cgroup_oom_kill_events"], 0);
   assert.equal(metrics.gauges["process.memory.cgroup_event_pressure"], 0);
   assert.equal(metrics.gauges["process.memory.rss_pressure_ratio"], 0.0078);
+  assert.equal(metrics.gauges["process.memory.pressure"], 1);
+});
+
+test("runtime clamps output under cgroup swap pressure", async () => {
+  let observedMaxTokens = 0;
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "cgroup-swap-pressure-model",
+    capabilities: {
+      streaming: false,
+      quantized: false,
+      localBackend: true,
+    },
+    async infer(request) {
+      observedMaxTokens = request.maxTokens;
+      return {
+        output: "degraded",
+      };
+    },
+  };
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    gracefulDegradation: {
+      enabled: true,
+      degradeToMaxTokens: 32,
+      memoryRssThresholdMiB: 4_096,
+      memoryCgroupPressureRatioThreshold: 0.75,
+    },
+  });
+  const runtime = createRayRuntime(config, {
+    provider,
+    memoryUsage: () => ({
+      rss: 32 * 1024 * 1024,
+      heapTotal: 0,
+      heapUsed: 0,
+      external: 0,
+      arrayBuffers: 0,
+    }),
+    cgroupMemory: () => ({
+      currentMiB: 300,
+      highMiB: 1_000,
+      limitMiB: 1_000,
+      pressureRatio: 0.3,
+      swapCurrentMiB: 820,
+      swapLimitMiB: 1_000,
+      swapPressureRatio: 0.82,
+    }),
+    cgroupCpu: false,
+  });
+
+  const result = await runtime.infer({
+    input: "hello world",
+    maxTokens: 128,
+    cache: false,
+  });
+  const health = await runtime.health();
+  const metrics = runtime.metricsSnapshot();
+
+  assert.equal(observedMaxTokens, 32);
+  assert.equal(result.degraded, true);
+  assert.deepEqual(result.diagnostics?.degradation?.reasons, ["memory_pressure"]);
+  assert.deepEqual(result.diagnostics?.degradation?.memoryPressureSources, ["cgroup"]);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemoryPressureRatio, 0.3);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemoryPressureRatioThreshold, 0.75);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemorySwapPressureRatio, 0.82);
+  assert.equal(result.diagnostics?.degradation?.cgroupMemorySwapPressureRatioThreshold, 0.75);
+  assert.equal(health.status, "degraded");
+  assert.equal(health.runtime?.memory.degraded, true);
+  assert.deepEqual(health.runtime?.memory.sources, ["cgroup"]);
+  assert.equal(health.runtime?.memory.cgroupMemoryPressureRatio, 0.3);
+  assert.equal(health.runtime?.memory.cgroupMemorySwapPressureRatio, 0.82);
+  assert.equal(health.runtime?.memory.cgroupMemorySwapPressureRatioThreshold, 0.75);
+  assert.equal(metrics.gauges["process.memory.cgroup_pressure"], 1);
+  assert.equal(metrics.gauges["process.memory.cgroup_swap_pressure_ratio"], 0.82);
+  assert.equal(metrics.gauges["process.memory.cgroup_swap_pressure_ratio_threshold"], 0.75);
   assert.equal(metrics.gauges["process.memory.pressure"], 1);
 });
 
@@ -1128,6 +1205,7 @@ test("runtime collected metrics refresh live queue and cgroup pressure gauges", 
   assert.equal(metrics.gauges["process.memory.cgroup_swap_current_mib"], 64);
   assert.equal(metrics.gauges["process.memory.cgroup_swap_limit_mib"], 512);
   assert.equal(metrics.gauges["process.memory.cgroup_swap_pressure_ratio"], 0.125);
+  assert.equal(metrics.gauges["process.memory.cgroup_swap_pressure_ratio_threshold"], 0.9);
   assert.equal(metrics.gauges["process.memory.rss_pressure_ratio"], 0.125);
   assert.equal(metrics.gauges["process.memory.cgroup_high_events"], 2);
   assert.equal(metrics.gauges["process.memory.cgroup_max_events"], 0);

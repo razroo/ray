@@ -503,6 +503,7 @@ export interface DegradationDiagnostics {
   cgroupMemorySwapCurrentMiB?: number;
   cgroupMemorySwapLimitMiB?: number;
   cgroupMemorySwapPressureRatio?: number;
+  cgroupMemorySwapPressureRatioThreshold?: number;
   cgroupMemoryHighEvents?: number;
   cgroupMemoryMaxEvents?: number;
   cgroupMemoryOomEvents?: number;
@@ -587,6 +588,7 @@ export interface RuntimeHealthDiagnostics {
     cgroupMemorySwapCurrentMiB?: number;
     cgroupMemorySwapLimitMiB?: number;
     cgroupMemorySwapPressureRatio?: number;
+    cgroupMemorySwapPressureRatioThreshold?: number;
     cgroupMemoryHighEvents?: number;
     cgroupMemoryMaxEvents?: number;
     cgroupMemoryOomEvents?: number;
