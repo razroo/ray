@@ -1700,13 +1700,13 @@ test("diagnoseConfig flags missing or mismatched llama.cpp launch settings", () 
           cachePrompt: false,
           cacheReuse: 64,
           cacheRamMiB: 0,
-          continuousBatching: true,
+          continuousBatching: false,
           enableMetrics: false,
           exposeSlots: false,
-          warmup: true,
+          warmup: false,
           enableUnifiedKv: false,
           cacheIdleSlots: true,
-          contextShift: true,
+          contextShift: false,
         },
       },
     },
@@ -1715,6 +1715,11 @@ test("diagnoseConfig flags missing or mismatched llama.cpp launch settings", () 
   const diagnostics = diagnoseConfig(config, process.env);
 
   assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "cache_prompt_disabled"));
+  assert.ok(
+    diagnostics.some((diagnostic) => diagnostic.code === "llama_continuous_batching_disabled"),
+  );
+  assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "llama_warmup_disabled"));
+  assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "llama_context_shift_disabled"));
   assert.ok(
     diagnostics.some((diagnostic) => diagnostic.code === "cache_idle_slots_without_cache_ram"),
   );

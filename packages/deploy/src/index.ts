@@ -3375,6 +3375,33 @@ export function diagnoseConfig(
         });
       }
 
+      if (!launchProfile.continuousBatching) {
+        diagnostics.push({
+          level: "warn",
+          code: "llama_continuous_batching_disabled",
+          message:
+            "llama.cpp continuous batching is disabled. Single-node VPS deployments should keep request batching enabled so queued work can share backend passes where llama.cpp supports it.",
+        });
+      }
+
+      if (!launchProfile.warmup) {
+        diagnostics.push({
+          level: "warn",
+          code: "llama_warmup_disabled",
+          message:
+            "llama.cpp backend warmup is disabled. Cold starts on cheap VPS model backends will be less predictable.",
+        });
+      }
+
+      if (!launchProfile.contextShift) {
+        diagnostics.push({
+          level: "warn",
+          code: "llama_context_shift_disabled",
+          message:
+            "llama.cpp context shift is disabled. Long-running single-node backends can pay more recomputation when context windows fill.",
+        });
+      }
+
       if (launchProfile.cacheRamMiB === undefined) {
         diagnostics.push({
           level: "warn",
