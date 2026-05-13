@@ -24,6 +24,9 @@ export interface ModelStageSmokeResult {
   modelId?: string;
   modelPath?: string;
   binaryPath?: string;
+  memoryBudgetMiB?: number;
+  safeMemoryBudgetMiB?: number;
+  nonModelWorkingSetMiB?: number;
   commandCount: number;
   errorCount: number;
   errorMessage?: string;
@@ -164,6 +167,9 @@ function toSuccessResult(configPath: string, plan: ModelStagePlan): ModelStageSm
     modelId: plan.modelId,
     modelPath: plan.modelPath,
     binaryPath: plan.binaryPath,
+    memoryBudgetMiB: plan.memoryBudgetMiB,
+    safeMemoryBudgetMiB: plan.safeMemoryBudgetMiB,
+    nonModelWorkingSetMiB: plan.nonModelWorkingSetMiB,
     commandCount: plan.commands.length,
     errorCount: 0,
   };
@@ -229,8 +235,14 @@ export function formatTextSummary(cwd: string, summary: ModelStageSmokeSummary):
     const model = result.modelId ? ` model=${result.modelId}` : "";
     const modelPath = result.modelPath ? ` modelPath=${result.modelPath}` : "";
     const binary = result.binaryPath ? ` binary=${result.binaryPath}` : "";
+    const memory =
+      result.memoryBudgetMiB !== undefined &&
+      result.safeMemoryBudgetMiB !== undefined &&
+      result.nonModelWorkingSetMiB !== undefined
+        ? ` memory=${result.memoryBudgetMiB}MiB safe=${result.safeMemoryBudgetMiB}MiB nonModel=${result.nonModelWorkingSetMiB}MiB`
+        : "";
     lines.push(
-      `- ${status} ${displayPath(cwd, result.configPath)}${profile}${model}${modelPath}${binary} commands=${result.commandCount} errors=${result.errorCount}`,
+      `- ${status} ${displayPath(cwd, result.configPath)}${profile}${model}${modelPath}${binary}${memory} commands=${result.commandCount} errors=${result.errorCount}`,
     );
 
     if (result.errorMessage) {

@@ -60,7 +60,17 @@ test("smokeModelStages renders every checked-in public staging plan", async () =
         result.errorCount === 0 &&
         result.commandCount >= 8 &&
         result.modelPath?.startsWith("/var/lib/ray/models/") &&
-        result.binaryPath === "/usr/local/bin/llama-server",
+        result.binaryPath === "/usr/local/bin/llama-server" &&
+        result.memoryBudgetMiB !== undefined &&
+        result.safeMemoryBudgetMiB !== undefined &&
+        result.nonModelWorkingSetMiB !== undefined,
+    ),
+  );
+  assert.ok(
+    summary.results.every((result) =>
+      result.configPath.includes("8gb")
+        ? result.memoryBudgetMiB === 8_192
+        : result.memoryBudgetMiB === 4_096,
     ),
   );
   assert.ok(
@@ -71,7 +81,10 @@ test("smokeModelStages renders every checked-in public staging plan", async () =
         result.modelId === "qwen2.5-0.5b-instruct-q4_k_m",
     ),
   );
-  assert.match(formatTextSummary(cwd, summary), /Summary: staged=\d+ errors=0/);
+  const text = formatTextSummary(cwd, summary);
+  assert.match(text, /memory=4096MiB safe=\d+MiB nonModel=\d+MiB/);
+  assert.match(text, /memory=8192MiB safe=\d+MiB nonModel=\d+MiB/);
+  assert.match(text, /Summary: staged=\d+ errors=0/);
 });
 
 test("runModelStageSmokeCli prints JSON summary", async () => {
@@ -84,8 +97,18 @@ test("runModelStageSmokeCli prints JSON summary", async () => {
 
   assert.equal(exitCode, 0);
   assert.equal(stderr, "");
-  const parsed = JSON.parse(stdout) as { ok: boolean; stagedCount: number; errorCount: number };
+  const parsed = JSON.parse(stdout) as {
+    ok: boolean;
+    stagedCount: number;
+    errorCount: number;
+    results: Array<{ memoryBudgetMiB?: number; safeMemoryBudgetMiB?: number }>;
+  };
   assert.equal(parsed.ok, true);
   assert.ok(parsed.stagedCount >= 7);
   assert.equal(parsed.errorCount, 0);
+  assert.ok(
+    parsed.results.every(
+      (result) => result.memoryBudgetMiB !== undefined && result.safeMemoryBudgetMiB !== undefined,
+    ),
+  );
 });
