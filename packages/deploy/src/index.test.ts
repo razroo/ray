@@ -2309,6 +2309,39 @@ test("diagnoseConfig warns when async dispatch exceeds scheduler concurrency", (
   assert.match(diagnostic.message, /cannot create more backend slots/);
 });
 
+test("diagnoseConfig warns when async retry cadence is too aggressive", () => {
+  const defaultConfig = mergeConfig(createDefaultConfig("1b"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir: "/var/lib/ray/async-queue",
+      pollIntervalMs: 250,
+    },
+  });
+
+  assert.ok(
+    !diagnoseConfig(defaultConfig, process.env).some(
+      (entry) => entry.code === "async_queue_retry_interval_too_fast",
+    ),
+  );
+
+  const config = mergeConfig(defaultConfig, {
+    asyncQueue: {
+      pollIntervalMs: 50,
+    },
+  });
+
+  const diagnostic = diagnoseConfig(config, process.env).find(
+    (entry) => entry.code === "async_queue_retry_interval_too_fast",
+  );
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /asyncQueue\.pollIntervalMs \(50ms\)/);
+  assert.match(diagnostic.message, /250ms/);
+  assert.match(diagnostic.message, /RAY_ASYNC_QUEUE_POLL_INTERVAL_MS/);
+  assert.match(diagnostic.message, /CPU, disk writes, and logs/);
+});
+
 test("diagnoseConfig warns when async retained jobs can exceed storage reserve", () => {
   const config = mergeConfig(createDefaultConfig("1b"), {
     asyncQueue: {

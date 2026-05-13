@@ -300,6 +300,7 @@ const GATEWAY_SCHEDULER_BUFFER_WARN_MIN_MIB = 96;
 const GATEWAY_REQUEST_BODY_BUFFER_WARN_RATIO = 0.04;
 const GATEWAY_REQUEST_BODY_BUFFER_WARN_MIN_MIB = 32;
 const ASYNC_QUEUE_PERSISTED_JOB_FILE_LIMIT_BYTES = 2 * 1024 * 1024;
+const ASYNC_QUEUE_RETRY_POLL_INTERVAL_WARN_MS = 250;
 const MIN_WORKING_DIRECTORY_FREE_MIB = 512;
 const LLAMA_CPP_MEMORY_HIGH_RATIO = 0.9;
 const LLAMA_CPP_SWAP_MAX_RATIO = 0.25;
@@ -3066,6 +3067,14 @@ export function diagnoseConfig(
         level: "warn",
         code: "async_queue_dispatch_exceeds_scheduler_concurrency",
         message: `asyncQueue.dispatchConcurrency (${config.asyncQueue.dispatchConcurrency}) is higher than scheduler.concurrency (${config.scheduler.concurrency}). On a cheap single-node VPS this cannot create more backend slots; it only lets durable jobs pile up behind the in-process scheduler, so lower asyncQueue.dispatchConcurrency or raise scheduler.concurrency only after sizing the backend.`,
+      });
+    }
+
+    if (config.asyncQueue.pollIntervalMs < ASYNC_QUEUE_RETRY_POLL_INTERVAL_WARN_MS) {
+      diagnostics.push({
+        level: "warn",
+        code: "async_queue_retry_interval_too_fast",
+        message: `asyncQueue.pollIntervalMs (${config.asyncQueue.pollIntervalMs}ms) is below the ${ASYNC_QUEUE_RETRY_POLL_INTERVAL_WARN_MS}ms small-VPS warning threshold. Failed durable jobs and callbacks use this retry delay, so an unhealthy backend or callback endpoint can churn CPU, disk writes, and logs; raise RAY_ASYNC_QUEUE_POLL_INTERVAL_MS unless this deployment has measured headroom.`,
       });
     }
 
