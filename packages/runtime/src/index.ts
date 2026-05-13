@@ -124,6 +124,28 @@ export interface CgroupCpuReaderOptions {
   readTextFile?: (filePath: string) => Promise<string>;
 }
 
+export interface LinuxPressureResourceSnapshot {
+  someAvg10?: number;
+  someAvg60?: number;
+  someAvg300?: number;
+  someTotalUsec?: number;
+  fullAvg10?: number;
+  fullAvg60?: number;
+  fullAvg300?: number;
+  fullTotalUsec?: number;
+}
+
+export interface LinuxPressureSnapshot {
+  memory?: LinuxPressureResourceSnapshot;
+  cpu?: LinuxPressureResourceSnapshot;
+}
+
+export interface LinuxPressureReaderOptions {
+  memoryPressurePath?: string;
+  cpuPressurePath?: string;
+  readTextFile?: (filePath: string) => Promise<string>;
+}
+
 interface CgroupMemoryCandidate {
   currentPath: string;
   highPath?: string;
@@ -160,6 +182,8 @@ interface MemoryPressureSnapshot {
   cgroupMemoryMaxEventsDelta?: number;
   cgroupMemoryOomEventsDelta?: number;
   cgroupMemoryOomKillEventsDelta?: number;
+  linuxMemoryPsiSomeAvg10?: number;
+  linuxMemoryPsiFullAvg10?: number;
 }
 
 type PreparationSnapshot = RuntimeHealthDiagnostics["preparation"];
@@ -172,6 +196,11 @@ export type CgroupMemoryReader = () =>
 export type CgroupCpuReader = () =>
   | CgroupCpuSnapshot
   | Promise<CgroupCpuSnapshot | undefined>
+  | undefined;
+
+export type LinuxPressureReader = () =>
+  | LinuxPressureSnapshot
+  | Promise<LinuxPressureSnapshot | undefined>
   | undefined;
 
 const MAX_DEDUPE_KEY_CHARS = 512;
@@ -187,10 +216,17 @@ const CGROUP_V2_ROOT = "/sys/fs/cgroup";
 const CGROUP_V1_MEMORY_ROOT = "/sys/fs/cgroup/memory";
 const CGROUP_V1_CPU_ROOT = "/sys/fs/cgroup/cpu";
 const PROC_SELF_CGROUP = "/proc/self/cgroup";
+const PROC_PRESSURE_MEMORY = "/proc/pressure/memory";
+const PROC_PRESSURE_CPU = "/proc/pressure/cpu";
 const MAX_CGROUP_TEXT_FILE_BYTES = 64 * 1024;
 const CGROUP_MEMORY_CACHE_TTL_MS = 250;
 const CGROUP_CPU_CACHE_TTL_MS = 250;
+const LINUX_PRESSURE_CACHE_TTL_MS = 250;
 const CGROUP_MEMORY_PRESSURE_RATIO = 0.9;
+const LINUX_MEMORY_PSI_SOME_AVG10_PRESSURE = 10;
+const LINUX_MEMORY_PSI_FULL_AVG10_PRESSURE = 1;
+const LINUX_CPU_PSI_SOME_AVG10_PRESSURE = 50;
+const LINUX_CPU_PSI_FULL_AVG10_PRESSURE = 5;
 const CGROUP_UNLIMITED_LIMIT_BYTES = 1024 ** 5;
 const unsafeMetadataKeys = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_LEARNED_FAMILY_HISTORY_KEYS = 512;
@@ -255,6 +291,7 @@ export interface CreateRayRuntimeOptions {
   memoryUsage?: () => NodeJS.MemoryUsage;
   cgroupMemory?: CgroupMemoryReader | false;
   cgroupCpu?: CgroupCpuReader | false;
+  linuxPressure?: LinuxPressureReader | false;
 }
 
 function assertRequestObject(request: InferenceRequest): void {
@@ -799,6 +836,49 @@ function resolveCgroupCpuPressure(
   );
 }
 
+function resolveLinuxMemoryPressure(snapshot: MemoryPressureSnapshot): boolean {
+  return (
+    (snapshot.linuxMemoryPsiSomeAvg10 !== undefined &&
+      snapshot.linuxMemoryPsiSomeAvg10 >= LINUX_MEMORY_PSI_SOME_AVG10_PRESSURE) ||
+    (snapshot.linuxMemoryPsiFullAvg10 !== undefined &&
+      snapshot.linuxMemoryPsiFullAvg10 >= LINUX_MEMORY_PSI_FULL_AVG10_PRESSURE)
+  );
+}
+
+function resolveLinuxCpuPressure(snapshot: LinuxPressureSnapshot | undefined): boolean {
+  const cpu = snapshot?.cpu;
+  return (
+    (cpu?.someAvg10 !== undefined && cpu.someAvg10 >= LINUX_CPU_PSI_SOME_AVG10_PRESSURE) ||
+    (cpu?.fullAvg10 !== undefined && cpu.fullAvg10 >= LINUX_CPU_PSI_FULL_AVG10_PRESSURE)
+  );
+}
+
+function resolveCpuPressure(
+  config: RayConfig,
+  cgroupCpu: CgroupCpuSnapshot | undefined,
+  linuxPressure: LinuxPressureSnapshot | undefined,
+): boolean {
+  return (
+    config.gracefulDegradation.enabled &&
+    (resolveCgroupCpuPressure(config, cgroupCpu) || resolveLinuxCpuPressure(linuxPressure))
+  );
+}
+
+function applyLinuxMemoryPressureSnapshot(
+  snapshot: MemoryPressureSnapshot,
+  linuxPressure: LinuxPressureSnapshot | undefined,
+): MemoryPressureSnapshot {
+  return {
+    ...snapshot,
+    ...(linuxPressure?.memory?.someAvg10 !== undefined
+      ? { linuxMemoryPsiSomeAvg10: linuxPressure.memory.someAvg10 }
+      : {}),
+    ...(linuxPressure?.memory?.fullAvg10 !== undefined
+      ? { linuxMemoryPsiFullAvg10: linuxPressure.memory.fullAvg10 }
+      : {}),
+  };
+}
+
 function resolveCgroupCounterDelta(
   current: number | undefined,
   previous: number | undefined,
@@ -881,9 +961,10 @@ function applyCpuPressureDegradation(
   config: RayConfig,
   request: NormalizedInferenceRequest,
   cgroupCpu: CgroupCpuSnapshot | undefined,
+  linuxPressure: LinuxPressureSnapshot | undefined,
 ): { request: NormalizedInferenceRequest; degraded: boolean } {
   if (
-    !resolveCgroupCpuPressure(config, cgroupCpu) ||
+    !resolveCpuPressure(config, cgroupCpu, linuxPressure) ||
     request.maxTokens <= config.gracefulDegradation.degradeToMaxTokens
   ) {
     return { request, degraded: false };
@@ -910,6 +991,7 @@ function buildDegradationDiagnostics(options: {
   memoryPressureSources: MemoryPressureSource[];
   memoryPressure: MemoryPressureSnapshot;
   cgroupCpu: CgroupCpuSnapshot | undefined;
+  linuxPressure: LinuxPressureSnapshot | undefined;
   memoryRssThresholdMiB: number;
   cpuThrottledRatioThreshold: number;
 }): DegradationDiagnostics {
@@ -994,10 +1076,34 @@ function buildDegradationDiagnostics(options: {
           cgroupMemoryOomKillEventsDelta: options.memoryPressure.cgroupMemoryOomKillEventsDelta,
         }
       : {}),
+    ...(options.memoryPressure.linuxMemoryPsiSomeAvg10 !== undefined
+      ? {
+          linuxMemoryPsiSomeAvg10: options.memoryPressure.linuxMemoryPsiSomeAvg10,
+          linuxMemoryPsiSomeAvg10Threshold: LINUX_MEMORY_PSI_SOME_AVG10_PRESSURE,
+        }
+      : {}),
+    ...(options.memoryPressure.linuxMemoryPsiFullAvg10 !== undefined
+      ? {
+          linuxMemoryPsiFullAvg10: options.memoryPressure.linuxMemoryPsiFullAvg10,
+          linuxMemoryPsiFullAvg10Threshold: LINUX_MEMORY_PSI_FULL_AVG10_PRESSURE,
+        }
+      : {}),
     ...(options.cgroupCpu?.throttledRatio !== undefined
       ? {
           cgroupCpuThrottledRatio: options.cgroupCpu.throttledRatio,
           cgroupCpuThrottledThreshold: options.cpuThrottledRatioThreshold,
+        }
+      : {}),
+    ...(options.linuxPressure?.cpu?.someAvg10 !== undefined
+      ? {
+          linuxCpuPsiSomeAvg10: options.linuxPressure.cpu.someAvg10,
+          linuxCpuPsiSomeAvg10Threshold: LINUX_CPU_PSI_SOME_AVG10_PRESSURE,
+        }
+      : {}),
+    ...(options.linuxPressure?.cpu?.fullAvg10 !== undefined
+      ? {
+          linuxCpuPsiFullAvg10: options.linuxPressure.cpu.fullAvg10,
+          linuxCpuPsiFullAvg10Threshold: LINUX_CPU_PSI_FULL_AVG10_PRESSURE,
         }
       : {}),
   };
@@ -1014,6 +1120,7 @@ function buildRuntimeHealthDiagnostics(options: {
   cpuDegraded: boolean;
   cpuThrottledRatioThreshold: number;
   cgroupCpu: CgroupCpuSnapshot | undefined;
+  linuxPressure: LinuxPressureSnapshot | undefined;
 }): RuntimeHealthDiagnostics {
   return {
     queue: {
@@ -1103,42 +1210,66 @@ function buildRuntimeHealthDiagnostics(options: {
             cgroupMemoryOomKillEventsDelta: options.memoryPressure.cgroupMemoryOomKillEventsDelta,
           }
         : {}),
+      ...(options.memoryPressure.linuxMemoryPsiSomeAvg10 !== undefined
+        ? {
+            linuxMemoryPsiSomeAvg10: options.memoryPressure.linuxMemoryPsiSomeAvg10,
+            linuxMemoryPsiSomeAvg10Threshold: LINUX_MEMORY_PSI_SOME_AVG10_PRESSURE,
+          }
+        : {}),
+      ...(options.memoryPressure.linuxMemoryPsiFullAvg10 !== undefined
+        ? {
+            linuxMemoryPsiFullAvg10: options.memoryPressure.linuxMemoryPsiFullAvg10,
+            linuxMemoryPsiFullAvg10Threshold: LINUX_MEMORY_PSI_FULL_AVG10_PRESSURE,
+          }
+        : {}),
     },
-    ...(options.cgroupCpu
+    ...(options.cgroupCpu || options.linuxPressure?.cpu
       ? {
           cpu: {
             degraded: options.cpuDegraded,
-            ...(options.cgroupCpu.usageUsec !== undefined
+            ...(options.cgroupCpu?.usageUsec !== undefined
               ? { cgroupCpuUsageUsec: options.cgroupCpu.usageUsec }
               : {}),
-            ...(options.cgroupCpu.userUsec !== undefined
+            ...(options.cgroupCpu?.userUsec !== undefined
               ? { cgroupCpuUserUsec: options.cgroupCpu.userUsec }
               : {}),
-            ...(options.cgroupCpu.systemUsec !== undefined
+            ...(options.cgroupCpu?.systemUsec !== undefined
               ? { cgroupCpuSystemUsec: options.cgroupCpu.systemUsec }
               : {}),
-            ...(options.cgroupCpu.quotaUsec !== undefined
+            ...(options.cgroupCpu?.quotaUsec !== undefined
               ? { cgroupCpuQuotaUsec: options.cgroupCpu.quotaUsec }
               : {}),
-            ...(options.cgroupCpu.periodUsec !== undefined
+            ...(options.cgroupCpu?.periodUsec !== undefined
               ? { cgroupCpuPeriodUsec: options.cgroupCpu.periodUsec }
               : {}),
-            ...(options.cgroupCpu.quotaCores !== undefined
+            ...(options.cgroupCpu?.quotaCores !== undefined
               ? { cgroupCpuQuotaCores: options.cgroupCpu.quotaCores }
               : {}),
-            ...(options.cgroupCpu.periods !== undefined
+            ...(options.cgroupCpu?.periods !== undefined
               ? { cgroupCpuPeriods: options.cgroupCpu.periods }
               : {}),
-            ...(options.cgroupCpu.throttledPeriods !== undefined
+            ...(options.cgroupCpu?.throttledPeriods !== undefined
               ? { cgroupCpuThrottledPeriods: options.cgroupCpu.throttledPeriods }
               : {}),
-            ...(options.cgroupCpu.throttledUsec !== undefined
+            ...(options.cgroupCpu?.throttledUsec !== undefined
               ? { cgroupCpuThrottledUsec: options.cgroupCpu.throttledUsec }
               : {}),
-            ...(options.cgroupCpu.throttledRatio !== undefined
+            ...(options.cgroupCpu?.throttledRatio !== undefined
               ? {
                   cgroupCpuThrottledRatio: options.cgroupCpu.throttledRatio,
                   cgroupCpuThrottledThreshold: options.cpuThrottledRatioThreshold,
+                }
+              : {}),
+            ...(options.linuxPressure?.cpu?.someAvg10 !== undefined
+              ? {
+                  linuxCpuPsiSomeAvg10: options.linuxPressure.cpu.someAvg10,
+                  linuxCpuPsiSomeAvg10Threshold: LINUX_CPU_PSI_SOME_AVG10_PRESSURE,
+                }
+              : {}),
+            ...(options.linuxPressure?.cpu?.fullAvg10 !== undefined
+              ? {
+                  linuxCpuPsiFullAvg10: options.linuxPressure.cpu.fullAvg10,
+                  linuxCpuPsiFullAvg10Threshold: LINUX_CPU_PSI_FULL_AVG10_PRESSURE,
                 }
               : {}),
           },
@@ -1344,6 +1475,72 @@ function parseCgroupCpuCfsQuota(raw: string): number | undefined {
   }
 
   return parsePositiveCgroupInteger(value);
+}
+
+function parseLinuxPressureAvg(value: string): number | undefined {
+  if (!/^\d+(?:\.\d+)?$/.test(value)) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100
+    ? Number(parsed.toFixed(2))
+    : undefined;
+}
+
+function parseLinuxPressureTotal(value: string): number | undefined {
+  if (!/^\d+$/.test(value)) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function parseLinuxPressureFile(raw: string): LinuxPressureResourceSnapshot | undefined {
+  const snapshot: LinuxPressureResourceSnapshot = {};
+
+  for (const line of raw.split(/\r?\n/)) {
+    const parts = line.trim().split(/\s+/);
+    const kind = parts.shift();
+
+    if (kind !== "some" && kind !== "full") {
+      continue;
+    }
+
+    const prefix = kind === "some" ? "some" : "full";
+
+    for (const part of parts) {
+      const [key, value] = part.split("=");
+      if (value === undefined) {
+        continue;
+      }
+
+      if (key === "avg10") {
+        const parsed = parseLinuxPressureAvg(value);
+        if (parsed !== undefined) {
+          snapshot[`${prefix}Avg10`] = parsed;
+        }
+      } else if (key === "avg60") {
+        const parsed = parseLinuxPressureAvg(value);
+        if (parsed !== undefined) {
+          snapshot[`${prefix}Avg60`] = parsed;
+        }
+      } else if (key === "avg300") {
+        const parsed = parseLinuxPressureAvg(value);
+        if (parsed !== undefined) {
+          snapshot[`${prefix}Avg300`] = parsed;
+        }
+      } else if (key === "total") {
+        const parsed = parseLinuxPressureTotal(value);
+        if (parsed !== undefined) {
+          snapshot[`${prefix}TotalUsec`] = parsed;
+        }
+      }
+    }
+  }
+
+  return Object.keys(snapshot).length > 0 ? snapshot : undefined;
 }
 
 function resolveCgroupFile(root: string, cgroupPath: string, fileName: string): string | undefined {
@@ -1694,6 +1891,26 @@ export async function readCgroupCpuSnapshot(
   return undefined;
 }
 
+export async function readLinuxPressureSnapshot(
+  options: LinuxPressureReaderOptions = {},
+): Promise<LinuxPressureSnapshot | undefined> {
+  const readTextFile = options.readTextFile ?? defaultReadTextFile;
+  const [memory, cpu] = await Promise.all([
+    readTextFile(options.memoryPressurePath ?? PROC_PRESSURE_MEMORY)
+      .then(parseLinuxPressureFile)
+      .catch(() => undefined),
+    readTextFile(options.cpuPressurePath ?? PROC_PRESSURE_CPU)
+      .then(parseLinuxPressureFile)
+      .catch(() => undefined),
+  ]);
+  const snapshot: LinuxPressureSnapshot = {
+    ...(memory ? { memory } : {}),
+    ...(cpu ? { cpu } : {}),
+  };
+
+  return Object.keys(snapshot).length > 0 ? snapshot : undefined;
+}
+
 function resolveMemoryPressureSources(
   config: RayConfig,
   snapshot: MemoryPressureSnapshot,
@@ -1717,6 +1934,10 @@ function resolveMemoryPressureSources(
 
   if (!sources.includes("cgroup") && hasRecentCgroupMemoryEvents(snapshot)) {
     sources.push("cgroup");
+  }
+
+  if (resolveLinuxMemoryPressure(snapshot)) {
+    sources.push("linux_psi");
   }
 
   return sources;
@@ -3435,6 +3656,7 @@ export class RayRuntime {
   private readonly memoryUsage: () => NodeJS.MemoryUsage;
   private readonly cgroupMemory: CgroupMemoryReader | undefined;
   private readonly cgroupCpu: CgroupCpuReader | undefined;
+  private readonly linuxPressure: LinuxPressureReader | undefined;
   private cgroupMemoryCache:
     | {
         checkedAtMs: number;
@@ -3445,6 +3667,12 @@ export class RayRuntime {
     | {
         checkedAtMs: number;
         snapshot: CgroupCpuSnapshot | undefined;
+      }
+    | undefined;
+  private linuxPressureCache:
+    | {
+        checkedAtMs: number;
+        snapshot: LinuxPressureSnapshot | undefined;
       }
     | undefined;
 
@@ -3477,6 +3705,10 @@ export class RayRuntime {
       options.cgroupCpu === false
         ? undefined
         : (options.cgroupCpu ?? (() => readCgroupCpuSnapshot()));
+    this.linuxPressure =
+      options.linuxPressure === false
+        ? undefined
+        : (options.linuxPressure ?? (() => readLinuxPressureSnapshot()));
   }
 
   async warm(): Promise<void> {
@@ -3563,10 +3795,12 @@ export class RayRuntime {
       learnedCap.request,
       queueSnapshot.queueDepth,
     );
-    const [memoryPressure, cgroupCpu] = await Promise.all([
+    const [baseMemoryPressure, cgroupCpu, linuxPressure] = await Promise.all([
       this.getMemoryPressureSnapshot(),
       this.getCgroupCpuSnapshot(),
+      this.getLinuxPressureSnapshot(),
     ]);
+    const memoryPressure = applyLinuxMemoryPressureSnapshot(baseMemoryPressure, linuxPressure);
     const memoryPressureSources = resolveMemoryPressureSources(this.config, memoryPressure);
     const memoryPressureDegraded = applyMemoryPressureDegradation(
       this.config,
@@ -3577,6 +3811,7 @@ export class RayRuntime {
       this.config,
       memoryPressureDegraded.request,
       cgroupCpu,
+      linuxPressure,
     );
     const degraded = {
       request: cpuPressureDegraded.request,
@@ -3600,6 +3835,7 @@ export class RayRuntime {
         memoryPressureSources,
         memoryPressure,
         cgroupCpu,
+        linuxPressure,
         memoryRssThresholdMiB: this.config.gracefulDegradation.memoryRssThresholdMiB,
         cpuThrottledRatioThreshold: this.config.gracefulDegradation.cpuThrottledRatioThreshold,
       }),
@@ -3615,7 +3851,7 @@ export class RayRuntime {
 
     this.recordSchedulerMetrics(queueSnapshot);
     this.recordMemoryPressureMetrics(memoryPressure, memoryPressureSources);
-    this.recordCgroupCpuMetrics(cgroupCpu);
+    this.recordCpuPressureMetrics(cgroupCpu, linuxPressure);
     this.metrics.gauge("prompt.compiler.chars_saved", compiled.diagnostics.charsSaved);
     this.metrics.gauge(
       "learned_output_cap.max_tokens_ratio",
@@ -3777,16 +4013,18 @@ export class RayRuntime {
   async health(): Promise<HealthSnapshot> {
     const snapshot = this.scheduler.snapshot();
     const preparationSnapshot = this.preparationSnapshot();
-    const [provider, memoryPressure, cgroupCpu] = await Promise.all([
+    const [provider, baseMemoryPressure, cgroupCpu, linuxPressure] = await Promise.all([
       this.getProviderHealth(),
       this.getMemoryPressureSnapshot(),
       this.getCgroupCpuSnapshot(),
+      this.getLinuxPressureSnapshot(),
     ]);
+    const memoryPressure = applyLinuxMemoryPressureSnapshot(baseMemoryPressure, linuxPressure);
     const memoryPressureSources = resolveMemoryPressureSources(this.config, memoryPressure);
     const queueDegraded =
       snapshot.queueDepth >= this.config.gracefulDegradation.queueDepthThreshold;
     const memoryDegraded = memoryPressureSources.length > 0;
-    const cpuDegraded = resolveCgroupCpuPressure(this.config, cgroupCpu);
+    const cpuDegraded = resolveCpuPressure(this.config, cgroupCpu, linuxPressure);
     const runtimeHealth = buildRuntimeHealthDiagnostics({
       queueDegraded,
       queueSnapshot: snapshot,
@@ -3798,9 +4036,10 @@ export class RayRuntime {
       cpuDegraded,
       cpuThrottledRatioThreshold: this.config.gracefulDegradation.cpuThrottledRatioThreshold,
       cgroupCpu,
+      linuxPressure,
     });
     this.recordMemoryPressureMetrics(memoryPressure, memoryPressureSources);
-    this.recordCgroupCpuMetrics(cgroupCpu);
+    this.recordCpuPressureMetrics(cgroupCpu, linuxPressure);
     const status =
       provider.status === "unavailable"
         ? "unavailable"
@@ -3832,16 +4071,18 @@ export class RayRuntime {
   async collectMetricsSnapshot(): Promise<RuntimeMetricsSnapshot> {
     const queueSnapshot = this.scheduler.snapshot();
     const preparationSnapshot = this.preparationSnapshot();
-    const [memoryPressure, cgroupCpu] = await Promise.all([
+    const [baseMemoryPressure, cgroupCpu, linuxPressure] = await Promise.all([
       this.getMemoryPressureSnapshot(),
       this.getCgroupCpuSnapshot(),
+      this.getLinuxPressureSnapshot(),
     ]);
+    const memoryPressure = applyLinuxMemoryPressureSnapshot(baseMemoryPressure, linuxPressure);
     const memoryPressureSources = resolveMemoryPressureSources(this.config, memoryPressure);
 
     this.recordSchedulerMetrics(queueSnapshot);
     this.recordPreparationMetrics(preparationSnapshot);
     this.recordMemoryPressureMetrics(memoryPressure, memoryPressureSources);
-    this.recordCgroupCpuMetrics(cgroupCpu);
+    this.recordCpuPressureMetrics(cgroupCpu, linuxPressure);
     this.recordCacheMetrics();
 
     return this.metricsSnapshot();
@@ -4377,49 +4618,132 @@ export class RayRuntime {
     }
   }
 
-  private recordCgroupCpuMetrics(snapshot: CgroupCpuSnapshot | undefined): void {
+  private async getLinuxPressureSnapshot(): Promise<LinuxPressureSnapshot | undefined> {
+    if (!this.linuxPressure) {
+      return undefined;
+    }
+
+    const now = Date.now();
+
+    if (
+      this.linuxPressureCache &&
+      now - this.linuxPressureCache.checkedAtMs < LINUX_PRESSURE_CACHE_TTL_MS
+    ) {
+      return this.linuxPressureCache.snapshot;
+    }
+
+    try {
+      const snapshot = await this.linuxPressure();
+      this.linuxPressureCache = {
+        checkedAtMs: now,
+        snapshot,
+      };
+      return snapshot;
+    } catch {
+      this.linuxPressureCache = {
+        checkedAtMs: now,
+        snapshot: undefined,
+      };
+      return undefined;
+    }
+  }
+
+  private recordLinuxPressureResourceMetrics(
+    resource: "memory" | "cpu",
+    snapshot: LinuxPressureResourceSnapshot | undefined,
+  ): void {
     if (!snapshot) {
       return;
     }
 
-    if (snapshot.usageUsec !== undefined) {
-      this.metrics.gauge("process.cpu.cgroup_usage_usec", snapshot.usageUsec);
+    if (snapshot.someAvg10 !== undefined) {
+      this.metrics.gauge(`process.${resource}.linux_psi_some_avg10`, snapshot.someAvg10);
     }
-    if (snapshot.userUsec !== undefined) {
-      this.metrics.gauge("process.cpu.cgroup_user_usec", snapshot.userUsec);
+    if (snapshot.someAvg60 !== undefined) {
+      this.metrics.gauge(`process.${resource}.linux_psi_some_avg60`, snapshot.someAvg60);
     }
-    if (snapshot.systemUsec !== undefined) {
-      this.metrics.gauge("process.cpu.cgroup_system_usec", snapshot.systemUsec);
+    if (snapshot.someAvg300 !== undefined) {
+      this.metrics.gauge(`process.${resource}.linux_psi_some_avg300`, snapshot.someAvg300);
     }
-    if (snapshot.quotaUsec !== undefined) {
-      this.metrics.gauge("process.cpu.cgroup_quota_usec", snapshot.quotaUsec);
+    if (snapshot.someTotalUsec !== undefined) {
+      this.metrics.gauge(`process.${resource}.linux_psi_some_total_usec`, snapshot.someTotalUsec);
     }
-    if (snapshot.periodUsec !== undefined) {
-      this.metrics.gauge("process.cpu.cgroup_period_usec", snapshot.periodUsec);
+    if (snapshot.fullAvg10 !== undefined) {
+      this.metrics.gauge(`process.${resource}.linux_psi_full_avg10`, snapshot.fullAvg10);
     }
-    if (snapshot.quotaCores !== undefined) {
-      this.metrics.gauge("process.cpu.cgroup_quota_cores", snapshot.quotaCores);
+    if (snapshot.fullAvg60 !== undefined) {
+      this.metrics.gauge(`process.${resource}.linux_psi_full_avg60`, snapshot.fullAvg60);
     }
-    if (snapshot.periods !== undefined) {
-      this.metrics.gauge("process.cpu.cgroup_periods", snapshot.periods);
+    if (snapshot.fullAvg300 !== undefined) {
+      this.metrics.gauge(`process.${resource}.linux_psi_full_avg300`, snapshot.fullAvg300);
     }
-    if (snapshot.throttledPeriods !== undefined) {
-      this.metrics.gauge("process.cpu.cgroup_throttled_periods", snapshot.throttledPeriods);
+    if (snapshot.fullTotalUsec !== undefined) {
+      this.metrics.gauge(`process.${resource}.linux_psi_full_total_usec`, snapshot.fullTotalUsec);
     }
-    if (snapshot.throttledUsec !== undefined) {
-      this.metrics.gauge("process.cpu.cgroup_throttled_usec", snapshot.throttledUsec);
+  }
+
+  private recordCpuPressureMetrics(
+    cgroupCpu: CgroupCpuSnapshot | undefined,
+    linuxPressure: LinuxPressureSnapshot | undefined,
+  ): void {
+    if (cgroupCpu) {
+      if (cgroupCpu.usageUsec !== undefined) {
+        this.metrics.gauge("process.cpu.cgroup_usage_usec", cgroupCpu.usageUsec);
+      }
+      if (cgroupCpu.userUsec !== undefined) {
+        this.metrics.gauge("process.cpu.cgroup_user_usec", cgroupCpu.userUsec);
+      }
+      if (cgroupCpu.systemUsec !== undefined) {
+        this.metrics.gauge("process.cpu.cgroup_system_usec", cgroupCpu.systemUsec);
+      }
+      if (cgroupCpu.quotaUsec !== undefined) {
+        this.metrics.gauge("process.cpu.cgroup_quota_usec", cgroupCpu.quotaUsec);
+      }
+      if (cgroupCpu.periodUsec !== undefined) {
+        this.metrics.gauge("process.cpu.cgroup_period_usec", cgroupCpu.periodUsec);
+      }
+      if (cgroupCpu.quotaCores !== undefined) {
+        this.metrics.gauge("process.cpu.cgroup_quota_cores", cgroupCpu.quotaCores);
+      }
+      if (cgroupCpu.periods !== undefined) {
+        this.metrics.gauge("process.cpu.cgroup_periods", cgroupCpu.periods);
+      }
+      if (cgroupCpu.throttledPeriods !== undefined) {
+        this.metrics.gauge("process.cpu.cgroup_throttled_periods", cgroupCpu.throttledPeriods);
+      }
+      if (cgroupCpu.throttledUsec !== undefined) {
+        this.metrics.gauge("process.cpu.cgroup_throttled_usec", cgroupCpu.throttledUsec);
+      }
+      if (cgroupCpu.throttledRatio !== undefined) {
+        this.metrics.gauge("process.cpu.cgroup_throttled_ratio", cgroupCpu.throttledRatio);
+        this.metrics.gauge(
+          "process.cpu.cgroup_throttled_threshold",
+          this.config.gracefulDegradation.cpuThrottledRatioThreshold,
+        );
+      }
     }
-    if (snapshot.throttledRatio !== undefined) {
-      this.metrics.gauge("process.cpu.cgroup_throttled_ratio", snapshot.throttledRatio);
+
+    this.recordLinuxPressureResourceMetrics("cpu", linuxPressure?.cpu);
+    if (linuxPressure?.cpu?.someAvg10 !== undefined) {
       this.metrics.gauge(
-        "process.cpu.cgroup_throttled_threshold",
-        this.config.gracefulDegradation.cpuThrottledRatioThreshold,
-      );
-      this.metrics.gauge(
-        "process.cpu.pressure",
-        resolveCgroupCpuPressure(this.config, snapshot) ? 1 : 0,
+        "process.cpu.linux_psi_some_avg10_threshold",
+        LINUX_CPU_PSI_SOME_AVG10_PRESSURE,
       );
     }
+    if (linuxPressure?.cpu?.fullAvg10 !== undefined) {
+      this.metrics.gauge(
+        "process.cpu.linux_psi_full_avg10_threshold",
+        LINUX_CPU_PSI_FULL_AVG10_PRESSURE,
+      );
+    }
+    this.metrics.gauge(
+      "process.cpu.linux_psi_pressure",
+      resolveLinuxCpuPressure(linuxPressure) ? 1 : 0,
+    );
+    this.metrics.gauge(
+      "process.cpu.pressure",
+      resolveCpuPressure(this.config, cgroupCpu, linuxPressure) ? 1 : 0,
+    );
   }
 
   private recordMemoryPressureMetrics(
@@ -4520,6 +4844,30 @@ export class RayRuntime {
         memoryPressure.cgroupMemoryOomKillEventsDelta,
       );
     }
+    if (memoryPressure.linuxMemoryPsiSomeAvg10 !== undefined) {
+      this.metrics.gauge(
+        "process.memory.linux_psi_some_avg10",
+        memoryPressure.linuxMemoryPsiSomeAvg10,
+      );
+      this.metrics.gauge(
+        "process.memory.linux_psi_some_avg10_threshold",
+        LINUX_MEMORY_PSI_SOME_AVG10_PRESSURE,
+      );
+    }
+    if (memoryPressure.linuxMemoryPsiFullAvg10 !== undefined) {
+      this.metrics.gauge(
+        "process.memory.linux_psi_full_avg10",
+        memoryPressure.linuxMemoryPsiFullAvg10,
+      );
+      this.metrics.gauge(
+        "process.memory.linux_psi_full_avg10_threshold",
+        LINUX_MEMORY_PSI_FULL_AVG10_PRESSURE,
+      );
+    }
+    this.metrics.gauge(
+      "process.memory.linux_psi_pressure",
+      resolveLinuxMemoryPressure(memoryPressure) ? 1 : 0,
+    );
     this.metrics.gauge(
       "process.memory.cgroup_event_pressure",
       hasRecentCgroupMemoryEvents(memoryPressure) ? 1 : 0,

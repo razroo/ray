@@ -477,7 +477,7 @@ export interface TaskRoutingDiagnostics {
   matchedActiveRole: boolean;
 }
 
-export type MemoryPressureSource = "process_rss" | "cgroup";
+export type MemoryPressureSource = "process_rss" | "cgroup" | "linux_psi";
 
 export interface DegradationDiagnostics {
   applied: boolean;
@@ -505,8 +505,16 @@ export interface DegradationDiagnostics {
   cgroupMemoryMaxEventsDelta?: number;
   cgroupMemoryOomEventsDelta?: number;
   cgroupMemoryOomKillEventsDelta?: number;
+  linuxMemoryPsiSomeAvg10?: number;
+  linuxMemoryPsiFullAvg10?: number;
+  linuxMemoryPsiSomeAvg10Threshold?: number;
+  linuxMemoryPsiFullAvg10Threshold?: number;
   cgroupCpuThrottledRatio?: number;
   cgroupCpuThrottledThreshold?: number;
+  linuxCpuPsiSomeAvg10?: number;
+  linuxCpuPsiFullAvg10?: number;
+  linuxCpuPsiSomeAvg10Threshold?: number;
+  linuxCpuPsiFullAvg10Threshold?: number;
 }
 
 export interface InferenceDiagnostics {
@@ -580,6 +588,10 @@ export interface RuntimeHealthDiagnostics {
     cgroupMemoryMaxEventsDelta?: number;
     cgroupMemoryOomEventsDelta?: number;
     cgroupMemoryOomKillEventsDelta?: number;
+    linuxMemoryPsiSomeAvg10?: number;
+    linuxMemoryPsiFullAvg10?: number;
+    linuxMemoryPsiSomeAvg10Threshold?: number;
+    linuxMemoryPsiFullAvg10Threshold?: number;
   };
   cpu?: {
     degraded: boolean;
@@ -594,6 +606,10 @@ export interface RuntimeHealthDiagnostics {
     cgroupCpuThrottledUsec?: number;
     cgroupCpuThrottledRatio?: number;
     cgroupCpuThrottledThreshold?: number;
+    linuxCpuPsiSomeAvg10?: number;
+    linuxCpuPsiFullAvg10?: number;
+    linuxCpuPsiSomeAvg10Threshold?: number;
+    linuxCpuPsiFullAvg10Threshold?: number;
   };
 }
 

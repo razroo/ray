@@ -5,7 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
 import type { ModelProvider, ProviderDiagnostics, SchedulerSlotSnapshot } from "@razroo/ray-core";
-import { createRayRuntime, readCgroupCpuSnapshot, readCgroupMemorySnapshot } from "./index.js";
+import {
+  createRayRuntime,
+  readCgroupCpuSnapshot,
+  readCgroupMemorySnapshot,
+  readLinuxPressureSnapshot,
+} from "./index.js";
 
 async function waitForCondition(predicate: () => boolean | Promise<boolean>): Promise<void> {
   const startedAt = Date.now();
@@ -399,6 +404,76 @@ test("runtime clamps output under cgroup memory pressure", async () => {
   assert.equal(metrics.gauges["process.memory.pressure"], 1);
 });
 
+test("runtime clamps output under Linux memory pressure stalls", async () => {
+  let observedMaxTokens = 0;
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "linux-memory-pressure-model",
+    capabilities: {
+      streaming: false,
+      quantized: false,
+      localBackend: true,
+    },
+    async infer(request) {
+      observedMaxTokens = request.maxTokens;
+      return {
+        output: "degraded",
+      };
+    },
+  };
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    gracefulDegradation: {
+      enabled: true,
+      degradeToMaxTokens: 32,
+      memoryRssThresholdMiB: 4_096,
+    },
+  });
+  const runtime = createRayRuntime(config, {
+    provider,
+    cgroupMemory: false,
+    cgroupCpu: false,
+    memoryUsage: () => ({
+      rss: 32 * 1024 * 1024,
+      heapTotal: 0,
+      heapUsed: 0,
+      external: 0,
+      arrayBuffers: 0,
+    }),
+    linuxPressure: () => ({
+      memory: {
+        someAvg10: 12.5,
+        fullAvg10: 0.25,
+      },
+    }),
+  });
+
+  const result = await runtime.infer({
+    input: "hello world",
+    maxTokens: 128,
+    cache: false,
+  });
+  const health = await runtime.health();
+  const metrics = runtime.metricsSnapshot();
+
+  assert.equal(observedMaxTokens, 32);
+  assert.equal(result.degraded, true);
+  assert.deepEqual(result.diagnostics?.degradation?.reasons, ["memory_pressure"]);
+  assert.deepEqual(result.diagnostics?.degradation?.memoryPressureSources, ["linux_psi"]);
+  assert.equal(result.diagnostics?.degradation?.linuxMemoryPsiSomeAvg10, 12.5);
+  assert.equal(result.diagnostics?.degradation?.linuxMemoryPsiSomeAvg10Threshold, 10);
+  assert.equal(result.diagnostics?.degradation?.linuxMemoryPsiFullAvg10, 0.25);
+  assert.equal(result.diagnostics?.degradation?.linuxMemoryPsiFullAvg10Threshold, 1);
+  assert.equal(health.status, "degraded");
+  assert.equal(health.runtime?.memory.degraded, true);
+  assert.deepEqual(health.runtime?.memory.sources, ["linux_psi"]);
+  assert.equal(health.runtime?.memory.linuxMemoryPsiSomeAvg10, 12.5);
+  assert.equal(health.runtime?.memory.linuxMemoryPsiSomeAvg10Threshold, 10);
+  assert.equal(metrics.gauges["process.memory.linux_psi_some_avg10"], 12.5);
+  assert.equal(metrics.gauges["process.memory.linux_psi_some_avg10_threshold"], 10);
+  assert.equal(metrics.gauges["process.memory.linux_psi_pressure"], 1);
+  assert.equal(metrics.gauges["process.memory.pressure"], 1);
+});
+
 test("runtime treats recent cgroup memory events as pressure", async () => {
   let observedMaxTokens = 0;
   const provider: ModelProvider = {
@@ -565,6 +640,74 @@ test("runtime clamps output under cgroup CPU throttling", async () => {
   assert.equal(health.runtime?.cpu?.cgroupCpuThrottledThreshold, 0.24);
   assert.equal(metrics.gauges["process.cpu.cgroup_throttled_ratio"], 0.25);
   assert.equal(metrics.gauges["process.cpu.cgroup_throttled_threshold"], 0.24);
+  assert.equal(metrics.gauges["process.cpu.pressure"], 1);
+});
+
+test("runtime clamps output under Linux CPU pressure stalls", async () => {
+  let observedMaxTokens = 0;
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "linux-cpu-pressure-model",
+    capabilities: {
+      streaming: false,
+      quantized: false,
+      localBackend: true,
+    },
+    async infer(request) {
+      observedMaxTokens = request.maxTokens;
+      return {
+        output: "degraded",
+      };
+    },
+  };
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    gracefulDegradation: {
+      enabled: true,
+      degradeToMaxTokens: 32,
+      memoryRssThresholdMiB: 4_096,
+    },
+  });
+  const runtime = createRayRuntime(config, {
+    provider,
+    cgroupMemory: false,
+    cgroupCpu: false,
+    memoryUsage: () => ({
+      rss: 32 * 1024 * 1024,
+      heapTotal: 0,
+      heapUsed: 0,
+      external: 0,
+      arrayBuffers: 0,
+    }),
+    linuxPressure: () => ({
+      cpu: {
+        someAvg10: 62.5,
+        fullAvg10: 0,
+      },
+    }),
+  });
+
+  const result = await runtime.infer({
+    input: "hello world",
+    maxTokens: 128,
+    cache: false,
+  });
+  const health = await runtime.health();
+  const metrics = runtime.metricsSnapshot();
+
+  assert.equal(observedMaxTokens, 32);
+  assert.equal(result.degraded, true);
+  assert.deepEqual(result.diagnostics?.degradation?.reasons, ["cpu_pressure"]);
+  assert.equal(result.diagnostics?.degradation?.linuxCpuPsiSomeAvg10, 62.5);
+  assert.equal(result.diagnostics?.degradation?.linuxCpuPsiSomeAvg10Threshold, 50);
+  assert.equal(result.diagnostics?.degradation?.linuxCpuPsiFullAvg10, 0);
+  assert.equal(result.diagnostics?.degradation?.linuxCpuPsiFullAvg10Threshold, 5);
+  assert.equal(health.status, "degraded");
+  assert.equal(health.runtime?.cpu?.degraded, true);
+  assert.equal(health.runtime?.cpu?.linuxCpuPsiSomeAvg10, 62.5);
+  assert.equal(health.runtime?.cpu?.linuxCpuPsiSomeAvg10Threshold, 50);
+  assert.equal(metrics.gauges["process.cpu.linux_psi_some_avg10"], 62.5);
+  assert.equal(metrics.gauges["process.cpu.linux_psi_some_avg10_threshold"], 50);
+  assert.equal(metrics.gauges["process.cpu.linux_psi_pressure"], 1);
   assert.equal(metrics.gauges["process.cpu.pressure"], 1);
 });
 
@@ -847,6 +990,61 @@ test("readCgroupCpuSnapshot skips oversized cgroup cpu files", async (t) => {
   assert.equal(snapshot, undefined);
 });
 
+test("readLinuxPressureSnapshot reads bounded PSI files", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-linux-pressure-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const memoryPressurePath = join(tempDir, "memory-pressure");
+  const cpuPressurePath = join(tempDir, "cpu-pressure");
+
+  await writeFile(
+    memoryPressurePath,
+    "some avg10=12.50 avg60=4.25 avg300=1.00 total=123456\nfull avg10=1.25 avg60=0.50 avg300=0.10 total=456\n",
+    "utf8",
+  );
+  await writeFile(
+    cpuPressurePath,
+    "some avg10=62.50 avg60=40.00 avg300=20.00 total=789\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n",
+    "utf8",
+  );
+
+  const snapshot = await readLinuxPressureSnapshot({
+    memoryPressurePath,
+    cpuPressurePath,
+  });
+
+  assert.equal(snapshot?.memory?.someAvg10, 12.5);
+  assert.equal(snapshot?.memory?.someAvg60, 4.25);
+  assert.equal(snapshot?.memory?.someAvg300, 1);
+  assert.equal(snapshot?.memory?.someTotalUsec, 123_456);
+  assert.equal(snapshot?.memory?.fullAvg10, 1.25);
+  assert.equal(snapshot?.memory?.fullTotalUsec, 456);
+  assert.equal(snapshot?.cpu?.someAvg10, 62.5);
+  assert.equal(snapshot?.cpu?.someTotalUsec, 789);
+  assert.equal(snapshot?.cpu?.fullAvg10, 0);
+});
+
+test("readLinuxPressureSnapshot skips oversized PSI files", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-linux-pressure-oversized-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const memoryPressurePath = join(tempDir, "memory-pressure");
+  const cpuPressurePath = join(tempDir, "cpu-pressure");
+
+  await writeFile(memoryPressurePath, "some ".concat("x".repeat(64 * 1024 + 1)), "utf8");
+  await writeFile(cpuPressurePath, "some avg10=1.00 avg60=1.00 avg300=1.00 total=1\n", "utf8");
+
+  const snapshot = await readLinuxPressureSnapshot({
+    memoryPressurePath,
+    cpuPressurePath,
+  });
+
+  assert.equal(snapshot?.memory, undefined);
+  assert.equal(snapshot?.cpu?.someAvg10, 1);
+});
+
 test("runtime collected metrics refresh live queue and cgroup pressure gauges", async () => {
   const config = createDefaultConfig("tiny");
   const runtime = createRayRuntime(config, {
@@ -881,6 +1079,16 @@ test("runtime collected metrics refresh live queue and cgroup pressure gauges", 
       throttledPeriods: 10,
       throttledUsec: 25_000,
       throttledRatio: 0.05,
+    }),
+    linuxPressure: () => ({
+      memory: {
+        someAvg10: 2.5,
+        fullAvg10: 0,
+      },
+      cpu: {
+        someAvg10: 12.5,
+        fullAvg10: 0,
+      },
     }),
   });
 
@@ -927,6 +1135,10 @@ test("runtime collected metrics refresh live queue and cgroup pressure gauges", 
   assert.equal(metrics.gauges["process.cpu.cgroup_throttled_usec"], 25_000);
   assert.equal(metrics.gauges["process.cpu.cgroup_throttled_ratio"], 0.05);
   assert.equal(metrics.gauges["process.cpu.cgroup_throttled_threshold"], 0.2);
+  assert.equal(metrics.gauges["process.memory.linux_psi_some_avg10"], 2.5);
+  assert.equal(metrics.gauges["process.memory.linux_psi_pressure"], 0);
+  assert.equal(metrics.gauges["process.cpu.linux_psi_some_avg10"], 12.5);
+  assert.equal(metrics.gauges["process.cpu.linux_psi_pressure"], 0);
   assert.equal(metrics.gauges["process.cpu.pressure"], 0);
 });
 

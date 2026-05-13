@@ -127,7 +127,7 @@ Current design choices that reflect this:
 - no distributed cache in the MVP
 - in-memory TTL cache with bounded entry count and byte budget
 - bounded request queue with explicit backpressure
-- process RSS, Linux cgroup memory, and cgroup CPU throttling signals for overload decisions
+- process RSS, Linux pressure stall information, Linux cgroup memory, and cgroup CPU throttling signals for overload decisions
 
 The current repo makes this concrete through:
 
@@ -143,7 +143,7 @@ On small hardware, graceful degradation is more honest than pretending every req
 The runtime already has policy hooks for:
 
 - prompt truncation
-- output token clamping under queue, memory, and cgroup CPU pressure
+- output token clamping under queue, memory, Linux PSI, and cgroup CPU pressure
 - bounded queue depth
 - in-flight request deduplication
 
