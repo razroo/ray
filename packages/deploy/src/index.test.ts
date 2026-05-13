@@ -670,6 +670,31 @@ test("diagnoseConfig warns when slow-request logging cannot fire before timeouts
   assert.match(diagnostic.message, /RAY_TELEMETRY_SLOW_REQUEST_THRESHOLD_MS/);
 });
 
+test("diagnoseConfig warns when log level hides operational warnings", () => {
+  const defaultConfig = createDefaultConfig("vps");
+  assert.ok(
+    !diagnoseConfig(defaultConfig, process.env).some(
+      (entry) => entry.code === "log_level_suppresses_operational_warnings",
+    ),
+  );
+
+  const config = mergeConfig(defaultConfig, {
+    telemetry: {
+      logLevel: "error",
+    },
+  });
+
+  const diagnostic = diagnoseConfig(config, process.env).find(
+    (entry) => entry.code === "log_level_suppresses_operational_warnings",
+  );
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /telemetry\.logLevel/);
+  assert.match(diagnostic.message, /client rejections/);
+  assert.match(diagnostic.message, /RAY_LOG_LEVEL=info or warn/);
+});
+
 test("diagnoseConfig warns when IP rate-limit proxy header posture is unsafe", () => {
   const publicBindConfig = mergeConfig(createDefaultConfig("vps"), {
     server: {

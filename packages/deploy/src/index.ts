@@ -2917,6 +2917,15 @@ export function diagnoseConfig(
     }
   }
 
+  if (config.telemetry.logLevel === "error") {
+    diagnostics.push({
+      level: "warn",
+      code: "log_level_suppresses_operational_warnings",
+      message:
+        "telemetry.logLevel is set to error, which suppresses Ray's warning-level operational logs for client rejections, timeout backpressure, parser rejects, and slow inference. Use RAY_LOG_LEVEL=info or warn on VPS deployments unless an external monitor already covers those signals.",
+    });
+  }
+
   if (!config.rateLimit.enabled) {
     diagnostics.push({
       level: "warn",
