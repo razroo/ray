@@ -218,7 +218,9 @@ export async function smokeDeployConfigs(options: {
   runtimeBinary: string;
   serviceUser: string;
   systemdEnvFile: string;
+  env?: NodeJS.ProcessEnv;
 }): Promise<DeploySmokeSummary> {
+  const env = buildSmokeDeployEnv(options.env ?? process.env);
   const results: DeploySmokeResult[] = [];
 
   for (const configPath of options.configPaths) {
@@ -230,6 +232,7 @@ export async function smokeDeployConfigs(options: {
         domain: options.domain,
         systemdEnvFile: options.systemdEnvFile,
         runtimeBinary: options.runtimeBinary,
+        env,
         inspectHostStorage: false,
       });
       const errorCount = bundle.summary.diagnostics.filter(
@@ -282,6 +285,20 @@ export async function smokeDeployConfigs(options: {
     warningCount,
     results,
   };
+}
+
+function buildSmokeDeployEnv(_env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+
+  for (const [name, value] of Object.entries(_env)) {
+    if (name.startsWith("RAY_") || value === undefined) {
+      continue;
+    }
+
+    env[name] = value;
+  }
+
+  return env;
 }
 
 function displayPath(cwd: string, configPath: string): string {

@@ -82,7 +82,11 @@ test("validateConfigFiles accepts every checked-in example config", async () => 
   const summary = await validateConfigFiles({
     cwd,
     configPaths,
-    env: { ...process.env, RAY_API_KEYS: "smoke" },
+    env: {
+      ...process.env,
+      RAY_API_KEYS: "smoke",
+      RAY_LLAMA_CPP_CTX_SIZE: "not-a-number",
+    },
   });
 
   assert.equal(summary.ok, true);

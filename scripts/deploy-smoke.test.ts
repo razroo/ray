@@ -96,12 +96,22 @@ test("smokeDeployConfigs renders every checked-in public deploy profile", async 
     runtimeBinary: "/usr/local/bin/bun",
     serviceUser: "ray",
     systemdEnvFile: "/etc/ray/ray.env",
+    env: {
+      ...process.env,
+      RAY_API_KEYS: "host-key-should-not-hide-smoke-warning",
+      RAY_LLAMA_CPP_CTX_SIZE: "not-a-number",
+    },
   });
 
   assert.equal(summary.ok, true);
   assert.equal(summary.errorCount, 0);
   assert.ok(summary.configCount >= 7);
   assert.ok(summary.warningCount > 0);
+  assert.ok(
+    summary.results.every((result) =>
+      result.diagnostics.some((diagnostic) => diagnostic.code === "auth_keys_unverified"),
+    ),
+  );
   assert.equal(
     summary.results
       .flatMap((result) => result.diagnostics)

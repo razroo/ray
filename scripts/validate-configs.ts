@@ -178,12 +178,13 @@ export async function collectConfigPaths(cwd: string, configDir: string): Promis
 }
 
 function withSmokeAuthEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const apiKeys =
+    typeof env.RAY_API_KEYS === "string" && env.RAY_API_KEYS.trim().length > 0
+      ? env.RAY_API_KEYS
+      : DEFAULT_SMOKE_API_KEY;
+
   return {
-    ...env,
-    RAY_API_KEYS:
-      typeof env.RAY_API_KEYS === "string" && env.RAY_API_KEYS.trim().length > 0
-        ? env.RAY_API_KEYS
-        : DEFAULT_SMOKE_API_KEY,
+    RAY_API_KEYS: apiKeys,
   };
 }
 
