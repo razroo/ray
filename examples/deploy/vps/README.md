@@ -409,7 +409,10 @@ long enough to resolve deployment settings, excludes `.ray-deploy-*` from repo
 sync, and writes the live config directly to `/etc/ray/ray.json`.
 
 `RAY_ENV_FILE_CONTENTS` is the right place for auth keys or env overrides. The
-workflow validates auth API keys before opening SSH, refuses
+workflow applies `RAY_GATEWAY_RUNTIME_BINARY`, `RAY_DEPLOY_CADDY_BINARY`, and
+`RAY_DEPLOY_SERVICE_USER` from this env file before repository variables when it
+wires remote doctor, render, and generated service commands. It validates auth
+API keys before opening SSH, refuses
 `RAY_DEPLOY_INSTALL_CADDY=true` when the resolved config still has
 `auth.enabled=false`, then applies those overrides when choosing the post-restart
 health check port. For example:
@@ -423,13 +426,15 @@ RAY_ASYNC_QUEUE_ENABLED=true
 RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS=callback.example
 RAY_DEPLOY_SERVICE_USER=ray
 RAY_DEPLOY_MEMORY_MIB=4096
+RAY_GATEWAY_RUNTIME_BINARY=/usr/local/bin/bun
+RAY_DEPLOY_CADDY_BINARY=/usr/bin/caddy
 RAY_AUTH_ENABLED=true
 RAY_RATE_LIMIT_MAX_REQUESTS=75
 ```
 
 The workflow validates the deploy SSH user and configured gateway runtime path
-before opening SSH, checks that `RAY_DEPLOY_KNOWN_HOSTS` contains an entry for
-the configured host and SSH port,
+after applying env-file overrides and before opening SSH, checks that
+`RAY_DEPLOY_KNOWN_HOSTS` contains an entry for the configured host and SSH port,
 installs missing remote deploy prerequisites such as `curl`, `ca-certificates`,
 `unzip`, and `rsync`, refreshes `/usr/local/bin/bun` when it is missing or older
 than the repo's supported Bun runtime, copies that refreshed Bun to custom

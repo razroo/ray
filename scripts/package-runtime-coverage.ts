@@ -1079,6 +1079,42 @@ function validateDeployWorkflowGatewayRuntimeBunInstall(
   ];
 }
 
+function validateDeployWorkflowGatewayRuntimeEnvOverride(
+  workflowPath: string,
+  contents: string,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (path.basename(workflowPath) !== "deploy-vps.yml") {
+    return [];
+  }
+
+  if (!contents.includes("RAY_GATEWAY_RUNTIME_BINARY")) {
+    return [];
+  }
+
+  if (
+    contents.includes("normalizeGatewayRuntimeBinaryPath") &&
+    contents.includes("envOverrides.RAY_GATEWAY_RUNTIME_BINARY") &&
+    contents.includes("readNonEmpty(process.env.RAY_GATEWAY_RUNTIME_BINARY)") &&
+    contents.includes('"/usr/local/bin/bun"') &&
+    contents.includes("gatewayRuntimeBinary") &&
+    contents.includes('echo "gateway_runtime_binary=$GATEWAY_RUNTIME_BINARY" >> "$GITHUB_OUTPUT"')
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      level: "error",
+      code: "workflow_gateway_runtime_env_override_missing",
+      workflowPath,
+      line: workflowLineNumber(lines, "RAY_GATEWAY_RUNTIME_BINARY"),
+      message:
+        "VPS deploy workflow must resolve RAY_GATEWAY_RUNTIME_BINARY after parsing RAY_ENV_FILE_CONTENTS so env-file runtime overrides feed doctor, render, and generated systemd units.",
+    },
+  ];
+}
+
 function validateDeployWorkflowRootCommandGuards(
   workflowPath: string,
   lines: string[],
@@ -1241,6 +1277,9 @@ async function validateWorkflow(
   diagnostics.push(...validateDeployWorkflowRemoteBunCommandGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowBunVersionProbeGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowGatewayRuntimeBunInstall(workflowPath, contents));
+  diagnostics.push(
+    ...validateDeployWorkflowGatewayRuntimeEnvOverride(workflowPath, contents, lines),
+  );
   diagnostics.push(...validateDeployWorkflowRootCommandGuards(workflowPath, lines));
   diagnostics.push(...validateDeployWorkflowRayEnvReadGuards(workflowPath, lines));
 

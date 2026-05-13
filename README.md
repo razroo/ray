@@ -299,6 +299,9 @@ deploy CLI while rendering units or running doctor. Explicit CLI flags win over
 env-file values. `RAY_DEPLOY_SERVICE_USER` accepts an account name or numeric
 UID; workflow deploys create missing named accounts, while numeric UIDs must
 already resolve to an account on the VPS.
+The GitHub VPS workflow also honors `RAY_GATEWAY_RUNTIME_BINARY` and
+`RAY_DEPLOY_CADDY_BINARY` from `RAY_ENV_FILE_CONTENTS` before repository
+variables when wiring remote doctor, render, and generated service commands.
 
 Create `/var/lib/ray/models` on the VPS and put the GGUF at `RAY_MODEL_PATH`
 before starting the generated llama.cpp service or running doctor.

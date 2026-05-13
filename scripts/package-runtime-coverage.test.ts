@@ -247,6 +247,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("workflow_remote_bun_command_unbounded"));
   assert.ok(codes.includes("workflow_bun_version_probe_unbounded"));
   assert.ok(codes.includes("workflow_gateway_runtime_bun_install_missing"));
+  assert.ok(codes.includes("workflow_gateway_runtime_env_override_missing"));
   assert.ok(codes.includes("workflow_ray_env_read_unbounded"));
   assert.ok(codes.includes("vps_readme_curl_install_unbounded"));
   assert.ok(codes.includes("vps_readme_apt_get_unbounded"));

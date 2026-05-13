@@ -91,7 +91,6 @@ jobs:
           DEPLOY_DOMAIN="${RAY_DEPLOY_DOMAIN:-ray.local}"
           INSTALL_CADDY="${RAY_DEPLOY_INSTALL_CADDY:-false}"
           READY_TIMEOUT_SECONDS_INPUT="${RAY_DEPLOY_READY_TIMEOUT_SECONDS:-120}"
-          GATEWAY_RUNTIME_BINARY_INPUT="${RAY_GATEWAY_RUNTIME_BINARY:-/usr/local/bin/bun}"
           SSH_PORT_INPUT="${RAY_DEPLOY_SSH_PORT:-22}"
           SSH_USER_INPUT="${RAY_DEPLOY_SSH_USER:-root}"
 
@@ -134,23 +133,6 @@ jobs:
             esac
           fi
 
-          GATEWAY_RUNTIME_BINARY=$(GATEWAY_RUNTIME_BINARY="$GATEWAY_RUNTIME_BINARY_INPUT" bun --eval '
-          import { normalizeGatewayRuntimeBinaryPath } from "./packages/deploy/dist/cli.js";
-
-          try {
-            process.stdout.write(
-              normalizeGatewayRuntimeBinaryPath(
-                process.env.GATEWAY_RUNTIME_BINARY ?? "",
-                "RAY_GATEWAY_RUNTIME_BINARY",
-              ),
-            );
-          } catch (error) {
-            process.stderr.write(
-              `::error::${error instanceof Error ? error.message : String(error)}\n`,
-            );
-            process.exit(1);
-          }
-          ')
           READY_TIMEOUT_SECONDS=$(READY_TIMEOUT_SECONDS="$READY_TIMEOUT_SECONDS_INPUT" bun --eval '
           import { parseDeployReadyTimeoutSeconds } from "./packages/deploy/dist/cli.js";
 
@@ -226,7 +208,11 @@ jobs:
 
           DEPLOY_SETTINGS=$(CONFIG_PATH="$CONFIG_PATH" bun --eval '
           import { loadRayConfig, resolveAuthApiKeys } from "./packages/config/dist/index.js";
-          import { normalizeCaddyBinaryPath, parseEnvironmentFile } from "./packages/deploy/dist/cli.js";
+          import {
+            normalizeCaddyBinaryPath,
+            normalizeGatewayRuntimeBinaryPath,
+            parseEnvironmentFile,
+          } from "./packages/deploy/dist/cli.js";
 
           const readNonEmpty = (value) =>
             typeof value === "string" && value.trim().length > 0 ? value : undefined;
@@ -241,6 +227,23 @@ jobs:
           const rawCaddyBinary =
             readNonEmpty(envOverrides.RAY_DEPLOY_CADDY_BINARY) ??
             readNonEmpty(process.env.RAY_DEPLOY_CADDY_BINARY);
+          const rawGatewayRuntimeBinary =
+            readNonEmpty(envOverrides.RAY_GATEWAY_RUNTIME_BINARY) ??
+            readNonEmpty(process.env.RAY_GATEWAY_RUNTIME_BINARY) ??
+            "/usr/local/bin/bun";
+          let gatewayRuntimeBinary = "";
+          try {
+            gatewayRuntimeBinary = normalizeGatewayRuntimeBinaryPath(
+              rawGatewayRuntimeBinary,
+              "RAY_GATEWAY_RUNTIME_BINARY",
+            );
+          } catch (error) {
+            process.stderr.write(
+              `::error::${error instanceof Error ? error.message : String(error)}\n`,
+            );
+            process.exit(1);
+          }
+
           let caddyBinary = "";
           if (rawCaddyBinary) {
             try {
@@ -278,12 +281,14 @@ jobs:
               readNonEmpty(envOverrides.RAY_DEPLOY_SERVICE_USER) ??
               readNonEmpty(process.env.RAY_DEPLOY_SERVICE_USER) ??
               "ray",
+            gatewayRuntimeBinary,
             caddyBinary,
           }));
           ')
           HEALTH_PORT=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).healthPort')
           AUTH_ENABLED=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'String(JSON.parse(process.env.DEPLOY_SETTINGS).authEnabled)')
           SERVICE_USER=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).serviceUser')
+          GATEWAY_RUNTIME_BINARY=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).gatewayRuntimeBinary')
           CADDY_BINARY=$(DEPLOY_SETTINGS="$DEPLOY_SETTINGS" bun --print 'JSON.parse(process.env.DEPLOY_SETTINGS).caddyBinary ?? ""')
 
           SERVICE_USER=$(SERVICE_USER="$SERVICE_USER" bun --eval '
