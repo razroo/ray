@@ -667,6 +667,70 @@ test("durable inference queue persists bounded JSON-safe job error details", asy
   }
 });
 
+test("durable inference queue snapshots scheduled inference retries", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-retry-snapshot-"));
+
+  try {
+    const config = mergeConfig(createDefaultConfig("tiny"), {
+      asyncQueue: {
+        enabled: true,
+        storageDir,
+        pollIntervalMs: 5_000,
+        dispatchConcurrency: 1,
+        maxAttempts: 2,
+        callbackTimeoutMs: 500,
+        maxCallbackAttempts: 2,
+      },
+      model: {
+        adapter: {
+          kind: "mock",
+          latencyMs: 5,
+        },
+      },
+    });
+    const runtime = {
+      config,
+      infer: async () => {
+        throw new RayError("backend is still recovering", {
+          code: "provider_timeout",
+          status: 504,
+        });
+      },
+    } as unknown as ReturnType<typeof createRayRuntime>;
+    const logger = new Logger("test", "error");
+    const queue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+    });
+    const queuedJob = await queue.enqueue({
+      input: "retry after provider timeout",
+    });
+
+    await queue.start();
+    const snapshot = await waitFor(
+      async () => queue.snapshot(),
+      (value) => value.jobRetryScheduled === 1,
+    );
+    const retryingJob = await queue.get(queuedJob.id);
+
+    assert.equal(retryingJob?.status, "queued");
+    assert.equal(retryingJob?.attempts, 1);
+    assert.equal(snapshot.retryScheduled, 1);
+    assert.equal(snapshot.jobRetryScheduled, 1);
+    assert.equal(snapshot.callbackRetryScheduled, 0);
+    assert.equal(snapshot.queued, 0);
+    assert.equal(snapshot.running, 0);
+    assert.equal(snapshot.failed, 0);
+
+    await queue.stop();
+
+    assert.equal(queue.snapshot().retryScheduled, 0);
+  } finally {
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});
+
 test("durable inference queue skips malformed persisted jobs during recovery", async () => {
   const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-"));
 
@@ -1830,7 +1894,14 @@ test("durable inference queue does not prune expired jobs while callbacks are pe
         (error as { code?: string }).code === "async_queue_full",
     );
 
-    assert.equal(queue.snapshot().totalJobs, 1);
+    const snapshot = await waitFor(
+      async () => queue.snapshot(),
+      (value) => value.callbackRetryScheduled === 1,
+    );
+    assert.equal(snapshot.totalJobs, 1);
+    assert.equal(snapshot.retryScheduled, 1);
+    assert.equal(snapshot.jobRetryScheduled, 0);
+    assert.equal(snapshot.callbackRetryScheduled, 1);
 
     await queue.stop();
   } finally {

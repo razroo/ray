@@ -328,6 +328,9 @@ export interface AsyncQueueSnapshot {
   callbackPending: number;
   callbackDelivered: number;
   callbackFailed: number;
+  retryScheduled: number;
+  jobRetryScheduled: number;
+  callbackRetryScheduled: number;
   totalJobs: number;
   maxJobs: number;
   jobsRatio: number;

@@ -178,6 +178,9 @@ function attachAsyncQueueMetrics(
   metrics.gauges["async_queue.callback_pending"] = snapshot.callbackPending;
   metrics.gauges["async_queue.callback_delivered"] = snapshot.callbackDelivered;
   metrics.gauges["async_queue.callback_failed"] = snapshot.callbackFailed;
+  metrics.gauges["async_queue.retry_scheduled"] = snapshot.retryScheduled;
+  metrics.gauges["async_queue.job_retry_scheduled"] = snapshot.jobRetryScheduled;
+  metrics.gauges["async_queue.callback_retry_scheduled"] = snapshot.callbackRetryScheduled;
   metrics.gauges["async_queue.total_jobs"] = snapshot.totalJobs;
   metrics.gauges["async_queue.max_jobs"] = snapshot.maxJobs;
   metrics.gauges["async_queue.jobs_ratio"] = snapshot.jobsRatio;

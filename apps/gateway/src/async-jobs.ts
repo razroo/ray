@@ -88,6 +88,11 @@ interface ActiveTaskContext {
   jobId: string;
 }
 
+interface ScheduledRetry {
+  kind: "job" | "callback";
+  jobId: string;
+}
+
 interface RecoveryRetentionResult {
   retained: boolean;
   displaced?: InferenceJobRecord;
@@ -1060,7 +1065,7 @@ export class DurableInferenceQueue {
   private readonly jobs = new Map<string, InferenceJobRecord>();
   private readonly queuedJobIds: string[] = [];
   private readonly pendingCallbackJobIds: string[] = [];
-  private readonly retryTimers = new Set<NodeJS.Timeout>();
+  private readonly retryTimers = new Map<NodeJS.Timeout, ScheduledRetry>();
   private readonly activeTasks = new Set<Promise<void>>();
   private readonly fetchImpl: typeof fetch;
   private readonly lookupImpl: CallbackAddressLookup;
@@ -1098,7 +1103,7 @@ export class DurableInferenceQueue {
   async stop(options: StopDurableInferenceQueueOptions = {}): Promise<void> {
     this.started = false;
 
-    for (const timer of this.retryTimers) {
+    for (const timer of this.retryTimers.keys()) {
       clearTimeout(timer);
     }
     this.retryTimers.clear();
@@ -1119,6 +1124,8 @@ export class DurableInferenceQueue {
     let callbackPending = 0;
     let callbackDelivered = 0;
     let callbackFailed = 0;
+    let jobRetryScheduled = 0;
+    let callbackRetryScheduled = 0;
 
     for (const job of this.jobs.values()) {
       if (job.status === "running") {
@@ -1146,6 +1153,14 @@ export class DurableInferenceQueue {
       }
     }
 
+    for (const retry of this.retryTimers.values()) {
+      if (retry.kind === "job") {
+        jobRetryScheduled += 1;
+      } else {
+        callbackRetryScheduled += 1;
+      }
+    }
+
     const jobsRatio = Number(
       (this.jobs.size / Math.max(1, this.options.config.maxJobs)).toFixed(4),
     );
@@ -1160,6 +1175,9 @@ export class DurableInferenceQueue {
       callbackPending,
       callbackDelivered,
       callbackFailed,
+      retryScheduled: jobRetryScheduled + callbackRetryScheduled,
+      jobRetryScheduled,
+      callbackRetryScheduled,
       totalJobs: this.jobs.size,
       maxJobs: this.options.config.maxJobs,
       jobsRatio,
@@ -1758,7 +1776,7 @@ export class DurableInferenceQueue {
       this.requestDrain();
     }, this.options.config.pollIntervalMs);
 
-    this.retryTimers.add(timer);
+    this.retryTimers.set(timer, { kind, jobId });
   }
 
   private enqueueJobId(jobId: string): void {

@@ -1158,6 +1158,9 @@ test("gateway metrics endpoint exposes async queue saturation", async (t) => {
   assert.equal(body.gauges["async_queue.callback_pending"], 0);
   assert.equal(body.gauges["async_queue.callback_delivered"], 0);
   assert.equal(body.gauges["async_queue.callback_failed"], 0);
+  assert.equal(body.gauges["async_queue.retry_scheduled"], 0);
+  assert.equal(body.gauges["async_queue.job_retry_scheduled"], 0);
+  assert.equal(body.gauges["async_queue.callback_retry_scheduled"], 0);
   assert.equal(body.gauges["async_queue.total_jobs"], 0);
   assert.equal(body.gauges["async_queue.max_jobs"], 3);
   assert.equal(body.gauges["async_queue.jobs_ratio"], 0);
@@ -1177,6 +1180,9 @@ test("gateway metrics endpoint exposes async queue saturation", async (t) => {
   assert.equal(health.asyncQueue?.failed, 0);
   assert.equal(health.asyncQueue?.callbackDelivered, 0);
   assert.equal(health.asyncQueue?.callbackFailed, 0);
+  assert.equal(health.asyncQueue?.retryScheduled, 0);
+  assert.equal(health.asyncQueue?.jobRetryScheduled, 0);
+  assert.equal(health.asyncQueue?.callbackRetryScheduled, 0);
   assert.equal(health.asyncQueue?.availableStorageMiB, 256);
   assert.equal(health.asyncQueue?.storageReserveRatio, 4);
   assert.equal(health.asyncQueue?.storageLow, false);
