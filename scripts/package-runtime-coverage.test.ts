@@ -253,6 +253,76 @@ test("validatePackageRuntimeCoverage rejects malformed direct paths before scann
   );
 });
 
+test("validatePackageRuntimeCoverage requires root export type conditions", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-export-types-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const rootPackageJson = path.join(tempDir, "package.json");
+  const packageDir = path.join(tempDir, "packages", "sdk");
+  await mkdir(packageDir, { recursive: true });
+  const sdkPackageJson = path.join(packageDir, "package.json");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify(
+      {
+        name: "ray-test",
+        packageManager: "bun@1.3.9",
+        engines: {
+          bun: ">=1.3.0",
+        },
+        type: "module",
+        types: "./dist/index.d.ts",
+        exports: {
+          ".": "./dist/index.js",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    sdkPackageJson,
+    JSON.stringify(
+      {
+        name: "@razroo/ray-sdk-test",
+        type: "module",
+        types: "./dist/index.d.ts",
+        exports: {
+          ".": {
+            default: "./dist/index.js",
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson, sdkPackageJson],
+  });
+  const diagnostics = summary.results.flatMap((result) => result.diagnostics);
+
+  assert.equal(summary.ok, false);
+  assert.ok(
+    diagnostics.some(
+      (diagnostic) =>
+        diagnostic.code === "package_root_export_must_be_object_for_types" &&
+        diagnostic.packagePath === rootPackageJson,
+    ),
+  );
+  assert.ok(
+    diagnostics.some(
+      (diagnostic) =>
+        diagnostic.code === "package_root_export_types_missing" &&
+        diagnostic.packagePath === sdkPackageJson,
+    ),
+  );
+});
+
 test("validatePackageRuntimeCoverage requires config and Bun cache storage preflight coverage", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-storage-"));
   t.after(async () => {

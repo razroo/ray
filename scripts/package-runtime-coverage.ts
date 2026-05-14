@@ -709,6 +709,55 @@ function validateScripts(
   return diagnostics;
 }
 
+function validatePackageExportTypes(
+  packageJsonPath: string,
+  parsedPackage: Record<string, unknown>,
+): PackageRuntimeCoverageDiagnostic[] {
+  const types = parsedPackage.types;
+  const exports = parsedPackage.exports;
+
+  if (typeof types !== "string" || exports === undefined) {
+    return [];
+  }
+
+  const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
+  if (typeof exports !== "object" || exports === null || Array.isArray(exports)) {
+    diagnostics.push({
+      level: "error",
+      code: "package_exports_must_be_object_for_types",
+      packagePath: packageJsonPath,
+      message:
+        "Package manifests with top-level types must use an object exports map so declaration entrypoints can be checked.",
+    });
+    return diagnostics;
+  }
+
+  const rootExport = (exports as Record<string, unknown>)["."];
+  if (typeof rootExport !== "object" || rootExport === null || Array.isArray(rootExport)) {
+    diagnostics.push({
+      level: "error",
+      code: "package_root_export_must_be_object_for_types",
+      packagePath: packageJsonPath,
+      message:
+        'Package manifests with top-level types must expose exports["."] as an object with a matching types condition.',
+    });
+    return diagnostics;
+  }
+
+  const rootExportTypes = (rootExport as Record<string, unknown>).types;
+  if (rootExportTypes !== types) {
+    diagnostics.push({
+      level: "error",
+      code: "package_root_export_types_missing",
+      packagePath: packageJsonPath,
+      message:
+        'Package manifests with top-level types must set exports["."].types to the same declaration path so TypeScript consumers resolve package exports consistently.',
+    });
+  }
+
+  return diagnostics;
+}
+
 function isLocalHealthCurl(line: string): boolean {
   return (
     /\bcurl\b/.test(line) &&
@@ -2890,6 +2939,7 @@ export async function validatePackageRuntimeCoverage(
       }
       const diagnostics = [
         ...validateRootPackageManager(cwd, packageJsonPath, parsedPackage),
+        ...validatePackageExportTypes(packageJsonPath, parsedPackage),
         ...validateScripts(packageJsonPath, scripts),
       ];
 
