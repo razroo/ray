@@ -476,11 +476,32 @@ test("renderCaddyfile applies body size and health checks", () => {
 
   assert.match(caddyfile, /^ray\.example\.com \{/);
   assert.match(caddyfile, /max_size 64000/);
+  assert.match(caddyfile, /reverse_proxy 127\.0\.0\.1:3000/);
   assert.match(caddyfile, /health_uri \/livez/);
   assert.match(caddyfile, /dial_timeout 5s/);
   assert.match(caddyfile, /response_header_timeout 25s/);
   assert.match(caddyfile, /read_timeout 25s/);
   assert.match(caddyfile, /write_timeout 10s/);
+});
+
+test("renderCaddyfile can target explicit loopback gateway hosts", () => {
+  const ipv4Caddyfile = renderCaddyfile({
+    domain: "ray.example.com",
+    upstreamHost: "127.0.0.2",
+    upstreamPort: 3000,
+    requestBodyLimitBytes: 64_000,
+    upstreamTimeoutMs: 25_000,
+  });
+  const ipv6Caddyfile = renderCaddyfile({
+    domain: "ray.example.com",
+    upstreamHost: "::1",
+    upstreamPort: 3000,
+    requestBodyLimitBytes: 64_000,
+    upstreamTimeoutMs: 25_000,
+  });
+
+  assert.match(ipv4Caddyfile, /reverse_proxy 127\.0\.0\.2:3000/);
+  assert.match(ipv6Caddyfile, /reverse_proxy \[::1\]:3000/);
 });
 
 test("renderCaddyfile rejects unsafe site addresses and numeric limits", () => {
@@ -539,6 +560,30 @@ test("renderCaddyfile rejects unsafe site addresses and numeric limits", () => {
         upstreamTimeoutMs: 25_000,
       }),
     /at most 512 bytes/,
+  );
+
+  assert.throws(
+    () =>
+      renderCaddyfile({
+        domain: "ray.example.com",
+        upstreamHost: "10.0.0.2",
+        upstreamPort: 3000,
+        requestBodyLimitBytes: 64_000,
+        upstreamTimeoutMs: 25_000,
+      }),
+    /Caddy upstream host must be localhost or a loopback IP literal/,
+  );
+
+  assert.throws(
+    () =>
+      renderCaddyfile({
+        domain: "ray.example.com",
+        upstreamHost: "127.0.0.1\n",
+        upstreamPort: 3000,
+        requestBodyLimitBytes: 64_000,
+        upstreamTimeoutMs: 25_000,
+      }),
+    /Caddy upstream host must be a loopback host without whitespace or controls/,
   );
 
   assert.throws(
@@ -1377,6 +1422,31 @@ test("renderDeploymentBundle includes llama.cpp service for generic 1b profiles"
     bundle.llamaCppService ?? "",
     /LLAMA_ARG_MODEL=\/var\/lib\/ray\/models\/local-1b-q4\.gguf/,
   );
+});
+
+test("renderDeploymentBundle points Caddy at the configured loopback gateway host", async (t) => {
+  const tempDir = await mkRayDeployTempDir("ray-deploy-caddy-upstream-");
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = mergeConfig(createDefaultConfig("vps"), {
+    server: {
+      host: "::1",
+      port: 3100,
+    },
+  });
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2), "utf8");
+
+  const bundle = await renderDeploymentBundle({
+    cwd: ".",
+    configPath,
+    user: "ray",
+    domain: "ray.example.com",
+  });
+
+  assert.match(bundle.caddyfile, /reverse_proxy \[::1\]:3100/);
 });
 
 test("loadAndDiagnoseDeployment uses the config memory class without deploy overrides", async (t) => {

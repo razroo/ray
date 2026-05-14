@@ -31,6 +31,7 @@ export interface SystemdServiceOptions {
 
 export interface ReverseProxyOptions {
   domain: string;
+  upstreamHost?: string;
   upstreamPort: number;
   requestBodyLimitBytes: number;
   upstreamTimeoutMs: number;
@@ -331,6 +332,7 @@ const CADDY_WRITE_TIMEOUT_MS = 10_000;
 const MAX_CADDY_REQUEST_BODY_LIMIT_BYTES = 1_048_576;
 const MAX_CADDY_UPSTREAM_TIMEOUT_MS = 120_000 + CADDY_UPSTREAM_TIMEOUT_GRACE_MS;
 const MAX_CADDY_SITE_ADDRESS_BYTES = 512;
+const DEFAULT_CADDY_UPSTREAM_HOST = "127.0.0.1";
 const GATEWAY_MEMORY_HIGH_HEADROOM_MIB = 128;
 const GATEWAY_MEMORY_MAX_HEADROOM_MIB = 384;
 const GATEWAY_MEMORY_SWAP_MAX_MIB = 128;
@@ -767,6 +769,10 @@ function inferRayStateDirectory(config: RayConfig): string | undefined {
   return undefined;
 }
 
+function resolveCaddyGatewayUpstreamHost(config: RayConfig): string {
+  return isLoopbackHost(config.server.host) ? config.server.host : DEFAULT_CADDY_UPSTREAM_HOST;
+}
+
 function readNonEmptyEnvValue(value: string | undefined): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
@@ -1108,6 +1114,23 @@ function assertTcpPort(value: unknown, label: string): asserts value is number {
 
 function assertCaddyPort(value: unknown): asserts value is number {
   assertTcpPort(value, "upstreamPort");
+}
+
+function formatCaddyUpstreamHost(value: string): string {
+  assertNonEmptyString(value, "Caddy upstream host");
+
+  if (value.trim() !== value || hasUnsafeCaddySiteAddressCharacter(value)) {
+    throw new Error("Caddy upstream host must be a loopback host without whitespace or controls");
+  }
+
+  const host = normalizeHostLiteral(value);
+  const hostVersion = isIP(host);
+
+  if (!isLoopbackHost(host) || (hostVersion === 0 && host !== "localhost")) {
+    throw new Error("Caddy upstream host must be localhost or a loopback IP literal");
+  }
+
+  return hostVersion === 6 ? `[${host}]` : host;
 }
 
 function formatCaddyDurationMs(value: number, label: string): string {
@@ -2278,6 +2301,7 @@ export function renderCaddyfile(options: ReverseProxyOptions): string {
   assertOptionsObject(options, "Caddyfile options");
 
   const domain = normalizeCaddySiteAddress(options.domain);
+  const upstreamHost = formatCaddyUpstreamHost(options.upstreamHost ?? DEFAULT_CADDY_UPSTREAM_HOST);
   assertCaddyPort(options.upstreamPort);
   assertPositiveIntegerAtMost(
     options.requestBodyLimitBytes,
@@ -2303,7 +2327,7 @@ export function renderCaddyfile(options: ReverseProxyOptions): string {
     Referrer-Policy no-referrer
     -Server
   }
-  reverse_proxy 127.0.0.1:${options.upstreamPort} {
+  reverse_proxy ${upstreamHost}:${options.upstreamPort} {
     health_uri /livez
     health_interval 15s
     transport http {
@@ -4606,6 +4630,7 @@ export async function renderDeploymentBundle(options: {
     service: renderedSystemd.service,
     caddyfile: renderCaddyfile({
       domain: options.domain,
+      upstreamHost: resolveCaddyGatewayUpstreamHost(inspected.config),
       upstreamPort: inspected.config.server.port,
       requestBodyLimitBytes: inspected.config.server.requestBodyLimitBytes,
       upstreamTimeoutMs:
@@ -5150,6 +5175,7 @@ async function collectCaddyConfigPreflight(
   try {
     caddyfile = renderCaddyfile({
       domain,
+      upstreamHost: resolveCaddyGatewayUpstreamHost(config),
       upstreamPort: config.server.port,
       requestBodyLimitBytes: config.server.requestBodyLimitBytes,
       upstreamTimeoutMs: config.scheduler.requestTimeoutMs + CADDY_UPSTREAM_TIMEOUT_GRACE_MS,
