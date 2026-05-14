@@ -942,6 +942,53 @@ function assertPersistedInferenceResult(value: unknown): void {
   }
 }
 
+function assertPersistedJobStatusPayloads(
+  value: Record<string, unknown>,
+  status: InferenceJobRecord["status"],
+): void {
+  if (isTerminalJobStatus(status)) {
+    if (value.completedAt === undefined) {
+      throw new PersistedJobValidationError(
+        "terminal persisted async jobs must include completedAt",
+      );
+    }
+  } else if (value.completedAt !== undefined) {
+    throw new PersistedJobValidationError(
+      "non-terminal persisted async jobs must not include completedAt",
+    );
+  }
+
+  if (status === "succeeded") {
+    if (value.result === undefined) {
+      throw new PersistedJobValidationError("succeeded persisted async jobs must include result");
+    }
+
+    if (value.error !== undefined) {
+      throw new PersistedJobValidationError(
+        "succeeded persisted async jobs must not include error",
+      );
+    }
+    return;
+  }
+
+  if (value.result !== undefined) {
+    throw new PersistedJobValidationError(
+      "non-succeeded persisted async jobs must not include result",
+    );
+  }
+
+  if (status === "failed") {
+    if (value.error === undefined) {
+      throw new PersistedJobValidationError("failed persisted async jobs must include error");
+    }
+    return;
+  }
+
+  if (status === "running" && value.error !== undefined) {
+    throw new PersistedJobValidationError("running persisted async jobs must not include error");
+  }
+}
+
 function assertPersistedCallbackState(value: unknown): void {
   if (value === undefined) {
     return;
@@ -1055,6 +1102,7 @@ function validatePersistedJobRecord(value: unknown, expectedJobId?: string): Inf
   assertOptionalTimestamp(value.completedAt, "persisted async job completedAt");
   assertPersistedInferenceResult(value.result);
   assertPersistedJobError(value.error);
+  assertPersistedJobStatusPayloads(value, value.status);
   assertPersistedCallbackState(value.callback);
 
   return value as unknown as InferenceJobRecord;

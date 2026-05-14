@@ -1314,6 +1314,70 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
       }),
     );
     await writeFile(
+      join(jobsDir, "job_succeeded_without_result.json"),
+      JSON.stringify({
+        id: "job_succeeded_without_result",
+        status: "succeeded",
+        request: {
+          input: "succeeded persisted job without result",
+        },
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        attempts: 1,
+        maxAttempts: 2,
+      }),
+    );
+    await writeFile(
+      join(jobsDir, "job_succeeded_with_error.json"),
+      JSON.stringify({
+        id: "job_succeeded_with_error",
+        status: "succeeded",
+        request: {
+          input: "succeeded persisted job with stale error",
+        },
+        result: persistedInferenceResult("done"),
+        error: {
+          message: "stale failure",
+        },
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        attempts: 1,
+        maxAttempts: 2,
+      }),
+    );
+    await writeFile(
+      join(jobsDir, "job_failed_without_error.json"),
+      JSON.stringify({
+        id: "job_failed_without_error",
+        status: "failed",
+        request: {
+          input: "failed persisted job without error",
+        },
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        attempts: 1,
+        maxAttempts: 2,
+      }),
+    );
+    await writeFile(
+      join(jobsDir, "job_queued_with_result.json"),
+      JSON.stringify({
+        id: "job_queued_with_result",
+        status: "queued",
+        request: {
+          input: "queued persisted job with stale result",
+        },
+        result: persistedInferenceResult("done"),
+        createdAt: now,
+        updatedAt: now,
+        attempts: 0,
+        maxAttempts: 2,
+      }),
+    );
+    await writeFile(
       join(jobsDir, "job_result_good.json"),
       JSON.stringify({
         id: "job_result_good",
@@ -1476,6 +1540,10 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
         completedAt: now,
         attempts: 1,
         maxAttempts: 2,
+        error: {
+          message: "callback URL was rejected",
+          code: "invalid_request",
+        },
         callback: {
           url: `https://example.com/${"x".repeat(2_048)}`,
           status: "pending",
@@ -1621,6 +1689,10 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.equal(await queue.get("job_other"), undefined);
     assert.equal(await queue.get("job_id_too_long"), undefined);
     assert.equal(await queue.get("job_attempts_too_large"), undefined);
+    assert.equal(await queue.get("job_succeeded_without_result"), undefined);
+    assert.equal(await queue.get("job_succeeded_with_error"), undefined);
+    assert.equal(await queue.get("job_failed_without_error"), undefined);
+    assert.equal(await queue.get("job_queued_with_result"), undefined);
     assert.equal(await queue.get("job_result_output_too_long"), undefined);
     assert.equal(await queue.get("job_result_extra_field"), undefined);
     assert.equal(await queue.get("job_result_bad_provider_diagnostics"), undefined);
@@ -1651,6 +1723,10 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.equal(entries.includes("job_mismatch.json"), false);
     assert.equal(entries.includes("job_id_too_long.json"), false);
     assert.equal(entries.includes("job_attempts_too_large.json"), false);
+    assert.equal(entries.includes("job_succeeded_without_result.json"), false);
+    assert.equal(entries.includes("job_succeeded_with_error.json"), false);
+    assert.equal(entries.includes("job_failed_without_error.json"), false);
+    assert.equal(entries.includes("job_queued_with_result.json"), false);
     assert.equal(entries.includes("job_result_output_too_long.json"), false);
     assert.equal(entries.includes("job_result_extra_field.json"), false);
     assert.equal(entries.includes("job_result_bad_provider_diagnostics.json"), false);
@@ -1772,6 +1848,7 @@ test("durable inference queue enforces retained job cap during recovery", async 
         request: {
           input: "terminal job should overflow",
         },
+        result: persistedInferenceResult("terminal job should overflow"),
         createdAt: terminalAt,
         updatedAt: terminalAt,
         completedAt: terminalAt,
@@ -2622,6 +2699,7 @@ test("durable inference queue prunes expired completed jobs from the retained st
         request: {
           input: "Already completed",
         },
+        result: persistedInferenceResult("Already completed"),
         createdAt: expiredAt,
         updatedAt: expiredAt,
         completedAt: expiredAt,
