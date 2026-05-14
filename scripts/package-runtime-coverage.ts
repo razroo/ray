@@ -70,6 +70,10 @@ const workflowReleaseMainAncestryPattern =
 const workflowIdTokenWritePattern = /^\s*id-token:\s*write\s*$/m;
 const workflowNpmTokenPattern = /NODE_AUTH_TOKEN:\s*\$\{\{\s*secrets\.NPM_TOKEN\s*\}\}/;
 const workflowLightweightReleaseTagCommentPattern = /^\s*#\s*git\s+tag\s+"\$TAG"(?:\s|$)/;
+const releaseTagVariablePattern = /\$(?:\{TAG(?:_(?:CORE|SDK))?\}|TAG(?:_(?:CORE|SDK))?)/;
+const releaseDocGitTagCommandPattern = /^git\s+tag\s+/;
+const releaseDocAnnotatedGitTagCommandPattern = /^git\s+tag\s+(?:-a|--annotate)\b/;
+const releaseDocNonAtomicTagPushPattern = /^git\s+push\s+origin\b/;
 const repoOwnedVpsWorkflowDocPattern =
   /\b(?:GitHub VPS workflow|workflow bootstrap|workflow appends|RAY_ENV_FILE_CONTENTS|repository variables|The deploy workflow)\b/;
 
@@ -2598,6 +2602,32 @@ async function validateRuntimeDoc(
         line: index + 1,
         message:
           "Runtime docs must not tell operators to use pnpm/yarn/npx or npm install/run/test. Use bun, bunx, or a direct binary instead.",
+      });
+    }
+
+    if (
+      releaseTagVariablePattern.test(line) &&
+      releaseDocGitTagCommandPattern.test(line) &&
+      !releaseDocAnnotatedGitTagCommandPattern.test(line)
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "runtime_doc_release_lightweight_tag_command",
+        docPath,
+        line: index + 1,
+        message:
+          "Runtime release docs must use annotated git tags in executable examples so operators do not cut lightweight package release tags.",
+      });
+    }
+
+    if (releaseTagVariablePattern.test(line) && releaseDocNonAtomicTagPushPattern.test(line)) {
+      diagnostics.push({
+        level: "error",
+        code: "runtime_doc_release_tag_push_not_atomic",
+        docPath,
+        line: index + 1,
+        message:
+          "Runtime release docs must push package release tags with git push --atomic so linked package tags are not partially published.",
       });
     }
 

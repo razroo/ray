@@ -1148,6 +1148,64 @@ test("validatePackageRuntimeCoverage rejects lightweight release tag workflow co
   );
 });
 
+test("validatePackageRuntimeCoverage rejects unsafe release tag doc commands", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-release-doc-tags-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const rootPackageJson = path.join(tempDir, "package.json");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify(
+      {
+        name: "ray-test",
+        packageManager: "bun@1.3.9",
+        engines: {
+          bun: ">=1.3.0",
+        },
+        scripts: {},
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    path.join(tempDir, "README.md"),
+    [
+      "# Ray test",
+      "",
+      "```bash",
+      'TAG_CORE="core-v1.2.3"',
+      'TAG_SDK="sdk-v1.2.3"',
+      'git tag "$TAG_CORE"',
+      'git push origin "$TAG_CORE" "$TAG_SDK"',
+      "```",
+      "",
+    ].join("\n"),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson],
+  });
+  const diagnostics = summary.results.flatMap((result) => result.diagnostics);
+
+  assert.equal(summary.ok, false);
+  assert.ok(
+    diagnostics.some(
+      (diagnostic) =>
+        diagnostic.code === "runtime_doc_release_lightweight_tag_command" && diagnostic.line === 6,
+    ),
+  );
+  assert.ok(
+    diagnostics.some(
+      (diagnostic) =>
+        diagnostic.code === "runtime_doc_release_tag_push_not_atomic" && diagnostic.line === 7,
+    ),
+  );
+});
+
 test("validatePackageRuntimeCoverage requires bounded quality release gate workflow commands", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-quality-timeouts-"));
   t.after(async () => {
