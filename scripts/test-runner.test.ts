@@ -16,6 +16,7 @@ import {
   resolveTestCommandTimeoutMs,
   runTestCli,
   runTestCommand,
+  runTestRunnerCli,
 } from "./test.mjs";
 
 function relativePaths(root: string, files: string[]): string[] {
@@ -259,6 +260,48 @@ test("runTestCli rejects malformed direct options before dispatch", async () => 
     () => runTestCli({ commandTimeoutMs: MAX_TEST_COMMAND_TIMEOUT_MS + 1 }),
     /commandTimeoutMs must be a positive safe integer no greater than 3600000/,
   );
+});
+
+test("runTestRunnerCli rejects malformed direct io and options before dispatch", async () => {
+  await assert.rejects(
+    () => runTestRunnerCli({}, null as unknown as never),
+    /test runner cli io\.stderr\.write must be a function/,
+  );
+  await assert.rejects(
+    () =>
+      runTestRunnerCli({}, {
+        stderr: {},
+      } as unknown as never),
+    /test runner cli io\.stderr\.write must be a function/,
+  );
+  await assert.rejects(
+    () => runTestRunnerCli(null as unknown as never, { stderr: { write() {} } }),
+    /test runner cli options must be an object/,
+  );
+});
+
+test("runTestRunnerCli reports runner failures to injected stderr", async () => {
+  const stderr: string[] = [];
+
+  const code = await runTestRunnerCli(
+    {
+      root: " /srv/ray",
+      diskPreflight: async () => {
+        throw new Error("disk preflight should not run");
+      },
+    },
+    {
+      stderr: {
+        write(message: string) {
+          stderr.push(message);
+          return true;
+        },
+      },
+    },
+  );
+
+  assert.equal(code, 1);
+  assert.match(stderr.join(""), /root must be a path without surrounding whitespace/);
 });
 
 test("runTestCli ignores inherited environment overrides", async (t) => {

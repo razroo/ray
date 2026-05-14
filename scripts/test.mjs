@@ -171,6 +171,12 @@ function assertTestCommandIo(io) {
   assertStderrIo(io, "test command");
 }
 
+function assertTestRunnerCliOptions(options) {
+  if (!isRecord(options)) {
+    throw new Error("test runner cli options must be an object");
+  }
+}
+
 function assertTestSkipNames(skipNames) {
   if (!(skipNames instanceof Set)) {
     throw new Error("skipNames must be a Set");
@@ -616,11 +622,18 @@ export async function runTestCli(options = {}) {
   return code;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+export async function runTestRunnerCli(options = {}, io = process) {
+  assertStderrIo(io, "test runner cli");
+  assertTestRunnerCliOptions(options);
+
   try {
-    process.exitCode = await runTestCli();
+    return await runTestCli({ ...options, io });
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 1;
+    io.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
   }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = await runTestRunnerCli();
 }
