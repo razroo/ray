@@ -68,6 +68,24 @@ const expectedRequestRejectionCodes = new Set([
   "async_queue_full",
   "async_queue_storage_low",
 ]);
+const unsafeGatewayOptionKeys = new Set(["__proto__", "constructor", "prototype"]);
+const createGatewayHandlerOptionKeys = new Set([
+  "config",
+  "runtime",
+  "jobQueue",
+  "logger",
+  "env",
+  "rateLimiter",
+  "warmupSnapshot",
+  "httpResourceSnapshot",
+]);
+const startGatewayOptionKeys = new Set([
+  ...createGatewayHandlerOptionKeys,
+  "configPath",
+  "warmupRetry",
+]);
+const gatewayWarmupRetryOptionKeys = new Set(["initialDelayMs", "maxDelayMs"]);
+const stopGatewayOptionKeys = new Set(["signal", "timeoutMs"]);
 const acknowledgedExpectContinueRequests = new WeakSet<IncomingMessage>();
 
 interface GatewayHttpParserRejection {
@@ -143,6 +161,119 @@ export interface StartGatewayOptions extends CreateGatewayHandlerOptions {
 export interface StopGatewayOptions {
   signal?: NodeJS.Signals;
   timeoutMs?: number;
+}
+
+function assertGatewayOptionsObject(
+  value: unknown,
+  label: string,
+): asserts value is Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+}
+
+function assertGatewayOptionKeys(
+  value: object,
+  label: string,
+  allowedKeys: ReadonlySet<string>,
+): void {
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") {
+      throw new Error(`${label} cannot include symbol option keys`);
+    }
+
+    if (unsafeGatewayOptionKeys.has(key)) {
+      throw new Error(`${label} cannot include unsafe option "${key}"`);
+    }
+
+    if (!allowedKeys.has(key)) {
+      throw new Error(`${label} contains unsupported option "${key}"`);
+    }
+  }
+}
+
+function assertOptionalGatewayObject(value: unknown, label: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  assertGatewayOptionsObject(value, label);
+}
+
+function assertOptionalGatewayFunction(value: unknown, label: string): void {
+  if (value !== undefined && typeof value !== "function") {
+    throw new Error(`${label} must be a function`);
+  }
+}
+
+function assertGatewayHandlerDependencies(value: Record<string, unknown>): void {
+  assertGatewayOptionsObject(value.config, "config");
+  assertOptionalGatewayObject(value.runtime, "runtime");
+  assertOptionalGatewayObject(value.jobQueue, "jobQueue");
+  assertOptionalGatewayObject(value.logger, "logger");
+  assertOptionalGatewayObject(value.env, "env");
+  assertOptionalGatewayObject(value.rateLimiter, "rateLimiter");
+  assertOptionalGatewayFunction(value.warmupSnapshot, "warmupSnapshot");
+  assertOptionalGatewayFunction(value.httpResourceSnapshot, "httpResourceSnapshot");
+}
+
+function assertCreateGatewayHandlerOptions(
+  value: unknown,
+  label: string,
+): asserts value is CreateGatewayHandlerOptions {
+  assertGatewayOptionsObject(value, label);
+  assertGatewayOptionKeys(value, label, createGatewayHandlerOptionKeys);
+  assertGatewayHandlerDependencies(value);
+}
+
+function assertOptionalGatewayConfigPath(value: unknown): asserts value is string | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "string") {
+    throw new Error("configPath must be a string");
+  }
+
+  assertConfigPathFlagValue(value, "configPath");
+}
+
+function assertWarmupRetryOptions(value: unknown): asserts value is GatewayWarmupRetryOptions {
+  assertGatewayOptionsObject(value, "warmupRetry");
+  assertGatewayOptionKeys(value, "warmupRetry", gatewayWarmupRetryOptionKeys);
+}
+
+function assertOptionalWarmupRetryOptions(
+  value: unknown,
+): asserts value is GatewayWarmupRetryOptions | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  assertWarmupRetryOptions(value);
+}
+
+function assertStartGatewayOptions(value: unknown): asserts value is StartGatewayOptions {
+  assertGatewayOptionsObject(value, "startGateway options");
+  assertGatewayOptionKeys(value, "startGateway options", startGatewayOptionKeys);
+  assertGatewayHandlerDependencies(value);
+  assertOptionalGatewayConfigPath(value.configPath);
+  assertOptionalWarmupRetryOptions(value.warmupRetry);
+}
+
+function assertStopGatewayOptions(value: unknown): asserts value is StopGatewayOptions {
+  assertGatewayOptionsObject(value, "stopGateway options");
+  assertGatewayOptionKeys(value, "stopGateway options", stopGatewayOptionKeys);
+
+  if (
+    value.signal !== undefined &&
+    (typeof value.signal !== "string" ||
+      value.signal.length === 0 ||
+      value.signal.length > 32 ||
+      !/^SIG[A-Z0-9]+$/.test(value.signal))
+  ) {
+    throw new Error("stopGateway signal must be a POSIX signal name");
+  }
 }
 
 function assertCliArgv(argv: unknown): asserts argv is string[] {
@@ -1572,6 +1703,8 @@ function buildRejectedRequestHeaders(
 }
 
 export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions) {
+  assertCreateGatewayHandlerOptions(options, "gateway handler options");
+
   const config = snapshotRayConfig(options.config);
   const handlerOptions: CreateGatewayHandlerOptions = { ...options, config };
   const runtime = options.runtime ?? createRayRuntime(config);
@@ -1926,6 +2059,8 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
 }
 
 export function createGatewayServer(options: CreateGatewayHandlerOptions): GatewayServer {
+  assertCreateGatewayHandlerOptions(options, "gateway server options");
+
   const config = snapshotRayConfig(options.config);
   const runtime = options.runtime ?? createRayRuntime(config);
   const logger =
@@ -2003,11 +2138,21 @@ export function createGatewayServer(options: CreateGatewayHandlerOptions): Gatew
 }
 
 export async function startGateway(options: StartGatewayOptions): Promise<GatewayServer> {
+  assertStartGatewayOptions(options);
+
   const config = snapshotRayConfig(options.config);
   const warmupRetry = resolveWarmupRetryOptions(options.warmupRetry);
   const gateway = createGatewayServer({
-    ...options,
     config,
+    ...(options.runtime !== undefined ? { runtime: options.runtime } : {}),
+    ...(options.jobQueue !== undefined ? { jobQueue: options.jobQueue } : {}),
+    ...(options.logger !== undefined ? { logger: options.logger } : {}),
+    ...(options.env !== undefined ? { env: options.env } : {}),
+    ...(options.rateLimiter !== undefined ? { rateLimiter: options.rateLimiter } : {}),
+    ...(options.warmupSnapshot !== undefined ? { warmupSnapshot: options.warmupSnapshot } : {}),
+    ...(options.httpResourceSnapshot !== undefined
+      ? { httpResourceSnapshot: options.httpResourceSnapshot }
+      : {}),
   });
 
   await gateway.jobQueue?.start();
@@ -2152,6 +2297,8 @@ export async function stopGateway(
   gateway: GatewayServer,
   options: StopGatewayOptions = {},
 ): Promise<void> {
+  assertStopGatewayOptions(options);
+
   const timeoutMs = resolveGatewayShutdownTimeoutMs(options.timeoutMs);
   const signal = options.signal ?? "SIGTERM";
   const startedAt = Date.now();

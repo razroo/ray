@@ -151,6 +151,48 @@ test("gateway bounds HTTP server socket and header resources for small VPS hosts
   assert.equal(gateway.server.maxHeadersCount, 64);
 });
 
+test("gateway rejects invalid direct helper options", async () => {
+  const config = createDefaultConfig("tiny");
+  const unsafeOptions = { config } as Record<string, unknown>;
+  Object.defineProperty(unsafeOptions, "__proto__", {
+    value: true,
+    enumerable: true,
+  });
+
+  assert.throws(
+    () => createGatewayRequestHandler(null as never),
+    /gateway handler options must be an object/,
+  );
+  assert.throws(
+    () => createGatewayRequestHandler({ config, extra: true } as never),
+    /gateway handler options contains unsupported option "extra"/,
+  );
+  assert.throws(
+    () => createGatewayRequestHandler(unsafeOptions as never),
+    /gateway handler options cannot include unsafe option "__proto__"/,
+  );
+  assert.throws(
+    () => createGatewayRequestHandler({ config, warmupSnapshot: true } as never),
+    /warmupSnapshot must be a function/,
+  );
+  assert.throws(
+    () => createGatewayServer({ config, warmupRetry: {} } as never),
+    /gateway server options contains unsupported option "warmupRetry"/,
+  );
+  await assert.rejects(
+    () => startGateway({ config, configPath: 42 } as never),
+    /configPath must be a string/,
+  );
+  await assert.rejects(
+    () => startGateway({ config, warmupRetry: null } as never),
+    /warmupRetry must be an object/,
+  );
+  await assert.rejects(
+    () => startGateway({ config, extra: true } as never),
+    /startGateway options contains unsupported option "extra"/,
+  );
+});
+
 test("gateway removes stale active request counters when sockets close", async (t) => {
   let releaseHealth: (() => void) | undefined;
   let healthStarted: (() => void) | undefined;
@@ -292,6 +334,18 @@ test("stopGateway rejects malformed direct shutdown timeouts", async () => {
     logger: new Logger("test", "error"),
   };
 
+  await assert.rejects(
+    () => stopGateway(gateway, null as never),
+    /stopGateway options must be an object/,
+  );
+  await assert.rejects(
+    () => stopGateway(gateway, { extra: true } as never),
+    /stopGateway options contains unsupported option "extra"/,
+  );
+  await assert.rejects(
+    () => stopGateway(gateway, { signal: 42 } as never),
+    /stopGateway signal must be a POSIX signal name/,
+  );
   await assert.rejects(
     () => stopGateway(gateway, { timeoutMs: 0 }),
     /stopGateway timeoutMs must be a positive safe integer less than or equal to 120000/,
@@ -468,6 +522,16 @@ test("gateway parseCliArgs rejects ambiguous or malformed options", () => {
 });
 
 test("startGateway rejects malformed warmup retry options before listening", async () => {
+  await assert.rejects(
+    () =>
+      startGateway({
+        config: createDefaultConfig("tiny"),
+        warmupRetry: {
+          extra: true,
+        } as never,
+      }),
+    /warmupRetry contains unsupported option "extra"/,
+  );
   await assert.rejects(
     () =>
       startGateway({
