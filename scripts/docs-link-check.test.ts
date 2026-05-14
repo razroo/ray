@@ -104,6 +104,14 @@ test("validateDocsLinks rejects malformed direct Markdown paths before reading",
       }),
     /markdownPaths\[0\] must be at most 4096 bytes/,
   );
+  await assert.rejects(
+    () =>
+      validateDocsLinks({
+        cwd: repoRoot,
+        markdownPaths: [path.join(path.dirname(repoRoot), "outside.md")],
+      }),
+    /markdownPaths\[0\] must stay inside cwd/,
+  );
 });
 
 test("validateDocsLinks reports missing and escaping local links", async (t) => {

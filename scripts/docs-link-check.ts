@@ -559,7 +559,11 @@ export async function validateDocsLinks(options: {
     ? options.markdownPaths
         .map((filePath, index) => {
           assertDocsPathValue(filePath, `markdownPaths[${index}]`);
-          return path.resolve(cwd, filePath);
+          const resolvedPath = path.resolve(cwd, filePath);
+          if (!isPathInside(cwd, resolvedPath)) {
+            throw new Error(`markdownPaths[${index}] must stay inside cwd`);
+          }
+          return resolvedPath;
         })
         .sort()
     : await collectMarkdownPaths(cwd);
