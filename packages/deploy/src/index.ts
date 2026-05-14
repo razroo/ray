@@ -311,6 +311,8 @@ const CADDY_VALIDATE_TIMEOUT_MS = 10_000;
 const CADDY_VALIDATE_MAX_BUFFER_BYTES = 64 * 1024;
 const LLAMA_CPP_BINARY_PROBE_TIMEOUT_MS = 10_000;
 const LLAMA_CPP_BINARY_PROBE_MAX_BUFFER_BYTES = 64 * 1024;
+const DEFAULT_DEPLOY_PROBE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const DEPLOY_PROBE_ENV_KEYS = ["LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TMP", "TEMP"] as const;
 const MAX_LLAMA_CPP_UNSUPPORTED_LAUNCH_FLAGS = 32;
 const HOST_PASSWD_PATH = "/etc/passwd";
 const HOST_GROUP_PATH = "/etc/group";
@@ -859,14 +861,49 @@ function snapshotDeploymentEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEn
   return snapshot;
 }
 
+function readOwnEnvString(env: NodeJS.ProcessEnv, key: string): string | undefined {
+  if (!Object.prototype.hasOwnProperty.call(env, key)) {
+    return undefined;
+  }
+
+  const value = env[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function isSafeDeployProbeEnvValue(value: string): boolean {
+  return value.length > 0 && !value.includes("\0");
+}
+
+export function buildDeploymentProbeEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  if (env === null || typeof env !== "object") {
+    throw new Error("env must be an object");
+  }
+
+  const probeEnv = Object.create(null) as NodeJS.ProcessEnv;
+  const pathValue = readOwnEnvString(env, "PATH");
+  probeEnv.PATH =
+    pathValue !== undefined && isSafeDeployProbeEnvValue(pathValue)
+      ? pathValue
+      : DEFAULT_DEPLOY_PROBE_PATH;
+
+  for (const key of DEPLOY_PROBE_ENV_KEYS) {
+    const value = readOwnEnvString(env, key);
+    if (value !== undefined && isSafeDeployProbeEnvValue(value)) {
+      probeEnv[key] = value;
+    }
+  }
+
+  return probeEnv;
+}
+
 export function buildSystemdAnalyzeVerifyEnv(
   unitDirectory: string,
   env: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-  const snapshot = snapshotDeploymentEnvironment(env);
-  const existingUnitPath = snapshot.SYSTEMD_UNIT_PATH;
+  const snapshot = buildDeploymentProbeEnv(env);
+  const existingUnitPath = readOwnEnvString(env, "SYSTEMD_UNIT_PATH");
   snapshot.SYSTEMD_UNIT_PATH =
-    typeof existingUnitPath === "string" && existingUnitPath.length > 0
+    existingUnitPath !== undefined && isSafeDeployProbeEnvValue(existingUnitPath)
       ? `${unitDirectory}${path.delimiter}${existingUnitPath}`
       : `${unitDirectory}${path.delimiter}`;
 
@@ -1634,6 +1671,7 @@ async function verifyChildProcessServiceIdentity(
           timeout: GATEWAY_RUNTIME_VERSION_TIMEOUT_MS,
           maxBuffer: GATEWAY_RUNTIME_VERSION_MAX_BUFFER_BYTES,
           windowsHide: true,
+          env: buildDeploymentProbeEnv(),
           ...serviceIdentity,
         },
         (error, stdout, stderr) => {
@@ -5110,6 +5148,7 @@ async function collectSystemdPreflight(
         timeout: SYSTEMCTL_VERSION_TIMEOUT_MS,
         maxBuffer: SYSTEMCTL_VERSION_MAX_BUFFER_BYTES,
         windowsHide: true,
+        env: buildDeploymentProbeEnv(),
       },
       (error, stdout, stderr) => {
         const output = `${stdout}\n${stderr}`.trim();
@@ -5256,6 +5295,7 @@ async function collectCaddyPreflight(
         timeout: CADDY_VERSION_TIMEOUT_MS,
         maxBuffer: CADDY_VERSION_MAX_BUFFER_BYTES,
         windowsHide: true,
+        env: buildDeploymentProbeEnv(),
       },
       (error, stdout, stderr) => {
         const output = `${stdout}\n${stderr}`.trim();
@@ -5299,6 +5339,7 @@ async function runCaddyValidate(
         timeout: CADDY_VALIDATE_TIMEOUT_MS,
         maxBuffer: CADDY_VALIDATE_MAX_BUFFER_BYTES,
         windowsHide: true,
+        env: buildDeploymentProbeEnv(),
       },
       (error, stdout, stderr) => {
         const output = `${stdout}\n${stderr}`.trim();
@@ -5663,6 +5704,7 @@ async function collectGatewayRuntimeVersionPreflight(
           timeout: GATEWAY_RUNTIME_VERSION_TIMEOUT_MS,
           maxBuffer: GATEWAY_RUNTIME_VERSION_MAX_BUFFER_BYTES,
           windowsHide: true,
+          env: buildDeploymentProbeEnv(),
           ...(serviceIdentity ? serviceIdentity : {}),
         },
         (error, stdout, stderr) => {
@@ -5794,6 +5836,7 @@ async function collectGatewayEntrypointImportPreflight(
         timeout: GATEWAY_ENTRYPOINT_IMPORT_TIMEOUT_MS,
         maxBuffer: GATEWAY_ENTRYPOINT_IMPORT_MAX_BUFFER_BYTES,
         windowsHide: true,
+        env: buildDeploymentProbeEnv(),
         ...(serviceIdentity ? serviceIdentity : {}),
       },
       (error, stdout, stderr) => {
@@ -5986,6 +6029,7 @@ async function collectLlamaCppBinaryProbePreflight(
         timeout: LLAMA_CPP_BINARY_PROBE_TIMEOUT_MS,
         maxBuffer: LLAMA_CPP_BINARY_PROBE_MAX_BUFFER_BYTES,
         windowsHide: true,
+        env: buildDeploymentProbeEnv(),
         ...(serviceIdentity ? serviceIdentity : {}),
       },
       (error, stdout, stderr) => {

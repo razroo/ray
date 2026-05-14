@@ -16,6 +16,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
 import {
+  buildDeploymentProbeEnv,
   buildLlamaCppEnvironment,
   buildSystemdAnalyzeVerifyEnv,
   diagnoseConfig,
@@ -51,6 +52,10 @@ const compatibleLlamaCppHelp = [
   "--cache-idle-slots",
   "--context-shift",
 ].join("\n");
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
 
 async function mkRayDeployTempDir(prefix: string): Promise<string> {
   // Linux CI checkouts usually live under /home, and tmpdir() is /tmp; both are
@@ -125,6 +130,7 @@ test("buildSystemdAnalyzeVerifyEnv ignores inherited unit path entries", () => {
     SYSTEMD_UNIT_PATH: "/inherited/systemd",
   }) as NodeJS.ProcessEnv;
   source.PATH = "/usr/bin";
+  source.RAY_API_KEYS = "client-secret";
   (source as Record<string, unknown>).COUNT = 7;
 
   const env = buildSystemdAnalyzeVerifyEnv(unitDirectory, source);
@@ -132,7 +138,36 @@ test("buildSystemdAnalyzeVerifyEnv ignores inherited unit path entries", () => {
   assert.equal(Object.getPrototypeOf(env), null);
   assert.equal(env.PATH, "/usr/bin");
   assert.equal(env.SYSTEMD_UNIT_PATH, `${unitDirectory}${delimiter}`);
+  assert.equal(env.RAY_API_KEYS, undefined);
   assert.equal("COUNT" in env, false);
+});
+
+test("buildDeploymentProbeEnv keeps external probe environments minimal", () => {
+  const source = Object.create({
+    PATH: "/inherited/bin",
+    RAY_API_KEYS: "inherited-secret",
+  }) as NodeJS.ProcessEnv;
+  source.PATH = "/usr/bin";
+  source.LANG = "C.UTF-8";
+  source.TMPDIR = "/tmp/ray";
+  source.TEMP = "bad\0value";
+  source.RAY_API_KEYS = "client-secret";
+  source.RAY_UPSTREAM_API_KEY = "upstream-secret";
+  source.HOME = "/root";
+  source.LD_PRELOAD = "/tmp/hook.so";
+
+  const env = buildDeploymentProbeEnv(source);
+
+  assert.equal(Object.getPrototypeOf(env), null);
+  assert.deepEqual(Object.keys(env).sort(), ["LANG", "PATH", "TMPDIR"]);
+  assert.equal(env.PATH, "/usr/bin");
+  assert.equal(env.LANG, "C.UTF-8");
+  assert.equal(env.TMPDIR, "/tmp/ray");
+  assert.equal(env.RAY_API_KEYS, undefined);
+  assert.equal(env.RAY_UPSTREAM_API_KEY, undefined);
+  assert.equal(env.HOME, undefined);
+  assert.equal(env.LD_PRELOAD, undefined);
+  assert.equal(env.TEMP, undefined);
 });
 
 test("buildSystemdAnalyzeVerifyEnv preserves own unit path entries", () => {
@@ -3769,9 +3804,23 @@ test("diagnoseConfig honors deploy storage reserve for Caddy state headroom", ()
 
 test("loadAndDiagnoseDeployment validates the generated Caddyfile in strict mode", async (t) => {
   const tempDir = await mkRayDeployTempDir("ray-deploy-caddyfile-ok-");
+  const previousApiKeys = process.env.RAY_API_KEYS;
+  const previousUpstreamKey = process.env.RAY_UPSTREAM_API_KEY;
   t.after(async () => {
+    if (previousApiKeys === undefined) {
+      delete process.env.RAY_API_KEYS;
+    } else {
+      process.env.RAY_API_KEYS = previousApiKeys;
+    }
+    if (previousUpstreamKey === undefined) {
+      delete process.env.RAY_UPSTREAM_API_KEY;
+    } else {
+      process.env.RAY_UPSTREAM_API_KEY = previousUpstreamKey;
+    }
     await rm(tempDir, { recursive: true, force: true });
   });
+  process.env.RAY_API_KEYS = "client-secret";
+  process.env.RAY_UPSTREAM_API_KEY = "upstream-secret";
 
   const config = createDefaultConfig("tiny");
   const configPath = join(tempDir, "ray.json");
@@ -3779,12 +3828,14 @@ test("loadAndDiagnoseDeployment validates the generated Caddyfile in strict mode
 
   const binDir = join(tempDir, "bin");
   const caddyArgsPath = join(tempDir, "caddy-args.txt");
+  const caddyEnvPath = join(tempDir, "caddy-env.txt");
   await mkdir(binDir);
   const caddyPath = join(binDir, "caddy");
   await writeFile(
     caddyPath,
     `#!/bin/sh
 if [ "$1" = "version" ]; then
+  env | sort > ${shellQuote(caddyEnvPath)}
   echo "v2.8.4"
   exit 0
 fi
@@ -3812,6 +3863,10 @@ exit 5
   assert.equal(inspected.preflight.caddyBinaryPath, caddyPath);
   assert.equal(inspected.preflight.caddyConfigStatus, "valid");
   assert.match(await readFile(caddyArgsPath, "utf8"), /^validate\n--config\n/m);
+  const caddyEnv = await readFile(caddyEnvPath, "utf8");
+  assert.match(caddyEnv, /^PATH=/m);
+  assert.doesNotMatch(caddyEnv, /^RAY_API_KEYS=/m);
+  assert.doesNotMatch(caddyEnv, /^RAY_UPSTREAM_API_KEY=/m);
   const diagnostic = inspected.diagnostics.find((entry) => entry.code === "caddy_config_ok");
   assert.ok(diagnostic);
   assert.equal(diagnostic.level, "info");
@@ -5058,14 +5113,37 @@ test("loadAndDiagnoseDeployment errors when the configured llama.cpp binary is m
 
 test("loadAndDiagnoseDeployment reports an executable llama.cpp binary in strict mode", async (t) => {
   const tempDir = await mkRayDeployTempDir("ray-deploy-llama-binary-ok-");
+  const previousApiKeys = process.env.RAY_API_KEYS;
+  const previousUpstreamKey = process.env.RAY_UPSTREAM_API_KEY;
   t.after(async () => {
+    if (previousApiKeys === undefined) {
+      delete process.env.RAY_API_KEYS;
+    } else {
+      process.env.RAY_API_KEYS = previousApiKeys;
+    }
+    if (previousUpstreamKey === undefined) {
+      delete process.env.RAY_UPSTREAM_API_KEY;
+    } else {
+      process.env.RAY_UPSTREAM_API_KEY = previousUpstreamKey;
+    }
     await rm(tempDir, { recursive: true, force: true });
   });
+  process.env.RAY_API_KEYS = "client-secret";
+  process.env.RAY_UPSTREAM_API_KEY = "upstream-secret";
 
   const modelPath = join(tempDir, "model.gguf");
   const binaryPath = join(tempDir, "llama-server");
+  const llamaEnvPath = join(tempDir, "llama-env.txt");
   await writeFile(modelPath, "GGUF");
-  await writeFile(binaryPath, `#!/bin/sh\ncat <<'EOF'\n${compatibleLlamaCppHelp}\nEOF\n`);
+  await writeFile(
+    binaryPath,
+    `#!/bin/sh
+env | sort > ${shellQuote(llamaEnvPath)}
+cat <<'EOF'
+${compatibleLlamaCppHelp}
+EOF
+`,
+  );
   await chmod(binaryPath, 0o755);
 
   const config = createDefaultConfig("1b");
@@ -5096,6 +5174,10 @@ test("loadAndDiagnoseDeployment reports an executable llama.cpp binary in strict
   );
   assert.ok(probeDiagnostic);
   assert.equal(probeDiagnostic.level, "info");
+  const llamaEnv = await readFile(llamaEnvPath, "utf8");
+  assert.match(llamaEnv, /^PATH=/m);
+  assert.doesNotMatch(llamaEnv, /^RAY_API_KEYS=/m);
+  assert.doesNotMatch(llamaEnv, /^RAY_UPSTREAM_API_KEY=/m);
   assert.equal(inspected.preflight.llamaCppBinaryLaunchFlagsStatus, "ok");
   const launchFlagsDiagnostic = inspected.diagnostics.find(
     (entry) => entry.code === "llama_binary_launch_flags_ok",
