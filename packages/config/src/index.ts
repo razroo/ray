@@ -78,6 +78,8 @@ const MAX_WARMUP_TEMPLATE_VARIABLE_KEY_CHARS = 128;
 const MAX_WARMUP_TEMPLATE_VARIABLE_VALUE_CHARS = 16_384;
 const MAX_MODEL_CONTEXT_WINDOW = 32_768;
 const MAX_MODEL_OUTPUT_TOKENS = 2_048;
+const MAX_MODEL_TOKENS_PER_SECOND_TARGET = 1_000;
+const MAX_MODEL_MEMORY_CLASS_MIB = 65_536;
 const MAX_REQUEST_TIMEOUT_MS = 120_000;
 const MAX_ADAPTER_TIMEOUT_MS = 120_000;
 const MAX_ASYNC_COMPLETED_TTL_MS = 604_800_000;
@@ -2314,8 +2316,16 @@ function assertModelOperationalMetadata(config: RayConfig): void {
     );
   }
 
-  assertPositiveInteger(metadata.tokensPerSecondTarget, "model.operational.tokensPerSecondTarget");
-  assertPositiveInteger(metadata.memoryClassMiB, "model.operational.memoryClassMiB");
+  assertPositiveIntegerAtMost(
+    metadata.tokensPerSecondTarget,
+    "model.operational.tokensPerSecondTarget",
+    MAX_MODEL_TOKENS_PER_SECOND_TARGET,
+  );
+  assertPositiveIntegerAtMost(
+    metadata.memoryClassMiB,
+    "model.operational.memoryClassMiB",
+    MAX_MODEL_MEMORY_CLASS_MIB,
+  );
   assertPositiveIntegerAtMost(
     metadata.preferredCtxSize,
     "model.operational.preferredCtxSize",
@@ -2572,9 +2582,10 @@ function validateConfig(config: RayConfig): RayConfig {
     "adaptiveTuning.queueLatencyThresholdMs",
     MAX_ADAPTIVE_LATENCY_THRESHOLD_MS,
   );
-  assertPositiveInteger(
+  assertPositiveIntegerAtMost(
     config.adaptiveTuning.minCompletionTokensPerSecond,
     "adaptiveTuning.minCompletionTokensPerSecond",
+    MAX_MODEL_TOKENS_PER_SECOND_TARGET,
   );
   assertPositiveInteger(config.adaptiveTuning.minOutputTokens, "adaptiveTuning.minOutputTokens");
   if (config.adaptiveTuning.minOutputTokens > config.model.maxOutputTokens) {
@@ -2590,9 +2601,10 @@ function validateConfig(config: RayConfig): RayConfig {
       },
     );
   }
-  assertPositiveInteger(
+  assertPositiveIntegerAtMost(
     config.adaptiveTuning.learnedCapHeadroomTokens,
     "adaptiveTuning.learnedCapHeadroomTokens",
+    config.model.maxOutputTokens,
   );
   assertPositiveIntegerAtMost(
     config.rateLimit.windowMs,

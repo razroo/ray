@@ -1514,6 +1514,50 @@ test("loadRayConfig rejects oversized scalar resource budgets", async (t) => {
     /model\.maxOutputTokens must be less than or equal to model\.contextWindow/,
   );
 
+  const operationalThroughputConfigPath = join(tempDir, "ray.operational-throughput.invalid.json");
+  await writeFile(
+    operationalThroughputConfigPath,
+    JSON.stringify({
+      profile: "sub1b",
+      model: {
+        operational: {
+          tokensPerSecondTarget: 1_001,
+        },
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: operationalThroughputConfigPath,
+      env: {},
+    }),
+    /model\.operational\.tokensPerSecondTarget must be less than or equal to 1000/,
+  );
+
+  const operationalMemoryConfigPath = join(tempDir, "ray.operational-memory.invalid.json");
+  await writeFile(
+    operationalMemoryConfigPath,
+    JSON.stringify({
+      profile: "sub1b",
+      model: {
+        operational: {
+          memoryClassMiB: 65_537,
+        },
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: operationalMemoryConfigPath,
+      env: {},
+    }),
+    /model\.operational\.memoryClassMiB must be less than or equal to 65536/,
+  );
+
   const schedulerTimeoutConfigPath = join(tempDir, "ray.scheduler-timeout.invalid.json");
   await writeFile(
     schedulerTimeoutConfigPath,
@@ -1594,6 +1638,57 @@ test("loadRayConfig rejects oversized scalar resource budgets", async (t) => {
       env: {},
     }),
     /rateLimit\.maxRequests must be less than or equal to 10000/,
+  );
+
+  const adaptiveThroughputConfigPath = join(tempDir, "ray.adaptive-throughput.invalid.json");
+  await writeFile(
+    adaptiveThroughputConfigPath,
+    JSON.stringify({
+      profile: "tiny",
+      adaptiveTuning: {
+        minCompletionTokensPerSecond: 1_001,
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: adaptiveThroughputConfigPath,
+      env: {},
+    }),
+    /adaptiveTuning\.minCompletionTokensPerSecond must be less than or equal to 1000/,
+  );
+
+  const learnedHeadroomConfigPath = join(tempDir, "ray.learned-headroom.invalid.json");
+  await writeFile(
+    learnedHeadroomConfigPath,
+    JSON.stringify({
+      profile: "tiny",
+      model: {
+        maxOutputTokens: 64,
+      },
+      scheduler: {
+        shortJobMaxTokens: 64,
+        maxQueuedTokens: 65,
+        maxInflightTokens: 65,
+      },
+      gracefulDegradation: {
+        degradeToMaxTokens: 64,
+      },
+      adaptiveTuning: {
+        learnedCapHeadroomTokens: 65,
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: learnedHeadroomConfigPath,
+      env: {},
+    }),
+    /adaptiveTuning\.learnedCapHeadroomTokens must be less than or equal to 64/,
   );
 
   const launchContextConfigPath = join(tempDir, "ray.launch-context.invalid.json");
