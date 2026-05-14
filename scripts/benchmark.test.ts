@@ -227,6 +227,14 @@ test("parseArgs rejects unsafe benchmark limits and URLs", () => {
     /--base-url must be an absolute HTTP URL/,
   );
   assert.throws(
+    () => parseArgs(["--base-url", " http://ray.example.com"]),
+    /--base-url must not contain unencoded whitespace or control characters/,
+  );
+  assert.throws(
+    () => parseArgs(["--base-url", "http://exa\tmple.com"]),
+    /--base-url must not contain unencoded whitespace or control characters/,
+  );
+  assert.throws(
     () => parseArgs(["--base-url", "ftp://ray.example.com"]),
     /--base-url must use http or https/,
   );

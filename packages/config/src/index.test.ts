@@ -844,6 +844,17 @@ test("loadRayConfig rejects malformed environment overrides", async () => {
       cwd: process.cwd(),
       configPath: "./examples/config/ray.1b.json",
       env: {
+        RAY_MODEL_BASE_URL: "http://exa\tmple.com:8081",
+      },
+    }),
+    /model\.adapter\.baseUrl must not contain unencoded whitespace or control characters/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
         RAY_MODEL_BASE_URL: "http://ray:secret@127.0.0.1:8081",
       },
     }),
@@ -2458,6 +2469,28 @@ test("loadRayConfig rejects invalid adapter base URLs", async (t) => {
       env: {},
     }),
     /model\.adapter\.baseUrl must not include a query string or fragment/,
+  );
+
+  const controlCharConfigPath = join(tempDir, "ray.control-url.invalid.json");
+  await writeFile(
+    controlCharConfigPath,
+    JSON.stringify({
+      profile: "vps",
+      model: {
+        adapter: {
+          baseUrl: "http://exa\tmple.com:8081",
+        },
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: controlCharConfigPath,
+      env: {},
+    }),
+    /model\.adapter\.baseUrl must not contain unencoded whitespace or control characters/,
   );
 
   const gatewayLoopConfigPath = join(tempDir, "ray.gateway-loop.invalid.json");

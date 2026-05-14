@@ -149,6 +149,14 @@ test("adapterRequest rejects invalid direct adapter config before dispatch", asy
     /adapter\.baseUrl/,
   );
   await assert.rejects(
+    () => adapterRequest({ baseUrl: " http://127.0.0.1:8080", timeoutMs: 500 }, "/health", {}),
+    /adapter\.baseUrl must not contain unencoded whitespace or control characters/,
+  );
+  await assert.rejects(
+    () => adapterRequest({ baseUrl: "http://exa\tmple.com", timeoutMs: 500 }, "/health", {}),
+    /adapter\.baseUrl must not contain unencoded whitespace or control characters/,
+  );
+  await assert.rejects(
     () => adapterRequest({ baseUrl: "http://127.0.0.1:8080", timeoutMs: Infinity }, "/health", {}),
     /adapter\.timeoutMs/,
   );

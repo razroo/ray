@@ -1415,6 +1415,14 @@ function assertAbsolutePath(value: string, label: string): void {
 }
 
 function assertHttpBaseUrl(value: string, label: string): URL {
+  if (/[\0-\x20\x7f]/.test(value)) {
+    throw new RayError(`${label} must not contain unencoded whitespace or control characters`, {
+      code: "config_validation_error",
+      status: 500,
+      details: { value },
+    });
+  }
+
   let parsed: URL;
   try {
     parsed = new URL(value);

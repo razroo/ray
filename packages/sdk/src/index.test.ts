@@ -7,6 +7,14 @@ test("RayClient rejects invalid direct options", () => {
   assert.throws(() => new RayClient(null as never), /RayClient options must be an object/);
   assert.throws(() => new RayClient({ baseUrl: "ftp://127.0.0.1" }), /baseUrl/);
   assert.throws(() => new RayClient({ baseUrl: "http://127.0.0.1/?debug=true" }), /baseUrl/);
+  assert.throws(
+    () => new RayClient({ baseUrl: " http://127.0.0.1" }),
+    /baseUrl must not contain unencoded whitespace or control characters/,
+  );
+  assert.throws(
+    () => new RayClient({ baseUrl: "http://exa\tmple.com" }),
+    /baseUrl must not contain unencoded whitespace or control characters/,
+  );
   assert.throws(() => new RayClient({ baseUrl: "http://127.0.0.1", timeoutMs: 0 }), /timeoutMs/);
   assert.throws(
     () => new RayClient({ baseUrl: "http://127.0.0.1", timeoutMs: 600_001 }),

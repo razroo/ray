@@ -63,6 +63,10 @@ function normalizeBaseUrl(baseUrl: string): string {
     throw new RangeError(`baseUrl must be at most ${MAX_RAY_CLIENT_BASE_URL_CHARS} characters`);
   }
 
+  if (/[\0-\x20\x7f]/.test(baseUrl)) {
+    throw new TypeError("baseUrl must not contain unencoded whitespace or control characters");
+  }
+
   let parsed: URL;
   try {
     parsed = new URL(baseUrl);

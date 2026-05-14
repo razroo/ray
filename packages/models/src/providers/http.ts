@@ -249,6 +249,10 @@ function assertHttpBaseUrl(value: string, label: string): void {
 
   assertStringLength(value, label, MAX_ADAPTER_URL_CHARS);
 
+  if (/[\0-\x20\x7f]/.test(value)) {
+    throw new TypeError(`${label} must not contain unencoded whitespace or control characters`);
+  }
+
   let parsed: URL;
   try {
     parsed = new URL(value);

@@ -504,6 +504,10 @@ function assertBenchmarkPathValue(value: unknown, label: string): asserts value 
 }
 
 function normalizeBaseUrlFlag(value: string): string {
+  if (/[\0-\x20\x7f]/.test(value)) {
+    throw new Error("--base-url must not contain unencoded whitespace or control characters");
+  }
+
   let parsed: URL;
 
   try {
