@@ -11,6 +11,81 @@ fail() {
   exit 1
 }
 
+run_bounded() {
+  local seconds="$1"
+  shift
+
+  if ! [[ "$seconds" =~ ^[1-9][0-9]*$ ]]; then
+    fail "timeout must be a positive integer number of seconds"
+  fi
+  if [ "$#" -eq 0 ]; then
+    fail "run_bounded requires a command"
+  fi
+
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${seconds}s" "$@"
+    return
+  fi
+
+  local marker
+  marker="$(mktemp "${TMPDIR:-/tmp}/ray-gh-release-timeout.XXXXXX")"
+  rm -f "$marker"
+
+  "$@" &
+  local command_pid=$!
+  (
+    sleep "$seconds"
+    if kill -0 "$command_pid" 2>/dev/null; then
+      : >"$marker"
+      kill -TERM "$command_pid" 2>/dev/null || true
+      sleep 5
+      kill -KILL "$command_pid" 2>/dev/null || true
+    fi
+  ) &
+  local watchdog_pid=$!
+  local status=0
+
+  wait "$command_pid" || status=$?
+  kill "$watchdog_pid" 2>/dev/null || true
+  wait "$watchdog_pid" 2>/dev/null || true
+
+  if [ -e "$marker" ]; then
+    rm -f "$marker"
+    return 124
+  fi
+
+  rm -f "$marker"
+  return "$status"
+}
+
+remote_tag_exists() {
+  local tag="$1"
+  if run_bounded 60 git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local status=$?
+  if [ "$status" -eq 2 ]; then
+    return 1
+  fi
+
+  fail "could not check remote tag $tag (exit $status)"
+}
+
+github_release_exists() {
+  local tag="$1"
+  if run_bounded 60 gh release view "$tag" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local status=$?
+  if [ "$status" -eq 124 ]; then
+    fail "timed out checking GitHub release: $tag"
+  fi
+
+  return 1
+}
+
 usage() {
   sed -n '1,80p' <<'EOF'
 Usage: bash scripts/release/gh-release.sh [--dry-run | --yes]
@@ -79,7 +154,7 @@ if [ "$BRANCH" != "main" ]; then
   fail "release helper must run from main; current branch is ${BRANCH:-detached}"
 fi
 
-git fetch --tags origin refs/heads/main:refs/remotes/origin/main
+run_bounded 120 git fetch --tags origin refs/heads/main:refs/remotes/origin/main
 LOCAL_HEAD="$(git rev-parse HEAD)"
 REMOTE_HEAD="$(git rev-parse origin/main)"
 if [ "$LOCAL_HEAD" != "$REMOTE_HEAD" ]; then
@@ -90,21 +165,21 @@ for tag in "$TAG_CORE" "$TAG_SDK"; do
   if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
     fail "local tag already exists: $tag"
   fi
-  if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+  if remote_tag_exists "$tag"; then
     fail "remote tag already exists: $tag"
   fi
-  if gh release view "$tag" >/dev/null 2>&1; then
+  if github_release_exists "$tag"; then
     fail "GitHub release already exists: $tag"
   fi
 done
 
-if ! gh auth status >/dev/null; then
+if ! run_bounded 60 gh auth status >/dev/null; then
   fail "gh is not authenticated"
 fi
 
 git tag -a "$TAG_CORE" -m "Release $TAG_CORE (@razroo/ray-core v$VER)"
 git tag -a "$TAG_SDK" -m "Release $TAG_SDK (@razroo/ray-sdk v$VER)"
-git push origin "$TAG_CORE" "$TAG_SDK"
-gh release create "$TAG_CORE" --generate-notes --title "$TAG_CORE"
-gh release create "$TAG_SDK" --generate-notes --title "$TAG_SDK"
+run_bounded 120 git push origin "$TAG_CORE" "$TAG_SDK"
+run_bounded 120 gh release create "$TAG_CORE" --generate-notes --title "$TAG_CORE"
+run_bounded 120 gh release create "$TAG_SDK" --generate-notes --title "$TAG_SDK"
 echo "Done. Actions publish to npm when each release is in published state."

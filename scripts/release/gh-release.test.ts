@@ -46,8 +46,27 @@ test("gh release helper gates destructive releases on clean synced main", async 
   assert.match(contents, /refs\/heads\/main:refs\/remotes\/origin\/main/);
   assert.match(contents, /git rev-parse HEAD/);
   assert.match(contents, /git rev-parse origin\/main/);
-  assert.match(contents, /git ls-remote --exit-code --tags origin/);
-  assert.match(contents, /gh release view "\$tag"/);
-  assert.match(contents, /gh auth status/);
+  assert.match(contents, /remote_tag_exists "\$tag"/);
+  assert.match(contents, /github_release_exists "\$tag"/);
   assert.match(contents, /bun \.\/scripts\/release\/check-source\.mjs "\$VER"/);
+});
+
+test("gh release helper bounds network release operations", async () => {
+  const contents = await readFile(scriptPath, "utf8");
+
+  assert.match(contents, /run_bounded\(\) \{/);
+  assert.match(contents, /timeout "\$\{seconds\}s" "\$@"/);
+  assert.match(contents, /return 124/);
+  assert.match(
+    contents,
+    /run_bounded 120 git fetch --tags origin refs\/heads\/main:refs\/remotes\/origin\/main/,
+  );
+  assert.match(contents, /run_bounded 60 git ls-remote --exit-code --tags origin/);
+  assert.match(contents, /fail "could not check remote tag \$tag \(exit \$status\)"/);
+  assert.match(contents, /run_bounded 60 gh release view "\$tag"/);
+  assert.match(contents, /fail "timed out checking GitHub release: \$tag"/);
+  assert.match(contents, /run_bounded 60 gh auth status/);
+  assert.match(contents, /run_bounded 120 git push origin "\$TAG_CORE" "\$TAG_SDK"/);
+  assert.match(contents, /run_bounded 120 gh release create "\$TAG_CORE"/);
+  assert.match(contents, /run_bounded 120 gh release create "\$TAG_SDK"/);
 });
