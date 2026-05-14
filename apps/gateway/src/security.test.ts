@@ -144,6 +144,7 @@ test("parseBearerToken rejects ambiguous or malformed authorization headers", ()
   assert.equal(parseBearerToken("Bearer secret-token extra"), undefined);
   assert.equal(parseBearerToken(["Bearer secret-token", "Bearer other-token"]), undefined);
   assert.equal(parseBearerToken("Basic secret-token"), undefined);
+  assert.equal(parseBearerToken(`Bearer bad${String.fromCharCode(0x1f)}token`), undefined);
   assert.equal(parseBearerToken(`Bearer ${"x".repeat(1_025)}`), undefined);
 });
 

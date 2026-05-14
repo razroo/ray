@@ -514,6 +514,13 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
     resolveAuthApiKeys(loaded.config, { RAY_PUBLIC_API_KEYS: "alpha,beta" }),
     new Set(["alpha", "beta"]),
   );
+  assert.throws(
+    () =>
+      resolveAuthApiKeys(loaded.config, {
+        RAY_PUBLIC_API_KEYS: `bad${String.fromCharCode(0x1f)}key`,
+      }),
+    /RAY_PUBLIC_API_KEYS entries must be bearer-token-safe strings without whitespace or control characters/,
+  );
   assert.equal(loaded.config.rateLimit.enabled, false);
   assert.equal(loaded.config.rateLimit.windowMs, 30_000);
   assert.equal(loaded.config.rateLimit.maxRequests, 45);

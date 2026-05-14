@@ -178,9 +178,11 @@ function assertApiKey(apiKey: string): void {
     typeof apiKey !== "string" ||
     apiKey.length === 0 ||
     apiKey.length > MAX_RAY_CLIENT_API_KEY_CHARS ||
-    /\s|[\0\r\n]/.test(apiKey)
+    /[\0-\x20\x7f]|\s/u.test(apiKey)
   ) {
-    throw new TypeError("apiKey must be a bounded bearer token string without whitespace");
+    throw new TypeError(
+      "apiKey must be a bounded bearer token string without whitespace or control characters",
+    );
   }
 }
 

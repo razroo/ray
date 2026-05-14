@@ -113,6 +113,14 @@ test("RayClient rejects invalid direct options", () => {
     () => new RayClient({ baseUrl: "http://127.0.0.1", apiKey: "x".repeat(1_025) }),
     /apiKey/,
   );
+  assert.throws(
+    () =>
+      new RayClient({
+        baseUrl: "http://127.0.0.1",
+        apiKey: `bad${String.fromCharCode(0x1f)}token`,
+      }),
+    /apiKey must be a bounded bearer token string without whitespace or control characters/,
+  );
 });
 
 test("RayClient snapshots direct options at construction", async (t) => {

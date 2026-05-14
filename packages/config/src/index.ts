@@ -3138,9 +3138,9 @@ export function resolveAuthApiKeys(config: RayConfig, env: NodeJS.ProcessEnv): S
 
   for (const key of keys) {
     assertStringLength(key, `${envName} entries`, MAX_AUTH_API_KEY_CHARS);
-    if (/[\0\s]/u.test(key)) {
+    if (/[\0-\x20\x7f]|\s/u.test(key)) {
       throw new RayError(
-        `${envName} entries must be bearer-token-safe strings without whitespace`,
+        `${envName} entries must be bearer-token-safe strings without whitespace or control characters`,
         {
           code: "config_validation_error",
           status: 500,

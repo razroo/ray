@@ -392,6 +392,18 @@ test("buildAdapterHeaders rejects unsafe apiKeyEnv values before dispatch", () =
       /RAY_TEST_UPSTREAM_API_KEY must be a bounded bearer token string without whitespace/,
     );
 
+    process.env[envName] = `bad${String.fromCharCode(0x1f)}key`;
+
+    assert.throws(
+      () =>
+        buildAdapterHeaders({
+          baseUrl: "http://127.0.0.1:8080",
+          timeoutMs: 500,
+          apiKeyEnv: envName,
+        }),
+      /RAY_TEST_UPSTREAM_API_KEY must be a bounded bearer token string without whitespace or control characters/,
+    );
+
     process.env[envName] = "";
 
     assert.throws(

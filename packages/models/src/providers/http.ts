@@ -404,9 +404,11 @@ function assertAdapterApiKey(value: string, label: string): void {
     typeof value !== "string" ||
     value.length === 0 ||
     value.length > MAX_ADAPTER_API_KEY_CHARS ||
-    /\s|[\0\r\n]/.test(value)
+    /[\0-\x20\x7f]|\s/u.test(value)
   ) {
-    throw new TypeError(`${label} must be a bounded bearer token string without whitespace`);
+    throw new TypeError(
+      `${label} must be a bounded bearer token string without whitespace or control characters`,
+    );
   }
 }
 

@@ -476,8 +476,10 @@ function assertNonEmptyStringAtMost(value: string, label: string, maximum: numbe
 function assertBenchmarkApiKey(value: string, label: string): void {
   assertNonEmptyStringAtMost(value, label, MAX_BENCHMARK_API_KEY_CHARS);
 
-  if (/[\0\s]/u.test(value)) {
-    throw new Error(`${label} must be a bearer-token-safe string without whitespace`);
+  if (/[\0-\x20\x7f]|\s/u.test(value)) {
+    throw new Error(
+      `${label} must be a bearer-token-safe string without whitespace or control characters`,
+    );
   }
 }
 

@@ -206,7 +206,8 @@ export function parseBearerToken(
     !scheme ||
     scheme.toLowerCase() !== "bearer" ||
     !token ||
-    token.length > MAX_BEARER_TOKEN_CHARS
+    token.length > MAX_BEARER_TOKEN_CHARS ||
+    /[\0-\x20\x7f]|\s/u.test(token)
   ) {
     return undefined;
   }

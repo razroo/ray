@@ -150,6 +150,10 @@ test("parseArgs rejects malformed direct argv values", () => {
     () => parseArgs(["--api-key", "not a bearer token"]),
     /--api-key must be a bearer-token-safe string without whitespace/,
   );
+  assert.throws(
+    () => parseArgs(["--api-key", `bad${String.fromCharCode(0x1f)}key`]),
+    /--api-key must be a bearer-token-safe string without whitespace or control characters/,
+  );
 });
 
 test("resolveBenchmarkApiKey bounds API key environment values", () => {
@@ -177,6 +181,12 @@ test("resolveBenchmarkApiKey bounds API key environment values", () => {
       /RAY_BENCHMARK_API_KEY must be a bearer-token-safe string without whitespace/,
     );
 
+    process.env.RAY_BENCHMARK_API_KEY = `bad${String.fromCharCode(0x1f)}key`;
+    assert.throws(
+      () => resolveBenchmarkApiKey(args, config),
+      /RAY_BENCHMARK_API_KEY must be a bearer-token-safe string without whitespace or control characters/,
+    );
+
     delete process.env.RAY_BENCHMARK_API_KEY;
     process.env.RAY_API_KEYS = "\n, first-key ,second-key";
     assert.equal(resolveBenchmarkApiKey(args, config), "first-key");
@@ -191,6 +201,12 @@ test("resolveBenchmarkApiKey bounds API key environment values", () => {
     assert.throws(
       () => resolveBenchmarkApiKey(args, config),
       /RAY_API_KEYS entries must be a bearer-token-safe string without whitespace/,
+    );
+
+    process.env.RAY_API_KEYS = `bad${String.fromCharCode(0x1f)}key`;
+    assert.throws(
+      () => resolveBenchmarkApiKey(args, config),
+      /RAY_API_KEYS entries must be a bearer-token-safe string without whitespace or control characters/,
     );
   } finally {
     if (previousBenchmarkKey === undefined) {
