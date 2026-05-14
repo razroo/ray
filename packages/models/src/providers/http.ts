@@ -195,6 +195,15 @@ function objectEntries(value: object, label: string): Array<[string, unknown]> {
   }
 }
 
+function setObjectDataProperty<T>(target: Record<string, T>, key: string, value: T): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
 function assertSafeRecordKey(key: string, label: string): void {
   if (unsafeAdapterRecordKeys.has(key)) {
     throw new TypeError(`${label} must not contain unsafe key "${key}"`);
@@ -377,7 +386,7 @@ function normalizeHeaderInit(value: RequestInit["headers"], label: string): Reco
     const headers: Record<string, string> = {};
 
     for (const [key, entry] of value.entries()) {
-      headers[key] = entry;
+      setObjectDataProperty(headers, key, entry);
     }
 
     assertHeaderRecord(headers, label);
@@ -409,7 +418,7 @@ function normalizeHeaderInit(value: RequestInit["headers"], label: string): Reco
       }
 
       seen.add(normalizedKey);
-      headers[key] = headerValue;
+      setObjectDataProperty(headers, key, headerValue);
     }
 
     assertHeaderRecord(headers, label);
@@ -924,7 +933,7 @@ function redactJsonStackFields(value: unknown, seen: WeakSet<object> = new WeakS
         continue;
       }
 
-      output[key] = redactJsonStackFields(nested, seen);
+      setObjectDataProperty(output, key, redactJsonStackFields(nested, seen));
     }
 
     return output;

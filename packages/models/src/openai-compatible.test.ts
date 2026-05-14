@@ -495,6 +495,15 @@ test("adapterRequest validates per-request headers before dispatch", async (t) =
     /adapter\.request\.headers must not contain duplicate header name "X-Ray-Request"/,
   );
 
+  await assert.rejects(
+    () =>
+      adapterRequest(adapter, "/health", {
+        method: "GET",
+        headers: [["__proto__", "polluted"]],
+      }),
+    /adapter\.request\.headers must not contain unsafe key "__proto__"/,
+  );
+
   assert.equal(requests, 1);
 });
 
@@ -889,6 +898,50 @@ test("adapterRequest redacts stack fields from upstream JSON error bodies", asyn
       assert.match(body, /nested failure/);
       assert.doesNotMatch(body, /internal stack trace/);
       assert.doesNotMatch(body, /nested stack trace/);
+
+      return true;
+    },
+  );
+});
+
+test("adapterRequest preserves unsafe upstream JSON error keys while redacting stacks", async (t) => {
+  const server = createServer((_request, response) => {
+    response.writeHead(500, { "content-type": "application/json; charset=utf-8" });
+    response.end(
+      '{"error":{"code":"upstream_failed","details":{"__proto__":{"polluted":true},"constructor":"shadowed","stack":"secret stack"}}}',
+    );
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  await assert.rejects(
+    () =>
+      adapterRequest(
+        {
+          baseUrl: `http://127.0.0.1:${address.port}`,
+          timeoutMs: 500,
+        },
+        "/v1/chat/completions",
+        { method: "POST" },
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_upstream_error");
+
+      const details = (error as { details?: unknown }).details;
+      assert.ok(details && typeof details === "object" && !Array.isArray(details));
+
+      const body = (details as { body?: string }).body ?? "";
+      assert.match(body, /"__proto__":\{"polluted":true\}/);
+      assert.match(body, /"constructor":"shadowed"/);
+      assert.doesNotMatch(body, /secret stack/);
+      assert.equal(({} as { polluted?: boolean }).polluted, undefined);
 
       return true;
     },
