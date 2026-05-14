@@ -482,6 +482,18 @@ test("scheduler rejects invalid task options before queueing", async () => {
   assert.throws(
     () =>
       scheduler.schedule({
+        handler: async () => "extra",
+        extra: "not-supported",
+      } as never),
+    /schedule options must not contain unsupported key "extra"/,
+  );
+  assert.throws(
+    () => scheduler.schedule(JSON.parse('{"__proto__":"polluted"}')),
+    /schedule options must not contain unsafe key "__proto__"/,
+  );
+  assert.throws(
+    () =>
+      scheduler.schedule({
         handler: "not-a-handler" as never,
       }),
     /schedule\.handler/,

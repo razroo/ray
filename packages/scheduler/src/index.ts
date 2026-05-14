@@ -35,6 +35,14 @@ const schedulerConfigKeys = new Set([
   "affinityLookahead",
   "shortJobMaxTokens",
 ]);
+const scheduleOptionKeys = new Set([
+  "key",
+  "affinityKey",
+  "preferredSlot",
+  "lane",
+  "costTokens",
+  "handler",
+]);
 
 function createRequestTimeoutError(): RayError {
   return new RayError("The inference request exceeded the scheduler timeout", {
@@ -197,6 +205,8 @@ function assertScheduleOptions<T>(value: unknown): asserts value is ScheduleTask
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("schedule options must be an object");
   }
+
+  assertKnownObjectKeys(value, "schedule options", scheduleOptionKeys);
 }
 
 function assertScheduleHandler<T>(
