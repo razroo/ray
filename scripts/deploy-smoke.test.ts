@@ -108,6 +108,13 @@ test("collectPublicConfigPaths rejects excessive public configs while streaming"
   );
 });
 
+test("collectPublicConfigPaths rejects config directories outside cwd", async () => {
+  await assert.rejects(
+    () => collectPublicConfigPaths(process.cwd(), path.dirname(process.cwd())),
+    /configDir must stay inside cwd/,
+  );
+});
+
 test("smokeDeployConfigs rejects excessive config inputs before rendering", async () => {
   await assert.rejects(
     () =>
@@ -162,6 +169,18 @@ test("smokeDeployConfigs rejects malformed direct path inputs before rendering",
         systemdEnvFile: "/etc/ray/ray.env",
       }),
     /configPaths\[0\] must be at most 4096 bytes/,
+  );
+  await assert.rejects(
+    () =>
+      smokeDeployConfigs({
+        cwd: process.cwd(),
+        configPaths: [path.join(path.dirname(process.cwd()), "outside.public.json")],
+        domain: "ray.example.com",
+        runtimeBinary: "/usr/local/bin/bun",
+        serviceUser: "ray",
+        systemdEnvFile: "/etc/ray/ray.env",
+      }),
+    /configPaths\[0\] must stay inside cwd/,
   );
 });
 

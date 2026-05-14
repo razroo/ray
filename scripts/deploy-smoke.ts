@@ -169,6 +169,11 @@ function hasUnsafeDeploySmokeDomainCharacter(value: string): boolean {
   return false;
 }
 
+function isPathInside(parentPath: string, candidatePath: string): boolean {
+  const relative = path.relative(parentPath, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 function assertDeploySmokeServiceUserValue(value: unknown, label: string): asserts value is string {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error(`${label} must be a non-empty system account name or numeric UID`);
@@ -275,7 +280,11 @@ export function parseArgs(argv: string[]): DeploySmokeArgs {
 export async function collectPublicConfigPaths(cwd: string, configDir: string): Promise<string[]> {
   assertDeploySmokePathValue(cwd, "cwd");
   assertDeploySmokePathValue(configDir, "configDir");
-  const absoluteConfigDir = path.resolve(cwd, configDir);
+  const root = path.resolve(cwd);
+  const absoluteConfigDir = path.resolve(root, configDir);
+  if (!isPathInside(root, absoluteConfigDir)) {
+    throw new Error("configDir must stay inside cwd");
+  }
   const configPaths: string[] = [];
   let directory: Awaited<ReturnType<typeof opendir>> | undefined;
 
@@ -352,6 +361,7 @@ export async function smokeDeployConfigs(options: {
   }
 
   assertDeploySmokePathValue(options.cwd, "cwd");
+  const cwd = path.resolve(options.cwd);
   assertDeploySmokePathValue(options.runtimeBinary, "runtimeBinary");
   assertDeploySmokePathValue(options.systemdEnvFile, "systemdEnvFile");
   assertDeploySmokeDomainValue(options.domain, "domain");
@@ -359,14 +369,21 @@ export async function smokeDeployConfigs(options: {
   for (const [index, configPath] of options.configPaths.entries()) {
     assertDeploySmokePathValue(configPath, `configPaths[${index}]`);
   }
+  const configPaths = options.configPaths.map((configPath, index) => {
+    const resolvedPath = path.resolve(cwd, configPath);
+    if (!isPathInside(cwd, resolvedPath)) {
+      throw new Error(`configPaths[${index}] must stay inside cwd`);
+    }
+    return resolvedPath;
+  });
 
   const env = buildSmokeDeployEnv(options.env ?? process.env);
   const results: DeploySmokeResult[] = [];
 
-  for (const configPath of options.configPaths) {
+  for (const configPath of configPaths) {
     try {
       const bundle = await renderDeploymentBundle({
-        cwd: options.cwd,
+        cwd,
         configPath,
         user: options.serviceUser,
         domain: options.domain,
