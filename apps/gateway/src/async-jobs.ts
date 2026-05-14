@@ -324,7 +324,14 @@ async function readPersistedJobFile(filePath: string): Promise<string> {
       );
     }
 
-    return await fileHandle.readFile("utf8");
+    const raw = await fileHandle.readFile("utf8");
+    if (Buffer.byteLength(raw, "utf8") > PERSISTED_JOB_FILE_LIMIT_BYTES) {
+      throw new PersistedJobValidationError(
+        `persisted async job file exceeds ${PERSISTED_JOB_FILE_LIMIT_BYTES} bytes`,
+      );
+    }
+
+    return raw;
   } finally {
     await fileHandle?.close().catch(() => undefined);
   }

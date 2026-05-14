@@ -2153,6 +2153,74 @@ test("durable inference queue skips oversized persisted jobs during recovery", a
   }
 });
 
+test("durable inference queue skips persisted jobs that exceed the byte cap after stat", async (t) => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-"));
+  const originalOpen = fs.open;
+  t.after(async () => {
+    Object.defineProperty(fs, "open", {
+      configurable: true,
+      value: originalOpen,
+    });
+    await rm(storageDir, { recursive: true, force: true });
+  });
+
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir,
+      pollIntervalMs: 20,
+      dispatchConcurrency: 1,
+      maxAttempts: 2,
+      callbackTimeoutMs: 500,
+      maxCallbackAttempts: 2,
+    },
+    model: {
+      adapter: {
+        kind: "mock",
+        latencyMs: 5,
+      },
+    },
+  });
+  const jobsDir = join(storageDir, "jobs");
+  const jobPath = join(jobsDir, "job_raced.json");
+  await mkdir(jobsDir, { recursive: true });
+  await writeFile(jobPath, "{}", "utf8");
+
+  Object.defineProperty(fs, "open", {
+    configurable: true,
+    value: async (...args: Parameters<typeof fs.open>) => {
+      const handle = await originalOpen(...args);
+      if (String(args[0]) !== jobPath) {
+        return handle;
+      }
+
+      return {
+        stat: async () => ({
+          isFile: () => true,
+          size: 2,
+        }),
+        readFile: async () => "x".repeat(PERSISTED_JOB_FILE_LIMIT_BYTES + 1),
+        close: async () => {
+          await handle.close();
+        },
+      } as Awaited<ReturnType<typeof fs.open>>;
+    },
+  });
+
+  const runtime = createRayRuntime(config);
+  const logger = new Logger("test", "error");
+  const queue = new DurableInferenceQueue({
+    config: config.asyncQueue,
+    runtime,
+    logger,
+  });
+  await queue.start();
+  await queue.stop();
+
+  const entries = await readdir(jobsDir);
+  assert.equal(entries.includes("job_raced.json"), false);
+});
+
 test("durable inference queue enforces retained job cap during recovery", async () => {
   const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-"));
 
