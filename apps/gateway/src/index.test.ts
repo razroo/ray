@@ -2636,6 +2636,45 @@ test("gateway logs client request failures as warnings without stacks", async (t
   assert.equal(error.stack, undefined);
 });
 
+test("gateway omits stack traces from client-facing error details", async (t) => {
+  const config = createDefaultConfig("tiny");
+  const gateway = createGatewayServer({
+    config,
+  });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/v1/infer`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: "{",
+  });
+
+  assert.equal(response.status, 400);
+  const body = (await response.json()) as {
+    error: {
+      code: string;
+      details?: {
+        name?: string;
+        message?: string;
+        stack?: string;
+      };
+    };
+  };
+  assert.equal(body.error.code, "invalid_json");
+  assert.equal(body.error.details?.name, "SyntaxError");
+  assert.equal(typeof body.error.details?.message, "string");
+  assert.equal(body.error.details?.stack, undefined);
+});
+
 test("gateway serializes unusual health details without failing the response", async (t) => {
   const config = createDefaultConfig("tiny");
   const circular: Record<string, unknown> = {

@@ -823,6 +823,74 @@ function sanitizeJsonResponseValue(value: unknown, seen: WeakSet<object>, depth 
   }
 }
 
+function redactErrorResponseDetails(
+  value: unknown,
+  seen: WeakSet<object> = new WeakSet(),
+): unknown {
+  if (value === null || value === undefined) {
+    return value;
+  }
+
+  if (typeof value !== "object") {
+    return value;
+  }
+
+  if (seen.has(value)) {
+    return "[Circular]";
+  }
+
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+    };
+  }
+
+  if (value instanceof Date || ArrayBuffer.isView(value)) {
+    return value;
+  }
+
+  seen.add(value);
+
+  try {
+    if (Array.isArray(value)) {
+      return value.map((entry) => redactErrorResponseDetails(entry, seen));
+    }
+
+    const output: Record<string, unknown> = {};
+
+    for (const key of Object.keys(value)) {
+      if (key.toLowerCase() === "stack") {
+        continue;
+      }
+
+      try {
+        output[key] = redactErrorResponseDetails((value as Record<string, unknown>)[key], seen);
+      } catch (error) {
+        output[key] = `[Thrown: ${truncateResponseString(toErrorMessage(error))}]`;
+      }
+    }
+
+    return output;
+  } finally {
+    seen.delete(value);
+  }
+}
+
+function buildErrorResponsePayload(error: RayError): {
+  error: { code: string; message: string; details?: unknown };
+} {
+  return {
+    error: {
+      code: error.code,
+      message: error.message,
+      ...(error.details !== undefined
+        ? { details: redactErrorResponseDetails(error.details) }
+        : {}),
+    },
+  };
+}
+
 function stringifyJsonResponse(payload: unknown): string {
   try {
     const serialized = JSON.stringify(sanitizeJsonResponseValue(payload, new WeakSet()), null, 2);
@@ -1787,13 +1855,7 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
       writeJson(
         response,
         normalized.status,
-        {
-          error: {
-            code: normalized.code,
-            message: normalized.message,
-            details: normalized.details,
-          },
-        },
+        buildErrorResponsePayload(normalized),
         buildRejectedRequestHeaders(normalized, closeRequest),
       );
     }
