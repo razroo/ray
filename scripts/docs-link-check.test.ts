@@ -155,6 +155,26 @@ test("validateDocsLinks accepts encoded local Markdown anchors", async (t) => {
   assert.equal(summary.errorCount, 0);
 });
 
+test("validateDocsLinks rejects encoded control characters in local targets", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-doc-links-target-controls-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  await mkdir(path.join(tempDir, "docs"), { recursive: true });
+  await writeFile(path.join(tempDir, "docs", "target.md"), "# Target\n");
+  await writeFile(path.join(tempDir, "README.md"), "# Root\n[bad](docs/target.md%0Aevil)\n");
+
+  const summary = await validateDocsLinks({ cwd: tempDir });
+  const diagnostic = summary.results
+    .flatMap((result) => result.diagnostics)
+    .find((entry) => entry.code === "local_markdown_link_invalid");
+
+  assert.equal(summary.ok, false);
+  assert.ok(diagnostic);
+  assert.match(diagnostic.message, /must not contain control characters/);
+});
+
 test("validateDocsLinks rejects oversized Markdown inputs", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-doc-links-size-"));
   t.after(async () => {

@@ -370,6 +370,10 @@ function resolveLocalLinkTarget(
     return { error: "local Markdown link target is not valid percent-encoding" };
   }
 
+  if (/[\0\r\n]/.test(decodedTarget)) {
+    return { error: "local Markdown link target must not contain control characters" };
+  }
+
   const targetPath = decodedTarget.startsWith("/")
     ? path.resolve(cwd, `.${decodedTarget}`)
     : path.resolve(path.dirname(docPath), decodedTarget);
