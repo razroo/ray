@@ -43,6 +43,15 @@ test("parseArgs accepts deploy storage preflight options", () => {
     parseArgs([], { RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "2048" }).minFreeStorageMiBSource,
     "env",
   );
+  assert.equal(
+    parseArgs([], Object.create({ RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "2048" })).minFreeStorageMiB,
+    1024,
+  );
+  assert.equal(
+    parseArgs([], Object.create({ RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "2048" }))
+      .minFreeStorageMiBSource,
+    "default",
+  );
   assert.deepEqual(parseArgs(["--path", "/srv/ray", "--path", "/var/lib/ray"]).paths, [
     "/srv/ray",
     "/var/lib/ray",

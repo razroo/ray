@@ -215,6 +215,15 @@ function isNonEmptyEnvValue(value: string | undefined): value is string {
   return value !== undefined && value.trim().length > 0;
 }
 
+function readOwnEnvValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  if (!Object.prototype.hasOwnProperty.call(env, name)) {
+    return undefined;
+  }
+
+  const value = env[name];
+  return typeof value === "string" ? value : undefined;
+}
+
 export function parseArgs(
   argv: string[],
   env: NodeJS.ProcessEnv = process.env,
@@ -223,7 +232,7 @@ export function parseArgs(
 
   const paths: string[] = [];
   const envMinFreeStorageMiB = parseNonNegativeInteger(
-    env.RAY_DEPLOY_MIN_FREE_STORAGE_MIB,
+    readOwnEnvValue(env, "RAY_DEPLOY_MIN_FREE_STORAGE_MIB"),
     "RAY_DEPLOY_MIN_FREE_STORAGE_MIB",
   );
   let minFreeStorageMiB = envMinFreeStorageMiB ?? DEFAULT_MIN_FREE_STORAGE_MIB;
