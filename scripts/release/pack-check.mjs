@@ -13,6 +13,8 @@ export const PACK_SHUTDOWN_GRACE_MS = 5_000;
 export const MAX_PACK_TARBALL_BYTES = 5 * 1024 * 1024;
 export const MAX_PACK_UNCOMPRESSED_BYTES = 20 * 1024 * 1024;
 export const MAX_PACK_TARBALL_ENTRIES = 512;
+const DEFAULT_PACK_CHILD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const PACK_CHILD_ENV_KEYS = ["LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TMP", "TEMP"];
 const packedManifestDependencySections = [
   "dependencies",
   "devDependencies",
@@ -56,11 +58,47 @@ function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function readOwnEnvString(env, key) {
+  if (!Object.prototype.hasOwnProperty.call(env, key)) {
+    return undefined;
+  }
+
+  const value = env[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function isSafePackChildEnvValue(value) {
+  return value.length > 0 && !value.includes("\0");
+}
+
+export function buildPackCheckEnv(env = process.env) {
+  if (env === null || typeof env !== "object") {
+    throw new Error("env must be an object");
+  }
+
+  const childEnv = Object.create(null);
+  const pathValue = readOwnEnvString(env, "PATH");
+  childEnv.PATH =
+    pathValue !== undefined && isSafePackChildEnvValue(pathValue)
+      ? pathValue
+      : DEFAULT_PACK_CHILD_PATH;
+
+  for (const key of PACK_CHILD_ENV_KEYS) {
+    const value = readOwnEnvString(env, key);
+    if (value !== undefined && isSafePackChildEnvValue(value)) {
+      childEnv[key] = value;
+    }
+  }
+
+  return childEnv;
+}
+
 export async function runPack(packageConfig, options = {}) {
   const timeoutMs = options.timeoutMs ?? PACK_TIMEOUT_MS;
   await new Promise((resolve, reject) => {
     const child = spawn(bunBin, ["pm", "pack", "--destination", destination], {
       cwd: packageConfig.cwd,
+      env: buildPackCheckEnv(),
       stdio: "inherit",
     });
     let timedOut = false;

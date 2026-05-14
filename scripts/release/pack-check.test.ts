@@ -7,6 +7,7 @@ import { gzipSync } from "node:zlib";
 import {
   assertPackedPackageManifest,
   assertRequiredTarballEntries,
+  buildPackCheckEnv,
   listTarballEntries,
   readTarballJsonEntry,
 } from "./pack-check.mjs";
@@ -59,6 +60,36 @@ function createTar(
   blocks.push(Buffer.alloc(1024));
   return Buffer.concat(blocks);
 }
+
+test("buildPackCheckEnv keeps pack child environments minimal", () => {
+  const source = Object.create({
+    PATH: "/inherited/bin",
+    NODE_AUTH_TOKEN: "inherited-token",
+  }) as NodeJS.ProcessEnv;
+  source.PATH = "/usr/bin";
+  source.LANG = "C.UTF-8";
+  source.TMPDIR = "/tmp/ray";
+  source.TEMP = "bad\0value";
+  source.NODE_AUTH_TOKEN = "npm-token";
+  source.NPM_TOKEN = "npm-token";
+  source.RAY_API_KEYS = "client-secret";
+  source.HOME = "/root";
+  source.LD_PRELOAD = "/tmp/hook.so";
+
+  const env = buildPackCheckEnv(source);
+
+  assert.equal(Object.getPrototypeOf(env), null);
+  assert.deepEqual(Object.keys(env).sort(), ["LANG", "PATH", "TMPDIR"]);
+  assert.equal(env.PATH, "/usr/bin");
+  assert.equal(env.LANG, "C.UTF-8");
+  assert.equal(env.TMPDIR, "/tmp/ray");
+  assert.equal(env.NODE_AUTH_TOKEN, undefined);
+  assert.equal(env.NPM_TOKEN, undefined);
+  assert.equal(env.RAY_API_KEYS, undefined);
+  assert.equal(env.HOME, undefined);
+  assert.equal(env.LD_PRELOAD, undefined);
+  assert.equal(env.TEMP, undefined);
+});
 
 test("listTarballEntries reads bounded npm package entries", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-pack-check-"));
