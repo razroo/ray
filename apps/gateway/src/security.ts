@@ -9,6 +9,8 @@ interface FixedWindowEntry {
 }
 
 const MAX_FORWARDED_FOR_ENTRIES = 32;
+const MAX_FORWARDED_FOR_HEADER_VALUES = 4;
+const MAX_FORWARDED_FOR_HEADER_CHARS = 4_096;
 const MAX_IP_ADDRESS_CHARS = 64;
 const MAX_BEARER_TOKEN_CHARS = 1_024;
 const MAX_RATE_LIMIT_WINDOW_MS = 3_600_000;
@@ -341,7 +343,11 @@ function parseForwardedFor(value: string | string[] | undefined): string | undef
   const headers = typeof value === "string" ? [value] : (value ?? []);
   const candidates: string[] = [];
 
-  for (const header of headers) {
+  for (const header of headers.slice(-MAX_FORWARDED_FOR_HEADER_VALUES)) {
+    if (header.length > MAX_FORWARDED_FOR_HEADER_CHARS) {
+      continue;
+    }
+
     for (const part of header.split(",")) {
       const normalized = normalizeIpAddress(part);
 
@@ -389,6 +395,10 @@ export function buildRateLimitKey(
   apiKey: string | undefined,
   trustProxyHeaders: boolean,
 ): string {
+  if (!rateLimitKeyStrategies.has(strategy)) {
+    throw new TypeError("rateLimit.keyStrategy is not supported");
+  }
+
   const clientIp = resolveClientIp(request, trustProxyHeaders);
 
   if (strategy === "api-key" && apiKey) {

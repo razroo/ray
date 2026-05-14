@@ -174,6 +174,10 @@ test("buildRateLimitKey hashes API key subjects instead of retaining raw secrets
     apiKeyOnly,
     buildRateLimitKey("api-key", request, "different-secret-token", false),
   );
+  assert.throws(
+    () => buildRateLimitKey("raw" as "ip", request, "secret-token", false),
+    /rateLimit\.keyStrategy/,
+  );
 });
 
 test("resolveClientIp trusts forwarded headers only from local or private proxy peers", () => {
@@ -218,6 +222,23 @@ test("resolveClientIp normalizes trusted proxy headers into bounded IP keys", ()
   );
   assert.equal(resolveClientIp(fakeRequest("127.0.0.1", "not-an-ip"), true), "127.0.0.1");
   assert.equal(resolveClientIp(fakeRequest("127.0.0.1", "x".repeat(4_096)), true), "127.0.0.1");
+  assert.equal(
+    resolveClientIp(fakeRequest("127.0.0.1", "203.0.113.10".padEnd(4_097, "x")), true),
+    "127.0.0.1",
+  );
+  assert.equal(
+    resolveClientIp(
+      fakeRequest("127.0.0.1", [
+        "203.0.113.1",
+        "203.0.113.2",
+        "203.0.113.3",
+        "203.0.113.4",
+        "203.0.113.5",
+      ]),
+      true,
+    ),
+    "203.0.113.5",
+  );
   assert.equal(resolveClientIp(fakeRequest("not-a-real-socket-address"), false), "unknown");
 
   const key = buildRateLimitKey("ip", fakeRequest("127.0.0.1", "x".repeat(4_096)), undefined, true);
