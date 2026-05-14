@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { gzipSync } from "node:zlib";
-import { listTarballEntries } from "./pack-check.mjs";
+import { assertRequiredTarballEntries, listTarballEntries } from "./pack-check.mjs";
 
 function writeOctal(buffer: Buffer, offset: number, length: number, value: number): void {
   const encoded = value.toString(8).padStart(length - 1, "0");
@@ -168,4 +168,39 @@ test("listTarballEntries rejects unsafe tar entry types", async (t) => {
       /Pack tarball contains an unsafe (hard link|symbolic link|device) entry/,
     );
   }
+});
+
+test("assertRequiredTarballEntries rejects missing publish-critical files", () => {
+  assert.doesNotThrow(() =>
+    assertRequiredTarballEntries(
+      "@razroo/ray-core",
+      [
+        "package/package.json",
+        "package/dist/index.js",
+        "package/dist/index.d.ts",
+        "package/CHANGELOG.md",
+      ],
+      [
+        "package/package.json",
+        "package/dist/index.js",
+        "package/dist/index.d.ts",
+        "package/CHANGELOG.md",
+      ],
+    ),
+  );
+
+  assert.throws(
+    () =>
+      assertRequiredTarballEntries(
+        "@razroo/ray-sdk",
+        ["package/package.json", "package/dist/index.js"],
+        [
+          "package/package.json",
+          "package/dist/index.js",
+          "package/dist/index.d.ts",
+          "package/README.md",
+        ],
+      ),
+    /@razroo\/ray-sdk package is missing required entries: package\/dist\/index\.d\.ts, package\/README\.md/,
+  );
 });

@@ -18,11 +18,24 @@ const packages = [
     name: "@razroo/ray-core",
     cwd: path.join(root, "packages/core"),
     expectedFragment: "ray-core",
+    requiredEntries: [
+      "package/package.json",
+      "package/dist/index.js",
+      "package/dist/index.d.ts",
+      "package/CHANGELOG.md",
+    ],
   },
   {
     name: "@razroo/ray-sdk",
     cwd: path.join(root, "packages/sdk"),
     expectedFragment: "ray-sdk",
+    requiredEntries: [
+      "package/package.json",
+      "package/dist/index.js",
+      "package/dist/index.d.ts",
+      "package/README.md",
+      "package/CHANGELOG.md",
+    ],
   },
 ];
 const allowedTarEntryTypes = new Set(["", "\0", "0", "5"]);
@@ -234,6 +247,17 @@ export async function listTarballEntries(filePath, options = {}) {
   return entries;
 }
 
+export function assertRequiredTarballEntries(packageName, entries, requiredEntries) {
+  const entrySet = new Set(entries);
+  const missingEntries = requiredEntries.filter((entry) => !entrySet.has(entry));
+
+  if (missingEntries.length > 0) {
+    throw new Error(
+      `${packageName} package is missing required entries: ${missingEntries.join(", ")}`,
+    );
+  }
+}
+
 export async function runPackCheck() {
   await fs.rm(destination, { recursive: true, force: true });
   await fs.mkdir(destination, { recursive: true });
@@ -254,6 +278,7 @@ export async function runPackCheck() {
     }
 
     const entries = await listTarballEntries(path.join(destination, packedFile));
+    assertRequiredTarballEntries(packageConfig.name, entries, packageConfig.requiredEntries);
     const testEntries = entries.filter((entry) => entry.includes(".test."));
 
     if (testEntries.length > 0) {
