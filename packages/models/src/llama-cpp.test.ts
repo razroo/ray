@@ -1550,6 +1550,18 @@ test("llama.cpp provider ignores malformed slot snapshot fields", async (t) => {
               n_keep: 64,
               next_token: { n_past: 128 },
             },
+            {
+              id: 4,
+              is_processing: false,
+              n_ctx: 8193,
+              n_keep: 8193,
+              next_token: { n_past: 8193 },
+            },
+            {
+              id: 1_000_000_001,
+              is_processing: false,
+              n_ctx: 2048,
+            },
           ],
         }),
       );
@@ -1614,7 +1626,7 @@ test("llama.cpp provider ignores malformed slot snapshot fields", async (t) => {
 
   assert.deepEqual(
     preparation.slotSnapshots?.map((slot) => slot.id),
-    [2, 3],
+    [2, 3, 4],
   );
   assert.equal(preparation.slotSnapshots?.[0]?.taskId, undefined);
   assert.equal(preparation.slotSnapshots?.[0]?.contextWindow, undefined);
@@ -1629,6 +1641,11 @@ test("llama.cpp provider ignores malformed slot snapshot fields", async (t) => {
     cacheTokens: 64,
     updatedAt: preparation.slotSnapshots?.[1]?.updatedAt,
   });
+  assert.deepEqual(preparation.slotSnapshots?.[2], {
+    id: 4,
+    isProcessing: false,
+    updatedAt: preparation.slotSnapshots?.[2]?.updatedAt,
+  });
 });
 
 test("llama.cpp provider ignores malformed health and capability counters", async (t) => {
@@ -1638,8 +1655,8 @@ test("llama.cpp provider ignores malformed health and capability counters", asyn
       response.end(
         JSON.stringify({
           status: 7,
-          slots_idle: -1,
-          slots_processing: 1.5,
+          slots_idle: 1_000_000_001,
+          slots_processing: 1_000_000_001,
         }),
       );
       return;
@@ -1655,10 +1672,10 @@ test("llama.cpp provider ignores malformed health and capability counters", asyn
       response.writeHead(200, { "content-type": "application/json" });
       response.end(
         JSON.stringify({
-          total_slots: -2,
+          total_slots: 1_000_000_001,
           chat_template: "{{ messages }}",
           default_generation_settings: {
-            n_ctx: -2048,
+            n_ctx: 8193,
             model: "test-model-ref",
           },
         }),
@@ -1683,9 +1700,16 @@ test("llama.cpp provider ignores malformed health and capability counters", asyn
       response.end(
         JSON.stringify({
           content: "ok",
+          tokens_cached: 8193,
+          tokens_evaluated: 1_000_000_001,
+          generation_settings: {
+            n_ctx: 8193,
+          },
           timings: {
-            prompt_n: 3,
-            predicted_n: 1,
+            prompt_n: 1_000_000_001,
+            predicted_n: 1_000_000_001,
+            prompt_ms: 1_000_000_001,
+            predicted_per_second: 1_000_000_001,
           },
         }),
       );
@@ -1736,6 +1760,10 @@ test("llama.cpp provider ignores malformed health and capability counters", asyn
   assert.equal(result.output, "ok");
   assert.equal(result.diagnostics?.totalSlots, undefined);
   assert.equal(result.diagnostics?.contextWindow, model.contextWindow);
+  assert.equal(result.diagnostics?.tokensCached, undefined);
+  assert.equal(result.diagnostics?.tokensEvaluated, undefined);
+  assert.equal(result.diagnostics?.timings?.promptMs, undefined);
+  assert.equal(result.diagnostics?.timings?.completionTokensPerSecond, undefined);
 });
 
 test("llama.cpp provider bounds preferred slot affinity maps", async (t) => {

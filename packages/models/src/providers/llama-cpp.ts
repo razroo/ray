@@ -46,6 +46,7 @@ const MAX_SLOT_SNAPSHOTS = 64;
 const MAX_FAMILY_PREFERRED_SLOT_KEYS = 512;
 const MAX_SLOT_FAMILY_ASSIGNMENTS = 64;
 const MAX_PROMPT_SCAFFOLD_CACHE_ENTRIES = 4_096;
+const MAX_LLAMA_CPP_DIAGNOSTIC_NUMBER = 1_000_000_000;
 
 interface LlamaCppHealthResponse {
   status?: string;
@@ -215,20 +216,33 @@ function resolvePromptFormatOverride(
   return undefined;
 }
 
-function isNonNegativeFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+function isNonNegativeFiniteNumber(
+  value: unknown,
+  maximum = MAX_LLAMA_CPP_DIAGNOSTIC_NUMBER,
+): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= maximum;
 }
 
-function isNonNegativeSafeInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+function isNonNegativeSafeInteger(
+  value: unknown,
+  maximum = MAX_LLAMA_CPP_DIAGNOSTIC_NUMBER,
+): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= maximum;
 }
 
 function firstNonNegativeFiniteNumber(...values: unknown[]): number | undefined {
-  return values.find(isNonNegativeFiniteNumber);
+  return values.find((value): value is number => isNonNegativeFiniteNumber(value));
+}
+
+function firstNonNegativeSafeIntegerAtMost(
+  maximum: number,
+  ...values: unknown[]
+): number | undefined {
+  return values.find((value): value is number => isNonNegativeSafeInteger(value, maximum));
 }
 
 function firstNonNegativeSafeInteger(...values: unknown[]): number | undefined {
-  return values.find(isNonNegativeSafeInteger);
+  return firstNonNegativeSafeIntegerAtMost(MAX_LLAMA_CPP_DIAGNOSTIC_NUMBER, ...values);
 }
 
 function mergeUsage(
@@ -263,34 +277,42 @@ function buildCompletionTimings(
   const completionMs = firstNonNegativeFiniteNumber(timings.predicted_ms);
   const completionTokens = firstNonNegativeSafeInteger(timings.predicted_n);
   const promptTokens = firstNonNegativeSafeInteger(timings.prompt_n);
-  const totalMs =
-    firstNonNegativeFiniteNumber(timings.total_ms) ?? (promptMs ?? 0) + (completionMs ?? 0);
-  const promptTokensPerSecond =
-    firstNonNegativeFiniteNumber(timings.prompt_per_second) ??
-    (promptMs !== undefined && promptMs > 0 && promptTokens !== undefined && promptTokens > 0
+  const totalMs = firstNonNegativeFiniteNumber(
+    timings.total_ms,
+    (promptMs ?? 0) + (completionMs ?? 0),
+  );
+  const promptTokensPerSecond = firstNonNegativeFiniteNumber(
+    timings.prompt_per_second,
+    promptMs !== undefined && promptMs > 0 && promptTokens !== undefined && promptTokens > 0
       ? (promptTokens / promptMs) * 1_000
-      : undefined);
-  const completionTokensPerSecond =
-    firstNonNegativeFiniteNumber(timings.predicted_per_second) ??
-    (completionMs !== undefined &&
-    completionMs > 0 &&
-    completionTokens !== undefined &&
-    completionTokens > 0
+      : undefined,
+  );
+  const completionTokensPerSecond = firstNonNegativeFiniteNumber(
+    timings.predicted_per_second,
+    completionMs !== undefined &&
+      completionMs > 0 &&
+      completionTokens !== undefined &&
+      completionTokens > 0
       ? (completionTokens / completionMs) * 1_000
-      : undefined);
+      : undefined,
+  );
 
   return {
     timings: {
       ...(promptMs !== undefined ? { promptMs } : {}),
       ...(completionMs !== undefined ? { completionMs } : {}),
-      totalMs,
+      ...(totalMs !== undefined ? { totalMs } : {}),
       ...(promptMs !== undefined
         ? {
             ttftMs:
-              promptMs +
-              (completionMs !== undefined && completionTokens !== undefined && completionTokens > 0
-                ? completionMs / completionTokens
-                : 0),
+              firstNonNegativeFiniteNumber(
+                promptMs +
+                  (completionMs !== undefined &&
+                  completionTokens !== undefined &&
+                  completionTokens > 0
+                    ? completionMs / completionTokens
+                    : 0),
+              ) ?? promptMs,
           }
         : {}),
       ...(promptTokensPerSecond !== undefined ? { promptTokensPerSecond } : {}),
@@ -299,7 +321,7 @@ function buildCompletionTimings(
   };
 }
 
-function parseSlotSnapshots(payload: unknown): SchedulerSlotSnapshot[] {
+function parseSlotSnapshots(payload: unknown, maxContextWindow: number): SchedulerSlotSnapshot[] {
   const list = Array.isArray(payload)
     ? payload
     : payload !== null &&
@@ -325,9 +347,12 @@ function parseSlotSnapshots(payload: unknown): SchedulerSlotSnapshot[] {
       continue;
     }
     const taskId = firstNonNegativeSafeInteger(slot.task_id, slot.id_task);
-    const contextWindow = firstNonNegativeSafeInteger(slot.n_ctx);
-    const promptTokens = firstNonNegativeSafeInteger(slot.next_token?.n_past);
-    const cacheTokens = firstNonNegativeSafeInteger(slot.n_keep);
+    const contextWindow = firstNonNegativeSafeIntegerAtMost(maxContextWindow, slot.n_ctx);
+    const promptTokens = firstNonNegativeSafeIntegerAtMost(
+      maxContextWindow,
+      slot.next_token?.n_past,
+    );
+    const cacheTokens = firstNonNegativeSafeIntegerAtMost(maxContextWindow, slot.n_keep);
 
     snapshots.push({
       id,
@@ -641,8 +666,10 @@ export class LlamaCppProvider implements ModelProvider {
           ? "unavailable"
           : "unknown";
     const contextWindow =
-      firstNonNegativeSafeInteger(propsPayload?.default_generation_settings?.n_ctx) ??
-      this.model.contextWindow;
+      firstNonNegativeSafeIntegerAtMost(
+        this.model.contextWindow,
+        propsPayload?.default_generation_settings?.n_ctx,
+      ) ?? this.model.contextWindow;
     const totalSlots = firstNonNegativeSafeInteger(propsPayload?.total_slots);
     let jsonMode: ProviderDetectedCapabilities["jsonMode"] =
       this.backendCapabilitiesCache?.capabilities.jsonMode ?? "unknown";
@@ -994,9 +1021,12 @@ export class LlamaCppProvider implements ModelProvider {
       payload.generation_settings?.id_slot,
       preparation.preferredSlot,
     );
-    const tokensCached = firstNonNegativeSafeInteger(payload.tokens_cached);
     const contextWindow =
-      firstNonNegativeSafeInteger(payload.generation_settings?.n_ctx) ?? this.model.contextWindow;
+      firstNonNegativeSafeIntegerAtMost(
+        this.model.contextWindow,
+        payload.generation_settings?.n_ctx,
+      ) ?? this.model.contextWindow;
+    const tokensCached = firstNonNegativeSafeIntegerAtMost(contextWindow, payload.tokens_cached);
 
     if (slotId !== undefined && context.affinityKey) {
       this.rememberFamilyPreferredSlot(context.affinityKey, slotId);
@@ -1365,7 +1395,7 @@ export class LlamaCppProvider implements ModelProvider {
         ),
         signal,
       );
-      snapshots = parseSlotSnapshots(payload);
+      snapshots = parseSlotSnapshots(payload, this.model.contextWindow);
     } catch (error) {
       if (error instanceof RayError) {
         if (error.code === "provider_upstream_error" && /\b404\b/.test(error.message)) {
