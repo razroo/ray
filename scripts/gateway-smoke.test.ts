@@ -72,6 +72,9 @@ test("parseArgs accepts strict gateway smoke options", () => {
   const publicAsyncArgs = parseArgs(["--public-safety", "--async-queue"]);
   assert.equal(publicAsyncArgs.publicSafety, true);
   assert.equal(publicAsyncArgs.asyncQueue, true);
+
+  assert.equal(parseArgs(["--host", "localhost"]).host, "localhost");
+  assert.equal(parseArgs(["--host", "::1"]).host, "::1");
 });
 
 test("parseArgs rejects malformed gateway smoke argv", () => {
@@ -85,6 +88,22 @@ test("parseArgs rejects malformed gateway smoke argv", () => {
   assert.throws(
     () => parseArgs(["--timeout-ms", "120001"]),
     /--timeout-ms must be a positive integer/,
+  );
+  assert.throws(
+    () => parseArgs(["--host", "0.0.0.0"]),
+    /--host must be localhost or a loopback IP address/,
+  );
+  assert.throws(
+    () => parseArgs(["--host", "example.com"]),
+    /--host must be localhost or a loopback IP address/,
+  );
+  assert.throws(
+    () => parseArgs(["--host", "127.0.0.1 "]),
+    /--host must not contain control characters or whitespace/,
+  );
+  assert.throws(
+    () => parseArgs(["--host", "[::1]"]),
+    /--host must be an unbracketed loopback host/,
   );
   assert.throws(() => parseArgs(["--unknown"]), /Unknown option: --unknown/);
   assert.throws(() => parseArgs(["config.json"]), /Unexpected positional argument/);
@@ -143,7 +162,7 @@ test("fetchText refuses to follow smoke probe redirects", async (t) => {
   assert.equal(redirectedAuthorization, undefined);
 });
 
-test("smokeGateway rejects malformed direct paths before startup", async () => {
+test("smokeGateway rejects malformed direct inputs before startup", async () => {
   await assert.rejects(
     () =>
       smokeGateway({
@@ -180,6 +199,26 @@ test("smokeGateway rejects malformed direct paths before startup", async () => {
         host: "127.0.0.1",
       }),
     /configPath must be at most 4096 bytes/,
+  );
+
+  await assert.rejects(
+    () =>
+      smokeGateway({
+        cwd: repoRoot,
+        configPath: "./examples/config/ray.tiny.json",
+        host: "0.0.0.0",
+      }),
+    /host must be localhost or a loopback IP address/,
+  );
+
+  await assert.rejects(
+    () =>
+      smokeGateway({
+        cwd: repoRoot,
+        configPath: "./examples/config/ray.tiny.json",
+        host: "127.0.0.1\t",
+      }),
+    /host must not contain control characters or whitespace/,
   );
 });
 

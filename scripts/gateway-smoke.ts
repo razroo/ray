@@ -1,5 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
-import { createServer as createTcpServer } from "node:net";
+import { createServer as createTcpServer, isIP } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -13,6 +13,7 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_CLI_ARGS = 16;
 const MAX_CLI_ARG_BYTES = 4_096;
+const MAX_GATEWAY_SMOKE_HOST_BYTES = 255;
 const MAX_GATEWAY_SMOKE_PATH_BYTES = 4_096;
 const MAX_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_TEXT_BYTES = 256 * 1024;
@@ -184,6 +185,43 @@ function assertGatewaySmokePathValue(value: unknown, label: string): asserts val
   }
 }
 
+function assertGatewaySmokeHostValue(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty loopback host`);
+  }
+
+  if (/[\0-\x20\x7f]/.test(value)) {
+    throw new Error(`${label} must not contain control characters or whitespace`);
+  }
+
+  if (value.includes("[") || value.includes("]")) {
+    throw new Error(`${label} must be an unbracketed loopback host`);
+  }
+
+  if (Buffer.byteLength(value, "utf8") > MAX_GATEWAY_SMOKE_HOST_BYTES) {
+    throw new Error(`${label} must be at most ${MAX_GATEWAY_SMOKE_HOST_BYTES} bytes`);
+  }
+
+  if (value.toLowerCase() === "localhost") {
+    return;
+  }
+
+  const ipVersion = isIP(value);
+
+  if (ipVersion === 4) {
+    const [firstOctet] = value.split(".");
+    if (firstOctet === "127") {
+      return;
+    }
+  }
+
+  if (ipVersion === 6 && (value === "::1" || value.toLowerCase() === "0:0:0:0:0:0:0:1")) {
+    return;
+  }
+
+  throw new Error(`${label} must be localhost or a loopback IP address`);
+}
+
 function parsePositiveInteger(value: string, label: string, maximum: number): number {
   const normalized = value.trim();
   const parsed = Number(normalized);
@@ -230,7 +268,9 @@ export function parseArgs(argv: string[]): GatewaySmokeArgs {
     }
 
     if (current === "--host") {
-      args.host = requireFlagValue(current, argv[index + 1]);
+      const host = requireFlagValue(current, argv[index + 1]);
+      assertGatewaySmokeHostValue(host, current);
+      args.host = host;
       index += 1;
       continue;
     }
@@ -1075,7 +1115,9 @@ export async function smokeGateway(options: {
 }): Promise<GatewaySmokeSummary> {
   assertGatewaySmokePathValue(options.cwd, "cwd");
   assertGatewaySmokePathValue(options.configPath, "configPath");
+  assertGatewaySmokeHostValue(options.host, "host");
   const cwd = path.resolve(options.cwd);
+  const host = options.host;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const configEnv = Object.create(null) as NodeJS.ProcessEnv;
   let asyncStorageDir: string | undefined;
@@ -1085,8 +1127,8 @@ export async function smokeGateway(options: {
     configPath: options.configPath,
     env: configEnv,
   });
-  const port = options.port ?? (await reserveTcpPort(options.host));
-  const baseConfig = cloneConfigForSmoke(loaded.config, options.host, port);
+  const port = options.port ?? (await reserveTcpPort(host));
+  const baseConfig = cloneConfigForSmoke(loaded.config, host, port);
   if (options.asyncQueue) {
     asyncStorageDir = await mkdtemp(path.join(tmpdir(), "ray-gateway-smoke-async-"));
   }
@@ -1099,7 +1141,7 @@ export async function smokeGateway(options: {
   if (options.asyncQueue && asyncStorageDir) {
     config = enableAsyncQueueConfig(config, asyncStorageDir);
   }
-  const baseUrl = `http://${formatHostForUrl(options.host)}:${port}`;
+  const baseUrl = `http://${formatHostForUrl(host)}:${port}`;
 
   try {
     gateway = await startGateway({
@@ -1158,7 +1200,7 @@ export async function smokeGateway(options: {
         configPath: loaded.configPath ?? path.resolve(cwd, options.configPath),
         profile: config.profile,
         modelId: config.model.id,
-        host: options.host,
+        host,
         port,
         baseUrl,
         livezStatus: livez.status,
@@ -1187,7 +1229,7 @@ export async function smokeGateway(options: {
         configPath: loaded.configPath ?? path.resolve(cwd, options.configPath),
         profile: config.profile,
         modelId: config.model.id,
-        host: options.host,
+        host,
         port,
         baseUrl,
         livezStatus: publicSafety.summary.livezUnauthStatus,
@@ -1223,7 +1265,7 @@ export async function smokeGateway(options: {
         configPath: loaded.configPath ?? path.resolve(cwd, options.configPath),
         profile: config.profile,
         modelId: config.model.id,
-        host: options.host,
+        host,
         port,
         baseUrl,
         livezStatus: livez.status,
@@ -1267,7 +1309,7 @@ export async function smokeGateway(options: {
       configPath: loaded.configPath ?? path.resolve(cwd, options.configPath),
       profile: config.profile,
       modelId: config.model.id,
-      host: options.host,
+      host,
       port,
       baseUrl,
       livezStatus: livez.status,
