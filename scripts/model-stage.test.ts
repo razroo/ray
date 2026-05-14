@@ -352,6 +352,23 @@ test("createModelStagePlan reads staging sources and checksums from env", async 
   assert.match(plan.commands.join("\n"), /timeout 30s df -Pm '\/var\/lib\/ray\/models'/);
 });
 
+test("createModelStagePlan ignores inherited staging env values", async () => {
+  const env = Object.create({
+    RAY_DEPLOY_SERVICE_USER: "intruder",
+    RAY_MODEL_SOURCE_PATH: "/tmp/ray-artifacts/inherited.gguf",
+    RAY_MODEL_SHA256: "B".repeat(64),
+  }) as NodeJS.ProcessEnv;
+  const plan = await createModelStagePlan({
+    cwd: repoRoot,
+    configPath: "./examples/config/ray.1b.generic.public.json",
+    env,
+  });
+
+  assert.equal(plan.serviceUser, "ray");
+  assert.equal(plan.sourcePath, undefined);
+  assert.equal(plan.sha256, undefined);
+});
+
 test("createModelStagePlan keeps shared artifact directories traversable", async () => {
   const plan = await createModelStagePlan({
     cwd: repoRoot,

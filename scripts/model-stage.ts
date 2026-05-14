@@ -244,6 +244,18 @@ function readNonEmptyEnvValue(value: string | undefined): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+function snapshotStageEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const snapshot = Object.create(null) as NodeJS.ProcessEnv;
+
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value === "string") {
+      snapshot[key] = value;
+    }
+  }
+
+  return snapshot;
+}
+
 function parseOptionalPositiveIntegerEnv(
   value: string | undefined,
   label: string,
@@ -565,8 +577,10 @@ async function loadStageEnvironment(
   baseEnv: NodeJS.ProcessEnv,
   envFile: string | undefined,
 ): Promise<NodeJS.ProcessEnv> {
+  const env = snapshotStageEnvironment(baseEnv);
+
   if (!envFile) {
-    return baseEnv;
+    return env;
   }
 
   let contents: string;
@@ -576,10 +590,7 @@ async function loadStageEnvironment(
     throw formatEnvironmentFileReadError(envFile, error);
   }
 
-  return {
-    ...baseEnv,
-    ...parseEnvironmentFile(contents),
-  };
+  return Object.assign(env, parseEnvironmentFile(contents));
 }
 
 function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
