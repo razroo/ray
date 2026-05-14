@@ -11,6 +11,7 @@ import {
   MAX_TEST_DISCOVERY_DIRECTORIES,
   MAX_TEST_SKIP_NAMES,
   MAX_TEST_COMMAND_TIMEOUT_MS,
+  MAX_TEST_FREE_SPACE_MIB,
   resolveMinimumTestFreeSpaceMiB,
   resolveTestCommandTimeoutMs,
   runTestCli,
@@ -472,6 +473,48 @@ test("test disk preflight rejects malformed direct paths before probing", async 
         },
       }),
     /tmpDir must be at most 4096 bytes/,
+  );
+
+  assert.equal(statfsCalls, 0);
+});
+
+test("test disk preflight rejects malformed direct options before probing", async () => {
+  let statfsCalls = 0;
+  const statfs = async () => {
+    statfsCalls += 1;
+    return { bsize: 1024 * 1024, bavail: 2_048 };
+  };
+
+  await assert.rejects(
+    () => assertTestDiskHeadroom(null),
+    /test disk preflight options must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      assertTestDiskHeadroom({
+        env: null,
+        statfs,
+      }),
+    /env must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      assertTestDiskHeadroom({
+        minFreeSpaceMiB: MAX_TEST_FREE_SPACE_MIB + 1,
+        statfs,
+      }),
+    /minFreeSpaceMiB must be a non-negative safe integer no greater than 1048576/,
+  );
+
+  await assert.rejects(
+    () =>
+      assertTestDiskHeadroom({
+        minFreeSpaceMiB: 1,
+        statfs: "statfs",
+      }),
+    /statfs must be a function/,
   );
 
   assert.equal(statfsCalls, 0);

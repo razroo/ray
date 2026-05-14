@@ -72,6 +72,12 @@ function assertPositiveIntegerAtMost(value, label, maximum) {
   }
 }
 
+function assertNonNegativeIntegerAtMost(value, label, maximum) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > maximum) {
+    throw new Error(`${label} must be a non-negative safe integer no greater than ${maximum}`);
+  }
+}
+
 function readOption(options, key, defaultValue) {
   return Object.hasOwn(options, key) ? options[key] : defaultValue;
 }
@@ -413,16 +419,33 @@ async function getAvailableSpaceMiB(targetPath, statfs) {
 }
 
 export async function assertTestDiskHeadroom(options = {}) {
-  const env = options.env ?? process.env;
-  const minFreeSpaceMiB = options.minFreeSpaceMiB ?? resolveMinimumTestFreeSpaceMiB(env);
-  const statfs = options.statfs ?? fs.statfs;
+  if (!isRecord(options)) {
+    throw new Error("test disk preflight options must be an object");
+  }
+
+  const env = readOption(options, "env", process.env);
+  if (env === null || typeof env !== "object") {
+    throw new Error("env must be an object");
+  }
+
+  const minFreeSpaceMiB = readOption(
+    options,
+    "minFreeSpaceMiB",
+    resolveMinimumTestFreeSpaceMiB(env),
+  );
+  assertNonNegativeIntegerAtMost(minFreeSpaceMiB, "minFreeSpaceMiB", MAX_TEST_FREE_SPACE_MIB);
+
+  const statfs = readOption(options, "statfs", fs.statfs);
+  if (typeof statfs !== "function") {
+    throw new Error("statfs must be a function");
+  }
 
   if (minFreeSpaceMiB === 0) {
     return;
   }
 
-  const rootPath = options.root ?? process.cwd();
-  const tmpPath = options.tmpDir ?? tmpdir();
+  const rootPath = readOption(options, "root", process.cwd());
+  const tmpPath = readOption(options, "tmpDir", tmpdir());
   assertTestPathValue(rootPath, "root");
   assertTestPathValue(tmpPath, "tmpDir");
 
