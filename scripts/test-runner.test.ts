@@ -168,6 +168,42 @@ test("runTestCli dispatches bounded built tests before script tests", async (t) 
   assert.equal(commands[1]?.timeoutMs, 123_456);
 });
 
+test("runTestCli rejects malformed runtime binary overrides before dispatch", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-test-runner-binary-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const stderr: string[] = [];
+  const commands: string[] = [];
+  const code = await runTestCli({
+    root: tempDir,
+    env: {
+      RAY_BUN_BINARY: "/usr/local/bin/bun\nmalformed",
+      RAY_NODE_BINARY: "/usr/local/bin/node",
+    },
+    io: {
+      stderr: {
+        write: (message: string) => {
+          stderr.push(message);
+          return true;
+        },
+      },
+    },
+    diskPreflight: async () => {
+      throw new Error("disk preflight should not run");
+    },
+    runCommand: async (binary: string) => {
+      commands.push(binary);
+      return 0;
+    },
+  });
+
+  assert.equal(code, 1);
+  assert.deepEqual(commands, []);
+  assert.match(stderr.join(""), /Bun test binary must not contain control characters/);
+});
+
 test("runTestCommand times out hung child commands", async () => {
   const stderr: string[] = [];
   const startedAt = Date.now();

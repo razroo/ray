@@ -363,6 +363,8 @@ export async function runTestCli(options = {}) {
   const commandTimeoutMs = options.commandTimeoutMs ?? resolveTestCommandTimeoutMs(env);
 
   try {
+    assertTestPathValue(bunBinary, "Bun test binary");
+    assertTestPathValue(nodeBinary, "Node test binary");
     await diskPreflight({ root, env });
   } catch (error) {
     io.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
