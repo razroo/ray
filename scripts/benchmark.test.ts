@@ -11,6 +11,7 @@ import {
   appendHistoryOutput,
   assertBenchmarkLlamaCppLaunchFiles,
   buildAutotuneCandidates,
+  buildBenchmarkLlamaCppServerEnv,
   buildBenchmarkLlamaCppServerArgs,
   loadBaseline,
   loadWorkload,
@@ -330,6 +331,40 @@ test("buildBenchmarkLlamaCppServerArgs mirrors generated launch profiles", () =>
   assert.match(args.join(" "), /--cache-prompt --cache-reuse 192 --cache-ram 384/);
   assert.match(args.join(" "), /--cont-batching --metrics --slots --warmup/);
   assert.equal(args.at(-1), "--no-mmap");
+});
+
+test("buildBenchmarkLlamaCppServerEnv keeps llama.cpp child env minimal", () => {
+  const config = createDefaultConfig("1b");
+  if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
+    throw new Error("Expected llama.cpp launch profile");
+  }
+
+  const source = Object.create({
+    PATH: "/inherited/bin",
+    RAY_API_KEYS: "inherited-secret",
+  }) as NodeJS.ProcessEnv;
+  source.PATH = "/usr/bin";
+  source.LANG = "C.UTF-8";
+  source.TMPDIR = "/tmp/ray";
+  source.TEMP = "bad\0value";
+  source.RAY_API_KEYS = "client-secret";
+  source.RAY_UPSTREAM_API_KEY = "upstream-secret";
+  source.HOME = "/root";
+  source.LD_PRELOAD = "/tmp/hook.so";
+
+  const env = buildBenchmarkLlamaCppServerEnv(config.model.adapter.launchProfile, source);
+
+  assert.equal(Object.getPrototypeOf(env), null);
+  assert.equal(env.PATH, "/usr/bin");
+  assert.equal(env.LANG, "C.UTF-8");
+  assert.equal(env.TMPDIR, "/tmp/ray");
+  assert.equal(env.LLAMA_ARG_MODEL, config.model.adapter.launchProfile.modelPath);
+  assert.equal(env.LLAMA_ARG_HOST, config.model.adapter.launchProfile.host);
+  assert.equal(env.RAY_API_KEYS, undefined);
+  assert.equal(env.RAY_UPSTREAM_API_KEY, undefined);
+  assert.equal(env.HOME, undefined);
+  assert.equal(env.LD_PRELOAD, undefined);
+  assert.equal(env.TEMP, undefined);
 });
 
 test("assertBenchmarkLlamaCppLaunchFiles rejects inaccessible backend files", async (t) => {

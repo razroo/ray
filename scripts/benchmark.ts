@@ -64,6 +64,8 @@ const BENCHMARK_REQUEST_TIMEOUT_MS = 180_000;
 const MAX_BENCHMARK_RESPONSE_TOKENS = 1_000_000;
 const BENCHMARK_HEALTH_REQUEST_TIMEOUT_MS = 3_000;
 const BUN_RUNTIME_BINARY = readOwnProcessEnvValue("RAY_BUN_BINARY") ?? "bun";
+const DEFAULT_BENCHMARK_CHILD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const BENCHMARK_CHILD_ENV_KEYS = ["LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TMP", "TEMP"] as const;
 const unsafeObjectKeys = new Set(["__proto__", "constructor", "prototype"]);
 const baselineAssertionKeys = new Set<keyof BenchmarkBaselineAssertions>([
   "maxLatencyP95Ms",
@@ -86,6 +88,44 @@ function readOwnProcessEnvValue(name: string): string | undefined {
 
   const value = process.env[name];
   return typeof value === "string" ? value : undefined;
+}
+
+function readOwnEnvString(env: NodeJS.ProcessEnv, key: string): string | undefined {
+  if (!Object.prototype.hasOwnProperty.call(env, key)) {
+    return undefined;
+  }
+
+  const value = env[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function isSafeBenchmarkChildEnvValue(value: string): boolean {
+  return value.length > 0 && !value.includes("\0");
+}
+
+function buildBenchmarkChildEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const childEnv = Object.create(null) as NodeJS.ProcessEnv;
+  const pathValue = readOwnEnvString(env, "PATH");
+  childEnv.PATH =
+    pathValue !== undefined && isSafeBenchmarkChildEnvValue(pathValue)
+      ? pathValue
+      : DEFAULT_BENCHMARK_CHILD_PATH;
+
+  for (const key of BENCHMARK_CHILD_ENV_KEYS) {
+    const value = readOwnEnvString(env, key);
+    if (value !== undefined && isSafeBenchmarkChildEnvValue(value)) {
+      childEnv[key] = value;
+    }
+  }
+
+  return childEnv;
+}
+
+export function buildBenchmarkLlamaCppServerEnv(
+  launchProfile: LlamaCppLaunchProfile,
+  env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return Object.assign(buildBenchmarkChildEnv(env), buildLlamaCppEnvironment(launchProfile));
 }
 
 interface BenchmarkArgs {
@@ -2413,10 +2453,7 @@ async function startLlamaCppServer(launchProfile: LlamaCppLaunchProfile): Promis
     buildBenchmarkLlamaCppServerArgs(launchProfile),
     {
       cwd: process.cwd(),
-      env: {
-        ...process.env,
-        ...buildLlamaCppEnvironment(launchProfile),
-      },
+      env: buildBenchmarkLlamaCppServerEnv(launchProfile),
     },
   );
 }
