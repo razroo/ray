@@ -123,6 +123,32 @@ github_release_exists() {
   fail "could not check GitHub release $tag (exit $status)"
 }
 
+local_release_tag_ready() {
+  local tag="$1"
+  local expected_sha="$2"
+
+  if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+    return 1
+  fi
+
+  local tag_type
+  tag_type="$(git cat-file -t "refs/tags/$tag")" ||
+    fail "could not inspect local tag type for $tag"
+  if [ "$tag_type" != "tag" ]; then
+    fail "local tag $tag already exists but is not annotated; delete it before releasing"
+  fi
+
+  local tag_target
+  tag_target="$(git rev-parse "$tag^{}")" ||
+    fail "could not resolve local tag target for $tag"
+  if [ "$tag_target" != "$expected_sha" ]; then
+    fail "local tag $tag points at $tag_target, expected $expected_sha"
+  fi
+
+  echo "Reusing local annotated tag $tag at $expected_sha"
+  return 0
+}
+
 usage() {
   sed -n '1,80p' <<'EOF'
 Usage: bash scripts/release/gh-release.sh [--dry-run | --yes]
@@ -203,9 +229,15 @@ fi
 
 run_required_bounded "checking GitHub CLI authentication" 60 gh auth status >/dev/null
 
+CREATE_TAG_CORE=true
+CREATE_TAG_SDK=true
 for tag in "$TAG_CORE" "$TAG_SDK"; do
-  if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-    fail "local tag already exists: $tag"
+  if local_release_tag_ready "$tag" "$LOCAL_HEAD"; then
+    if [ "$tag" = "$TAG_CORE" ]; then
+      CREATE_TAG_CORE=false
+    else
+      CREATE_TAG_SDK=false
+    fi
   fi
   if remote_tag_exists "$tag"; then
     fail "remote tag already exists: $tag"
@@ -215,8 +247,12 @@ for tag in "$TAG_CORE" "$TAG_SDK"; do
   fi
 done
 
-git tag -a "$TAG_CORE" -m "Release $TAG_CORE (@razroo/ray-core v$VER)"
-git tag -a "$TAG_SDK" -m "Release $TAG_SDK (@razroo/ray-sdk v$VER)"
+if [ "$CREATE_TAG_CORE" = true ]; then
+  git tag -a "$TAG_CORE" -m "Release $TAG_CORE (@razroo/ray-core v$VER)"
+fi
+if [ "$CREATE_TAG_SDK" = true ]; then
+  git tag -a "$TAG_SDK" -m "Release $TAG_SDK (@razroo/ray-sdk v$VER)"
+fi
 run_required_bounded "pushing release tags atomically" 120 git push --atomic origin "$TAG_CORE" "$TAG_SDK"
 run_required_bounded \
   "creating GitHub release $TAG_CORE" \

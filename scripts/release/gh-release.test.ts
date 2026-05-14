@@ -27,7 +27,10 @@ async function writeExecutable(filePath: string, contents: string): Promise<void
 
 async function createReleaseHelperFixture(
   t: TestContext,
-  options: { ghReleaseViewScript: string },
+  options: {
+    ghReleaseViewScript: string;
+    localTagMode?: "absent" | "annotated-at-head" | "lightweight-at-head" | "wrong-target";
+  },
 ): Promise<{ binDir: string; logPath: string; scriptPath: string; tempDir: string }> {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-gh-release-helper-"));
   t.after(async () => {
@@ -40,6 +43,7 @@ async function createReleaseHelperFixture(
 
   const binDir = path.join(tempDir, "bin");
   const logPath = path.join(tempDir, "commands.log");
+  const localTagMode = options.localTagMode ?? "absent";
 
   await writeExecutable(
     path.join(binDir, "timeout"),
@@ -80,6 +84,7 @@ async function createReleaseHelperFixture(
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
+      `LOCAL_TAG_MODE=${JSON.stringify(localTagMode)}`,
       'printf "git %s\\n" "$*" >> "${RAY_TEST_LOG:?}"',
       'if [ "${1:-}" = "status" ]; then',
       "  exit 0",
@@ -100,7 +105,26 @@ async function createReleaseHelperFixture(
       "  exit 0",
       "fi",
       'if [ "${1:-}" = "rev-parse" ] && [ "${2:-}" = "-q" ]; then',
-      "  exit 1",
+      '  if [ "$LOCAL_TAG_MODE" = "absent" ]; then',
+      "    exit 1",
+      "  fi",
+      "  exit 0",
+      "fi",
+      'if [ "${1:-}" = "cat-file" ] && [ "${2:-}" = "-t" ]; then',
+      '  if [ "$LOCAL_TAG_MODE" = "lightweight-at-head" ]; then',
+      '    echo "commit"',
+      "  else",
+      '    echo "tag"',
+      "  fi",
+      "  exit 0",
+      "fi",
+      'if [ "${1:-}" = "rev-parse" ] && [[ "${2:-}" == *"^{}" ]]; then',
+      '  if [ "$LOCAL_TAG_MODE" = "wrong-target" ]; then',
+      '    echo "deadbeef00000000"',
+      "  else",
+      '    echo "abcdef1234567890"',
+      "  fi",
+      "  exit 0",
       "fi",
       'if [ "${1:-}" = "ls-remote" ]; then',
       "  exit 2",
@@ -218,6 +242,9 @@ test("gh release helper bounds network release operations", async () => {
   assert.match(contents, /git fetch --tags origin refs\/heads\/main:refs\/remotes\/origin\/main/);
   assert.match(contents, /run_bounded 60 git ls-remote --exit-code --tags origin/);
   assert.match(contents, /fail "could not check remote tag \$tag \(exit \$status\)"/);
+  assert.match(contents, /local_release_tag_ready\(\) \{/);
+  assert.match(contents, /git cat-file -t "refs\/tags\/\$tag"/);
+  assert.match(contents, /git rev-parse "\$tag\^\{\}"/);
   assert.match(contents, /run_bounded 60 gh release view "\$tag"/);
   assert.match(contents, /fail "timed out checking GitHub release: \$tag"/);
   assert.match(
@@ -282,5 +309,52 @@ test("gh release helper continues when GitHub reports releases are missing", asy
   assert.match(
     commandLog,
     /^gh release create sdk-v1\.2\.3 --generate-notes --title sdk-v1\.2\.3$/m,
+  );
+});
+
+test("gh release helper reuses matching local annotated tags", async (t) => {
+  const fixture = await createReleaseHelperFixture(t, {
+    ghReleaseViewScript: ['  echo "release not found" >&2', "  exit 1"].join("\n"),
+    localTagMode: "annotated-at-head",
+  });
+
+  const result = await runFixtureReleaseHelper(fixture);
+
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /Reusing local annotated tag core-v1\.2\.3/);
+  assert.match(result.stdout, /Reusing local annotated tag sdk-v1\.2\.3/);
+
+  const commandLog = await readFile(fixture.logPath, "utf8");
+  assert.match(commandLog, /^git cat-file -t refs\/tags\/core-v1\.2\.3$/m);
+  assert.match(commandLog, /^git rev-parse core-v1\.2\.3\^\{\}$/m);
+  assert.doesNotMatch(commandLog, /^git tag -a /m);
+  assert.match(commandLog, /^git push --atomic origin core-v1\.2\.3 sdk-v1\.2\.3$/m);
+});
+
+test("gh release helper rejects unsafe existing local tags", async (t) => {
+  const lightweightFixture = await createReleaseHelperFixture(t, {
+    ghReleaseViewScript: ['  echo "release not found" >&2', "  exit 1"].join("\n"),
+    localTagMode: "lightweight-at-head",
+  });
+
+  const lightweightResult = await runFixtureReleaseHelper(lightweightFixture);
+
+  assert.notEqual(lightweightResult.code, 0);
+  assert.match(
+    lightweightResult.stderr,
+    /local tag core-v1\.2\.3 already exists but is not annotated/,
+  );
+
+  const wrongTargetFixture = await createReleaseHelperFixture(t, {
+    ghReleaseViewScript: ['  echo "release not found" >&2', "  exit 1"].join("\n"),
+    localTagMode: "wrong-target",
+  });
+
+  const wrongTargetResult = await runFixtureReleaseHelper(wrongTargetFixture);
+
+  assert.notEqual(wrongTargetResult.code, 0);
+  assert.match(
+    wrongTargetResult.stderr,
+    /local tag core-v1\.2\.3 points at deadbeef00000000, expected abcdef1234567890/,
   );
 });
