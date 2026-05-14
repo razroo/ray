@@ -225,7 +225,18 @@ const CGROUP_MEMORY_CACHE_TTL_MS = 250;
 const CGROUP_CPU_CACHE_TTL_MS = 250;
 const LINUX_PRESSURE_CACHE_TTL_MS = 250;
 const CGROUP_UNLIMITED_LIMIT_BYTES = 1024 ** 5;
-const unsafeMetadataKeys = new Set(["__proto__", "constructor", "prototype"]);
+const unsafeObjectKeys = new Set(["__proto__", "constructor", "prototype"]);
+const runtimeOptionKeys = new Set([
+  "provider",
+  "logger",
+  "metrics",
+  "scheduler",
+  "cache",
+  "memoryUsage",
+  "cgroupMemory",
+  "cgroupCpu",
+  "linuxPressure",
+]);
 const MAX_LEARNED_FAMILY_HISTORY_KEYS = 512;
 const MAX_PROVIDER_PREPARATION_SLOT_SNAPSHOTS = 256;
 const MAX_PROVIDER_SLOT_UPDATED_AT_CHARS = 128;
@@ -365,6 +376,43 @@ function objectEntries(value: object, label: string): Array<[string, unknown]> {
   }
 }
 
+function runtimeOptionEntries(value: object): Array<[string, unknown]> {
+  try {
+    return Object.entries(value);
+  } catch {
+    throw new TypeError("runtime options must not contain unreadable properties");
+  }
+}
+
+function assertCreateRayRuntimeOptions(value: unknown): asserts value is CreateRayRuntimeOptions {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("runtime options must be an object");
+  }
+
+  for (const [key, entry] of runtimeOptionEntries(value)) {
+    if (unsafeObjectKeys.has(key)) {
+      throw new TypeError(`runtime options must not contain unsafe key "${key}"`);
+    }
+
+    if (!runtimeOptionKeys.has(key)) {
+      throw new TypeError(`runtime options must not contain unsupported key "${key}"`);
+    }
+
+    if (key === "memoryUsage" && entry !== undefined && typeof entry !== "function") {
+      throw new TypeError("runtime options memoryUsage must be a function when provided");
+    }
+
+    if (
+      (key === "cgroupMemory" || key === "cgroupCpu" || key === "linuxPressure") &&
+      entry !== undefined &&
+      entry !== false &&
+      typeof entry !== "function"
+    ) {
+      throw new TypeError(`runtime options ${key} must be false or a function when provided`);
+    }
+  }
+}
+
 function assertMetadataRecord(value: unknown): asserts value is Record<string, string> | undefined {
   if (value === undefined) {
     return;
@@ -392,7 +440,7 @@ function assertMetadataRecord(value: unknown): asserts value is Record<string, s
   }
 
   for (const [key, entry] of entries) {
-    if (unsafeMetadataKeys.has(key)) {
+    if (unsafeObjectKeys.has(key)) {
       throw new RayError(`metadata must not contain unsafe key "${key}"`, {
         code: "invalid_request",
         status: 400,
@@ -2565,7 +2613,7 @@ function normalizeProviderPreparationStringRecord(
   const record: Record<string, string> = {};
 
   for (const [key, entry] of entries) {
-    if (unsafeMetadataKeys.has(key)) {
+    if (unsafeObjectKeys.has(key)) {
       throw createProviderPreparationError(`${label} must not contain unsafe keys`, {
         field: label,
         key,
@@ -3895,6 +3943,8 @@ export class RayRuntime {
   readonly config: RayConfig;
 
   constructor(config: RayConfig, options: CreateRayRuntimeOptions = {}) {
+    assertCreateRayRuntimeOptions(options);
+
     this.config = snapshotRayConfig(config);
     this.provider = options.provider ?? createModelProvider(this.config.model);
     this.providerModelId = normalizeProviderModelId(this.provider.modelId, this.config.model.id);

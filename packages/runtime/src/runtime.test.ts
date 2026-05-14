@@ -39,6 +39,37 @@ test("runtime rejects invalid direct config", () => {
   assert.throws(() => createRayRuntime(config), /scheduler\.concurrency/);
 });
 
+test("runtime rejects invalid direct options", () => {
+  const config = createDefaultConfig("tiny");
+
+  assert.throws(() => createRayRuntime(config, null as never), /runtime options must be an object/);
+  assert.throws(
+    () =>
+      createRayRuntime(config, {
+        extra: "not-supported",
+      } as never),
+    /runtime options must not contain unsupported key "extra"/,
+  );
+  assert.throws(
+    () => createRayRuntime(config, JSON.parse('{"__proto__":"polluted"}') as never),
+    /runtime options must not contain unsafe key "__proto__"/,
+  );
+  assert.throws(
+    () =>
+      createRayRuntime(config, {
+        memoryUsage: "not-a-function",
+      } as never),
+    /runtime options memoryUsage must be a function when provided/,
+  );
+  assert.throws(
+    () =>
+      createRayRuntime(config, {
+        cgroupMemory: true,
+      } as never),
+    /runtime options cgroupMemory must be false or a function when provided/,
+  );
+});
+
 test("runtime snapshots config at construction", async () => {
   let observedInput = "";
   const provider: ModelProvider = {
