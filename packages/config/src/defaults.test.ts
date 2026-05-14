@@ -335,6 +335,19 @@ test("resolveAuthApiKeys parses comma and newline separated values", () => {
   assert.deepEqual([...keys], ["alpha", "beta", "charlie"]);
 });
 
+test("resolveAuthApiKeys ignores inherited environment values", () => {
+  const config = mergeConfig(createDefaultConfig("tiny"), {
+    auth: {
+      enabled: true,
+    },
+  });
+  const env = Object.create({
+    RAY_API_KEYS: "alpha",
+  }) as NodeJS.ProcessEnv;
+
+  assert.throws(() => resolveAuthApiKeys(config, env), /Auth is enabled but RAY_API_KEYS is empty/);
+});
+
 test("resolveAuthApiKeys bounds retained API key material", () => {
   const config = mergeConfig(createDefaultConfig("tiny"), {
     auth: {

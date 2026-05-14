@@ -586,6 +586,27 @@ function firstNonEmptyEnvValue(...values: Array<string | undefined>): string | u
   return values.find((value): value is string => isNonEmptyString(value));
 }
 
+function readOwnEnvValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  if (!Object.prototype.hasOwnProperty.call(env, name)) {
+    return undefined;
+  }
+
+  const value = env[name];
+  return typeof value === "string" ? value : undefined;
+}
+
+function snapshotEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const snapshot = Object.create(null) as NodeJS.ProcessEnv;
+
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value === "string") {
+      snapshot[key] = value;
+    }
+  }
+
+  return snapshot;
+}
+
 function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig {
   const next = structuredClone(config);
   const host = env.RAY_HOST;
@@ -3170,7 +3191,7 @@ export function resolveAuthApiKeys(config: RayConfig, env: NodeJS.ProcessEnv): S
     });
   }
 
-  const raw = env[envName];
+  const raw = readOwnEnvValue(env, envName);
 
   if (!isNonEmptyString(raw)) {
     throw new RayError(`Auth is enabled but ${envName} is empty`, {
@@ -3238,7 +3259,7 @@ export async function loadRayConfig(options: LoadRayConfigOptions = {}): Promise
   assertLoadRayConfigOptions(options);
 
   const cwd = options.cwd ?? process.cwd();
-  const env = options.env ?? process.env;
+  const env = snapshotEnv(options.env ?? process.env);
   assertConfigPathInput(cwd, "cwd");
   if (options.configPath !== undefined) {
     assertConfigPathInput(options.configPath, "configPath");

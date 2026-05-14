@@ -57,6 +57,20 @@ test("loadRayConfig defaults to the sub1b profile", async () => {
   assert.equal(loaded.config.model.adapter.kind, "llama.cpp");
 });
 
+test("loadRayConfig ignores inherited environment overrides", async () => {
+  const env = Object.create({
+    RAY_PROFILE: "tiny",
+    RAY_PORT: "65535",
+  }) as NodeJS.ProcessEnv;
+  const loaded = await loadRayConfig({
+    cwd: process.cwd(),
+    env,
+  });
+
+  assert.equal(loaded.config.profile, "sub1b");
+  assert.notEqual(loaded.config.server.port, 65535);
+});
+
 test("loadRayConfig rejects invalid direct options", async () => {
   await assert.rejects(loadRayConfig(null as never), /loadRayConfig options must be an object/);
   await assert.rejects(
