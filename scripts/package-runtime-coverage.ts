@@ -758,6 +758,55 @@ function validatePackageExportTypes(
   return diagnostics;
 }
 
+function validatePackageExportMain(
+  packageJsonPath: string,
+  parsedPackage: Record<string, unknown>,
+): PackageRuntimeCoverageDiagnostic[] {
+  const main = parsedPackage.main;
+  const exports = parsedPackage.exports;
+
+  if (typeof main !== "string" || exports === undefined) {
+    return [];
+  }
+
+  const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
+  if (typeof exports !== "object" || exports === null || Array.isArray(exports)) {
+    diagnostics.push({
+      level: "error",
+      code: "package_exports_must_be_object_for_main",
+      packagePath: packageJsonPath,
+      message:
+        "Package manifests with top-level main must use an object exports map so JavaScript entrypoints can be checked.",
+    });
+    return diagnostics;
+  }
+
+  const rootExport = (exports as Record<string, unknown>)["."];
+  if (typeof rootExport !== "object" || rootExport === null || Array.isArray(rootExport)) {
+    diagnostics.push({
+      level: "error",
+      code: "package_root_export_must_be_object_for_main",
+      packagePath: packageJsonPath,
+      message:
+        'Package manifests with top-level main must expose exports["."] as an object with a matching default condition.',
+    });
+    return diagnostics;
+  }
+
+  const rootExportDefault = (rootExport as Record<string, unknown>).default;
+  if (rootExportDefault !== main) {
+    diagnostics.push({
+      level: "error",
+      code: "package_root_export_default_mismatch",
+      packagePath: packageJsonPath,
+      message:
+        'Package manifests with top-level main must set exports["."].default to the same JavaScript entrypoint so consumers resolve package exports consistently.',
+    });
+  }
+
+  return diagnostics;
+}
+
 function isLocalHealthCurl(line: string): boolean {
   return (
     /\bcurl\b/.test(line) &&
@@ -2940,6 +2989,7 @@ export async function validatePackageRuntimeCoverage(
       const diagnostics = [
         ...validateRootPackageManager(cwd, packageJsonPath, parsedPackage),
         ...validatePackageExportTypes(packageJsonPath, parsedPackage),
+        ...validatePackageExportMain(packageJsonPath, parsedPackage),
         ...validateScripts(packageJsonPath, scripts),
       ];
 

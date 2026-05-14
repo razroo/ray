@@ -261,8 +261,11 @@ test("validatePackageRuntimeCoverage requires root export type conditions", asyn
 
   const rootPackageJson = path.join(tempDir, "package.json");
   const packageDir = path.join(tempDir, "packages", "sdk");
+  const cachePackageDir = path.join(tempDir, "packages", "cache");
   await mkdir(packageDir, { recursive: true });
+  await mkdir(cachePackageDir, { recursive: true });
   const sdkPackageJson = path.join(packageDir, "package.json");
+  const cachePackageJson = path.join(cachePackageDir, "package.json");
   await writeFile(
     rootPackageJson,
     JSON.stringify(
@@ -299,10 +302,27 @@ test("validatePackageRuntimeCoverage requires root export type conditions", asyn
       2,
     ),
   );
+  await writeFile(
+    cachePackageJson,
+    JSON.stringify(
+      {
+        name: "@ray/cache-test",
+        type: "module",
+        main: "./dist/index.js",
+        exports: {
+          ".": {
+            default: "./dist/cache.js",
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
 
   const summary = await validatePackageRuntimeCoverage({
     cwd: tempDir,
-    packageJsonPaths: [rootPackageJson, sdkPackageJson],
+    packageJsonPaths: [rootPackageJson, sdkPackageJson, cachePackageJson],
   });
   const diagnostics = summary.results.flatMap((result) => result.diagnostics);
 
@@ -319,6 +339,13 @@ test("validatePackageRuntimeCoverage requires root export type conditions", asyn
       (diagnostic) =>
         diagnostic.code === "package_root_export_types_missing" &&
         diagnostic.packagePath === sdkPackageJson,
+    ),
+  );
+  assert.ok(
+    diagnostics.some(
+      (diagnostic) =>
+        diagnostic.code === "package_root_export_default_mismatch" &&
+        diagnostic.packagePath === cachePackageJson,
     ),
   );
 });
