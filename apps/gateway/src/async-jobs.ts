@@ -1083,6 +1083,32 @@ function assertPersistedCallbackState(value: unknown): void {
       `callback.lastError must be at most ${MAX_JOB_ERROR_MESSAGE_CHARS} characters`,
     );
   }
+
+  assertPersistedCallbackStatusPayloads(value, value.status);
+}
+
+function assertPersistedCallbackStatusPayloads(
+  value: Record<string, unknown>,
+  status: InferenceJobCallbackState["status"],
+): void {
+  if (status === "delivered") {
+    if (value.deliveredAt === undefined) {
+      throw new PersistedJobValidationError("delivered callbacks must include deliveredAt");
+    }
+
+    if (value.lastError !== undefined) {
+      throw new PersistedJobValidationError("delivered callbacks must not include lastError");
+    }
+    return;
+  }
+
+  if (value.deliveredAt !== undefined) {
+    throw new PersistedJobValidationError("undelivered callbacks must not include deliveredAt");
+  }
+
+  if (status === "failed" && !isNonEmptyString(value.lastError)) {
+    throw new PersistedJobValidationError("failed callbacks must include lastError");
+  }
 }
 
 function validatePersistedJobRecord(value: unknown, expectedJobId?: string): InferenceJobRecord {

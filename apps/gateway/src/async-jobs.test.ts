@@ -1771,6 +1771,94 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
       }),
     );
     await writeFile(
+      join(jobsDir, "job_callback_delivered_without_timestamp.json"),
+      JSON.stringify({
+        id: "job_callback_delivered_without_timestamp",
+        status: "succeeded",
+        request: {
+          input: "delivered callback without timestamp",
+        },
+        result: persistedInferenceResult("done"),
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        attempts: 1,
+        maxAttempts: 2,
+        callback: {
+          url: "https://93.184.216.34/ray-callback",
+          status: "delivered",
+          attempts: 1,
+        },
+      }),
+    );
+    await writeFile(
+      join(jobsDir, "job_callback_delivered_with_error.json"),
+      JSON.stringify({
+        id: "job_callback_delivered_with_error",
+        status: "succeeded",
+        request: {
+          input: "delivered callback with stale error",
+        },
+        result: persistedInferenceResult("done"),
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        attempts: 1,
+        maxAttempts: 2,
+        callback: {
+          url: "https://93.184.216.34/ray-callback",
+          status: "delivered",
+          attempts: 1,
+          deliveredAt: now,
+          lastError: "stale failure",
+        },
+      }),
+    );
+    await writeFile(
+      join(jobsDir, "job_callback_pending_delivered_at.json"),
+      JSON.stringify({
+        id: "job_callback_pending_delivered_at",
+        status: "succeeded",
+        request: {
+          input: "pending callback with stale delivered timestamp",
+        },
+        result: persistedInferenceResult("done"),
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        attempts: 1,
+        maxAttempts: 2,
+        callback: {
+          url: "https://93.184.216.34/ray-callback",
+          status: "pending",
+          attempts: 0,
+          deliveredAt: now,
+        },
+      }),
+    );
+    await writeFile(
+      join(jobsDir, "job_callback_failed_without_error.json"),
+      JSON.stringify({
+        id: "job_callback_failed_without_error",
+        status: "succeeded",
+        request: {
+          input: "failed callback without last error",
+        },
+        result: persistedInferenceResult("done"),
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        attempts: 1,
+        maxAttempts: 2,
+        callback: {
+          url: "https://93.184.216.34/ray-callback",
+          status: "failed",
+          attempts: 1,
+          lastAttemptAt: now,
+        },
+      }),
+    );
+    await writeFile(
       join(jobsDir, "job_callback_extra_field.json"),
       JSON.stringify({
         id: "job_callback_extra_field",
@@ -1844,6 +1932,10 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.equal(await queue.get("job_callback_control"), undefined);
     assert.equal(await queue.get("job_callback_attempts_too_large"), undefined);
     assert.equal(await queue.get("job_callback_last_error_too_long"), undefined);
+    assert.equal(await queue.get("job_callback_delivered_without_timestamp"), undefined);
+    assert.equal(await queue.get("job_callback_delivered_with_error"), undefined);
+    assert.equal(await queue.get("job_callback_pending_delivered_at"), undefined);
+    assert.equal(await queue.get("job_callback_failed_without_error"), undefined);
     assert.equal(await queue.get("job_callback_extra_field"), undefined);
     assert.equal(await queue.get("job_bad_request"), undefined);
 
@@ -1880,6 +1972,10 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.equal(entries.includes("job_callback_control.json"), false);
     assert.equal(entries.includes("job_callback_attempts_too_large.json"), false);
     assert.equal(entries.includes("job_callback_last_error_too_long.json"), false);
+    assert.equal(entries.includes("job_callback_delivered_without_timestamp.json"), false);
+    assert.equal(entries.includes("job_callback_delivered_with_error.json"), false);
+    assert.equal(entries.includes("job_callback_pending_delivered_at.json"), false);
+    assert.equal(entries.includes("job_callback_failed_without_error.json"), false);
     assert.equal(entries.includes("job_callback_extra_field.json"), false);
     assert.equal(entries.includes("job_bad_request.json"), false);
     assert.equal(entries.includes("job_good.json"), true);
