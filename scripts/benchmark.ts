@@ -63,7 +63,7 @@ const MAX_BENCHMARK_CHILD_OUTPUT_BYTES = 32 * 1024;
 const BENCHMARK_REQUEST_TIMEOUT_MS = 180_000;
 const MAX_BENCHMARK_RESPONSE_TOKENS = 1_000_000;
 const BENCHMARK_HEALTH_REQUEST_TIMEOUT_MS = 3_000;
-const BUN_RUNTIME_BINARY = process.env.RAY_BUN_BINARY ?? "bun";
+const BUN_RUNTIME_BINARY = readOwnProcessEnvValue("RAY_BUN_BINARY") ?? "bun";
 const unsafeObjectKeys = new Set(["__proto__", "constructor", "prototype"]);
 const baselineAssertionKeys = new Set<keyof BenchmarkBaselineAssertions>([
   "maxLatencyP95Ms",
@@ -78,6 +78,15 @@ const baselineAssertionKeys = new Set<keyof BenchmarkBaselineAssertions>([
   "minValidJsonRate",
 ]);
 const benchmarkChildOutputCaptures = new WeakMap<ChildProcess, BenchmarkChildOutputCapture>();
+
+function readOwnProcessEnvValue(name: string): string | undefined {
+  if (!Object.prototype.hasOwnProperty.call(process.env, name)) {
+    return undefined;
+  }
+
+  const value = process.env[name];
+  return typeof value === "string" ? value : undefined;
+}
 
 interface BenchmarkArgs {
   baseUrl: string;
@@ -1573,7 +1582,7 @@ export function resolveBenchmarkApiKey(
     return args.apiKey;
   }
 
-  const directEnvKey = process.env[BENCHMARK_API_KEY_ENV];
+  const directEnvKey = readOwnProcessEnvValue(BENCHMARK_API_KEY_ENV);
   if (directEnvKey) {
     assertBenchmarkApiKey(directEnvKey, BENCHMARK_API_KEY_ENV);
     return directEnvKey;
@@ -1583,7 +1592,7 @@ export function resolveBenchmarkApiKey(
     return undefined;
   }
 
-  const raw = process.env[config.auth.apiKeyEnv];
+  const raw = readOwnProcessEnvValue(config.auth.apiKeyEnv);
   if (!raw) {
     return undefined;
   }

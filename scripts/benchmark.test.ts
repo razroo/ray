@@ -164,6 +164,7 @@ test("resolveBenchmarkApiKey bounds API key environment values", () => {
 
   const previousBenchmarkKey = process.env.RAY_BENCHMARK_API_KEY;
   const previousConfigKeys = process.env.RAY_API_KEYS;
+  const previousEnvPrototype = Object.getPrototypeOf(process.env);
 
   try {
     process.env.RAY_BENCHMARK_API_KEY = "direct-benchmark-key";
@@ -208,7 +209,16 @@ test("resolveBenchmarkApiKey bounds API key environment values", () => {
       () => resolveBenchmarkApiKey(args, config),
       /RAY_API_KEYS entries must be a bearer-token-safe string without whitespace or control characters/,
     );
+
+    delete process.env.RAY_BENCHMARK_API_KEY;
+    delete process.env.RAY_API_KEYS;
+    const inheritedEnv = Object.create(previousEnvPrototype) as NodeJS.ProcessEnv;
+    inheritedEnv.RAY_BENCHMARK_API_KEY = "inherited-benchmark-key";
+    inheritedEnv.RAY_API_KEYS = "inherited-config-key";
+    Object.setPrototypeOf(process.env, inheritedEnv);
+    assert.equal(resolveBenchmarkApiKey(args, config), undefined);
   } finally {
+    Object.setPrototypeOf(process.env, previousEnvPrototype);
     if (previousBenchmarkKey === undefined) {
       delete process.env.RAY_BENCHMARK_API_KEY;
     } else {
