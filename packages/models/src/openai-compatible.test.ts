@@ -376,6 +376,47 @@ test("buildAdapterHeaders forwards bounded apiKeyEnv values", () => {
   }
 });
 
+test("buildAdapterHeaders ignores inherited apiKeyEnv values", () => {
+  const envName = "RAY_TEST_UPSTREAM_API_KEY";
+  const original = process.env[envName];
+  const originalEnvPrototype = Object.getPrototypeOf(process.env);
+
+  try {
+    delete process.env[envName];
+    const inheritedEnv = Object.create(originalEnvPrototype) as NodeJS.ProcessEnv;
+    inheritedEnv[envName] = "inherited-token";
+    Object.setPrototypeOf(process.env, inheritedEnv);
+
+    assert.deepEqual(
+      buildAdapterHeaders({
+        baseUrl: "http://127.0.0.1:8080",
+        timeoutMs: 500,
+        apiKeyEnv: envName,
+      }),
+      {
+        "content-type": "application/json",
+      },
+    );
+
+    process.env[envName] = "own-token";
+    assert.equal(
+      buildAdapterHeaders({
+        baseUrl: "http://127.0.0.1:8080",
+        timeoutMs: 500,
+        apiKeyEnv: envName,
+      }).authorization,
+      "Bearer own-token",
+    );
+  } finally {
+    Object.setPrototypeOf(process.env, originalEnvPrototype);
+    if (original === undefined) {
+      delete process.env[envName];
+    } else {
+      process.env[envName] = original;
+    }
+  }
+});
+
 test("buildAdapterHeaders rejects unsafe apiKeyEnv values before dispatch", () => {
   const envName = "RAY_TEST_UPSTREAM_API_KEY";
   const original = process.env[envName];

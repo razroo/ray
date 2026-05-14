@@ -270,6 +270,15 @@ function assertOptionalEnvironmentVariableName(value: string | undefined, label:
   }
 }
 
+function readOwnProcessEnvValue(name: string): string | undefined {
+  if (!Object.prototype.hasOwnProperty.call(process.env, name)) {
+    return undefined;
+  }
+
+  const value = process.env[name];
+  return typeof value === "string" ? value : undefined;
+}
+
 function assertSafeInteger(value: number, label: string): void {
   if (!Number.isSafeInteger(value)) {
     throw new RangeError(`${label} must be a safe integer`);
@@ -657,7 +666,7 @@ export function buildAdapterHeaders(adapter: HttpAdapterConfig): Record<string, 
   };
 
   if (adapter.apiKeyEnv) {
-    const apiKey = process.env[adapter.apiKeyEnv];
+    const apiKey = readOwnProcessEnvValue(adapter.apiKeyEnv);
     if (apiKey !== undefined) {
       assertAdapterApiKey(apiKey, adapter.apiKeyEnv);
       headers.authorization = `Bearer ${apiKey}`;
