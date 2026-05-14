@@ -567,7 +567,7 @@ export function snapshotAdapterWarmupRequests(
     return {
       ...request,
       ...(request.stop ? { stop: [...request.stop] } : {}),
-      ...(request.responseFormat ? { responseFormat: { ...request.responseFormat } } : {}),
+      ...(request.responseFormat ? { responseFormat: { type: request.responseFormat.type } } : {}),
       ...(request.templateVariables ? { templateVariables: { ...request.templateVariables } } : {}),
     };
   });

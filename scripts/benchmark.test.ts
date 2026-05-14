@@ -655,6 +655,7 @@ test("runBenchmark strips non-inference fields before dispatch", async () => {
         workload: [
           {
             input: "ping",
+            responseFormat: { type: "json_object", extra: "not-forwarded" },
             benchmark: { noPromptEcho: true },
             extra: "not-forwarded",
           } as never,
@@ -666,7 +667,7 @@ test("runBenchmark strips non-inference fields before dispatch", async () => {
     },
   );
 
-  assert.deepEqual(received, { input: "ping" });
+  assert.deepEqual(received, { input: "ping", responseFormat: { type: "json_object" } });
 });
 
 test("runBenchmark rejects oversized request bodies before dispatch", async () => {

@@ -1345,7 +1345,7 @@ function stripBenchmarkFields(request: BenchmarkWorkloadItem): InferenceRequest 
     ...(request.seed !== undefined ? { seed: request.seed } : {}),
     ...(request.stop !== undefined ? { stop: [...request.stop] } : {}),
     ...(request.responseFormat !== undefined
-      ? { responseFormat: { ...request.responseFormat } }
+      ? { responseFormat: { type: request.responseFormat.type } }
       : {}),
     ...(request.cache !== undefined ? { cache: request.cache } : {}),
     ...(request.dedupeKey !== undefined ? { dedupeKey: request.dedupeKey } : {}),
