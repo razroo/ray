@@ -65,6 +65,10 @@ test("parseArgs accepts deploy storage preflight options", () => {
 
 test("parseArgs rejects malformed deploy storage preflight options", () => {
   assert.throws(() => parseArgs(null as unknown as string[]), /argv must be an array/);
+  assert.throws(
+    () => parseArgs([], null as unknown as NodeJS.ProcessEnv),
+    /deploy storage preflight env must be an object/,
+  );
   assert.throws(() => parseArgs(["--path"]), /--path requires a value/);
   assert.throws(() => parseArgs(["--ray-env-file"]), /--ray-env-file requires a value/);
   assert.throws(
@@ -217,6 +221,18 @@ test("loadDeployStoragePreflightArgs rejects malformed ray env file thresholds",
 
 test("checkDeployStorageHeadroom rejects malformed direct options before probing", async () => {
   await assert.rejects(
+    () => checkDeployStorageHeadroom(null as unknown as never),
+    /deploy storage preflight options must be an object/,
+  );
+  await assert.rejects(
+    () => checkDeployStorageHeadroom({ paths: null } as unknown as never),
+    /paths must be an array when provided/,
+  );
+  await assert.rejects(
+    () => checkDeployStorageHeadroom({ paths: [10] } as unknown as never),
+    /paths\[0\] must be a string/,
+  );
+  await assert.rejects(
     () =>
       checkDeployStorageHeadroom({
         paths: Array.from({ length: 21 }, (_value, index) => `/srv/ray-${index}`),
@@ -234,6 +250,30 @@ test("checkDeployStorageHeadroom rejects malformed direct options before probing
   await assert.rejects(
     () => checkDeployStorageHeadroom({ paths: ["/srv/ray"], minFreeStorageMiB: 1_048_577 }),
     /minFreeStorageMiB must be less than or equal to 1048576/,
+  );
+  await assert.rejects(
+    () =>
+      checkDeployStorageHeadroom({
+        paths: ["/srv/ray"],
+        stat: null,
+      } as unknown as never),
+    /stat must be a function when provided/,
+  );
+  await assert.rejects(
+    () =>
+      checkDeployStorageHeadroom({
+        paths: ["/srv/ray"],
+        statfs: null,
+      } as unknown as never),
+    /statfs must be a function when provided/,
+  );
+  await assert.rejects(
+    () =>
+      checkDeployStorageHeadroom({
+        paths: ["/srv/ray"],
+        realpath: null,
+      } as unknown as never),
+    /realpath must be a function when provided/,
   );
 });
 
@@ -332,6 +372,66 @@ test("runDeployStoragePreflightCli reports malformed thresholds", async () => {
   assert.equal(code, 1);
   assert.deepEqual(stdout, []);
   assert.match(stderr.join(""), /--min-free-mib must be less than or equal to/);
+});
+
+test("runDeployStoragePreflightCli rejects malformed direct io before parsing", async () => {
+  await assert.rejects(
+    () => runDeployStoragePreflightCli([], null as unknown as never),
+    /deploy storage preflight io must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      runDeployStoragePreflightCli(["--help"], {
+        stdout: {},
+        stderr: {
+          write() {
+            return true;
+          },
+        },
+      } as unknown as never),
+    /deploy storage preflight io\.stdout\.write must be a function/,
+  );
+
+  await assert.rejects(
+    () =>
+      runDeployStoragePreflightCli(["--unknown"], {
+        stdout: {
+          write() {
+            return true;
+          },
+        },
+        stderr: {},
+      } as unknown as never),
+    /deploy storage preflight io\.stderr\.write must be a function/,
+  );
+});
+
+test("runDeployStoragePreflightCli reports malformed direct env before probing", async () => {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const code = await runDeployStoragePreflightCli(
+    [],
+    {
+      stdout: {
+        write: (message: string) => {
+          stdout.push(message);
+          return true;
+        },
+      },
+      stderr: {
+        write: (message: string) => {
+          stderr.push(message);
+          return true;
+        },
+      },
+    },
+    null as unknown as NodeJS.ProcessEnv,
+  );
+
+  assert.equal(code, 1);
+  assert.deepEqual(stdout, []);
+  assert.match(stderr.join(""), /deploy storage preflight env must be an object/);
 });
 
 test("runDeployStoragePreflightCli help documents env-file artifact storage paths", async () => {

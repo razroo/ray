@@ -66,6 +66,14 @@ interface DeployStorageEnvironmentFileValues {
   storagePaths: string[];
 }
 
+interface DeployStorageHeadroomOptions {
+  paths?: string[];
+  minFreeStorageMiB?: number;
+  stat?: typeof stat;
+  statfs?: typeof statfs;
+  realpath?: typeof realpath;
+}
+
 const HELP = `Check remote VPS storage headroom before Ray deploy work consumes disk.
 
 Usage:
@@ -79,6 +87,10 @@ Options:
   --json                Print machine-readable summary JSON.
   -h, --help            Show this help.
 `;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 
 function assertArgv(argv: unknown): asserts argv is string[] {
   if (!Array.isArray(argv)) {
@@ -101,6 +113,64 @@ function assertArgv(argv: unknown): asserts argv is string[] {
     if (Buffer.byteLength(value, "utf8") > MAX_CLI_ARG_BYTES) {
       throw new Error(`argv[${index}] must be at most ${MAX_CLI_ARG_BYTES} bytes`);
     }
+  }
+}
+
+function assertDeployStoragePreflightEnv(env: unknown): asserts env is NodeJS.ProcessEnv {
+  if (!isRecord(env)) {
+    throw new Error("deploy storage preflight env must be an object");
+  }
+}
+
+function assertDeployStorageHeadroomOptions(
+  options: unknown,
+): asserts options is DeployStorageHeadroomOptions {
+  if (!isRecord(options)) {
+    throw new Error("deploy storage preflight options must be an object");
+  }
+
+  if (options.paths !== undefined) {
+    if (!Array.isArray(options.paths)) {
+      throw new Error("paths must be an array when provided");
+    }
+
+    for (const [index, storagePath] of options.paths.entries()) {
+      if (typeof storagePath !== "string") {
+        throw new Error(`paths[${index}] must be a string`);
+      }
+    }
+  }
+
+  if (options.minFreeStorageMiB !== undefined && typeof options.minFreeStorageMiB !== "number") {
+    throw new Error("minFreeStorageMiB must be a number when provided");
+  }
+
+  if (options.stat !== undefined && typeof options.stat !== "function") {
+    throw new Error("stat must be a function when provided");
+  }
+
+  if (options.statfs !== undefined && typeof options.statfs !== "function") {
+    throw new Error("statfs must be a function when provided");
+  }
+
+  if (options.realpath !== undefined && typeof options.realpath !== "function") {
+    throw new Error("realpath must be a function when provided");
+  }
+}
+
+function assertDeployStoragePreflightCliIo(
+  io: unknown,
+): asserts io is Pick<NodeJS.Process, "stdout" | "stderr"> {
+  if (!isRecord(io)) {
+    throw new Error("deploy storage preflight io must be an object");
+  }
+
+  if (!isRecord(io.stdout) || typeof io.stdout.write !== "function") {
+    throw new Error("deploy storage preflight io.stdout.write must be a function");
+  }
+
+  if (!isRecord(io.stderr) || typeof io.stderr.write !== "function") {
+    throw new Error("deploy storage preflight io.stderr.write must be a function");
   }
 }
 
@@ -229,6 +299,7 @@ export function parseArgs(
   env: NodeJS.ProcessEnv = process.env,
 ): DeployStoragePreflightArgs {
   assertArgv(argv);
+  assertDeployStoragePreflightEnv(env);
 
   const paths: string[] = [];
   const envMinFreeStorageMiB = parseNonNegativeInteger(
@@ -563,14 +634,10 @@ async function resolveCheckRealPathIfDifferent(
 }
 
 export async function checkDeployStorageHeadroom(
-  options: {
-    paths?: string[];
-    minFreeStorageMiB?: number;
-    stat?: typeof stat;
-    statfs?: typeof statfs;
-    realpath?: typeof realpath;
-  } = {},
+  options: DeployStorageHeadroomOptions = {},
 ): Promise<DeployStoragePreflightSummary> {
+  assertDeployStorageHeadroomOptions(options);
+
   const paths = options.paths ?? [...DEFAULT_STORAGE_PATHS];
   if (paths.length > MAX_STORAGE_PATHS) {
     throw new Error(`at most ${MAX_STORAGE_PATHS} storage paths can be checked`);
@@ -644,6 +711,8 @@ export async function runDeployStoragePreflightCli(
   io: Pick<NodeJS.Process, "stdout" | "stderr"> = process,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<number> {
+  assertDeployStoragePreflightCliIo(io);
+
   try {
     const args = await loadDeployStoragePreflightArgs(argv, env);
 
