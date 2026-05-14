@@ -217,6 +217,28 @@ test("durable inference queue rejects invalid direct config", () => {
   );
 });
 
+test("durable inference queue rejects malformed direct stop timeouts", async () => {
+  const config = createDefaultConfig("tiny");
+  const queue = new DurableInferenceQueue({
+    config: config.asyncQueue,
+    runtime: createRayRuntime(config),
+    logger: new Logger("test", "error"),
+  });
+
+  await assert.rejects(
+    () => queue.stop({ timeoutMs: 0 }),
+    /async queue stop timeoutMs must be a positive safe integer/,
+  );
+  await assert.rejects(
+    () => queue.stop({ timeoutMs: Number.POSITIVE_INFINITY }),
+    /async queue stop timeoutMs must be a positive safe integer/,
+  );
+  await assert.rejects(
+    () => queue.stop({ timeoutMs: 121_001 }),
+    /async queue stop timeoutMs must be less than or equal to 121000/,
+  );
+});
+
 test("durable inference queue snapshots config at construction", async () => {
   const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-"));
 

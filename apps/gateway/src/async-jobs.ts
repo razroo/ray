@@ -57,6 +57,7 @@ const MAX_CALLBACK_ALLOWED_HOST_CHARS = 253;
 const MAX_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB = 1_048_576;
 const MAX_ASYNC_ATTEMPTS = 100;
 const MAX_ASYNC_QUEUE_STORAGE_PATH_BYTES = 4_096;
+const MAX_ASYNC_QUEUE_STOP_TIMEOUT_MS = 121_000;
 const BYTES_PER_MIB = 1024 * 1024;
 const PERSISTED_JOB_FILE_LIMIT_MIB = Math.ceil(PERSISTED_JOB_FILE_LIMIT_BYTES / BYTES_PER_MIB);
 const DNS_HOST_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -242,6 +243,22 @@ function assertPositiveSafeIntegerAtMost(value: number, label: string, maximum: 
   if (value > maximum) {
     throw new RangeError(`${label} must be less than or equal to ${maximum}`);
   }
+}
+
+function resolveAsyncQueueStopTimeoutMs(
+  value: number | undefined,
+  fallbackTimeoutMs: number,
+): number {
+  if (value === undefined) {
+    return fallbackTimeoutMs;
+  }
+
+  assertPositiveSafeIntegerAtMost(
+    value,
+    "async queue stop timeoutMs",
+    MAX_ASYNC_QUEUE_STOP_TIMEOUT_MS,
+  );
+  return value;
 }
 
 function assertBoolean(value: boolean, label: string): void {
@@ -1201,6 +1218,14 @@ export class DurableInferenceQueue {
   }
 
   async stop(options: StopDurableInferenceQueueOptions = {}): Promise<void> {
+    const timeoutMs = resolveAsyncQueueStopTimeoutMs(
+      options.timeoutMs,
+      Math.max(
+        this.options.runtime.config.scheduler.requestTimeoutMs,
+        this.options.config.callbackTimeoutMs,
+      ) + STOP_TIMEOUT_BUFFER_MS,
+    );
+
     this.started = false;
 
     for (const timer of this.retryTimers.keys()) {
@@ -1208,13 +1233,7 @@ export class DurableInferenceQueue {
     }
     this.retryTimers.clear();
 
-    await this.waitForActiveTasks(
-      options.timeoutMs ??
-        Math.max(
-          this.options.runtime.config.scheduler.requestTimeoutMs,
-          this.options.config.callbackTimeoutMs,
-        ) + STOP_TIMEOUT_BUFFER_MS,
-    );
+    await this.waitForActiveTasks(timeoutMs);
   }
 
   snapshot(): AsyncQueueSnapshot {

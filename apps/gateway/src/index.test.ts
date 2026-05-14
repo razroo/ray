@@ -221,6 +221,27 @@ test("gateway rejects oversized HTTP headers before request handling", async (t)
   assert.equal(error?.stack, undefined);
 });
 
+test("stopGateway rejects malformed direct shutdown timeouts", async () => {
+  const gateway = {
+    server: createServer(),
+    runtime: {} as RayRuntime,
+    logger: new Logger("test", "error"),
+  };
+
+  await assert.rejects(
+    () => stopGateway(gateway, { timeoutMs: 0 }),
+    /stopGateway timeoutMs must be a positive safe integer less than or equal to 120000/,
+  );
+  await assert.rejects(
+    () => stopGateway(gateway, { timeoutMs: Number.POSITIVE_INFINITY }),
+    /stopGateway timeoutMs must be a positive safe integer less than or equal to 120000/,
+  );
+  await assert.rejects(
+    () => stopGateway(gateway, { timeoutMs: 120_001 }),
+    /stopGateway timeoutMs must be a positive safe integer less than or equal to 120000/,
+  );
+});
+
 test("stopGateway force-closes active request sockets before systemd timeout", async (t) => {
   const warnings: Array<{ message: string; fields: LogFields | undefined }> = [];
   let requestStarted: (() => void) | undefined;

@@ -47,6 +47,7 @@ const GATEWAY_MAX_HEADER_BYTES = 12_288;
 const GATEWAY_MAX_HEADERS_COUNT = 64;
 const GATEWAY_HTTP_PRESSURE_RATIO = 0.9;
 const GATEWAY_SHUTDOWN_TIMEOUT_MS = 30_000;
+const MAX_GATEWAY_SHUTDOWN_TIMEOUT_MS = 120_000;
 const GATEWAY_LISTEN_FAILURE_QUEUE_STOP_TIMEOUT_MS = 5_000;
 const GATEWAY_WARMUP_RETRY_INITIAL_MS = 2_000;
 const GATEWAY_WARMUP_RETRY_MAX_MS = 15_000;
@@ -454,6 +455,20 @@ function resolveWarmupRetryOptions(
       "warmupRetry.maxDelayMs",
     ),
   };
+}
+
+function resolveGatewayShutdownTimeoutMs(value: number | undefined): number {
+  if (value === undefined) {
+    return GATEWAY_SHUTDOWN_TIMEOUT_MS;
+  }
+
+  if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_GATEWAY_SHUTDOWN_TIMEOUT_MS) {
+    throw new RangeError(
+      `stopGateway timeoutMs must be a positive safe integer less than or equal to ${MAX_GATEWAY_SHUTDOWN_TIMEOUT_MS}`,
+    );
+  }
+
+  return value;
 }
 
 function resolveWarmupRetryDelayMs(
@@ -1971,7 +1986,7 @@ export async function stopGateway(
   gateway: GatewayServer,
   options: StopGatewayOptions = {},
 ): Promise<void> {
-  const timeoutMs = options.timeoutMs ?? GATEWAY_SHUTDOWN_TIMEOUT_MS;
+  const timeoutMs = resolveGatewayShutdownTimeoutMs(options.timeoutMs);
   const signal = options.signal ?? "SIGTERM";
   const startedAt = Date.now();
   let forceTimeout: NodeJS.Timeout | undefined;
