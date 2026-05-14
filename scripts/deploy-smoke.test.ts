@@ -9,6 +9,7 @@ import {
   collectPublicConfigPaths,
   formatTextSummary,
   parseArgs,
+  runDeploySmokeCli,
   smokeDeployConfigs,
   validateStaticVpsExamples,
 } from "./deploy-smoke.ts";
@@ -134,6 +135,40 @@ test("smokeDeployConfigs rejects excessive config inputs before rendering", asyn
   );
 });
 
+test("smokeDeployConfigs rejects malformed direct options before rendering", async () => {
+  await assert.rejects(
+    () => smokeDeployConfigs(null as never),
+    /deploy smoke options must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      smokeDeployConfigs({
+        cwd: process.cwd(),
+        configPaths: null,
+        domain: "ray.example.com",
+        runtimeBinary: "/usr/local/bin/bun",
+        serviceUser: "ray",
+        systemdEnvFile: "/etc/ray/ray.env",
+      } as never),
+    /configPaths must be an array/,
+  );
+
+  await assert.rejects(
+    () =>
+      smokeDeployConfigs({
+        cwd: process.cwd(),
+        configPaths: [],
+        domain: "ray.example.com",
+        runtimeBinary: "/usr/local/bin/bun",
+        serviceUser: "ray",
+        systemdEnvFile: "/etc/ray/ray.env",
+        env: null,
+      } as never),
+    /env must be an object when provided/,
+  );
+});
+
 test("smokeDeployConfigs rejects malformed direct path inputs before rendering", async () => {
   await assert.rejects(
     () =>
@@ -233,6 +268,39 @@ test("buildSmokeDeployEnv keeps deploy smoke env inert", () => {
   assert.equal(env.RAY_LLAMA_CPP_CTX_SIZE, undefined);
   assert.equal((env as Record<string, unknown>).COUNT, undefined);
   assert.equal((env as Record<string, unknown>).__proto__, undefined);
+});
+
+test("runDeploySmokeCli rejects malformed direct io before parsing", async () => {
+  await assert.rejects(
+    () => runDeploySmokeCli([], null as never),
+    /deploy smoke io must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      runDeploySmokeCli(["--help"], {
+        stdout: {},
+        stderr: {
+          write() {
+            return true;
+          },
+        },
+      } as never),
+    /deploy smoke io\.stdout\.write must be a function/,
+  );
+
+  await assert.rejects(
+    () =>
+      runDeploySmokeCli(["--unknown"], {
+        stdout: {
+          write() {
+            return true;
+          },
+        },
+        stderr: {},
+      } as never),
+    /deploy smoke io\.stderr\.write must be a function/,
+  );
 });
 
 test("smokeDeployConfigs renders every checked-in deploy smoke profile", async () => {
@@ -348,6 +416,11 @@ test("validateStaticVpsExamples reports drifted checked-in VPS examples", async 
 });
 
 test("validateStaticVpsExamples rejects oversized direct paths before reading files", async () => {
+  await assert.rejects(
+    () => validateStaticVpsExamples(null as never),
+    /static deploy example options must be an object/,
+  );
+
   await assert.rejects(
     () =>
       validateStaticVpsExamples({

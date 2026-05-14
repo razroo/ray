@@ -35,6 +35,16 @@ export interface DeploySmokeArgs {
   help: boolean;
 }
 
+interface DeploySmokeConfigsOptions {
+  cwd: string;
+  configPaths: string[];
+  domain: string;
+  runtimeBinary: string;
+  serviceUser: string;
+  systemdEnvFile: string;
+  env?: NodeJS.ProcessEnv;
+}
+
 export interface DeploySmokeResult {
   configPath: string;
   profile?: string;
@@ -65,6 +75,13 @@ export interface DeployStaticExampleResult {
   errorCount: number;
 }
 
+interface DeployStaticExampleOptions {
+  cwd: string;
+  servicePath?: string;
+  llamaCppServicePath?: string;
+  caddyfilePath?: string;
+}
+
 const HELP = `Dry-run Ray VPS deployment bundles.
 
 Usage:
@@ -81,6 +98,10 @@ Options:
   --verbose                    Print warning diagnostic details in text output.
   -h, --help                   Show this help.
 `;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 
 function assertArgv(argv: unknown): asserts argv is string[] {
   if (!Array.isArray(argv)) {
@@ -183,6 +204,53 @@ function assertDeploySmokeServiceUserValue(value: unknown, label: string): asser
     throw new Error(
       `${label} must be a system account name or numeric UID using only letters, digits, underscores, or hyphens`,
     );
+  }
+}
+
+function assertOptionalDeploySmokeEnv(
+  value: unknown,
+  label: string,
+): asserts value is NodeJS.ProcessEnv | undefined {
+  if (value !== undefined && !isRecord(value)) {
+    throw new Error(`${label} must be an object when provided`);
+  }
+}
+
+function assertDeploySmokeConfigsOptions(
+  options: unknown,
+): asserts options is DeploySmokeConfigsOptions {
+  if (!isRecord(options)) {
+    throw new Error("deploy smoke options must be an object");
+  }
+
+  if (!Array.isArray(options.configPaths)) {
+    throw new Error("configPaths must be an array");
+  }
+
+  assertOptionalDeploySmokeEnv(options.env, "env");
+}
+
+function assertDeployStaticExampleOptions(
+  options: unknown,
+): asserts options is DeployStaticExampleOptions {
+  if (!isRecord(options)) {
+    throw new Error("static deploy example options must be an object");
+  }
+}
+
+function assertDeploySmokeCliIo(
+  io: unknown,
+): asserts io is Pick<NodeJS.Process, "stdout" | "stderr"> {
+  if (!isRecord(io)) {
+    throw new Error("deploy smoke io must be an object");
+  }
+
+  if (!isRecord(io.stdout) || typeof io.stdout.write !== "function") {
+    throw new Error("deploy smoke io.stdout.write must be a function");
+  }
+
+  if (!isRecord(io.stderr) || typeof io.stderr.write !== "function") {
+    throw new Error("deploy smoke io.stderr.write must be a function");
   }
 }
 
@@ -347,15 +415,10 @@ export async function collectDeploySmokeConfigPaths(
   return [...configPaths].sort();
 }
 
-export async function smokeDeployConfigs(options: {
-  cwd: string;
-  configPaths: string[];
-  domain: string;
-  runtimeBinary: string;
-  serviceUser: string;
-  systemdEnvFile: string;
-  env?: NodeJS.ProcessEnv;
-}): Promise<DeploySmokeSummary> {
+export async function smokeDeployConfigs(
+  options: DeploySmokeConfigsOptions,
+): Promise<DeploySmokeSummary> {
+  assertDeploySmokeConfigsOptions(options);
   if (options.configPaths.length > MAX_DEPLOY_SMOKE_CONFIGS) {
     throw new Error(`Deploy smoke can inspect at most ${MAX_DEPLOY_SMOKE_CONFIGS} config files`);
   }
@@ -506,12 +569,10 @@ function compareStaticExample(
   }
 }
 
-export async function validateStaticVpsExamples(options: {
-  cwd: string;
-  servicePath?: string;
-  llamaCppServicePath?: string;
-  caddyfilePath?: string;
-}): Promise<DeployStaticExampleResult> {
+export async function validateStaticVpsExamples(
+  options: DeployStaticExampleOptions,
+): Promise<DeployStaticExampleResult> {
+  assertDeployStaticExampleOptions(options);
   assertDeploySmokePathValue(options.cwd, "cwd");
   if (options.servicePath !== undefined) {
     assertDeploySmokePathValue(options.servicePath, "servicePath");
@@ -688,6 +749,8 @@ export async function runDeploySmokeCli(
   argv = process.argv.slice(2),
   io: Pick<NodeJS.Process, "stdout" | "stderr"> = process,
 ): Promise<number> {
+  assertDeploySmokeCliIo(io);
+
   try {
     const args = parseArgs(argv);
 
