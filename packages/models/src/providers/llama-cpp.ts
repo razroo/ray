@@ -14,11 +14,15 @@ import {
   type SchedulerSlotSnapshot,
   type WarmupInferenceRequest,
 } from "@razroo/ray-core";
+import { resolvePromptTemplateRequest } from "@ray/prompts";
 import {
-  renderPromptTemplate,
-  requirePromptTemplate,
-  resolvePromptTemplateRequest,
-} from "@ray/prompts";
+  PromptScaffoldCache,
+  buildPromptScaffoldCacheKey,
+  createPromptScaffold,
+  renderPromptFromScaffold,
+  renderPromptScaffoldTemplate,
+  type PromptScaffold,
+} from "@ray/prompt-cache";
 import {
   BACKEND_RESPONSE_BODY_LIMIT_BYTES,
   MAX_ADAPTER_TIMEOUT_MS,
@@ -47,6 +51,7 @@ const MAX_SLOT_SNAPSHOTS = 64;
 const MAX_FAMILY_PREFERRED_SLOT_KEYS = 512;
 const MAX_SLOT_FAMILY_ASSIGNMENTS = 64;
 const MAX_PROMPT_SCAFFOLD_CACHE_ENTRIES = 4_096;
+const PROMPT_SCAFFOLD_CACHE_TTL_MS = 86_400_000;
 const MAX_LLAMA_CPP_DIAGNOSTIC_NUMBER = 1_000_000_000;
 const MAX_LAUNCH_PROFILE_PATH_CHARS = 4_096;
 const MAX_LAUNCH_PROFILE_HOST_CHARS = 256;
@@ -186,11 +191,6 @@ interface LlamaCppSlotResponse {
     n_past?: number;
     n_decoded?: number;
   };
-}
-
-interface PromptScaffold {
-  segments: string[];
-  variableOrder: string[];
 }
 
 interface PreparedPromptState {
@@ -726,7 +726,7 @@ export class LlamaCppProvider implements ModelProvider {
   } as const;
   private readonly preparationCache = new Map<string, ProviderRequestPreparation>();
   private readonly promptTokenCache = new Map<string, number>();
-  private readonly promptScaffolds = new Map<string, PromptScaffold>();
+  private readonly promptScaffolds: PromptScaffoldCache;
   private readonly familyPreferredSlots = new Map<string, number>();
   private readonly slotFamilyAssignments = new Map<number, string>();
   private readonly maxPreparationCacheEntries = 256;
@@ -743,6 +743,10 @@ export class LlamaCppProvider implements ModelProvider {
     this.modelId = model.id;
     this.adapter = snapshotLlamaCppAdapter(adapter, model.maxOutputTokens);
     this.maxPromptScaffoldEntries = this.adapter.promptScaffoldCacheEntries ?? 128;
+    this.promptScaffolds = new PromptScaffoldCache({
+      maxEntries: this.maxPromptScaffoldEntries,
+      ttlMs: PROMPT_SCAFFOLD_CACHE_TTL_MS,
+    });
   }
 
   async warm(): Promise<void> {
@@ -1516,8 +1520,8 @@ export class LlamaCppProvider implements ModelProvider {
     responseFormatType: "text" | "json_object",
     signal?: AbortSignal,
   ): Promise<PromptScaffold> {
-    const cacheKey = hashValue({
-      model: this.adapter.modelRef,
+    const cacheKey = buildPromptScaffoldCacheKey({
+      modelRef: this.adapter.modelRef,
       templateId,
       responseFormatType,
     });
@@ -1526,14 +1530,8 @@ export class LlamaCppProvider implements ModelProvider {
       return cached;
     }
 
-    const template = requirePromptTemplate(templateId);
-    const sentinelVariables = Object.fromEntries(
-      template.variables.map((variable: string, index: number) => [
-        variable,
-        `__RAY_PROMPT_VAR_${index}__`,
-      ]),
-    );
-    const rendered = renderPromptTemplate(template.id, sentinelVariables);
+    const scaffoldTemplate = renderPromptScaffoldTemplate(templateId);
+    const rendered = scaffoldTemplate.rendered;
     const prompt = await this.applyTemplate(
       {
         input: rendered.input,
@@ -1551,38 +1549,14 @@ export class LlamaCppProvider implements ModelProvider {
       },
       signal,
     );
-    const segments: string[] = [];
-    let cursor = 0;
-
-    for (const variable of template.variables) {
-      const sentinel = sentinelVariables[variable];
-      if (!sentinel) {
-        throw new RayError(`Prompt scaffold marker "${variable}" is missing`, {
-          code: "provider_invalid_response",
-          status: 500,
-        });
-      }
-      const position = prompt.indexOf(sentinel, cursor);
-
-      if (position === -1) {
-        throw new RayError(
-          `Prompt scaffold marker "${variable}" was not found in rendered prompt`,
-          {
-            code: "provider_invalid_response",
-            status: 500,
-          },
-        );
-      }
-
-      segments.push(prompt.slice(cursor, position));
-      cursor = position + sentinel.length;
-    }
-
-    segments.push(prompt.slice(cursor));
-    const scaffold: PromptScaffold = {
-      segments,
-      variableOrder: [...template.variables],
-    };
+    const scaffold = createPromptScaffold({
+      prompt,
+      variableOrder: scaffoldTemplate.variableOrder,
+      sentinelVariables: scaffoldTemplate.sentinelVariables,
+      templateId: rendered.id,
+      templateVersion: rendered.version,
+      family: rendered.family,
+    });
     this.setPromptScaffold(cacheKey, scaffold);
     return scaffold;
   }
@@ -1591,26 +1565,7 @@ export class LlamaCppProvider implements ModelProvider {
     scaffold: PromptScaffold,
     templateVariables: Record<string, string>,
   ): string {
-    let prompt = scaffold.segments[0] ?? "";
-
-    for (let index = 0; index < scaffold.variableOrder.length; index += 1) {
-      const variableName = scaffold.variableOrder[index];
-      if (!variableName) {
-        continue;
-      }
-      const value = templateVariables[variableName];
-      if (value === undefined) {
-        throw new RayError(`Missing template variable "${variableName}" for prompt scaffold`, {
-          code: "invalid_request",
-          status: 400,
-        });
-      }
-
-      prompt += value;
-      prompt += scaffold.segments[index + 1] ?? "";
-    }
-
-    return prompt;
+    return renderPromptFromScaffold(scaffold, templateVariables);
   }
 
   private async getSlotSnapshots(signal?: AbortSignal): Promise<SchedulerSlotSnapshot[]> {
@@ -1809,19 +1764,7 @@ export class LlamaCppProvider implements ModelProvider {
   }
 
   private setPromptScaffold(key: string, scaffold: PromptScaffold): void {
-    if (this.promptScaffolds.has(key)) {
-      this.promptScaffolds.delete(key);
-    }
-
     this.promptScaffolds.set(key, scaffold);
-
-    while (this.promptScaffolds.size > this.maxPromptScaffoldEntries) {
-      const oldestKey = this.promptScaffolds.keys().next().value;
-      if (!oldestKey) {
-        break;
-      }
-      this.promptScaffolds.delete(oldestKey);
-    }
   }
 
   private async fetchHealthPayload(): Promise<{

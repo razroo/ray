@@ -1,5 +1,5 @@
 {
-  "name": "@ray/models",
+  "name": "@ray/prompt-cache",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -17,7 +17,7 @@
     "src"
   ],
   "dependencies": {
-    "@ray/prompt-cache": "workspace:*",
+    "@ray/cache": "workspace:*",
     "@ray/prompts": "workspace:*",
     "@razroo/ray-core": "workspace:*"
   }

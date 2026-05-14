@@ -62,6 +62,16 @@
       "name": "@ray/models",
       "version": "0.1.0",
       "dependencies": {
+        "@ray/prompt-cache": "workspace:*",
+        "@ray/prompts": "workspace:*",
+        "@razroo/ray-core": "workspace:*",
+      },
+    },
+    "packages/prompt-cache": {
+      "name": "@ray/prompt-cache",
+      "version": "0.1.0",
+      "dependencies": {
+        "@ray/cache": "workspace:*",
         "@ray/prompts": "workspace:*",
         "@razroo/ray-core": "workspace:*",
       },
@@ -203,6 +213,8 @@
     "@ray/gateway": ["@ray/gateway@workspace:apps/gateway"],
 
     "@ray/models": ["@ray/models@workspace:packages/models"],
+
+    "@ray/prompt-cache": ["@ray/prompt-cache@workspace:packages/prompt-cache"],
 
     "@ray/prompts": ["@ray/prompts@workspace:packages/prompts"],
 

@@ -6,6 +6,7 @@
     { "path": "./packages/cache" },
     { "path": "./packages/telemetry" },
     { "path": "./packages/prompts" },
+    { "path": "./packages/prompt-cache" },
     { "path": "./packages/scheduler" },
     { "path": "./packages/tuner" },
     { "path": "./packages/models" },
