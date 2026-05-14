@@ -20,6 +20,7 @@ export interface CliOptions {
   nodeBinary?: string;
   caddyBinary?: string;
   strictFilesystem?: boolean;
+  json?: boolean;
 }
 
 export interface RepoConfigPath {
@@ -76,6 +77,7 @@ Options:
   --caddy-binary <path>           Caddy binary for strict doctor/render checks. Default: caddy on PATH.
   --memory-mib <number>           VPS memory budget for llama.cpp sizing.
   --strict-filesystem             Check service-user, binary, config, model, and storage paths.
+  --json                          Print machine-readable JSON. Render emits the bundle unless --output-dir is set.
   -h, --help                      Show this help.
 
 Deploy env values loaded by --env-file include RAY_API_KEYS, RAY_DEPLOY_SERVICE_USER,
@@ -691,6 +693,11 @@ export function parseCliArgs(argv: string[]): CliOptions {
       continue;
     }
 
+    if (current === "--json") {
+      options.json = true;
+      continue;
+    }
+
     throw new Error(`Unknown option: ${current}`);
   }
 
@@ -768,6 +775,11 @@ export async function runCli(argv: string[]): Promise<number> {
     if (deploymentOptions.outputDir) {
       const files = await writeDeploymentBundleFiles(deploymentOptions.outputDir, bundle);
       console.log(JSON.stringify({ files }, null, 2));
+      return 0;
+    }
+
+    if (deploymentOptions.json) {
+      console.log(JSON.stringify(bundle, null, 2));
       return 0;
     }
 

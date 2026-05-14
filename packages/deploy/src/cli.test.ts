@@ -68,6 +68,14 @@ test("parseCliArgs accepts deploy help", () => {
   assert.equal(parseCliArgs(["help"]).help, true);
 });
 
+test("parseCliArgs accepts machine-readable deploy output", () => {
+  const renderOptions = parseCliArgs(["render", "--json"]);
+  const doctorOptions = parseCliArgs(["doctor", "--json"]);
+
+  assert.equal(renderOptions.json, true);
+  assert.equal(doctorOptions.json, true);
+});
+
 test("normalizeRepoConfigPath resolves repo-relative deploy config paths", () => {
   assert.deepEqual(normalizeRepoConfigPath("./examples/config/ray.sub1b.public.json"), {
     configPath: "./examples/config/ray.sub1b.public.json",
@@ -502,6 +510,7 @@ test("runCli prints deploy help without loading config or env files", async (t) 
   assert.match(help, /render \[options\]/);
   assert.match(help, /--ray-env-file <path>/);
   assert.match(help, /--systemd-env-file <path>/);
+  assert.match(help, /--json/);
   assert.match(help, /RAY_DEPLOY_MEMORY_MIB/);
   assert.match(help, /RAY_DEPLOY_MIN_FREE_STORAGE_MIB/);
 });
@@ -577,6 +586,58 @@ test("runCli render applies env-file overrides to generated llama.cpp service", 
   assert.match(rendered, /LLAMA_ARG_MODEL=\/var\/lib\/ray\/models\/env-local-1b\.gguf/);
   assert.match(rendered, /LLAMA_ARG_ALIAS=env-local-1b/);
   assert.doesNotMatch(llamaSection, /EnvironmentFile=.*ray\.env/);
+});
+
+test("runCli render can print a machine-readable deployment bundle", async (t) => {
+  const tempDir = await mkRayDeployTempDir("ray-deploy-json-");
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(envFile, "RAY_API_KEYS=test-key\n", "utf8");
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli([
+    "render",
+    "--cwd",
+    ".",
+    "--config",
+    "./examples/config/ray.1b.generic.public.json",
+    "--ray-env-file",
+    envFile,
+    "--memory-mib",
+    "4096",
+    "--json",
+  ]);
+
+  const rendered = output.join("\n");
+  const bundle = JSON.parse(rendered) as {
+    service: string;
+    caddyfile: string;
+    envFileExample: string;
+    llamaCppService?: string;
+    summary: {
+      profile: string;
+      preflight: { memoryBudgetMiB?: number; memoryBudgetSource?: string };
+    };
+  };
+
+  assert.doesNotMatch(rendered, /# Ray systemd service/);
+  assert.match(bundle.service, /Description=Ray Gateway/);
+  assert.match(bundle.caddyfile, /reverse_proxy 127\.0\.0\.1:3000/);
+  assert.match(bundle.envFileExample, /RAY_API_KEYS=/);
+  assert.match(bundle.llamaCppService ?? "", /Description=llama\.cpp Server for Ray/);
+  assert.equal(bundle.summary.profile, "1b");
+  assert.equal(bundle.summary.preflight.memoryBudgetMiB, 4096);
+  assert.equal(bundle.summary.preflight.memoryBudgetSource, "override");
 });
 
 test("runCli explicit gateway runtime flag overrides env-file runtime", async (t) => {
