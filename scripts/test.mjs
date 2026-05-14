@@ -613,13 +613,19 @@ export async function runTestCli(options = {}) {
     return 0;
   }
 
-  code = await runCommand(
-    bunBinary,
-    ["test", "--max-concurrency=1", "--timeout=120000", ...discovered.scriptTestFiles],
-    { cwd: root, env, timeoutMs: commandTimeoutMs, io },
-  );
+  for (const scriptTestFile of discovered.scriptTestFiles) {
+    code = await runCommand(
+      bunBinary,
+      ["test", "--max-concurrency=1", "--timeout=120000", scriptTestFile],
+      { cwd: root, env, timeoutMs: commandTimeoutMs, io },
+    );
 
-  return code;
+    if (code !== 0) {
+      return code;
+    }
+  }
+
+  return 0;
 }
 
 export async function runTestRunnerCli(options = {}, io = process) {

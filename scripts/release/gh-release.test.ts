@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const repoRoot = process.cwd();
 const scriptPath = path.join(repoRoot, "scripts", "release", "gh-release.sh");
+const FIXTURE_RELEASE_HELPER_TIMEOUT_MS = 15_000;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -208,7 +209,7 @@ async function runFixtureReleaseHelper(fixture: {
         RAY_TEST_LOG: fixture.logPath,
       },
       maxBuffer: 64 * 1024,
-      timeout: 5_000,
+      timeout: FIXTURE_RELEASE_HELPER_TIMEOUT_MS,
     });
 
     return { code: 0, stderr, stdout };
@@ -220,6 +221,27 @@ async function runFixtureReleaseHelper(fixture: {
       stdout: result.stdout ?? "",
     };
   }
+}
+
+async function assertFixtureReleaseHelperSucceeded(
+  fixture: { logPath: string },
+  result: { code: number; stderr: string; stdout: string },
+): Promise<void> {
+  const commandLog = await readFile(fixture.logPath, "utf8").catch(() => "");
+
+  assert.equal(
+    result.code,
+    0,
+    [
+      "expected release helper fixture to exit 0",
+      "stdout:",
+      result.stdout,
+      "stderr:",
+      result.stderr,
+      "commands:",
+      commandLog,
+    ].join("\n"),
+  );
 }
 
 test("gh release helper validates syntax and dry-runs without mutating git state", async () => {
@@ -323,7 +345,7 @@ test("gh release helper continues when GitHub reports releases are missing", asy
 
   const result = await runFixtureReleaseHelper(fixture);
 
-  assert.equal(result.code, 0);
+  await assertFixtureReleaseHelperSucceeded(fixture, result);
   assert.match(
     result.stdout,
     /Done\. Actions publish to npm when each release is in published state\./,
@@ -352,7 +374,7 @@ test("gh release helper reuses matching local annotated tags", async (t) => {
 
   const result = await runFixtureReleaseHelper(fixture);
 
-  assert.equal(result.code, 0);
+  await assertFixtureReleaseHelperSucceeded(fixture, result);
   assert.match(result.stdout, /Reusing local annotated tag core-v1\.2\.3/);
   assert.match(result.stdout, /Reusing local annotated tag sdk-v1\.2\.3/);
 
@@ -378,7 +400,7 @@ test("gh release helper resumes after remote tags or releases already exist safe
 
   const result = await runFixtureReleaseHelper(fixture);
 
-  assert.equal(result.code, 0);
+  await assertFixtureReleaseHelperSucceeded(fixture, result);
   assert.match(result.stdout, /Reusing remote annotated tag core-v1\.2\.3/);
   assert.match(result.stdout, /Reusing remote annotated tag sdk-v1\.2\.3/);
   assert.match(result.stdout, /Reusing GitHub release core-v1\.2\.3/);

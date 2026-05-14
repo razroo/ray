@@ -158,6 +158,7 @@ test("runTestCli dispatches bounded built tests before script tests", async (t) 
   await mkdir(path.join(tempDir, "scripts"), { recursive: true });
   await writeFile(path.join(tempDir, "apps", "gateway", "dist", "index.test.js"), "");
   await writeFile(path.join(tempDir, "scripts", "package-runtime-coverage.test.ts"), "");
+  await writeFile(path.join(tempDir, "scripts", "validate-configs.test.ts"), "");
 
   const commands: Array<{ binary: string; args: string[]; cwd?: string; timeoutMs?: number }> = [];
   const code = await runTestCli({
@@ -179,7 +180,7 @@ test("runTestCli dispatches bounded built tests before script tests", async (t) 
   });
 
   assert.equal(code, 0);
-  assert.equal(commands.length, 2);
+  assert.equal(commands.length, 3);
   assert.equal(commands[0]?.binary, "/usr/local/bin/node");
   assert.deepEqual(commands[0]?.args.slice(0, 2), ["--test", "--test-concurrency=1"]);
   assert.equal(
@@ -200,6 +201,16 @@ test("runTestCli dispatches bounded built tests before script tests", async (t) 
   );
   assert.equal(commands[1]?.cwd, tempDir);
   assert.equal(commands[1]?.timeoutMs, 123_456);
+  assert.equal(commands[2]?.binary, "/usr/local/bin/bun");
+  assert.deepEqual(commands[2]?.args.slice(0, 3), [
+    "test",
+    "--max-concurrency=1",
+    "--timeout=120000",
+  ]);
+  assert.equal(commands[2]?.args.length, 4);
+  assert.equal(commands[2]?.args.at(-1), path.join(tempDir, "scripts", "validate-configs.test.ts"));
+  assert.equal(commands[2]?.cwd, tempDir);
+  assert.equal(commands[2]?.timeoutMs, 123_456);
 });
 
 test("runTestCli rejects malformed runtime binary overrides before dispatch", async (t) => {
