@@ -48,6 +48,12 @@ const MAX_FAMILY_PREFERRED_SLOT_KEYS = 512;
 const MAX_SLOT_FAMILY_ASSIGNMENTS = 64;
 const MAX_PROMPT_SCAFFOLD_CACHE_ENTRIES = 4_096;
 const MAX_LLAMA_CPP_DIAGNOSTIC_NUMBER = 1_000_000_000;
+const MAX_LAUNCH_PROFILE_PATH_CHARS = 4_096;
+const MAX_LAUNCH_PROFILE_HOST_CHARS = 256;
+const MAX_LAUNCH_PROFILE_INTEGER = 1_000_000;
+const MAX_LAUNCH_PROFILE_THREADS = 1_024;
+const MAX_LAUNCH_PROFILE_EXTRA_ARGS = 64;
+const MAX_LAUNCH_PROFILE_EXTRA_ARG_CHARS = 4_096;
 const llamaCppAdapterKeys = new Set([
   "kind",
   "baseUrl",
@@ -62,6 +68,40 @@ const llamaCppAdapterKeys = new Set([
   "slotSnapshotTimeoutMs",
   "promptScaffoldCacheEntries",
   "launchProfile",
+]);
+const llamaCppLaunchProfileKeys = new Set([
+  "preset",
+  "binaryPath",
+  "modelPath",
+  "host",
+  "port",
+  "alias",
+  "ctxSize",
+  "parallel",
+  "threads",
+  "threadsBatch",
+  "threadsHttp",
+  "batchSize",
+  "ubatchSize",
+  "cachePrompt",
+  "cacheReuse",
+  "cacheRamMiB",
+  "continuousBatching",
+  "enableMetrics",
+  "exposeSlots",
+  "warmup",
+  "enableUnifiedKv",
+  "cacheIdleSlots",
+  "contextShift",
+  "extraArgs",
+]);
+const llamaCppLaunchProfilePresets = new Set([
+  "single-vps-sub1b",
+  "single-vps-sub1b-cx23",
+  "single-vps-sub1b-cax11",
+  "single-vps-1b-cx23",
+  "single-vps-1b-8gb",
+  "single-vps-balanced",
 ]);
 
 interface LlamaCppHealthResponse {
@@ -427,9 +467,63 @@ function assertOptionalBoolean(value: boolean | undefined, label: string): void 
   }
 }
 
+function assertBoolean(value: unknown, label: string): void {
+  if (typeof value !== "boolean") {
+    throw new TypeError(`${label} must be a boolean`);
+  }
+}
+
+function assertStringAtMost(
+  value: unknown,
+  label: string,
+  maximum: number,
+): asserts value is string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new TypeError(`${label} must be a non-empty string`);
+  }
+
+  assertNonEmptyStringAtMost(value, label, maximum);
+}
+
+function assertOptionalStringAtMost(value: unknown, label: string, maximum: number): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "string") {
+    throw new TypeError(`${label} must be a string when provided`);
+  }
+
+  if (value.length > maximum) {
+    throw new RangeError(`${label} must be at most ${maximum} characters`);
+  }
+}
+
 function assertOptionalNonNegativeSafeInteger(value: number | undefined, label: string): void {
   if (value !== undefined && !isNonNegativeSafeInteger(value)) {
     throw new RangeError(`${label} must be a non-negative safe integer when provided`);
+  }
+}
+
+function assertNonNegativeSafeIntegerAtMost(value: unknown, label: string, maximum: number): void {
+  if (!isNonNegativeSafeInteger(value, maximum)) {
+    throw new RangeError(`${label} must be a non-negative safe integer`);
+  }
+}
+
+function assertIntegerAtLeastAtMost(
+  value: unknown,
+  label: string,
+  minimum: number,
+  maximum: number,
+): void {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < minimum ||
+    value > maximum
+  ) {
+    throw new RangeError(`${label} must be a safe integer between ${minimum} and ${maximum}`);
   }
 }
 
@@ -445,6 +539,132 @@ function assertOptionalPositiveSafeIntegerAtMost(
   assertPositiveSafeIntegerAtMost(value, label, maximum);
 }
 
+function assertLaunchProfilePreset(value: unknown): void {
+  assertStringAtMost(value, "adapter.launchProfile.preset", MAX_ADAPTER_MODEL_REF_CHARS);
+
+  if (!llamaCppLaunchProfilePresets.has(value)) {
+    throw new TypeError("adapter.launchProfile.preset is not recognized");
+  }
+}
+
+function assertLaunchProfileExtraArgs(value: unknown): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!Array.isArray(value)) {
+    throw new TypeError("adapter.launchProfile.extraArgs must be an array of non-empty strings");
+  }
+
+  if (value.length > MAX_LAUNCH_PROFILE_EXTRA_ARGS) {
+    throw new RangeError(
+      `adapter.launchProfile.extraArgs must contain at most ${MAX_LAUNCH_PROFILE_EXTRA_ARGS} entries`,
+    );
+  }
+
+  for (const [index, entry] of value.entries()) {
+    assertStringAtMost(
+      entry,
+      `adapter.launchProfile.extraArgs[${index}]`,
+      MAX_LAUNCH_PROFILE_EXTRA_ARG_CHARS,
+    );
+  }
+}
+
+function assertLlamaCppLaunchProfile(profile: LlamaCppProviderConfig["launchProfile"]): void {
+  if (profile === undefined) {
+    return;
+  }
+
+  if (profile === null || typeof profile !== "object" || Array.isArray(profile)) {
+    throw new TypeError("adapter.launchProfile must be an object");
+  }
+
+  assertKnownObjectKeys(profile, "adapter.launchProfile", llamaCppLaunchProfileKeys);
+  assertLaunchProfilePreset(profile.preset);
+  assertStringAtMost(
+    profile.binaryPath,
+    "adapter.launchProfile.binaryPath",
+    MAX_LAUNCH_PROFILE_PATH_CHARS,
+  );
+  assertStringAtMost(
+    profile.modelPath,
+    "adapter.launchProfile.modelPath",
+    MAX_LAUNCH_PROFILE_PATH_CHARS,
+  );
+  assertStringAtMost(profile.host, "adapter.launchProfile.host", MAX_LAUNCH_PROFILE_HOST_CHARS);
+  assertOptionalStringAtMost(
+    profile.alias,
+    "adapter.launchProfile.alias",
+    MAX_ADAPTER_MODEL_REF_CHARS,
+  );
+  assertPositiveSafeIntegerAtMost(profile.port, "adapter.launchProfile.port", 65_535);
+  assertPositiveSafeIntegerAtMost(
+    profile.ctxSize,
+    "adapter.launchProfile.ctxSize",
+    MAX_LAUNCH_PROFILE_INTEGER,
+  );
+  assertPositiveSafeIntegerAtMost(
+    profile.parallel,
+    "adapter.launchProfile.parallel",
+    MAX_LAUNCH_PROFILE_THREADS,
+  );
+  assertPositiveSafeIntegerAtMost(
+    profile.threads,
+    "adapter.launchProfile.threads",
+    MAX_LAUNCH_PROFILE_THREADS,
+  );
+  assertOptionalPositiveSafeIntegerAtMost(
+    profile.threadsBatch,
+    "adapter.launchProfile.threadsBatch",
+    MAX_LAUNCH_PROFILE_THREADS,
+  );
+  assertPositiveSafeIntegerAtMost(
+    profile.threadsHttp,
+    "adapter.launchProfile.threadsHttp",
+    MAX_LAUNCH_PROFILE_THREADS,
+  );
+  assertPositiveSafeIntegerAtMost(
+    profile.batchSize,
+    "adapter.launchProfile.batchSize",
+    MAX_LAUNCH_PROFILE_INTEGER,
+  );
+  assertPositiveSafeIntegerAtMost(
+    profile.ubatchSize,
+    "adapter.launchProfile.ubatchSize",
+    MAX_LAUNCH_PROFILE_INTEGER,
+  );
+
+  if (profile.ubatchSize > profile.batchSize) {
+    throw new RangeError(
+      "adapter.launchProfile.ubatchSize must be less than or equal to batchSize",
+    );
+  }
+
+  assertBoolean(profile.cachePrompt, "adapter.launchProfile.cachePrompt");
+  assertNonNegativeSafeIntegerAtMost(
+    profile.cacheReuse,
+    "adapter.launchProfile.cacheReuse",
+    MAX_LAUNCH_PROFILE_INTEGER,
+  );
+  if (profile.cacheRamMiB !== undefined) {
+    assertIntegerAtLeastAtMost(
+      profile.cacheRamMiB,
+      "adapter.launchProfile.cacheRamMiB",
+      -1,
+      MAX_LAUNCH_PROFILE_INTEGER,
+    );
+  }
+  assertBoolean(profile.continuousBatching, "adapter.launchProfile.continuousBatching");
+  assertBoolean(profile.enableMetrics, "adapter.launchProfile.enableMetrics");
+  assertBoolean(profile.exposeSlots, "adapter.launchProfile.exposeSlots");
+  assertBoolean(profile.warmup, "adapter.launchProfile.warmup");
+  assertBoolean(profile.enableUnifiedKv, "adapter.launchProfile.enableUnifiedKv");
+  assertBoolean(profile.cacheIdleSlots, "adapter.launchProfile.cacheIdleSlots");
+  assertBoolean(profile.contextShift, "adapter.launchProfile.contextShift");
+  assertLaunchProfileExtraArgs(profile.extraArgs);
+}
+
 function snapshotLlamaCppAdapter(
   adapter: LlamaCppProviderConfig,
   maxOutputTokens: number,
@@ -452,6 +672,7 @@ function snapshotLlamaCppAdapter(
   assertKnownObjectKeys(adapter, "adapter", llamaCppAdapterKeys);
   const snapshot = snapshotHttpAdapterConfig(adapter);
 
+  assertLlamaCppLaunchProfile(snapshot.launchProfile);
   assertNonEmptyStringAtMost(snapshot.modelRef, "adapter.modelRef", MAX_ADAPTER_MODEL_REF_CHARS);
   assertOptionalBoolean(snapshot.cachePrompt, "adapter.cachePrompt");
   assertOptionalNonNegativeSafeInteger(snapshot.slotId, "adapter.slotId");

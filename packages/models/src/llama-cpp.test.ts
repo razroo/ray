@@ -33,6 +33,32 @@ function createModel(
   };
 }
 
+function createLaunchProfile(): NonNullable<LlamaCppProviderConfig["launchProfile"]> {
+  return {
+    preset: "single-vps-sub1b",
+    binaryPath: "/opt/llama.cpp/llama-server",
+    modelPath: "/models/test-model.gguf",
+    host: "127.0.0.1",
+    port: 8081,
+    ctxSize: 2048,
+    parallel: 1,
+    threads: 2,
+    threadsHttp: 1,
+    batchSize: 256,
+    ubatchSize: 128,
+    cachePrompt: true,
+    cacheReuse: 256,
+    continuousBatching: true,
+    enableMetrics: false,
+    exposeSlots: true,
+    warmup: true,
+    enableUnifiedKv: false,
+    cacheIdleSlots: true,
+    contextShift: true,
+    extraArgs: ["--no-mmap"],
+  };
+}
+
 function createContext(model: ModelConfig, signal: AbortSignal): ProviderContext {
   return {
     signal,
@@ -185,6 +211,38 @@ test("llama.cpp provider rejects invalid direct adapter config", () => {
         cachePrompt: "true" as unknown as boolean,
       }),
     /adapter\.cachePrompt/,
+  );
+  assert.throws(
+    () =>
+      new LlamaCppProvider(model, {
+        ...adapter,
+        launchProfile: "not-an-object" as never,
+      }),
+    /adapter\.launchProfile must be an object/,
+  );
+  assert.throws(
+    () =>
+      new LlamaCppProvider(model, {
+        ...adapter,
+        launchProfile: { ...createLaunchProfile(), extra: "not-supported" } as never,
+      }),
+    /adapter\.launchProfile must not contain unsupported key "extra"/,
+  );
+  assert.throws(
+    () =>
+      new LlamaCppProvider(model, {
+        ...adapter,
+        launchProfile: { ...createLaunchProfile(), preset: "unknown" } as never,
+      }),
+    /adapter\.launchProfile\.preset is not recognized/,
+  );
+  assert.throws(
+    () =>
+      new LlamaCppProvider(model, {
+        ...adapter,
+        launchProfile: { ...createLaunchProfile(), extraArgs: [""] },
+      }),
+    /adapter\.launchProfile\.extraArgs\[0\] must be a non-empty string/,
   );
 });
 
