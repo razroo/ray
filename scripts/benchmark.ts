@@ -23,6 +23,15 @@ import { buildLlamaCppEnvironment, buildLlamaCppLaunchArgs } from "../packages/d
 type AutotuneScope = "auto" | "gateway" | "full";
 type BenchmarkCheckOperator = "<=" | ">=" | "===";
 
+export interface BenchmarkCliIo {
+  stdout: {
+    write(chunk: string | Uint8Array): unknown;
+  };
+  stderr: {
+    write(chunk: string | Uint8Array): unknown;
+  };
+}
+
 const STRUCTURED_OUTPUT_VERSION = 1;
 const BENCHMARK_API_KEY_ENV = "RAY_BENCHMARK_API_KEY";
 const MAX_BENCHMARK_WORKLOAD_FILE_BYTES = 1_048_576;
@@ -526,6 +535,33 @@ function assertCliArgv(argv: unknown): asserts argv is string[] {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function assertBenchmarkCliIo(io: unknown): asserts io is BenchmarkCliIo {
+  if (!isRecord(io)) {
+    throw new Error("benchmark cli io must be an object");
+  }
+
+  if (!isRecord(io.stdout) || typeof io.stdout.write !== "function") {
+    throw new Error("benchmark cli io.stdout.write must be a function");
+  }
+
+  if (!isRecord(io.stderr) || typeof io.stderr.write !== "function") {
+    throw new Error("benchmark cli io.stderr.write must be a function");
+  }
+}
+
+function writeBenchmarkCliLine(io: BenchmarkCliIo | undefined, value: string): void {
+  if (io) {
+    io.stdout.write(`${value}\n`);
+    return;
+  }
+
+  console.log(value);
+}
+
 function readFlagValue(argv: string[], index: number, flag: string): string {
   const value = argv[index + 1];
 
@@ -774,32 +810,55 @@ export function parseArgs(argv: string[]): BenchmarkArgs {
   return result;
 }
 
-function printUsage(): void {
-  console.log("Usage: bun run benchmark -- [options]");
-  console.log("");
-  console.log("Options:");
-  console.log("  --base-url <url>        Gateway base URL. Default: http://127.0.0.1:3000");
-  console.log("  --workload <path>       JSON or JSONL workload file.");
-  console.log("  --concurrency <n>       Client-side concurrency. Default: 1");
-  console.log("  --requests <n>          Total requests to replay.");
-  console.log("  --label <name>          Label shown in benchmark output.");
-  console.log("  --config <path>         Ray config path for autotune mode.");
-  console.log("  --api-key <key>         Bearer API key used for auth-enabled gateways.");
-  console.log(
+function printUsage(io?: BenchmarkCliIo): void {
+  writeBenchmarkCliLine(io, "Usage: bun run benchmark -- [options]");
+  writeBenchmarkCliLine(io, "");
+  writeBenchmarkCliLine(io, "Options:");
+  writeBenchmarkCliLine(
+    io,
+    "  --base-url <url>        Gateway base URL. Default: http://127.0.0.1:3000",
+  );
+  writeBenchmarkCliLine(io, "  --workload <path>       JSON or JSONL workload file.");
+  writeBenchmarkCliLine(io, "  --concurrency <n>       Client-side concurrency. Default: 1");
+  writeBenchmarkCliLine(io, "  --requests <n>          Total requests to replay.");
+  writeBenchmarkCliLine(io, "  --label <name>          Label shown in benchmark output.");
+  writeBenchmarkCliLine(io, "  --config <path>         Ray config path for autotune mode.");
+  writeBenchmarkCliLine(
+    io,
+    "  --api-key <key>         Bearer API key used for auth-enabled gateways.",
+  );
+  writeBenchmarkCliLine(
+    io,
     `  --output <path>         Write structured benchmark or autotune output JSON (${STRUCTURED_OUTPUT_VERSION}).`,
   );
-  console.log("  --history-dir <path>    Append structured benchmark output to JSONL history.");
-  console.log("  --baseline <path>       Compare the benchmark summary against a baseline JSON.");
-  console.log("  --assert-baseline       Exit non-zero if the baseline checks fail.");
-  console.log("  --prompt-format-sweep   Run llama.cpp template/scaffold/Ray fallback variants.");
-  console.log("  --autotune              Sweep scheduler settings using the supplied config.");
-  console.log("  --autotune-scope <mode> Autotune scope: auto, gateway, or full. Default: auto.");
-  console.log(
+  writeBenchmarkCliLine(
+    io,
+    "  --history-dir <path>    Append structured benchmark output to JSONL history.",
+  );
+  writeBenchmarkCliLine(
+    io,
+    "  --baseline <path>       Compare the benchmark summary against a baseline JSON.",
+  );
+  writeBenchmarkCliLine(io, "  --assert-baseline       Exit non-zero if the baseline checks fail.");
+  writeBenchmarkCliLine(
+    io,
+    "  --prompt-format-sweep   Run llama.cpp template/scaffold/Ray fallback variants.",
+  );
+  writeBenchmarkCliLine(
+    io,
+    "  --autotune              Sweep scheduler settings using the supplied config.",
+  );
+  writeBenchmarkCliLine(
+    io,
+    "  --autotune-scope <mode> Autotune scope: auto, gateway, or full. Default: auto.",
+  );
+  writeBenchmarkCliLine(
+    io,
     `  --autotune-max-candidates <n> Max scheduler candidates. Default: ${DEFAULT_AUTOTUNE_SCHEDULER_CANDIDATES}, max: ${MAX_AUTOTUNE_SCHEDULER_CANDIDATES}.`,
   );
-  console.log("  --help, -h              Show this help text.");
-  console.log("");
-  console.log(`Auth fallback env: ${BENCHMARK_API_KEY_ENV}`);
+  writeBenchmarkCliLine(io, "  --help, -h              Show this help text.");
+  writeBenchmarkCliLine(io, "");
+  writeBenchmarkCliLine(io, `Auth fallback env: ${BENCHMARK_API_KEY_ENV}`);
 }
 
 async function readTextFileBounded(
@@ -2117,30 +2176,41 @@ export async function runBenchmark(options: RunBenchmarkOptions): Promise<Benchm
   return summary;
 }
 
-function printSummary(summary: BenchmarkSummary): void {
-  console.log(`Benchmark: ${summary.label}`);
-  console.log(`Base URL: ${summary.baseUrl}`);
-  console.log(`Concurrency: ${summary.concurrency}`);
-  console.log(`Requests: ${summary.requests}`);
-  console.log(
+function printSummary(summary: BenchmarkSummary, io?: BenchmarkCliIo): void {
+  writeBenchmarkCliLine(io, `Benchmark: ${summary.label}`);
+  writeBenchmarkCliLine(io, `Base URL: ${summary.baseUrl}`);
+  writeBenchmarkCliLine(io, `Concurrency: ${summary.concurrency}`);
+  writeBenchmarkCliLine(io, `Requests: ${summary.requests}`);
+  writeBenchmarkCliLine(
+    io,
     `Latency: p50=${formatNumber(summary.latencyP50Ms)}ms p95=${formatNumber(summary.latencyP95Ms)}ms`,
   );
-  console.log(
+  writeBenchmarkCliLine(
+    io,
     `Queue delay: p50=${formatNumber(summary.queueDelayP50Ms)}ms p95=${formatNumber(summary.queueDelayP95Ms)}ms`,
   );
-  console.log(
+  writeBenchmarkCliLine(
+    io,
     `TTFT: p50=${formatNumber(summary.ttftP50Ms)}ms p95=${formatNumber(summary.ttftP95Ms)}ms`,
   );
-  console.log(`Completion tok/s: avg=${formatNumber(summary.completionTokensPerSecondAvg)}`);
-  console.log(`Response cache hit rate: ${formatNumber(summary.responseCacheHitRate)}%`);
-  console.log(
+  writeBenchmarkCliLine(
+    io,
+    `Completion tok/s: avg=${formatNumber(summary.completionTokensPerSecondAvg)}`,
+  );
+  writeBenchmarkCliLine(
+    io,
+    `Response cache hit rate: ${formatNumber(summary.responseCacheHitRate)}%`,
+  );
+  writeBenchmarkCliLine(
+    io,
     `Prompt cache hit rate: ${formatNumber(summary.promptCacheHitRate)}% reuse=${formatNumber(
       typeof summary.promptCacheReuseRatio === "number"
         ? summary.promptCacheReuseRatio * 100
         : undefined,
     )}%`,
   );
-  console.log(
+  writeBenchmarkCliLine(
+    io,
     `Quality: pass=${formatNumber(summary.qualityPassRate)}% validJson=${formatNumber(
       summary.validJsonRate,
     )}% score=${formatNumber(summary.qualityScoreAvg)} p50=${formatNumber(
@@ -2148,12 +2218,14 @@ function printSummary(summary: BenchmarkSummary): void {
     )} failures=${summary.qualityFailures ?? 0} promptEcho=${summary.promptEchoRejects ?? 0}`,
   );
   if (summary.providerDiagnostics) {
-    console.log(
+    writeBenchmarkCliLine(
+      io,
       `Provider: promptFormats=${JSON.stringify(
         summary.providerDiagnostics.promptFormats,
       )} requestShapes=${JSON.stringify(summary.providerDiagnostics.requestShapes)}`,
     );
-    console.log(
+    writeBenchmarkCliLine(
+      io,
       `Provider: slotReuse=${formatNumber(
         summary.providerDiagnostics.slotReuseRate,
       )}% cachedTokensAvg=${formatNumber(
@@ -2165,8 +2237,8 @@ function printSummary(summary: BenchmarkSummary): void {
       }`,
     );
   }
-  console.log(`Emails/hour: ${formatNumber(summary.emailsPerHour)}`);
-  console.log(`Score: ${formatNumber(summary.score, 2)}`);
+  writeBenchmarkCliLine(io, `Emails/hour: ${formatNumber(summary.emailsPerHour)}`);
+  writeBenchmarkCliLine(io, `Score: ${formatNumber(summary.score, 2)}`);
 }
 
 function assertAutotuneCandidateLimit(maxCandidates: number): void {
@@ -2700,16 +2772,17 @@ async function runLaunchProfileSweep(options: {
   return results;
 }
 
-function printTopSchedulerResults(results: SchedulerBenchmarkResult[]): void {
+function printTopSchedulerResults(results: SchedulerBenchmarkResult[], io?: BenchmarkCliIo): void {
   const sorted = [...results].sort(
     (left, right) => (right.summary.score ?? 0) - (left.summary.score ?? 0),
   );
   const top = sorted.slice(0, 5);
 
-  console.log(`Autotune scheduler candidates: ${results.length}`);
+  writeBenchmarkCliLine(io, `Autotune scheduler candidates: ${results.length}`);
   for (const result of top) {
     const summary = result.summary;
-    console.log(
+    writeBenchmarkCliLine(
+      io,
       `${summary.label}: score=${formatNumber(summary.score, 2)} emails/hour=${formatNumber(
         summary.emailsPerHour,
       )} latencyP95=${formatNumber(summary.latencyP95Ms)}ms queueP95=${formatNumber(
@@ -2719,17 +2792,21 @@ function printTopSchedulerResults(results: SchedulerBenchmarkResult[]): void {
   }
 }
 
-function printTopLaunchProfileResults(results: LaunchProfileBenchmarkResult[]): void {
+function printTopLaunchProfileResults(
+  results: LaunchProfileBenchmarkResult[],
+  io?: BenchmarkCliIo,
+): void {
   const sorted = [...results].sort(
     (left, right) => (right.summary.score ?? 0) - (left.summary.score ?? 0),
   );
   const top = sorted.slice(0, 5);
 
-  console.log(`Launch profile candidates: ${results.length}`);
+  writeBenchmarkCliLine(io, `Launch profile candidates: ${results.length}`);
   for (const result of top) {
     const summary = result.summary;
     const profile = result.candidate.profile;
-    console.log(
+    writeBenchmarkCliLine(
+      io,
       `${result.candidate.label}: score=${formatNumber(summary.score, 2)} emails/hour=${formatNumber(
         summary.emailsPerHour,
       )} latencyP95=${formatNumber(summary.latencyP95Ms)}ms tok/s=${formatNumber(
@@ -2898,8 +2975,9 @@ function compareSummaryToBaseline(options: {
   };
 }
 
-function printComparison(comparison: BenchmarkComparison): void {
-  console.log(
+function printComparison(comparison: BenchmarkComparison, io?: BenchmarkCliIo): void {
+  writeBenchmarkCliLine(
+    io,
     `Baseline ${comparison.machineClass} (${comparison.baselineLabel}): ${comparison.passed ? "PASS" : "FAIL"}`,
   );
 
@@ -2908,7 +2986,8 @@ function printComparison(comparison: BenchmarkComparison): void {
       typeof check.actual === "number" ? formatNumber(check.actual, 2) : String(check.actual);
     const expected =
       typeof check.expected === "number" ? formatNumber(check.expected, 2) : String(check.expected);
-    console.log(
+    writeBenchmarkCliLine(
+      io,
       `  ${check.passed ? "ok" : "fail"} ${check.metric} ${check.operator} ${expected} (actual ${actual})`,
     );
   }
@@ -2917,6 +2996,7 @@ function printComparison(comparison: BenchmarkComparison): void {
 export async function writeStructuredOutput(
   outputPath: string,
   payload: BenchmarkSummaryOutput | AutotuneOutput | PromptFormatSweepOutput,
+  io?: BenchmarkCliIo,
 ): Promise<void> {
   assertBenchmarkPathValue(outputPath, "Benchmark output path");
   const resolvedPath = path.resolve(process.cwd(), outputPath);
@@ -2931,7 +3011,7 @@ export async function writeStructuredOutput(
 
   await mkdir(path.dirname(resolvedPath), { recursive: true });
   await writeTextFileAtomic(resolvedPath, output);
-  console.log(`Wrote structured output to ${resolvedPath}`);
+  writeBenchmarkCliLine(io, `Wrote structured output to ${resolvedPath}`);
 }
 
 async function resolveBenchmarkArtifactMode(filePath: string): Promise<number | undefined> {
@@ -3064,6 +3144,7 @@ async function pruneHistoryFile(historyPath: string, incomingBytes: number): Pro
 export async function appendHistoryOutput(
   historyDir: string | undefined,
   payload: BenchmarkSummaryOutput | AutotuneOutput | PromptFormatSweepOutput,
+  io?: BenchmarkCliIo,
 ): Promise<void> {
   if (!historyDir) {
     return;
@@ -3084,7 +3165,7 @@ export async function appendHistoryOutput(
   await mkdir(resolvedDir, { recursive: true });
   await pruneHistoryFile(historyPath, lineBytes);
   await appendTextFileSynced(historyPath, line);
-  console.log(`Appended benchmark history to ${historyPath}`);
+  writeBenchmarkCliLine(io, `Appended benchmark history to ${historyPath}`);
 }
 
 function withPromptFormatOverride(
@@ -3103,6 +3184,7 @@ function withPromptFormatOverride(
 async function runPromptFormatSweep(
   args: BenchmarkArgs,
   workload: BenchmarkWorkloadItem[],
+  io?: BenchmarkCliIo,
 ): Promise<PromptFormatSweepOutput> {
   const promptFormats = ["llama.cpp-template", "prompt-scaffold", "ray-chat-fallback"];
   const requests = args.requests ?? workload.length;
@@ -3125,8 +3207,8 @@ async function runPromptFormatSweep(
       label: `${args.label ?? args.workloadPath ?? "default-workload"}:${promptFormat}`,
       apiKey: resolveBenchmarkApiKey(args, directConfig),
     });
-    printSummary(summary);
-    console.log("");
+    printSummary(summary, io);
+    writeBenchmarkCliLine(io, "");
     results.push({
       promptFormat,
       summary,
@@ -3143,7 +3225,7 @@ async function runPromptFormatSweep(
     throw new Error("Prompt format sweep produced no results.");
   }
 
-  console.log(`Recommended prompt format: ${winner.promptFormat}`);
+  writeBenchmarkCliLine(io, `Recommended prompt format: ${winner.promptFormat}`);
 
   return {
     kind: "prompt-format-sweep",
@@ -3164,6 +3246,7 @@ async function runPromptFormatSweep(
 async function runAutotune(
   args: BenchmarkArgs,
   workload: BenchmarkWorkloadItem[],
+  io?: BenchmarkCliIo,
 ): Promise<AutotuneOutput> {
   if (!args.configPath) {
     throw new Error("--autotune requires --config");
@@ -3215,7 +3298,7 @@ async function runAutotune(
         throw new Error("No llama.cpp launch profile candidates were benchmarked.");
       }
 
-      printTopLaunchProfileResults(launchResults);
+      printTopLaunchProfileResults(launchResults, io);
       const bestLaunchResult = [...launchResults].sort(
         (left, right) => (right.summary.score ?? 0) - (left.summary.score ?? 0),
       )[0];
@@ -3262,7 +3345,7 @@ async function runAutotune(
       maxCandidates: args.autotuneMaxCandidates,
       apiKey,
     });
-    printTopSchedulerResults(schedulerResults);
+    printTopSchedulerResults(schedulerResults, io);
     const bestSchedulerResult = [...schedulerResults].sort(
       (left, right) => (right.summary.score ?? 0) - (left.summary.score ?? 0),
     )[0];
@@ -3283,8 +3366,8 @@ async function runAutotune(
           scheduler: bestSchedulerResult.candidate.override.scheduler,
         };
 
-    console.log("\nRecommended autotune patch:");
-    console.log(JSON.stringify(recommendedPatch, null, 2));
+    writeBenchmarkCliLine(io, "\nRecommended autotune patch:");
+    writeBenchmarkCliLine(io, JSON.stringify(recommendedPatch, null, 2));
 
     return {
       kind: "autotune-report",
@@ -3314,12 +3397,16 @@ async function runAutotune(
   }
 }
 
-async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+async function runBenchmarkCommand(argv: string[], io?: BenchmarkCliIo): Promise<number> {
+  if (io !== undefined) {
+    assertBenchmarkCliIo(io);
+  }
+
+  const args = parseArgs(argv);
 
   if (args.help) {
-    printUsage();
-    return;
+    printUsage(io);
+    return 0;
   }
 
   if (args.assertBaseline && !args.baselinePath) {
@@ -3329,21 +3416,21 @@ async function main(): Promise<void> {
   const workload = await loadWorkload(args.workloadPath);
 
   if (args.autotune) {
-    const report = await runAutotune(args, workload);
+    const report = await runAutotune(args, workload, io);
     if (args.outputPath) {
-      await writeStructuredOutput(args.outputPath, report);
+      await writeStructuredOutput(args.outputPath, report, io);
     }
-    await appendHistoryOutput(args.historyDir, report);
-    return;
+    await appendHistoryOutput(args.historyDir, report, io);
+    return 0;
   }
 
   if (args.promptFormatSweep) {
-    const report = await runPromptFormatSweep(args, workload);
+    const report = await runPromptFormatSweep(args, workload, io);
     if (args.outputPath) {
-      await writeStructuredOutput(args.outputPath, report);
+      await writeStructuredOutput(args.outputPath, report, io);
     }
-    await appendHistoryOutput(args.historyDir, report);
-    return;
+    await appendHistoryOutput(args.historyDir, report, io);
+    return 0;
   }
 
   const directConfig = args.configPath
@@ -3363,7 +3450,7 @@ async function main(): Promise<void> {
     label: args.label ?? args.workloadPath ?? "default-workload",
     apiKey: resolveBenchmarkApiKey(args, directConfig),
   });
-  printSummary(summary);
+  printSummary(summary, io);
 
   let comparison: BenchmarkComparison | undefined;
   if (args.baselinePath) {
@@ -3374,8 +3461,8 @@ async function main(): Promise<void> {
       baselinePath: args.baselinePath,
       args,
     });
-    console.log("");
-    printComparison(comparison);
+    writeBenchmarkCliLine(io, "");
+    printComparison(comparison, io);
   }
 
   const outputPayload: BenchmarkSummaryOutput = {
@@ -3398,18 +3485,31 @@ async function main(): Promise<void> {
   };
 
   if (args.outputPath) {
-    await writeStructuredOutput(args.outputPath, outputPayload);
+    await writeStructuredOutput(args.outputPath, outputPayload, io);
   }
-  await appendHistoryOutput(args.historyDir, outputPayload);
+  await appendHistoryOutput(args.historyDir, outputPayload, io);
 
   if (args.assertBaseline && comparison && !comparison.passed) {
-    process.exitCode = 1;
+    return 1;
+  }
+
+  return 0;
+}
+
+export async function runBenchmarkCli(
+  argv: string[] = process.argv.slice(2),
+  io: BenchmarkCliIo = process,
+): Promise<number> {
+  assertBenchmarkCliIo(io);
+
+  try {
+    return await runBenchmarkCommand(argv, io);
+  } catch (error) {
+    io.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
   }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  void main().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-  });
+  process.exitCode = await runBenchmarkCli();
 }

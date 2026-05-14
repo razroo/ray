@@ -7,6 +7,7 @@ const repoRoot = process.cwd();
 const embeddableCliEntrypoints = [
   "apps/gateway/src/index.ts",
   "packages/deploy/src/cli.ts",
+  "scripts/benchmark.ts",
   "scripts/deploy-storage-preflight.ts",
   "scripts/docs-link-check.ts",
   "scripts/package-runtime-coverage.ts",

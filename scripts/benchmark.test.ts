@@ -20,6 +20,7 @@ import {
   parseArgs,
   resolveBenchmarkApiKey,
   runBenchmark,
+  runBenchmarkCli,
   waitForBenchmarkChildHealth,
   writeStructuredOutput,
 } from "./benchmark.ts";
@@ -75,6 +76,34 @@ function minimalBenchmarkOutput(label: string) {
   } as const;
 }
 
+function createTestIo() {
+  let stdout = "";
+  let stderr = "";
+
+  return {
+    io: {
+      stdout: {
+        write(chunk: string | Uint8Array) {
+          stdout += String(chunk);
+          return true;
+        },
+      },
+      stderr: {
+        write(chunk: string | Uint8Array) {
+          stderr += String(chunk);
+          return true;
+        },
+      },
+    },
+    get stdout() {
+      return stdout;
+    },
+    get stderr() {
+      return stderr;
+    },
+  };
+}
+
 test("parseArgs accepts strict benchmark CLI options", () => {
   const args = parseArgs([
     "--base-url",
@@ -121,6 +150,43 @@ test("parseArgs accepts strict benchmark CLI options", () => {
   assert.equal(args.autotuneScope, "gateway");
   assert.equal(args.autotuneMaxCandidates, 12);
   assert.equal(args.assertBaseline, true);
+});
+
+test("runBenchmarkCli rejects malformed direct io before parsing", async () => {
+  await assert.rejects(
+    () => runBenchmarkCli([], null as never),
+    /benchmark cli io must be an object/,
+  );
+  await assert.rejects(
+    () => runBenchmarkCli([], { stdout: null, stderr: { write() {} } } as never),
+    /benchmark cli io\.stdout\.write must be a function/,
+  );
+  await assert.rejects(
+    () => runBenchmarkCli([], { stdout: { write() {} }, stderr: null } as never),
+    /benchmark cli io\.stderr\.write must be a function/,
+  );
+});
+
+test("runBenchmarkCli prints help to injected stdout", async () => {
+  const output = createTestIo();
+
+  const status = await runBenchmarkCli(["--help"], output.io);
+
+  assert.equal(status, 0);
+  assert.equal(output.stderr, "");
+  assert.match(output.stdout, /Usage: bun run benchmark/);
+  assert.match(output.stdout, /--workload <path>/);
+  assert.match(output.stdout, /RAY_BENCHMARK_API_KEY/);
+});
+
+test("runBenchmarkCli reports parser failures to injected stderr", async () => {
+  const output = createTestIo();
+
+  const status = await runBenchmarkCli(["--definitely-unknown"], output.io);
+
+  assert.equal(status, 1);
+  assert.equal(output.stdout, "");
+  assert.match(output.stderr, /Unknown option: --definitely-unknown/);
 });
 
 test("parseArgs rejects malformed direct argv values", () => {
