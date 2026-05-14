@@ -27,8 +27,8 @@ async function mkRayDeployTempDir(prefix: string): Promise<string> {
   // Linux CI checkouts usually live under /home, and tmpdir() is /tmp; both are
   // intentionally rejected for generated systemd WorkingDirectory values.
   const tempRoots = [
-    "/proc/self/cwd/.ray/test-tmp",
     "/dev/shm/ray-deploy-tests",
+    "/proc/self/cwd/.ray/test-tmp",
     join(repoRoot, ".ray", "test-tmp"),
   ];
   let lastError: unknown;

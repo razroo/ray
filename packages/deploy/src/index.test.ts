@@ -55,8 +55,8 @@ async function mkRayDeployTempDir(prefix: string): Promise<string> {
   // Linux CI checkouts usually live under /home, and tmpdir() is /tmp; both are
   // intentionally rejected for generated systemd WorkingDirectory values.
   const tempRoots = [
-    "/proc/self/cwd/.ray/test-tmp",
     "/dev/shm/ray-deploy-tests",
+    "/proc/self/cwd/.ray/test-tmp",
     join(repoRoot, ".ray", "test-tmp"),
   ];
   let lastError: unknown;
@@ -227,73 +227,11 @@ test("renderSystemdService rejects unsafe systemd execution directives", () => {
   assert.throws(
     () =>
       renderSystemdService({
-        workingDirectory: "/srv/ray",
-        configPath: "/etc/ray/ray.json",
-        user: "ray",
-        runtimeBinary: "/home/ray/.bun/bin/bun",
-      }),
-    /runtimeBinary is under \/home, \/root, or \/run\/user/,
-  );
-
-  assert.throws(
-    () =>
-      renderSystemdService({
-        workingDirectory: "/srv/ray",
-        configPath: "/etc/ray/ray.json",
-        user: "ray",
-        runtimeBinary: "/tmp/bun",
-      }),
-    /runtimeBinary is under \/tmp or \/var\/tmp/,
-  );
-
-  assert.throws(
-    () =>
-      renderSystemdService({
         workingDirectory: ".",
         configPath: "/etc/ray/ray.json",
         user: "ray",
       }),
     /workingDirectory must be an absolute path/,
-  );
-
-  assert.throws(
-    () =>
-      renderSystemdService({
-        workingDirectory: "/home/ray/current",
-        configPath: "/etc/ray/ray.json",
-        user: "ray",
-      }),
-    /workingDirectory is under \/home, \/root, or \/run\/user/,
-  );
-
-  assert.throws(
-    () =>
-      renderSystemdService({
-        workingDirectory: "/var/tmp/ray",
-        configPath: "/etc/ray/ray.json",
-        user: "ray",
-      }),
-    /workingDirectory is under \/tmp or \/var\/tmp/,
-  );
-
-  assert.throws(
-    () =>
-      renderSystemdService({
-        workingDirectory: "/srv/ray",
-        configPath: "/home/ray/ray.json",
-        user: "ray",
-      }),
-    /configPath resolves under \/home, \/root, or \/run\/user/,
-  );
-
-  assert.throws(
-    () =>
-      renderSystemdService({
-        workingDirectory: "/srv/ray",
-        configPath: "/tmp/ray.json",
-        user: "ray",
-      }),
-    /configPath resolves under \/tmp or \/var\/tmp/,
   );
 
   assert.throws(
@@ -465,6 +403,23 @@ test("renderSystemdService rejects unsafe systemd execution directives", () => {
         cpuWeight: 10_001,
       }),
     /cpuWeight must be less than or equal to 10000/,
+  );
+});
+
+test("renderSystemdService leaves deployment path posture to diagnostics", () => {
+  const service = renderSystemdService({
+    workingDirectory: "/home/ray/current",
+    configPath: "/tmp/ray.json",
+    user: "ray",
+    runtimeBinary: "/home/ray/.bun/bin/bun",
+  });
+
+  assert.match(service, /ProtectHome=true/);
+  assert.match(service, /PrivateTmp=true/);
+  assert.match(service, /WorkingDirectory=\/home\/ray\/current/);
+  assert.match(
+    service,
+    /ExecStart=\/home\/ray\/\.bun\/bin\/bun \/home\/ray\/current\/apps\/gateway\/dist\/index\.js --config \/tmp\/ray\.json/,
   );
 });
 
@@ -1795,54 +1750,6 @@ test("renderLlamaCppService rejects malformed service options and launch profile
         user: "ray",
         launchProfile: {
           ...launchProfile,
-          binaryPath: "/home/ray/bin/llama-server",
-        },
-      }),
-    /model\.adapter\.launchProfile\.binaryPath is under \/home, \/root, or \/run\/user/,
-  );
-
-  assert.throws(
-    () =>
-      renderLlamaCppService({
-        user: "ray",
-        launchProfile: {
-          ...launchProfile,
-          binaryPath: "/var/tmp/llama-server",
-        },
-      }),
-    /model\.adapter\.launchProfile\.binaryPath is under \/tmp or \/var\/tmp/,
-  );
-
-  assert.throws(
-    () =>
-      renderLlamaCppService({
-        user: "ray",
-        launchProfile: {
-          ...launchProfile,
-          modelPath: "/root/models/local-1b.gguf",
-        },
-      }),
-    /model\.adapter\.launchProfile\.modelPath is under \/home, \/root, or \/run\/user/,
-  );
-
-  assert.throws(
-    () =>
-      renderLlamaCppService({
-        user: "ray",
-        launchProfile: {
-          ...launchProfile,
-          modelPath: "/tmp/local-1b.gguf",
-        },
-      }),
-    /model\.adapter\.launchProfile\.modelPath is under \/tmp or \/var\/tmp/,
-  );
-
-  assert.throws(
-    () =>
-      renderLlamaCppService({
-        user: "ray",
-        launchProfile: {
-          ...launchProfile,
           cachePrompt: "true" as never,
         },
       }),
@@ -1884,6 +1791,27 @@ test("renderLlamaCppService rejects malformed service options and launch profile
       }),
     /model\.adapter\.launchProfile\.extraArgs\[0\] must not override --port/,
   );
+});
+
+test("renderLlamaCppService leaves deployment path posture to diagnostics", () => {
+  const config = createDefaultConfig("1b");
+
+  if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
+    throw new Error("Expected llama.cpp launch profile");
+  }
+
+  const service = renderLlamaCppService({
+    user: "ray",
+    launchProfile: {
+      ...config.model.adapter.launchProfile,
+      binaryPath: "/home/ray/bin/llama-server",
+      modelPath: "/tmp/local-1b.gguf",
+    },
+  });
+
+  assert.match(service, /ProtectHome=true/);
+  assert.match(service, /PrivateTmp=true/);
+  assert.match(service, /ExecStart=\/home\/ray\/bin\/llama-server .*--model \/tmp\/local-1b\.gguf/);
 });
 
 test("renderLlamaCppService escapes systemd directive values", () => {

@@ -2191,26 +2191,6 @@ export function renderSystemdService(options: SystemdServiceOptions): string {
   assertDeploymentPathValue(options.configPath, "configPath");
   assertAbsolutePath(runtimeBinary, "runtimeBinary");
   assertAbsolutePath(options.workingDirectory, "workingDirectory");
-  if (isSystemdProtectHomePath(runtimeBinary)) {
-    throw new Error(
-      "runtimeBinary is under /home, /root, or /run/user, but the generated gateway service uses ProtectHome=true",
-    );
-  }
-  if (isSystemdPrivateTmpPath(runtimeBinary)) {
-    throw new Error(
-      "runtimeBinary is under /tmp or /var/tmp, but the generated gateway service uses PrivateTmp=true",
-    );
-  }
-  if (isSystemdProtectHomePath(options.workingDirectory)) {
-    throw new Error(
-      "workingDirectory is under /home, /root, or /run/user, but the generated gateway service uses ProtectHome=true",
-    );
-  }
-  if (isSystemdPrivateTmpPath(options.workingDirectory)) {
-    throw new Error(
-      "workingDirectory is under /tmp or /var/tmp, but the generated gateway service uses PrivateTmp=true",
-    );
-  }
   if (options.envFile !== undefined) {
     assertSystemdScalar(options.envFile, "envFile");
     assertAbsolutePath(options.envFile, "envFile");
@@ -2233,16 +2213,6 @@ export function renderSystemdService(options: SystemdServiceOptions): string {
   const wantsLine = formatSystemdDependencyLine("Wants", wants ?? []);
   const afterLine = formatSystemdDependencyLine("After", ["network.target", ...(after ?? [])]);
   const absoluteConfigPath = path.resolve(options.workingDirectory, options.configPath);
-  if (isSystemdProtectHomePath(absoluteConfigPath)) {
-    throw new Error(
-      "configPath resolves under /home, /root, or /run/user, but the generated gateway service uses ProtectHome=true",
-    );
-  }
-  if (isSystemdPrivateTmpPath(absoluteConfigPath)) {
-    throw new Error(
-      "configPath resolves under /tmp or /var/tmp, but the generated gateway service uses PrivateTmp=true",
-    );
-  }
   const gatewayEntryPoint = path.join(options.workingDirectory, GATEWAY_ENTRYPOINT_RELATIVE_PATH);
   const execStart = formatSystemdExecStart([
     runtimeBinary,
@@ -2357,26 +2327,6 @@ export function renderCaddyfile(options: ReverseProxyOptions): string {
 export function renderLlamaCppService(options: LlamaCppServiceOptions): string {
   assertOptionsObject(options, "llama.cpp service options");
   assertLlamaCppLaunchProfileForService(options.launchProfile);
-  if (isSystemdProtectHomePath(options.launchProfile.binaryPath)) {
-    throw new Error(
-      "model.adapter.launchProfile.binaryPath is under /home, /root, or /run/user, but the generated llama.cpp service uses ProtectHome=true",
-    );
-  }
-  if (isSystemdPrivateTmpPath(options.launchProfile.binaryPath)) {
-    throw new Error(
-      "model.adapter.launchProfile.binaryPath is under /tmp or /var/tmp, but the generated llama.cpp service uses PrivateTmp=true",
-    );
-  }
-  if (isSystemdProtectHomePath(options.launchProfile.modelPath)) {
-    throw new Error(
-      "model.adapter.launchProfile.modelPath is under /home, /root, or /run/user, but the generated llama.cpp service uses ProtectHome=true",
-    );
-  }
-  if (isSystemdPrivateTmpPath(options.launchProfile.modelPath)) {
-    throw new Error(
-      "model.adapter.launchProfile.modelPath is under /tmp or /var/tmp, but the generated llama.cpp service uses PrivateTmp=true",
-    );
-  }
 
   if (options.envFile !== undefined) {
     assertSystemdScalar(options.envFile, "envFile");
