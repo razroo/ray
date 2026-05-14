@@ -121,6 +121,23 @@ test("verifyPackageVersion rejects malformed version arguments", async () => {
   );
 });
 
+test("verifyPackageVersion rejects package names outside the release allowlist", async () => {
+  let fetched = false;
+  const fetchImpl = async () => {
+    fetched = true;
+    return new Response(metadata("@razroo/ray-core", "0.2.0"));
+  };
+
+  await assert.rejects(
+    () =>
+      verifyPackageVersion("@razroo/ray-plugin", "0.2.0", {
+        fetchImpl,
+      }),
+    /npm verification package must be one of: @razroo\/ray-core, @razroo\/ray-sdk/,
+  );
+  assert.equal(fetched, false);
+});
+
 test("verifyPackageVersion requires matching npm version metadata", async () => {
   const fetchImpl = async () =>
     new Response(

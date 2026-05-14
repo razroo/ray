@@ -23,6 +23,20 @@ function assertReleaseVersion(version) {
   }
 }
 
+function assertReleasePackageName(pkg) {
+  if (typeof pkg !== "string" || pkg.length === 0) {
+    throw new Error("npm verification package must be a non-empty package name");
+  }
+
+  if (/[\0-\x20\x7f]/.test(pkg)) {
+    throw new Error("npm verification package must not contain control characters or whitespace");
+  }
+
+  if (!packages.includes(pkg)) {
+    throw new Error(`npm verification package must be one of: ${packages.join(", ")}`);
+  }
+}
+
 function parseContentLength(value) {
   if (!value) {
     return undefined;
@@ -87,6 +101,7 @@ async function readResponseTextWithinLimit(response, limitBytes, label) {
 }
 
 export async function fetchNpmMetadata(pkg, options = {}) {
+  assertReleasePackageName(pkg);
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? VERIFY_NPM_TIMEOUT_MS;
   const maxBytes = options.maxBytes ?? MAX_NPM_METADATA_BYTES;
@@ -122,6 +137,7 @@ export async function fetchNpmMetadata(pkg, options = {}) {
 }
 
 export async function verifyPackageVersion(pkg, version, options = {}) {
+  assertReleasePackageName(pkg);
   assertReleaseVersion(version);
   const body = await fetchNpmMetadata(pkg, options);
   const published = body?.["dist-tags"]?.latest;
