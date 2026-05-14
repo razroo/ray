@@ -24,6 +24,7 @@ import {
   MAX_ADAPTER_TIMEOUT_MS,
   MAX_ADAPTER_MODEL_REF_CHARS,
   adapterRequest,
+  assertKnownObjectKeys,
   assertNonEmptyStringAtMost,
   assertPositiveSafeIntegerAtMost,
   assertDeclaredResponseBodyWithinLimit,
@@ -47,6 +48,21 @@ const MAX_FAMILY_PREFERRED_SLOT_KEYS = 512;
 const MAX_SLOT_FAMILY_ASSIGNMENTS = 64;
 const MAX_PROMPT_SCAFFOLD_CACHE_ENTRIES = 4_096;
 const MAX_LLAMA_CPP_DIAGNOSTIC_NUMBER = 1_000_000_000;
+const llamaCppAdapterKeys = new Set([
+  "kind",
+  "baseUrl",
+  "modelRef",
+  "apiKeyEnv",
+  "timeoutMs",
+  "headers",
+  "warmupRequests",
+  "cachePrompt",
+  "slotId",
+  "slotStateTtlMs",
+  "slotSnapshotTimeoutMs",
+  "promptScaffoldCacheEntries",
+  "launchProfile",
+]);
 
 interface LlamaCppHealthResponse {
   status?: string;
@@ -433,6 +449,7 @@ function snapshotLlamaCppAdapter(
   adapter: LlamaCppProviderConfig,
   maxOutputTokens: number,
 ): LlamaCppProviderConfig {
+  assertKnownObjectKeys(adapter, "adapter", llamaCppAdapterKeys);
   const snapshot = snapshotHttpAdapterConfig(adapter);
 
   assertNonEmptyStringAtMost(snapshot.modelRef, "adapter.modelRef", MAX_ADAPTER_MODEL_REF_CHARS);

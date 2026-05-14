@@ -688,6 +688,14 @@ test("openai-compatible provider rejects invalid direct adapter payload config",
     () =>
       new OpenAICompatibleProvider(model, {
         ...adapter,
+        extra: "not-supported",
+      } as OpenAICompatibleProviderConfig),
+    /adapter must not contain unsupported key "extra"/,
+  );
+  assert.throws(
+    () =>
+      new OpenAICompatibleProvider(model, {
+        ...adapter,
         warmupRequests: Array.from({ length: 9 }, () => ({ input: "ping" })),
       }),
     /adapter\.warmupRequests/,

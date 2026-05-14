@@ -201,6 +201,20 @@ function assertSafeRecordKey(key: string, label: string): void {
   }
 }
 
+export function assertKnownObjectKeys(
+  value: object,
+  label: string,
+  allowedKeys: ReadonlySet<string>,
+): void {
+  for (const [key] of objectEntries(value, label)) {
+    assertSafeRecordKey(key, label);
+
+    if (!allowedKeys.has(key)) {
+      throw new TypeError(`${label} must not contain unsupported key "${key}"`);
+    }
+  }
+}
+
 export function assertNonEmptyStringAtMost(value: string, label: string, maximum: number): void {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new TypeError(`${label} must be a non-empty string`);

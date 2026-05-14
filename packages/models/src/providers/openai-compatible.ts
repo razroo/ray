@@ -14,6 +14,7 @@ import { resolvePromptTemplateRequest } from "@ray/prompts";
 import {
   MAX_ADAPTER_MODEL_REF_CHARS,
   adapterRequest,
+  assertKnownObjectKeys,
   assertNonEmptyStringAtMost,
   extractAssistantText,
   normalizeOpenAICompatibleTokenUsage,
@@ -46,6 +47,15 @@ const MAX_DISCOVERED_MODEL_ENTRIES = 4_096;
 const MAX_DISCOVERED_MODEL_IDS = 64;
 const MAX_DISCOVERED_MODEL_ID_CHARS = MAX_ADAPTER_MODEL_REF_CHARS;
 const MAX_HEALTH_DETAIL_MODEL_IDS = 10;
+const openAIAdapterKeys = new Set([
+  "kind",
+  "baseUrl",
+  "modelRef",
+  "apiKeyEnv",
+  "timeoutMs",
+  "headers",
+  "warmupRequests",
+]);
 
 interface OpenAICompatibleModelIdsSnapshot {
   ids: string[];
@@ -153,6 +163,7 @@ function snapshotOpenAIAdapter(
   adapter: OpenAICompatibleProviderConfig,
   maxOutputTokens: number,
 ): OpenAICompatibleProviderConfig {
+  assertKnownObjectKeys(adapter, "adapter", openAIAdapterKeys);
   const snapshot = snapshotHttpAdapterConfig(adapter);
   assertNonEmptyStringAtMost(snapshot.modelRef, "adapter.modelRef", MAX_ADAPTER_MODEL_REF_CHARS);
   const warmupRequests = snapshotAdapterWarmupRequests(snapshot.warmupRequests, maxOutputTokens);

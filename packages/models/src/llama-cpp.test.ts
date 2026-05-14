@@ -150,6 +150,14 @@ test("llama.cpp provider rejects invalid direct adapter config", () => {
     () =>
       new LlamaCppProvider(model, {
         ...adapter,
+        extra: "not-supported",
+      } as LlamaCppProviderConfig),
+    /adapter must not contain unsupported key "extra"/,
+  );
+  assert.throws(
+    () =>
+      new LlamaCppProvider(model, {
+        ...adapter,
         warmupRequests: Array.from({ length: 9 }, () => ({ input: "ping" })),
       }),
     /adapter\.warmupRequests/,
