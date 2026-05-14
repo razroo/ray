@@ -1,43 +1,36 @@
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { checkReleaseSource } from "../../../../scripts/release/check-source.mjs";
 
-const args = process.argv.slice(2).filter((a) => a !== "--");
-const version = args[0];
+const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const repoRoot = path.resolve(packageRoot, "..", "..");
+const manifest = path
+  .relative(repoRoot, path.join(packageRoot, "package.json"))
+  .replaceAll("\\", "/");
 
-if (!version) {
-  console.error("Usage: bun scripts/release/check-source.mjs <version>");
-  process.exit(1);
+function usage() {
+  return "Usage: bun scripts/release/check-source.mjs <version>";
 }
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const pkgPath = path.join(root, "package.json");
-const pkg = JSON.parse(await readFile(pkgPath, "utf8"));
+async function main() {
+  const args = process.argv.slice(2).filter((arg) => arg !== "--");
+  const version = args[0];
 
-if (pkg.version !== version) {
-  console.error(
-    `package.json version ${pkg.version ?? "unknown"} does not match release tag ${version}. ` +
-      `Bump "version" in package.json, commit, and retag before publishing.`,
-  );
-  process.exit(1);
-}
+  if (!version) {
+    throw new Error(usage());
+  }
 
-for (const section of [
-  "dependencies",
-  "devDependencies",
-  "peerDependencies",
-  "optionalDependencies",
-]) {
-  const deps = pkg[section];
-  if (!deps) continue;
-  for (const [name, spec] of Object.entries(deps)) {
-    if (typeof spec === "string" && spec.startsWith("file:")) {
-      console.error(
-        `${section}["${name}"] is "${spec}" — file: deps are published verbatim and break consumers.`,
-      );
-      process.exit(1);
-    }
+  const checked = await checkReleaseSource(version, {
+    cwd: repoRoot,
+    manifests: [manifest],
+  });
+
+  for (const line of checked) {
+    console.log(line);
   }
 }
 
-console.log(`${pkg.name}: ${pkg.version}`);
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});

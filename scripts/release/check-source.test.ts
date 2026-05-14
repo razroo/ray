@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 import { checkReleaseSource } from "./check-source.mjs";
+
+const execFileAsync = promisify(execFile);
+const repoRoot = process.cwd();
 
 async function writePackageJson(root: string, relPath: string, pkg: unknown): Promise<void> {
   const packagePath = path.join(root, relPath);
@@ -67,4 +72,30 @@ test("checkReleaseSource rejects mismatched package versions and file dependenci
     () => checkReleaseSource("1.2.3", { cwd: tempDir }),
     /file: dependencies are published verbatim/,
   );
+});
+
+test("package-local release source checks use the bounded root verifier", async () => {
+  const packageChecks = [
+    {
+      scriptPath: path.join(repoRoot, "packages/core/scripts/release/check-source.mjs"),
+      packagePath: path.join(repoRoot, "packages/core/package.json"),
+      name: "@razroo/ray-core",
+    },
+    {
+      scriptPath: path.join(repoRoot, "packages/sdk/scripts/release/check-source.mjs"),
+      packagePath: path.join(repoRoot, "packages/sdk/package.json"),
+      name: "@razroo/ray-sdk",
+    },
+  ];
+
+  for (const check of packageChecks) {
+    const pkg = JSON.parse(await readFile(check.packagePath, "utf8")) as { version: string };
+    const { stdout } = await execFileAsync(process.execPath, [check.scriptPath, pkg.version], {
+      cwd: repoRoot,
+      timeout: 5_000,
+      maxBuffer: 64 * 1024,
+    });
+
+    assert.equal(stdout.trim(), `${check.name}: ${pkg.version}`);
+  }
 });
