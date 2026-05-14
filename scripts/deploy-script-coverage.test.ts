@@ -146,6 +146,15 @@ test("validateDeployScriptCoverage rejects malformed direct paths before matchin
       }),
     /configPaths\[0\] must be at most 4096 bytes/,
   );
+  assert.throws(
+    () =>
+      validateDeployScriptCoverage({
+        cwd: process.cwd(),
+        configPaths: [path.join(path.dirname(process.cwd()), "outside.public.json")],
+        scripts: {},
+      }),
+    /configPaths\[0\] must stay inside cwd/,
+  );
 });
 
 test("validateDeployScriptCoverage catches missing and mistargeted package aliases", async () => {

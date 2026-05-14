@@ -327,6 +327,11 @@ function displayPath(cwd: string, configPath: string): string {
     : configPath;
 }
 
+function isPathInside(parentPath: string, candidatePath: string): boolean {
+  const relative = path.relative(parentPath, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 function scriptCommandPrefix(kind: ScriptKind): string {
   switch (kind) {
     case "render":
@@ -444,12 +449,22 @@ export function validateDeployScriptCoverage(options: {
   }
 
   assertDeployScriptPathValue(options.cwd, "cwd");
+  const cwd = path.resolve(options.cwd);
   for (const [index, configPath] of options.configPaths.entries()) {
     assertDeployScriptPathValue(configPath, `configPaths[${index}]`);
   }
+  const configPaths = options.configPaths
+    .map((configPath, index) => {
+      const resolvedPath = path.resolve(cwd, configPath);
+      if (!isPathInside(cwd, resolvedPath)) {
+        throw new Error(`configPaths[${index}] must stay inside cwd`);
+      }
+      return resolvedPath;
+    })
+    .sort();
 
   const configByName = new Map(
-    options.configPaths.map((configPath) => [path.basename(configPath), configPath]),
+    configPaths.map((configPath) => [path.basename(configPath), configPath]),
   );
   const specByConfig = new Map(
     DEPLOY_PROFILE_SCRIPT_MATRIX.map((spec) => [spec.configFile, spec] as const),
@@ -476,7 +491,7 @@ export function validateDeployScriptCoverage(options: {
     }
 
     results.push({
-      configPath: configPath ?? path.join(options.cwd, DEFAULT_CONFIG_DIR, spec.configFile),
+      configPath: configPath ?? path.join(cwd, DEFAULT_CONFIG_DIR, spec.configFile),
       renderScript: spec.render,
       validateScript: spec.validate,
       doctorScript: spec.doctor,
@@ -486,7 +501,7 @@ export function validateDeployScriptCoverage(options: {
     });
   }
 
-  for (const configPath of options.configPaths) {
+  for (const configPath of configPaths) {
     const configFile = path.basename(configPath);
     if (specByConfig.has(configFile)) {
       continue;
