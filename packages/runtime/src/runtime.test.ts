@@ -1876,6 +1876,61 @@ test("runtime bounds provider health snapshots before caching", async () => {
   assert.notEqual(cached.provider.details?.message, "mutated");
 });
 
+test("runtime stores unsafe provider health detail keys as inert own properties", async () => {
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "test-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async health() {
+      return {
+        status: "ready",
+        checkedAt: new Date().toISOString(),
+        detectedCapabilities: {
+          applyTemplate: "available",
+          chatTemplate: "unknown",
+          jsonMode: "available",
+          errors: JSON.parse(
+            '{"__proto__":"capability-polluted","constructor":"shadowed"}',
+          ) as Record<string, string>,
+        },
+        details: JSON.parse(
+          '{"__proto__":{"polluted":true},"constructor":"shadowed","nested":{"__proto__":{"deep":true},"constructor":"nested-shadowed"}}',
+        ) as Record<string, unknown>,
+      };
+    },
+    async infer() {
+      return {
+        output: "unused",
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("vps"), { provider });
+  const health = await runtime.health();
+  const details = health.provider.details as Record<string, unknown>;
+  const nested = details.nested as Record<string, unknown>;
+  const errors = health.provider.detectedCapabilities?.errors as Record<string, string>;
+
+  assert.equal(health.status, "ok");
+  assert.equal(health.provider.status, "ready");
+  assert.equal(Object.getPrototypeOf(details), Object.prototype);
+  assert.equal(Object.prototype.hasOwnProperty.call(details, "__proto__"), true);
+  assert.deepEqual(details.__proto__, { polluted: true });
+  assert.equal(details.constructor, "shadowed");
+  assert.equal(Object.prototype.hasOwnProperty.call(nested, "__proto__"), true);
+  assert.deepEqual(nested.__proto__, { deep: true });
+  assert.equal(nested.constructor, "nested-shadowed");
+  assert.equal(Object.prototype.hasOwnProperty.call(errors, "__proto__"), true);
+  assert.equal(errors.__proto__, "capability-polluted");
+  assert.equal(errors.constructor, "shadowed");
+  assert.equal(({} as { polluted?: boolean; deep?: boolean }).polluted, undefined);
+  assert.equal(({} as { polluted?: boolean; deep?: boolean }).deep, undefined);
+});
+
 test("runtime treats malformed provider health as unavailable", async () => {
   const provider: ModelProvider = {
     kind: "openai-compatible",

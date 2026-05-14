@@ -3612,6 +3612,19 @@ function truncateProviderHealthKey(value: string): string {
   }
 }
 
+function setProviderHealthObjectProperty(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
 function assertProviderHealthString(
   value: unknown,
   field: string,
@@ -3788,16 +3801,19 @@ function snapshotProviderHealthDetail(value: unknown, seen: WeakSet<object>, dep
 
     for (const key of keys.slice(0, MAX_PROVIDER_HEALTH_DETAIL_OBJECT_KEYS)) {
       const safeKey = truncateProviderHealthKey(key);
+      let snapshot: unknown;
 
       try {
-        output[safeKey] = snapshotProviderHealthDetail(
+        snapshot = snapshotProviderHealthDetail(
           (value as Record<string, unknown>)[key],
           seen,
           depth + 1,
         );
       } catch (error) {
-        output[safeKey] = `[Thrown: ${truncateProviderHealthString(toErrorMessage(error))}]`;
+        snapshot = `[Thrown: ${truncateProviderHealthString(toErrorMessage(error))}]`;
       }
+
+      setProviderHealthObjectProperty(output, safeKey, snapshot);
     }
 
     if (keys.length > MAX_PROVIDER_HEALTH_DETAIL_OBJECT_KEYS) {
@@ -3847,7 +3863,11 @@ function normalizeProviderCapabilityErrors(value: unknown): Record<string, strin
       continue;
     }
 
-    errors[truncateProviderHealthKey(key)] = truncateProviderHealthString(entry);
+    setProviderHealthObjectProperty(
+      errors,
+      truncateProviderHealthKey(key),
+      truncateProviderHealthString(entry),
+    );
   }
 
   return Object.keys(errors).length > 0 ? errors : undefined;
