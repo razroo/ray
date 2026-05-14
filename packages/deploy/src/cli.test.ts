@@ -1,3 +1,4 @@
+import { promises as fs } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -551,6 +552,56 @@ test("runCli rejects oversized explicit env files before parsing", async (t) => 
         envFile,
       ]),
     /Env file must be at most 65536 bytes/,
+  );
+});
+
+test("runCli rejects explicit env files that exceed the byte cap after stat", async (t) => {
+  const tempDir = await mkRayDeployTempDir("ray-deploy-env-post-read-limit-");
+  const originalOpen = fs.open;
+  t.after(async () => {
+    Object.defineProperty(fs, "open", {
+      configurable: true,
+      value: originalOpen,
+    });
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(envFile, "RAY_API_KEYS=test-key\n", "utf8");
+
+  Object.defineProperty(fs, "open", {
+    configurable: true,
+    value: async (...args: Parameters<typeof fs.open>) => {
+      const handle = await originalOpen(...args);
+      if (String(args[0]) !== envFile) {
+        return handle;
+      }
+
+      return {
+        stat: async () => ({
+          isFile: () => true,
+          size: 20,
+        }),
+        readFile: async () => `RAY_API_KEYS=${"x".repeat(64 * 1024)}\n`,
+        close: async () => {
+          await handle.close();
+        },
+      } as Awaited<ReturnType<typeof fs.open>>;
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      runCli([
+        "render",
+        "--cwd",
+        process.cwd(),
+        "--config",
+        "./examples/config/ray.1b.generic.public.json",
+        "--ray-env-file",
+        envFile,
+      ]),
+    /Env file must be at most 65536 bytes: .*ray\.env/,
   );
 });
 

@@ -1,4 +1,4 @@
-import { mkdir, open, rename, rm } from "node:fs/promises";
+import { promises as fs } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -472,10 +472,10 @@ export function parseEnvironmentFile(contents: string): NodeJS.ProcessEnv {
 }
 
 async function readEnvironmentFileBounded(envFile: string): Promise<string> {
-  let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
+  let fileHandle: Awaited<ReturnType<typeof fs.open>> | undefined;
 
   try {
-    fileHandle = await open(envFile, "r");
+    fileHandle = await fs.open(envFile, "r");
     const stats = await fileHandle.stat();
 
     if (!stats.isFile()) {
@@ -486,7 +486,12 @@ async function readEnvironmentFileBounded(envFile: string): Promise<string> {
       throw new Error(`Env file must be at most ${MAX_DEPLOY_ENV_FILE_BYTES} bytes: ${envFile}`);
     }
 
-    return await fileHandle.readFile("utf8");
+    const contents = await fileHandle.readFile("utf8");
+    if (Buffer.byteLength(contents, "utf8") > MAX_DEPLOY_ENV_FILE_BYTES) {
+      throw new Error(`Env file must be at most ${MAX_DEPLOY_ENV_FILE_BYTES} bytes: ${envFile}`);
+    }
+
+    return contents;
   } finally {
     await fileHandle?.close().catch(() => undefined);
   }
@@ -539,7 +544,7 @@ async function writeDeploymentBundleFiles(
   outputDir: string,
   bundle: Awaited<ReturnType<typeof renderDeploymentBundle>>,
 ): Promise<RenderedDeploymentFiles> {
-  await mkdir(outputDir, { recursive: true });
+  await fs.mkdir(outputDir, { recursive: true });
 
   const files: RenderedDeploymentFiles = {
     service: path.join(outputDir, "ray-gateway.service"),
@@ -557,7 +562,7 @@ async function writeDeploymentBundleFiles(
     files.llamaCppService = path.join(outputDir, "ray-llama-cpp.service");
     await writeTextFileAtomic(files.llamaCppService, bundle.llamaCppService);
   } else {
-    await rm(path.join(outputDir, "ray-llama-cpp.service"), { force: true });
+    await fs.rm(path.join(outputDir, "ray-llama-cpp.service"), { force: true });
   }
 
   return files;
@@ -569,28 +574,28 @@ async function writeTextFileAtomic(filePath: string, contents: string): Promise<
     directory,
     `${ATOMIC_DEPLOY_WRITE_TEMP_PREFIX}${path.basename(filePath)}-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`,
   );
-  let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
+  let fileHandle: Awaited<ReturnType<typeof fs.open>> | undefined;
 
   try {
-    fileHandle = await open(tempPath, "wx", RENDERED_DEPLOYMENT_FILE_MODE);
+    fileHandle = await fs.open(tempPath, "wx", RENDERED_DEPLOYMENT_FILE_MODE);
     await fileHandle.writeFile(contents, "utf8");
     await fileHandle.sync();
     await fileHandle.close();
     fileHandle = undefined;
-    await rename(tempPath, filePath);
+    await fs.rename(tempPath, filePath);
     await syncDirectoryBestEffort(directory);
   } catch (error) {
     await fileHandle?.close().catch(() => undefined);
-    await rm(tempPath, { force: true }).catch(() => undefined);
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
     throw error;
   }
 }
 
 async function syncDirectoryBestEffort(directory: string): Promise<void> {
-  let directoryHandle: Awaited<ReturnType<typeof open>> | undefined;
+  let directoryHandle: Awaited<ReturnType<typeof fs.open>> | undefined;
 
   try {
-    directoryHandle = await open(directory, "r");
+    directoryHandle = await fs.open(directory, "r");
     await directoryHandle.sync();
   } catch {
     // Directory fsync support varies by platform; the atomic rename still protects readers.
