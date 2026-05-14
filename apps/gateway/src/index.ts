@@ -433,8 +433,8 @@ function resolveWarmupRetryDelayOption(
     return fallback;
   }
 
-  if (!Number.isFinite(value) || value < 1 || value > GATEWAY_WARMUP_RETRY_DELAY_MAX_MS) {
-    throw new Error(`${label} must be a finite delay between 1 and 60000 milliseconds`);
+  if (!Number.isSafeInteger(value) || value < 1 || value > GATEWAY_WARMUP_RETRY_DELAY_MAX_MS) {
+    throw new Error(`${label} must be a positive safe integer between 1 and 60000 milliseconds`);
   }
 
   return value;

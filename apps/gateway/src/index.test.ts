@@ -414,6 +414,26 @@ test("startGateway rejects malformed warmup retry options before listening", asy
       }),
     /warmupRetry\.initialDelayMs/,
   );
+  await assert.rejects(
+    () =>
+      startGateway({
+        config: createDefaultConfig("tiny"),
+        warmupRetry: {
+          initialDelayMs: 1.5,
+        },
+      }),
+    /warmupRetry\.initialDelayMs must be a positive safe integer between 1 and 60000 milliseconds/,
+  );
+  await assert.rejects(
+    () =>
+      startGateway({
+        config: createDefaultConfig("tiny"),
+        warmupRetry: {
+          maxDelayMs: 60_001,
+        },
+      }),
+    /warmupRetry\.maxDelayMs must be a positive safe integer between 1 and 60000 milliseconds/,
+  );
 });
 
 test("gateway closes unfinished request bodies on no-body routes", async (t) => {
