@@ -16,9 +16,38 @@ import {
   parseCliArgs,
   parseEnvironmentFile,
   runCli,
+  runDeployCli,
 } from "./cli.js";
 
 const repoRoot = process.cwd();
+
+function createTestIo() {
+  let stdout = "";
+  let stderr = "";
+
+  return {
+    io: {
+      stdout: {
+        write(chunk: string | Uint8Array) {
+          stdout += String(chunk);
+          return true;
+        },
+      },
+      stderr: {
+        write(chunk: string | Uint8Array) {
+          stderr += String(chunk);
+          return true;
+        },
+      },
+    },
+    get stdout() {
+      return stdout;
+    },
+    get stderr() {
+      return stderr;
+    },
+  };
+}
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -508,6 +537,42 @@ test("runCli rejects systemd env-file paths outside render", async () => {
     () => runCli(["doctor", "--systemd-env-file", "/etc/ray/ray.env"]),
     /--systemd-env-file is only supported by render/,
   );
+});
+
+test("runDeployCli rejects malformed direct io before parsing", async () => {
+  await assert.rejects(() => runDeployCli([], null as never), /deploy cli io must be an object/);
+  await assert.rejects(
+    () => runDeployCli([], { stdout: null, stderr: { write() {} } } as never),
+    /deploy cli io\.stdout\.write must be a function/,
+  );
+  await assert.rejects(
+    () => runDeployCli([], { stdout: { write() {} }, stderr: null } as never),
+    /deploy cli io\.stderr\.write must be a function/,
+  );
+});
+
+test("runDeployCli prints help to injected stdout", async () => {
+  const output = createTestIo();
+
+  const status = await runDeployCli(["render", "--help", "--ray-env-file", "missing.ray.env"], {
+    ...output.io,
+  });
+
+  assert.equal(status, 0);
+  assert.equal(output.stderr, "");
+  assert.match(output.stdout, /Usage:/);
+  assert.match(output.stdout, /render \[options\]/);
+  assert.match(output.stdout, /--ray-env-file <path>/);
+});
+
+test("runDeployCli reports parser failures to injected stderr", async () => {
+  const output = createTestIo();
+
+  const status = await runDeployCli(["doctor", "--memory"], output.io);
+
+  assert.equal(status, 1);
+  assert.equal(output.stdout, "");
+  assert.match(output.stderr, /Unknown option: --memory/);
 });
 
 test("runCli prints deploy help without loading config or env files", async (t) => {

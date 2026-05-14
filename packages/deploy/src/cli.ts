@@ -40,6 +40,15 @@ interface RenderedDeploymentFiles {
   llamaCppService?: string;
 }
 
+export interface DeployCliIo {
+  stdout: {
+    write(chunk: string | Uint8Array): unknown;
+  };
+  stderr: {
+    write(chunk: string | Uint8Array): unknown;
+  };
+}
+
 const MAX_DEPLOY_ENV_FILE_BYTES = 64 * 1024;
 const MAX_DEPLOY_ENV_ENTRIES = 512;
 const MAX_DEPLOY_ENV_KEY_CHARS = 128;
@@ -91,6 +100,33 @@ RAY_DEPLOY_DOMAIN, RAY_DEPLOY_MEMORY_MIB, RAY_GATEWAY_RUNTIME_BINARY,
 RAY_DEPLOY_MIN_FREE_STORAGE_MIB, RAY_DEPLOY_CADDY_BINARY, and portable RAY_MODEL_* /
 RAY_LLAMA_CPP_* model overrides.
 `;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function assertDeployCliIo(io: unknown): asserts io is DeployCliIo {
+  if (!isRecord(io)) {
+    throw new Error("deploy cli io must be an object");
+  }
+
+  if (!isRecord(io.stdout) || typeof io.stdout.write !== "function") {
+    throw new Error("deploy cli io.stdout.write must be a function");
+  }
+
+  if (!isRecord(io.stderr) || typeof io.stderr.write !== "function") {
+    throw new Error("deploy cli io.stderr.write must be a function");
+  }
+}
+
+function writeDeployCliLine(io: DeployCliIo | undefined, value: string): void {
+  if (io) {
+    io.stdout.write(`${value}\n`);
+    return;
+  }
+
+  console.log(value);
+}
 
 function assertCliArgv(argv: unknown): asserts argv is string[] {
   if (!Array.isArray(argv)) {
@@ -755,10 +791,14 @@ export function parseCliArgs(argv: string[]): CliOptions {
   return options;
 }
 
-export async function runCli(argv: string[]): Promise<number> {
+export async function runCli(argv: string[], io?: DeployCliIo): Promise<number> {
+  if (io !== undefined) {
+    assertDeployCliIo(io);
+  }
+
   const options = parseCliArgs(argv);
   if (options.help) {
-    console.log(DEPLOY_CLI_HELP.trimEnd());
+    writeDeployCliLine(io, DEPLOY_CLI_HELP.trimEnd());
     return 0;
   }
 
@@ -849,27 +889,27 @@ export async function runCli(argv: string[]): Promise<number> {
 
     if (deploymentOptions.outputDir) {
       const files = await writeDeploymentBundleFiles(deploymentOptions.outputDir, bundle);
-      console.log(JSON.stringify({ files }, null, 2));
+      writeDeployCliLine(io, JSON.stringify({ files }, null, 2));
       return 0;
     }
 
     if (deploymentOptions.json) {
-      console.log(JSON.stringify(bundle, null, 2));
+      writeDeployCliLine(io, JSON.stringify(bundle, null, 2));
       return 0;
     }
 
-    console.log("# Ray systemd service\n");
-    console.log(bundle.service);
+    writeDeployCliLine(io, "# Ray systemd service\n");
+    writeDeployCliLine(io, bundle.service);
     if (bundle.llamaCppService) {
-      console.log("\n# llama.cpp systemd service\n");
-      console.log(bundle.llamaCppService);
+      writeDeployCliLine(io, "\n# llama.cpp systemd service\n");
+      writeDeployCliLine(io, bundle.llamaCppService);
     }
-    console.log("\n# Caddyfile\n");
-    console.log(bundle.caddyfile);
-    console.log("\n# Environment File Example\n");
-    console.log(bundle.envFileExample);
-    console.log("\n# Summary\n");
-    console.log(JSON.stringify(bundle.summary, null, 2));
+    writeDeployCliLine(io, "\n# Caddyfile\n");
+    writeDeployCliLine(io, bundle.caddyfile);
+    writeDeployCliLine(io, "\n# Environment File Example\n");
+    writeDeployCliLine(io, bundle.envFileExample);
+    writeDeployCliLine(io, "\n# Summary\n");
+    writeDeployCliLine(io, JSON.stringify(bundle.summary, null, 2));
     return 0;
   } else {
     const inspectionOptions: Parameters<typeof loadAndDiagnoseDeployment>[0] = {
@@ -897,7 +937,8 @@ export async function runCli(argv: string[]): Promise<number> {
     const inspected = await loadAndDiagnoseDeployment(inspectionOptions);
     const hasErrors = inspected.diagnostics.some((diagnostic) => diagnostic.level === "error");
 
-    console.log(
+    writeDeployCliLine(
+      io,
       JSON.stringify(
         {
           configPath: inspected.configPath,
@@ -921,13 +962,20 @@ export async function runCli(argv: string[]): Promise<number> {
   }
 }
 
+export async function runDeployCli(
+  argv: string[] = process.argv.slice(2),
+  io: DeployCliIo = process,
+): Promise<number> {
+  assertDeployCliIo(io);
+
+  try {
+    return await runCli(argv, io);
+  } catch (error) {
+    io.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runCli(process.argv.slice(2))
-    .then((exitCode) => {
-      process.exitCode = exitCode;
-    })
-    .catch((error: unknown) => {
-      console.error(error instanceof Error ? error.message : String(error));
-      process.exitCode = 1;
-    });
+  process.exitCode = await runDeployCli();
 }
