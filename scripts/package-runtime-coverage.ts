@@ -1951,6 +1951,8 @@ function validateDeployStoragePreflightScript(
     contents.includes("RAY_ASYNC_QUEUE_STORAGE_DIR") &&
     contents.includes("RAY_LLAMA_CPP_BINARY_SOURCE_PATH") &&
     contents.includes("RAY_MODEL_SOURCE_PATH") &&
+    contents.includes("normalizeSourceStoragePath") &&
+    contents.includes("path.posix.resolve") &&
     contents.includes("realpath") &&
     contents.includes("checkRealPath") &&
     contents.includes("resolveCheckRealPathIfDifferent") &&
@@ -1967,7 +1969,7 @@ function validateDeployStoragePreflightScript(
       scriptPath,
       line: workflowLineNumber(lines, "DEFAULT_STORAGE_PATHS"),
       message:
-        "Manual deploy storage preflight must check /, /var/cache/apt, /var/lib/apt, /etc/ray, /etc/systemd/system, /etc/caddy, /srv/ray/.ray/bun-install-cache, and /var/tmp by default, load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from --ray-env-file, include custom env-file model, llama.cpp binary, async-queue, and artifact staging source storage paths, and report resolved symlink targets so operator-run package installs, config writes, artifact staging, and Bun installs use the same disk headroom guard as the manual deploy helpers.",
+        "Manual deploy storage preflight must check /, /var/cache/apt, /var/lib/apt, /etc/ray, /etc/systemd/system, /etc/caddy, /srv/ray/.ray/bun-install-cache, and /var/tmp by default, load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from --ray-env-file, include custom env-file model, llama.cpp binary, async-queue, and artifact staging source storage paths, resolve relative staging sources from the current working directory, and report resolved symlink targets so operator-run package installs, config writes, artifact staging, and Bun installs use the same disk headroom guard as the manual deploy helpers.",
     },
   ];
 }
@@ -2177,7 +2179,8 @@ function validateDeployStoragePreflightDoc(
   if (
     contents.includes("RAY_LLAMA_CPP_BINARY_PATH") &&
     contents.includes("RAY_LLAMA_CPP_BINARY_SOURCE_PATH") &&
-    contents.includes("RAY_MODEL_SOURCE_PATH")
+    contents.includes("RAY_MODEL_SOURCE_PATH") &&
+    contents.includes("relative source paths")
   ) {
     return [];
   }
@@ -2189,7 +2192,7 @@ function validateDeployStoragePreflightDoc(
       docPath,
       line: workflowLineNumber(lines, "RAY_MODEL_PATH"),
       message:
-        "Runtime docs that list env-file deploy storage paths must include RAY_LLAMA_CPP_BINARY_PATH, RAY_LLAMA_CPP_BINARY_SOURCE_PATH, and RAY_MODEL_SOURCE_PATH along with model and async-queue paths so manual small-VPS preflight guidance matches the deploy-storage helper.",
+        "Runtime docs that list env-file deploy storage paths must include RAY_LLAMA_CPP_BINARY_PATH, RAY_LLAMA_CPP_BINARY_SOURCE_PATH, and RAY_MODEL_SOURCE_PATH along with model and async-queue paths, and explain that relative source paths resolve from the current working directory so manual small-VPS preflight guidance matches the deploy-storage helper.",
     },
   ];
 }

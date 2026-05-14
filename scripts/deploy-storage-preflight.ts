@@ -70,7 +70,7 @@ Usage:
   bun ./scripts/deploy-storage-preflight.ts [options]
 
 Options:
-  --path <path>          Absolute path to check. Repeatable. Defaults to /, /var/cache/apt, /var/lib/apt, /etc/ray, /etc/systemd/system, /etc/caddy, /srv/ray, /srv/ray/.ray/bun-install-cache, /var/lib/ray, /tmp, /var/tmp, plus model, llama.cpp binary, async-queue, and artifact staging source paths from --env-file when set.
+  --path <path>          Absolute path to check. Repeatable. Defaults to /, /var/cache/apt, /var/lib/apt, /etc/ray, /etc/systemd/system, /etc/caddy, /srv/ray, /srv/ray/.ray/bun-install-cache, /var/lib/ray, /tmp, /var/tmp, plus model, llama.cpp binary, async-queue, and artifact staging source paths from --env-file when set. Relative source paths resolve from the current working directory.
   --min-free-mib <n>    Required free storage in MiB. Default: RAY_DEPLOY_MIN_FREE_STORAGE_MIB or ${DEFAULT_MIN_FREE_STORAGE_MIB}. Use 0 to skip the threshold.
   --env-file <path>      Load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from a bounded dotenv file unless --min-free-mib is set.
   --ray-env-file <path>  Alias for --env-file.
@@ -170,6 +170,23 @@ function normalizeStoragePath(value: string, label = "storage path"): string {
   }
 
   return path.posix.normalize(value);
+}
+
+function normalizeSourceStoragePath(value: string, label: string): string {
+  if (value.length === 0 || value.trim() !== value) {
+    throw new Error(`${label} must be a non-empty path without surrounding whitespace`);
+  }
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} must not contain control characters`);
+  }
+
+  if (Buffer.byteLength(value, "utf8") > MAX_STORAGE_PATH_BYTES) {
+    throw new Error(`${label} must be at most ${MAX_STORAGE_PATH_BYTES} bytes`);
+  }
+
+  const absolutePath = path.posix.isAbsolute(value) ? value : path.posix.resolve(value);
+  return normalizeStoragePath(absolutePath, label);
 }
 
 function appendUniqueStoragePaths(paths: string[], extraPaths: string[]): string[] {
@@ -428,13 +445,13 @@ function parseDeployStorageEnvironmentFile(contents: string): DeployStorageEnvir
   const llamaCppBinarySourcePath = values.get("RAY_LLAMA_CPP_BINARY_SOURCE_PATH");
   if (isNonEmptyEnvValue(llamaCppBinarySourcePath)) {
     storagePaths.push(
-      normalizeStoragePath(llamaCppBinarySourcePath, "RAY_LLAMA_CPP_BINARY_SOURCE_PATH"),
+      normalizeSourceStoragePath(llamaCppBinarySourcePath, "RAY_LLAMA_CPP_BINARY_SOURCE_PATH"),
     );
   }
 
   const modelSourcePath = values.get("RAY_MODEL_SOURCE_PATH");
   if (isNonEmptyEnvValue(modelSourcePath)) {
-    storagePaths.push(normalizeStoragePath(modelSourcePath, "RAY_MODEL_SOURCE_PATH"));
+    storagePaths.push(normalizeSourceStoragePath(modelSourcePath, "RAY_MODEL_SOURCE_PATH"));
   }
 
   return {

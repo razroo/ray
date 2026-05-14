@@ -159,7 +159,8 @@ threshold without shell-sourcing the rest of the env file. When that env file
 sets a custom `RAY_MODEL_PATH`, `RAY_LLAMA_CPP_MODEL_PATH`,
 `RAY_LLAMA_CPP_BINARY_PATH`, `RAY_ASYNC_QUEUE_STORAGE_DIR`,
 `RAY_LLAMA_CPP_BINARY_SOURCE_PATH`, or `RAY_MODEL_SOURCE_PATH`, the preflight
-checks those volumes too.
+checks those volumes too; relative source paths resolve from the current working
+directory.
 Use `sudo /usr/local/bin/bun run deploy:storage -- --ray-env-file /etc/ray/ray.env`
 when the env file is installed as root-owned `0600`.
 
