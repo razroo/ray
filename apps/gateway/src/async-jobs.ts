@@ -233,12 +233,12 @@ function hasUnencodedWhitespaceOrControl(value: string): boolean {
   return /[\0-\x20\x7f]/u.test(value);
 }
 
-function isNonNegativeInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+function isNonNegativeSafeIntegerAtMost(value: unknown, maximum: number): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= maximum;
 }
 
-function isPositiveInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
+function isPositiveSafeIntegerAtMost(value: unknown, maximum: number): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value <= maximum;
 }
 
 function assertPositiveSafeIntegerAtMost(value: number, label: string, maximum: number): void {
@@ -488,8 +488,10 @@ function assertPersistedCallbackState(value: unknown): void {
     throw new PersistedJobValidationError("callback.status is invalid");
   }
 
-  if (!isNonNegativeInteger(value.attempts)) {
-    throw new PersistedJobValidationError("callback.attempts must be a non-negative integer");
+  if (!isNonNegativeSafeIntegerAtMost(value.attempts, MAX_ASYNC_ATTEMPTS)) {
+    throw new PersistedJobValidationError(
+      `callback.attempts must be a non-negative safe integer no greater than ${MAX_ASYNC_ATTEMPTS}`,
+    );
   }
 
   assertOptionalTimestamp(value.lastAttemptAt, "callback.lastAttemptAt");
@@ -529,12 +531,16 @@ function validatePersistedJobRecord(value: unknown, expectedJobId?: string): Inf
     throw new PersistedJobValidationError("persisted async job updatedAt is invalid");
   }
 
-  if (!isNonNegativeInteger(value.attempts)) {
-    throw new PersistedJobValidationError("persisted async job attempts is invalid");
+  if (!isNonNegativeSafeIntegerAtMost(value.attempts, MAX_ASYNC_ATTEMPTS)) {
+    throw new PersistedJobValidationError(
+      `persisted async job attempts must be a non-negative safe integer no greater than ${MAX_ASYNC_ATTEMPTS}`,
+    );
   }
 
-  if (!isPositiveInteger(value.maxAttempts)) {
-    throw new PersistedJobValidationError("persisted async job maxAttempts is invalid");
+  if (!isPositiveSafeIntegerAtMost(value.maxAttempts, MAX_ASYNC_ATTEMPTS)) {
+    throw new PersistedJobValidationError(
+      `persisted async job maxAttempts must be a positive safe integer no greater than ${MAX_ASYNC_ATTEMPTS}`,
+    );
   }
 
   assertOptionalTimestamp(value.startedAt, "persisted async job startedAt");

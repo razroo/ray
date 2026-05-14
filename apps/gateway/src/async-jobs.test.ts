@@ -1276,6 +1276,20 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
       }),
     );
     await writeFile(
+      join(jobsDir, "job_attempts_too_large.json"),
+      JSON.stringify({
+        id: "job_attempts_too_large",
+        status: "queued",
+        request: {
+          input: "oversized persisted job attempts",
+        },
+        createdAt: now,
+        updatedAt: now,
+        attempts: 101,
+        maxAttempts: 101,
+      }),
+    );
+    await writeFile(
       join(jobsDir, "job_callback_too_long.json"),
       JSON.stringify({
         id: "job_callback_too_long",
@@ -1365,6 +1379,29 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
       }),
     );
     await writeFile(
+      join(jobsDir, "job_callback_attempts_too_large.json"),
+      JSON.stringify({
+        id: "job_callback_attempts_too_large",
+        status: "succeeded",
+        request: {
+          input: "callback with oversized persisted attempts",
+        },
+        result: {
+          output: "done",
+        },
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        attempts: 1,
+        maxAttempts: 2,
+        callback: {
+          url: "https://93.184.216.34/ray-callback",
+          status: "pending",
+          attempts: 101,
+        },
+      }),
+    );
+    await writeFile(
       join(jobsDir, "job_bad_request.json"),
       JSON.stringify({
         id: "job_bad_request",
@@ -1395,10 +1432,12 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.equal(await queue.get("job_mismatch"), undefined);
     assert.equal(await queue.get("job_other"), undefined);
     assert.equal(await queue.get("job_id_too_long"), undefined);
+    assert.equal(await queue.get("job_attempts_too_large"), undefined);
     assert.equal(await queue.get("job_callback_too_long"), undefined);
     assert.equal(await queue.get("job_callback_credentials"), undefined);
     assert.equal(await queue.get("job_callback_fragment"), undefined);
     assert.equal(await queue.get("job_callback_control"), undefined);
+    assert.equal(await queue.get("job_callback_attempts_too_large"), undefined);
     assert.equal(await queue.get("job_bad_request"), undefined);
 
     const completedJob = await waitFor(
@@ -1413,10 +1452,12 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.equal(entries.includes("job_bad.json"), false);
     assert.equal(entries.includes("job_mismatch.json"), false);
     assert.equal(entries.includes("job_id_too_long.json"), false);
+    assert.equal(entries.includes("job_attempts_too_large.json"), false);
     assert.equal(entries.includes("job_callback_too_long.json"), false);
     assert.equal(entries.includes("job_callback_credentials.json"), false);
     assert.equal(entries.includes("job_callback_fragment.json"), false);
     assert.equal(entries.includes("job_callback_control.json"), false);
+    assert.equal(entries.includes("job_callback_attempts_too_large.json"), false);
     assert.equal(entries.includes("job_bad_request.json"), false);
     assert.equal(entries.includes("job_good.json"), true);
   } finally {
