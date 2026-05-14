@@ -856,6 +856,80 @@ test("runBenchmark rejects oversized and malformed gateway success responses", a
       );
     },
   );
+
+  await withTestServer(
+    (_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          id: "inf_oversized_latency",
+          output: "ok",
+          cached: false,
+          deduplicated: false,
+          queueTimeMs: 1,
+          latencyMs: 180_001,
+          degraded: false,
+          usage: {
+            tokens: {
+              prompt: 1,
+              completion: 1,
+              total: 2,
+            },
+          },
+        }),
+      );
+    },
+    async (baseUrl) => {
+      await assert.rejects(
+        () =>
+          runBenchmark({
+            baseUrl,
+            workload: [{ input: "ping" }],
+            concurrency: 1,
+            requests: 1,
+            label: "oversized-latency",
+          }),
+        /Benchmark response\.latencyMs must be less than or equal to 180000/,
+      );
+    },
+  );
+
+  await withTestServer(
+    (_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          id: "inf_oversized_tokens",
+          output: "ok",
+          cached: false,
+          deduplicated: false,
+          queueTimeMs: 1,
+          latencyMs: 2,
+          degraded: false,
+          usage: {
+            tokens: {
+              prompt: 1_000_001,
+              completion: 1,
+              total: 1_000_002,
+            },
+          },
+        }),
+      );
+    },
+    async (baseUrl) => {
+      await assert.rejects(
+        () =>
+          runBenchmark({
+            baseUrl,
+            workload: [{ input: "ping" }],
+            concurrency: 1,
+            requests: 1,
+            label: "oversized-tokens",
+          }),
+        /Benchmark response\.usage\.tokens\.prompt must be less than or equal to 1000000/,
+      );
+    },
+  );
 });
 
 test("waitForBenchmarkChildHealth fails fast with bounded child output", async () => {

@@ -47,6 +47,7 @@ const MAX_BENCHMARK_HISTORY_FILE_BYTES = 8 * 1024 * 1024;
 const BENCHMARK_HISTORY_RETAIN_BYTES = 6 * 1024 * 1024;
 const MAX_BENCHMARK_CHILD_OUTPUT_BYTES = 32 * 1024;
 const BENCHMARK_REQUEST_TIMEOUT_MS = 180_000;
+const MAX_BENCHMARK_RESPONSE_TOKENS = 1_000_000;
 const BENCHMARK_HEALTH_REQUEST_TIMEOUT_MS = 3_000;
 const BUN_RUNTIME_BINARY = process.env.RAY_BUN_BINARY ?? "bun";
 const unsafeObjectKeys = new Set(["__proto__", "constructor", "prototype"]);
@@ -835,6 +836,20 @@ function assertOptionalNonNegativeIntegerValue(
   }
 }
 
+function assertNonNegativeIntegerValue(
+  value: unknown,
+  label: string,
+  maximum = Number.MAX_SAFE_INTEGER,
+): asserts value is number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
+
+  if (value > maximum) {
+    throw new Error(`${label} must be less than or equal to ${maximum}`);
+  }
+}
+
 function assertOptionalNonNegativeNumberValue(
   value: unknown,
   label: string,
@@ -848,9 +863,17 @@ function assertOptionalNonNegativeNumberValue(
   }
 }
 
-function assertNonNegativeNumberValue(value: unknown, label: string): asserts value is number {
+function assertNonNegativeNumberValue(
+  value: unknown,
+  label: string,
+  maximum = Number.MAX_VALUE,
+): asserts value is number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     throw new Error(`${label} must be a non-negative number`);
+  }
+
+  if (value > maximum) {
+    throw new Error(`${label} must be less than or equal to ${maximum}`);
   }
 }
 
@@ -1615,21 +1638,35 @@ function assertInferenceResponsePayload(value: unknown): asserts value is Infere
     throw new Error("Benchmark response.degraded is required");
   }
 
-  assertNonNegativeNumberValue(value.queueTimeMs, "Benchmark response.queueTimeMs");
-  assertNonNegativeNumberValue(value.latencyMs, "Benchmark response.latencyMs");
+  assertNonNegativeNumberValue(
+    value.queueTimeMs,
+    "Benchmark response.queueTimeMs",
+    BENCHMARK_REQUEST_TIMEOUT_MS,
+  );
+  assertNonNegativeNumberValue(
+    value.latencyMs,
+    "Benchmark response.latencyMs",
+    BENCHMARK_REQUEST_TIMEOUT_MS,
+  );
   assertRecord(value.usage, "Benchmark response.usage");
 
   if (value.usage.tokens !== undefined) {
     assertRecord(value.usage.tokens, "Benchmark response.usage.tokens");
-    assertNonNegativeNumberValue(
+    assertNonNegativeIntegerValue(
       value.usage.tokens.prompt,
       "Benchmark response.usage.tokens.prompt",
+      MAX_BENCHMARK_RESPONSE_TOKENS,
     );
-    assertNonNegativeNumberValue(
+    assertNonNegativeIntegerValue(
       value.usage.tokens.completion,
       "Benchmark response.usage.tokens.completion",
+      MAX_BENCHMARK_RESPONSE_TOKENS,
     );
-    assertNonNegativeNumberValue(value.usage.tokens.total, "Benchmark response.usage.tokens.total");
+    assertNonNegativeIntegerValue(
+      value.usage.tokens.total,
+      "Benchmark response.usage.tokens.total",
+      MAX_BENCHMARK_RESPONSE_TOKENS,
+    );
   }
 }
 
