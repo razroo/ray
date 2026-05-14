@@ -510,7 +510,7 @@ Install: `bun add @razroo/ray-sdk` (pulls **`@razroo/ray-core`**).
 
 - **Changesets** — [`iso`](https://github.com/razroo/iso)-style workflow: `bun run changeset` on PRs that affect publishable APIs, then `bun run version` on `main` to bump linked packages and **`CHANGELOG.md`** ([`.changeset/config.json`](.changeset/config.json)).
 - **GitHub Releases** — tags `core-v…` and `sdk-v…`, then **`gh release create`** (shortcut: **`bun run release:github -- --yes`** after `bun run version` is on `main`); workflows publish with provenance. Details: [docs/npm-publishing.md](docs/npm-publishing.md).
-- **Post-publish check** — `bun run release:verify-npm -- <version>` against the npm registry.
+- **Post-publish check** — `bun run release:verify-npm -- <version>` confirms npm `latest`, the concrete version metadata, package name/version, sha512 integrity, and registry-hosted tarball URL.
 
 ### Security and repository hygiene
 

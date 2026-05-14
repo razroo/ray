@@ -114,7 +114,7 @@ bun install
 bun run release:gate
 ```
 
-After a successful publish, confirm **`latest`** on npm (optional smoke, like geometra’s **`verify-npm`**):
+After a successful publish, confirm npm registry metadata for the version you just published. This checks **`latest`**, the concrete `versions[version]` entry, package name/version, sha512 integrity, and the registry-hosted tarball URL:
 
 ```bash
 bun run release:verify-npm -- <version-you-just-published>
