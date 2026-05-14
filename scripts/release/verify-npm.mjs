@@ -7,6 +7,21 @@ import { pathToFileURL } from "node:url";
 export const VERIFY_NPM_TIMEOUT_MS = 15_000;
 export const MAX_NPM_METADATA_BYTES = 1024 * 1024;
 export const packages = ["@razroo/ray-core", "@razroo/ray-sdk"];
+const semverPattern =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function assertReleaseVersion(version) {
+  if (typeof version !== "string" || version.trim().length === 0) {
+    throw new Error("Usage: bun scripts/release/verify-npm.mjs <version>");
+  }
+  if (version !== version.trim() || !semverPattern.test(version)) {
+    throw new Error(`npm verification version must be a valid SemVer string: ${version}`);
+  }
+}
 
 function parseContentLength(value) {
   if (!value) {
@@ -107,15 +122,66 @@ export async function fetchNpmMetadata(pkg, options = {}) {
 }
 
 export async function verifyPackageVersion(pkg, version, options = {}) {
+  assertReleaseVersion(version);
   const body = await fetchNpmMetadata(pkg, options);
   const published = body?.["dist-tags"]?.latest;
   if (published !== version) {
     throw new Error(`${pkg} latest=${published ?? "unknown"} expected=${version}`);
   }
+
+  const versions = body?.versions;
+  if (!isRecord(versions)) {
+    throw new Error(`${pkg} npm metadata is missing versions`);
+  }
+
+  const packageVersion = versions[version];
+  if (!isRecord(packageVersion)) {
+    throw new Error(`${pkg} npm metadata is missing version ${version}`);
+  }
+
+  if (packageVersion.name !== pkg) {
+    throw new Error(
+      `${pkg} npm metadata version ${version} has name ${packageVersion.name ?? "unknown"}`,
+    );
+  }
+
+  if (packageVersion.version !== version) {
+    throw new Error(
+      `${pkg} npm metadata version ${version} has package.json version ${
+        packageVersion.version ?? "unknown"
+      }`,
+    );
+  }
+
+  const dist = packageVersion.dist;
+  if (!isRecord(dist)) {
+    throw new Error(`${pkg} npm metadata version ${version} is missing dist metadata`);
+  }
+
+  if (typeof dist.integrity !== "string" || !/^sha512-[A-Za-z0-9+/]+=*$/.test(dist.integrity)) {
+    throw new Error(`${pkg} npm metadata version ${version} is missing sha512 integrity`);
+  }
+
+  if (typeof dist.tarball !== "string") {
+    throw new Error(`${pkg} npm metadata version ${version} is missing tarball URL`);
+  }
+
+  let tarballUrl;
+  try {
+    tarballUrl = new URL(dist.tarball);
+  } catch {
+    throw new Error(`${pkg} npm metadata version ${version} has invalid tarball URL`);
+  }
+
+  if (tarballUrl.protocol !== "https:" || tarballUrl.hostname !== "registry.npmjs.org") {
+    throw new Error(`${pkg} npm metadata version ${version} has unexpected tarball URL origin`);
+  }
+
   return published;
 }
 
 export async function runVerifyNpm(version, options = {}) {
+  assertReleaseVersion(version);
   for (const pkg of packages) {
     const published = await verifyPackageVersion(pkg, version, options);
     console.log(`${pkg}: ${published}`);
@@ -124,11 +190,6 @@ export async function runVerifyNpm(version, options = {}) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const version = process.argv[2];
-
-  if (!version) {
-    console.error("Usage: bun scripts/release/verify-npm.mjs <version>");
-    process.exit(1);
-  }
 
   runVerifyNpm(version).catch((err) => {
     console.error(String(err));
