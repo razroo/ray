@@ -91,7 +91,8 @@ type GatewayEntrypointImportStatus = "ok" | "failed";
 type ConfigFileStatus = BinaryPreflightStatus;
 type WorkingDirectoryStatus = "found" | "missing" | "not_directory" | "unreadable";
 type WorkingDirectoryStorageStatus = "available" | "unreadable";
-type SystemLogStorageStatus = "available" | "missing" | "not_directory" | "unreadable";
+type DirectoryStorageStatus = "available" | "missing" | "not_directory" | "unreadable";
+type SystemLogStorageStatus = DirectoryStorageStatus;
 type EnvFileStatus = "found" | "missing" | "unreadable";
 type ServiceUserStatus = "found" | "missing" | "unreadable";
 type ServiceUserAccessStatus = "ok" | "blocked";
@@ -168,6 +169,7 @@ export interface DeploymentPreflight {
   systemLogStorageStatus?: SystemLogStorageStatus;
   systemLogStorageAvailableMiB?: number;
   systemLogStorageError?: string;
+  temporaryStorageChecks?: DeploymentDirectoryStorageCheck[];
   llamaCppBinaryRealPath?: string;
   llamaCppBinaryPath?: string;
   llamaCppBinaryStatus?: LlamaCppBinaryStatus;
@@ -240,6 +242,14 @@ export interface DeploymentHostFilePaths {
   swappiness?: string;
 }
 
+export interface DeploymentDirectoryStorageCheck {
+  path: string;
+  realPath?: string;
+  status: DirectoryStorageStatus;
+  availableMiB?: number;
+  error?: string;
+}
+
 const BYTES_PER_MIB = 1024 * 1024;
 const DEFAULT_CACHE_RAM_MIB = 8_192;
 const LLAMA_CPP_RUNTIME_RESERVE_MIB = 160;
@@ -258,6 +268,7 @@ const RAY_STATE_DIRECTORY_NAME = "ray";
 const RAY_STATE_DIRECTORY_PATH = "/var/lib/ray";
 const RAY_STATE_DIRECTORY_PARENT_PATH = path.dirname(RAY_STATE_DIRECTORY_PATH);
 const SYSTEM_LOG_STORAGE_PATH = "/var/log";
+const TEMPORARY_STORAGE_PATHS = ["/tmp", "/var/tmp"] as const;
 const GATEWAY_ENTRYPOINT_RELATIVE_PATH = "apps/gateway/dist/index.js";
 const DEFAULT_GATEWAY_RUNTIME_BINARY = "/usr/local/bin/bun";
 const DEFAULT_CADDY_RUNTIME_BINARY = "/usr/bin/caddy";
@@ -3012,6 +3023,61 @@ export function diagnoseConfig(
     }
   }
 
+  if (strictFilesystem && preflight?.temporaryStorageChecks !== undefined) {
+    for (const storageCheck of preflight.temporaryStorageChecks) {
+      const temporaryStoragePath = storageCheck.path;
+      const temporaryStorageDiagnosticPath = formatPathWithRealTarget(
+        temporaryStoragePath,
+        storageCheck.realPath,
+      );
+
+      if (storageCheck.status === "missing") {
+        diagnostics.push({
+          level: "error",
+          code: "temporary_storage_missing",
+          message: `Temporary storage was not found at ${temporaryStoragePath}. Ray deploy doctor, render validation, Caddy validation, fallback Bun installs, and staging helpers use bounded temporary files, so fix this path before running VPS maintenance.`,
+        });
+      } else if (storageCheck.status === "not_directory") {
+        diagnostics.push({
+          level: "error",
+          code: "temporary_storage_not_directory",
+          message: `Temporary storage at ${temporaryStoragePath} is not a directory. Ray deploy doctor, render validation, Caddy validation, fallback Bun installs, and staging helpers need writable temporary directories on small VPS hosts.`,
+        });
+      } else if (storageCheck.status === "unreadable") {
+        diagnostics.push({
+          level: "error",
+          code: "temporary_storage_unreadable",
+          message: `Doctor could not inspect free space for temporary storage at ${temporaryStorageDiagnosticPath}${storageCheck.error ? ` (${storageCheck.error})` : ""}. Verify temp storage headroom before running VPS maintenance that creates rendered bundles, Caddy validation files, Bun installer directories, or staging temps.`,
+        });
+      } else if (storageCheck.availableMiB === undefined) {
+        diagnostics.push({
+          level: "error",
+          code: "temporary_storage_unreadable",
+          message: `Doctor could not resolve free space for temporary storage at ${temporaryStorageDiagnosticPath}. Verify temp storage headroom before running VPS maintenance that creates rendered bundles, Caddy validation files, Bun installer directories, or staging temps.`,
+        });
+      } else if (
+        deployStorageCushionMiB > 0 &&
+        storageCheck.availableMiB < deployStorageCushionMiB
+      ) {
+        diagnostics.push({
+          level: "error",
+          code: "temporary_storage_low",
+          message: `Temporary storage has ${formatMiB(storageCheck.availableMiB)} free at ${temporaryStorageDiagnosticPath}, below the ${formatMiB(deployStorageCushionMiB)} deploy storage cushion from RAY_DEPLOY_MIN_FREE_STORAGE_MIB. Free temp space before running doctor, render validation, Caddy validation, fallback Bun installs, or staging helpers on this VPS.`,
+        });
+      } else {
+        const threshold =
+          deployStorageCushionMiB > 0
+            ? `, satisfying the ${formatMiB(deployStorageCushionMiB)} deploy storage cushion from RAY_DEPLOY_MIN_FREE_STORAGE_MIB`
+            : " with deploy storage threshold checks disabled by RAY_DEPLOY_MIN_FREE_STORAGE_MIB=0";
+        diagnostics.push({
+          level: "info",
+          code: "temporary_storage_ok",
+          message: `Temporary storage has ${formatMiB(storageCheck.availableMiB)} free at ${temporaryStorageDiagnosticPath}${threshold}.`,
+        });
+      }
+    }
+  }
+
   if (strictFilesystem && preflight?.envFileStatus !== undefined) {
     const checkedEnvFile = preflight.envFilePath ?? envFile ?? "the configured EnvironmentFile";
 
@@ -5073,51 +5139,47 @@ async function collectWorkingDirectoryPreflight(
   }
 }
 
-async function collectSystemLogStoragePreflight(
-  strictFilesystem: boolean,
-): Promise<Partial<DeploymentPreflight>> {
-  if (!strictFilesystem) {
-    return {};
-  }
-
+async function collectDirectoryStorageCheck(
+  storagePath: string,
+): Promise<DeploymentDirectoryStorageCheck> {
   try {
-    const logStat = await stat(SYSTEM_LOG_STORAGE_PATH);
+    const storageStat = await stat(storagePath);
 
-    if (!logStat.isDirectory()) {
+    if (!storageStat.isDirectory()) {
       return {
-        systemLogStoragePath: SYSTEM_LOG_STORAGE_PATH,
-        systemLogStorageStatus: "not_directory",
-        systemLogStorageError: "not a directory",
+        path: storagePath,
+        status: "not_directory",
+        error: "not a directory",
       };
     }
 
-    const systemLogStorageRealPath = await resolveRealPathIfDifferent(SYSTEM_LOG_STORAGE_PATH);
+    const realPath = await resolveRealPathIfDifferent(storagePath);
 
     try {
-      const storageStats = await statfs(SYSTEM_LOG_STORAGE_PATH);
+      const storageStats = await statfs(storagePath);
       const availableMiB = resolveAvailableStorageMiB(storageStats);
 
       if (availableMiB === undefined) {
         return {
-          ...(systemLogStorageRealPath ? { systemLogStorageRealPath } : {}),
-          systemLogStoragePath: SYSTEM_LOG_STORAGE_PATH,
-          systemLogStorageStatus: "unreadable",
-          systemLogStorageError: "free space could not be resolved",
+          path: storagePath,
+          ...(realPath ? { realPath } : {}),
+          status: "unreadable",
+          error: "free space could not be resolved",
         };
       }
 
       return {
-        ...(systemLogStorageRealPath ? { systemLogStorageRealPath } : {}),
-        systemLogStoragePath: SYSTEM_LOG_STORAGE_PATH,
-        systemLogStorageStatus: "available",
-        systemLogStorageAvailableMiB: availableMiB,
+        path: storagePath,
+        ...(realPath ? { realPath } : {}),
+        status: "available",
+        availableMiB,
       };
     } catch (error) {
       return {
-        ...(systemLogStorageRealPath ? { systemLogStorageRealPath } : {}),
-        systemLogStoragePath: SYSTEM_LOG_STORAGE_PATH,
-        systemLogStorageStatus: "unreadable",
-        systemLogStorageError: toErrorMessage(error),
+        path: storagePath,
+        ...(realPath ? { realPath } : {}),
+        status: "unreadable",
+        error: toErrorMessage(error),
       };
     }
   } catch (error) {
@@ -5127,11 +5189,45 @@ async function collectSystemLogStoragePreflight(
         : undefined;
 
     return {
-      systemLogStoragePath: SYSTEM_LOG_STORAGE_PATH,
-      systemLogStorageStatus: code === "ENOENT" ? "missing" : "unreadable",
-      systemLogStorageError: toErrorMessage(error),
+      path: storagePath,
+      status: code === "ENOENT" ? "missing" : "unreadable",
+      error: toErrorMessage(error),
     };
   }
+}
+
+async function collectSystemLogStoragePreflight(
+  strictFilesystem: boolean,
+): Promise<Partial<DeploymentPreflight>> {
+  if (!strictFilesystem) {
+    return {};
+  }
+
+  const check = await collectDirectoryStorageCheck(SYSTEM_LOG_STORAGE_PATH);
+
+  return {
+    systemLogStoragePath: check.path,
+    ...(check.realPath ? { systemLogStorageRealPath: check.realPath } : {}),
+    systemLogStorageStatus: check.status,
+    ...(check.availableMiB !== undefined
+      ? { systemLogStorageAvailableMiB: check.availableMiB }
+      : {}),
+    ...(check.error ? { systemLogStorageError: check.error } : {}),
+  };
+}
+
+async function collectTemporaryStoragePreflight(
+  strictFilesystem: boolean,
+): Promise<Partial<DeploymentPreflight>> {
+  if (!strictFilesystem) {
+    return {};
+  }
+
+  return {
+    temporaryStorageChecks: await Promise.all(
+      TEMPORARY_STORAGE_PATHS.map((storagePath) => collectDirectoryStorageCheck(storagePath)),
+    ),
+  };
 }
 
 async function collectGatewayRuntimePreflight(
@@ -5731,6 +5827,9 @@ async function collectDeploymentPreflight(
   const systemLogStoragePreflight = await collectSystemLogStoragePreflight(
     options.strictFilesystem === true,
   );
+  const temporaryStoragePreflight = await collectTemporaryStoragePreflight(
+    options.strictFilesystem === true,
+  );
   const gatewayEntrypointPreflight = await collectGatewayEntrypointPreflight(
     options.cwd,
     options.strictFilesystem === true,
@@ -5770,6 +5869,7 @@ async function collectDeploymentPreflight(
       ...configFilePreflight,
       ...workingDirectoryPreflight,
       ...systemLogStoragePreflight,
+      ...temporaryStoragePreflight,
       ...gatewayEntrypointPreflight,
       ...runtimePreflight,
       ...gatewayEntrypointImportPreflight,
@@ -5828,6 +5928,7 @@ async function collectDeploymentPreflight(
     ...configFilePreflight,
     ...workingDirectoryPreflight,
     ...systemLogStoragePreflight,
+    ...temporaryStoragePreflight,
     ...gatewayEntrypointPreflight,
     ...runtimePreflight,
     ...gatewayEntrypointImportPreflight,
