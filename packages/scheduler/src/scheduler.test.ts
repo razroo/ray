@@ -20,6 +20,27 @@ function createSchedulerConfig(overrides: Partial<SchedulerConfig> = {}): Schedu
 
 test("scheduler rejects invalid resource limit config", () => {
   assert.throws(
+    () => new RequestScheduler<string>(null as never),
+    /scheduler config must be an object/,
+  );
+  assert.throws(
+    () =>
+      new RequestScheduler<string>({
+        ...createSchedulerConfig(),
+        extra: "not-supported",
+      } as SchedulerConfig),
+    /scheduler config must not contain unsupported key "extra"/,
+  );
+  assert.throws(
+    () =>
+      new RequestScheduler<string>(
+        JSON.parse(
+          '{"concurrency":1,"maxQueue":8,"maxQueuedTokens":128,"maxInflightTokens":64,"requestTimeoutMs":1000,"dedupeInflight":true,"batchWindowMs":0,"affinityLookahead":8,"shortJobMaxTokens":96,"__proto__":"polluted"}',
+        ),
+      ),
+    /scheduler config must not contain unsafe key "__proto__"/,
+  );
+  assert.throws(
     () => new RequestScheduler<string>(createSchedulerConfig({ concurrency: 0 })),
     /scheduler\.concurrency/,
   );

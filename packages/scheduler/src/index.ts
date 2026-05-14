@@ -23,6 +23,18 @@ const MAX_SCHEDULER_BATCH_WINDOW_MS = 1_000;
 const MAX_SCHEDULER_BACKEND_SLOTS = 64;
 const MAX_SCHEDULER_SLOT_DIAGNOSTIC_NUMBER = 1_000_000_000;
 const MAX_SCHEDULER_SLOT_UPDATED_AT_CHARS = 64;
+const unsafeSchedulerRecordKeys = new Set(["__proto__", "constructor", "prototype"]);
+const schedulerConfigKeys = new Set([
+  "concurrency",
+  "maxQueue",
+  "maxQueuedTokens",
+  "maxInflightTokens",
+  "requestTimeoutMs",
+  "dedupeInflight",
+  "batchWindowMs",
+  "affinityLookahead",
+  "shortJobMaxTokens",
+]);
 
 function createRequestTimeoutError(): RayError {
   return new RayError("The inference request exceeded the scheduler timeout", {
@@ -79,6 +91,38 @@ function assertBoolean(value: boolean, label: string): void {
   if (typeof value !== "boolean") {
     throw new TypeError(`${label} must be a boolean`);
   }
+}
+
+function objectEntries(value: object, label: string): Array<[string, unknown]> {
+  try {
+    return Object.entries(value);
+  } catch {
+    throw new TypeError(`${label} must not contain unreadable properties`);
+  }
+}
+
+function assertKnownObjectKeys(
+  value: object,
+  label: string,
+  allowedKeys: ReadonlySet<string>,
+): void {
+  for (const [key] of objectEntries(value, label)) {
+    if (unsafeSchedulerRecordKeys.has(key)) {
+      throw new TypeError(`${label} must not contain unsafe key "${key}"`);
+    }
+
+    if (!allowedKeys.has(key)) {
+      throw new TypeError(`${label} must not contain unsupported key "${key}"`);
+    }
+  }
+}
+
+function assertSchedulerConfig(config: SchedulerConfig): void {
+  if (config === null || typeof config !== "object" || Array.isArray(config)) {
+    throw new TypeError("scheduler config must be an object");
+  }
+
+  assertKnownObjectKeys(config, "scheduler config", schedulerConfigKeys);
 }
 
 function normalizeScheduleLane(value: unknown): ScheduleLane {
@@ -254,6 +298,7 @@ function normalizeBackendSlotSnapshots(value: unknown): SchedulerSlotSnapshot[] 
 }
 
 function normalizeSchedulerConfig(config: SchedulerConfig): SchedulerConfig {
+  assertSchedulerConfig(config);
   assertPositiveSafeIntegerAtMost(
     config.concurrency,
     "scheduler.concurrency",
