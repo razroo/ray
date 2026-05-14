@@ -113,6 +113,7 @@ const DNS_HOST_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const unsafeConfigRecordKeys = new Set(["__proto__", "constructor", "prototype"]);
+const loadRayConfigOptionKeys = new Set(["configPath", "cwd", "env"]);
 const reservedAdapterHeaderNames = new Set([
   "connection",
   "content-length",
@@ -135,6 +136,46 @@ export interface LoadRayConfigOptions {
 export interface LoadedRayConfig {
   config: RayConfig;
   configPath?: string;
+}
+
+function loadRayConfigOptionEntries(value: object): Array<[string, unknown]> {
+  try {
+    return Object.entries(value);
+  } catch {
+    throw new TypeError("loadRayConfig options must not contain unreadable properties");
+  }
+}
+
+function assertLoadRayConfigOptions(value: unknown): asserts value is LoadRayConfigOptions {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("loadRayConfig options must be an object");
+  }
+
+  for (const [key, entry] of loadRayConfigOptionEntries(value)) {
+    if (unsafeConfigRecordKeys.has(key)) {
+      throw new TypeError(`loadRayConfig options must not contain unsafe key "${key}"`);
+    }
+
+    if (!loadRayConfigOptionKeys.has(key)) {
+      throw new TypeError(`loadRayConfig options must not contain unsupported key "${key}"`);
+    }
+
+    if (
+      (key === "cwd" || key === "configPath") &&
+      entry !== undefined &&
+      typeof entry !== "string"
+    ) {
+      throw new TypeError(`loadRayConfig options.${key} must be a string when provided`);
+    }
+
+    if (
+      key === "env" &&
+      entry !== undefined &&
+      (entry === null || typeof entry !== "object" || Array.isArray(entry))
+    ) {
+      throw new TypeError("loadRayConfig options.env must be an object when provided");
+    }
+  }
 }
 
 function parseConfigJson(raw: string, configPath: string): DeepPartial<RayConfig> {
@@ -3194,6 +3235,8 @@ export function resolveAuthApiKeys(config: RayConfig, env: NodeJS.ProcessEnv): S
 }
 
 export async function loadRayConfig(options: LoadRayConfigOptions = {}): Promise<LoadedRayConfig> {
+  assertLoadRayConfigOptions(options);
+
   const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
   assertConfigPathInput(cwd, "cwd");

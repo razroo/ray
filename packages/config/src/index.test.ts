@@ -57,6 +57,43 @@ test("loadRayConfig defaults to the sub1b profile", async () => {
   assert.equal(loaded.config.model.adapter.kind, "llama.cpp");
 });
 
+test("loadRayConfig rejects invalid direct options", async () => {
+  await assert.rejects(loadRayConfig(null as never), /loadRayConfig options must be an object/);
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      env: {},
+      extra: "not-supported",
+    } as never),
+    /loadRayConfig options must not contain unsupported key "extra"/,
+  );
+  await assert.rejects(
+    loadRayConfig(JSON.parse('{"__proto__":"polluted"}') as never),
+    /loadRayConfig options must not contain unsafe key "__proto__"/,
+  );
+  await assert.rejects(
+    loadRayConfig({
+      cwd: 42,
+      env: {},
+    } as never),
+    /loadRayConfig options\.cwd must be a string when provided/,
+  );
+  await assert.rejects(
+    loadRayConfig({
+      configPath: 42,
+      env: {},
+    } as never),
+    /loadRayConfig options\.configPath must be a string when provided/,
+  );
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      env: null,
+    } as never),
+    /loadRayConfig options\.env must be an object when provided/,
+  );
+});
+
 test("loadRayConfig rejects oversized config files before parsing", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-config-file-limit-"));
   t.after(async () => {
