@@ -173,6 +173,11 @@ test("fetchText refuses to follow smoke probe redirects", async (t) => {
 
 test("smokeGateway rejects malformed direct inputs before startup", async () => {
   await assert.rejects(
+    () => smokeGateway(null as never),
+    /gateway smoke options must be an object/,
+  );
+
+  await assert.rejects(
     () =>
       smokeGateway({
         cwd: " /srv/ray",
@@ -260,6 +265,28 @@ test("smokeGateway rejects malformed direct inputs before startup", async () => 
         timeoutMs: Number.NaN,
       }),
     /timeoutMs must be a positive integer less than or equal to 120000/,
+  );
+
+  await assert.rejects(
+    () =>
+      smokeGateway({
+        cwd: repoRoot,
+        configPath: "./examples/config/ray.tiny.json",
+        host: "127.0.0.1",
+        publicSafety: "true",
+      } as never),
+    /publicSafety must be a boolean when provided/,
+  );
+
+  await assert.rejects(
+    () =>
+      smokeGateway({
+        cwd: repoRoot,
+        configPath: "./examples/config/ray.tiny.json",
+        host: "127.0.0.1",
+        asyncQueue: 1,
+      } as never),
+    /asyncQueue must be a boolean when provided/,
   );
 });
 
@@ -370,6 +397,39 @@ test("runGatewaySmokeCli starts the tiny profile and verifies inference", async 
   assert.equal(summary.inferStatus, 200);
   assert.ok(summary.port > 0);
   assert.ok(summary.outputChars > 0);
+});
+
+test("runGatewaySmokeCli rejects malformed direct io before parsing", async () => {
+  await assert.rejects(
+    () => runGatewaySmokeCli([], null as never),
+    /gateway smoke io must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      runGatewaySmokeCli(["--help"], {
+        stdout: {},
+        stderr: {
+          write() {
+            return true;
+          },
+        },
+      } as never),
+    /gateway smoke io\.stdout\.write must be a function/,
+  );
+
+  await assert.rejects(
+    () =>
+      runGatewaySmokeCli(["--unknown"], {
+        stdout: {
+          write() {
+            return true;
+          },
+        },
+        stderr: {},
+      } as never),
+    /gateway smoke io\.stderr\.write must be a function/,
+  );
 });
 
 test("runGatewaySmokeCli verifies public auth guards and rate limiting", async () => {

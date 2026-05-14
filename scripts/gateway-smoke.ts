@@ -33,6 +33,16 @@ export interface GatewaySmokeArgs {
   help: boolean;
 }
 
+interface GatewaySmokeOptions {
+  cwd: string;
+  configPath: string;
+  host: string;
+  port?: number;
+  timeoutMs?: number;
+  publicSafety?: boolean;
+  asyncQueue?: boolean;
+}
+
 export interface GatewayPublicSafetySummary {
   livezUnauthStatus: number;
   readyzUnauthStatus: number;
@@ -235,6 +245,40 @@ function assertPositiveInteger(
 ): asserts value is number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value > maximum) {
     throw new Error(`${label} must be a positive integer less than or equal to ${maximum}`);
+  }
+}
+
+function assertOptionalBoolean(
+  value: unknown,
+  label: string,
+): asserts value is boolean | undefined {
+  if (value !== undefined && typeof value !== "boolean") {
+    throw new Error(`${label} must be a boolean when provided`);
+  }
+}
+
+function assertGatewaySmokeOptions(options: unknown): asserts options is GatewaySmokeOptions {
+  if (!isRecord(options)) {
+    throw new Error("gateway smoke options must be an object");
+  }
+
+  assertOptionalBoolean(options.publicSafety, "publicSafety");
+  assertOptionalBoolean(options.asyncQueue, "asyncQueue");
+}
+
+function assertGatewaySmokeCliIo(
+  io: unknown,
+): asserts io is Pick<NodeJS.Process, "stdout" | "stderr"> {
+  if (!isRecord(io)) {
+    throw new Error("gateway smoke io must be an object");
+  }
+
+  if (!isRecord(io.stdout) || typeof io.stdout.write !== "function") {
+    throw new Error("gateway smoke io.stdout.write must be a function");
+  }
+
+  if (!isRecord(io.stderr) || typeof io.stderr.write !== "function") {
+    throw new Error("gateway smoke io.stderr.write must be a function");
   }
 }
 
@@ -1139,15 +1183,8 @@ async function readAsyncQueueObservability(options: {
   };
 }
 
-export async function smokeGateway(options: {
-  cwd: string;
-  configPath: string;
-  host: string;
-  port?: number;
-  timeoutMs?: number;
-  publicSafety?: boolean;
-  asyncQueue?: boolean;
-}): Promise<GatewaySmokeSummary> {
+export async function smokeGateway(options: GatewaySmokeOptions): Promise<GatewaySmokeSummary> {
+  assertGatewaySmokeOptions(options);
   assertGatewaySmokePathValue(options.cwd, "cwd");
   assertGatewaySmokePathValue(options.configPath, "configPath");
   assertGatewaySmokeHostValue(options.host, "host");
@@ -1424,6 +1461,8 @@ export async function runGatewaySmokeCli(
   argv = process.argv.slice(2),
   io: Pick<NodeJS.Process, "stdout" | "stderr"> = process,
 ): Promise<number> {
+  assertGatewaySmokeCliIo(io);
+
   try {
     const args = parseArgs(argv);
 
