@@ -14,6 +14,7 @@ import {
   adapterRequest,
   buildAdapterHeaders,
   extractAssistantText,
+  snapshotAdapterWarmupRequests,
 } from "./providers/http.js";
 
 function createModel(
@@ -720,6 +721,46 @@ test("openai-compatible provider rejects invalid direct adapter payload config",
       }),
     /adapter\.warmupRequests\[0\]\.templateVariables must not contain unsafe key "prototype"/,
   );
+});
+
+test("snapshotAdapterWarmupRequests keeps only warmup schema fields", () => {
+  const inputWarmup = {
+    input: "ping",
+    system: "Warm the adapter.",
+    maxTokens: 2,
+    seed: 7,
+    stop: ["END"],
+    responseFormat: { type: "json_object", extra: "not-retained" } as never,
+    extra: "not-retained",
+  };
+  const templateWarmup = {
+    templateId: "email.reply_classification.v1",
+    templateVariables: { replyText: "Sounds useful." },
+    extra: "not-retained",
+  };
+
+  const snapshot = snapshotAdapterWarmupRequests([inputWarmup, templateWarmup], 128);
+
+  assert.deepEqual(snapshot, [
+    {
+      input: "ping",
+      system: "Warm the adapter.",
+      maxTokens: 2,
+      seed: 7,
+      stop: ["END"],
+      responseFormat: { type: "json_object" },
+    },
+    {
+      templateId: "email.reply_classification.v1",
+      templateVariables: { replyText: "Sounds useful." },
+    },
+  ]);
+
+  inputWarmup.stop.push("MUTATED");
+  templateWarmup.templateVariables.replyText = "Mutated.";
+
+  assert.deepEqual(snapshot?.[0]?.stop, ["END"]);
+  assert.deepEqual(snapshot?.[1]?.templateVariables, { replyText: "Sounds useful." });
 });
 
 test("adapterRequest caps upstream error response bodies", async (t) => {

@@ -565,9 +565,13 @@ export function snapshotAdapterWarmupRequests(
     assertWarmupRequest(request, `adapter.warmupRequests[${index}]`, maxOutputTokens);
 
     return {
-      ...request,
-      ...(request.stop ? { stop: [...request.stop] } : {}),
+      ...(request.input !== undefined ? { input: request.input } : {}),
+      ...(request.system !== undefined ? { system: request.system } : {}),
+      ...(request.maxTokens !== undefined ? { maxTokens: request.maxTokens } : {}),
+      ...(request.seed !== undefined ? { seed: request.seed } : {}),
+      ...(request.stop !== undefined ? { stop: [...request.stop] } : {}),
       ...(request.responseFormat ? { responseFormat: { type: request.responseFormat.type } } : {}),
+      ...(request.templateId !== undefined ? { templateId: request.templateId } : {}),
       ...(request.templateVariables ? { templateVariables: { ...request.templateVariables } } : {}),
     };
   });
