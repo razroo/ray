@@ -1805,6 +1805,7 @@ export function createGatewayServer(options: CreateGatewayHandlerOptions): Gatew
     sockets.add(socket);
     socket.on("close", () => {
       sockets.delete(socket);
+      activeRequestsBySocket.delete(socket);
     });
   });
   server.on("request", (request, response) => {

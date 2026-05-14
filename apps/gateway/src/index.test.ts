@@ -151,6 +151,70 @@ test("gateway bounds HTTP server socket and header resources for small VPS hosts
   assert.equal(gateway.server.maxHeadersCount, 64);
 });
 
+test("gateway removes stale active request counters when sockets close", async (t) => {
+  let releaseHealth: (() => void) | undefined;
+  let healthStarted: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    healthStarted = resolve;
+  });
+  const healthReleased = new Promise<void>((resolve) => {
+    releaseHealth = resolve;
+  });
+  const runtime = {
+    async health() {
+      healthStarted?.();
+      await healthReleased;
+      return {
+        status: "ok",
+        uptimeMs: 1,
+        queueDepth: 0,
+        inFlight: 0,
+        cacheEntries: 0,
+        profile: "tiny",
+        modelId: "tiny-model",
+        provider: {
+          status: "ready",
+          checkedAt: new Date().toISOString(),
+        },
+      } satisfies HealthSnapshot;
+    },
+  } as unknown as RayRuntime;
+  const gateway = createGatewayServer({
+    config: createDefaultConfig("tiny"),
+    runtime,
+  });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    releaseHealth?.();
+    await closeServer(gateway.server).catch(() => undefined);
+  });
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+  const controller = new AbortController();
+  const request = fetch(`http://127.0.0.1:${address.port}/health`, {
+    signal: controller.signal,
+  }).catch(() => undefined);
+  await started;
+  await waitForCondition(() => (gateway.sockets?.size ?? 0) === 1);
+
+  const serverSocket = [...(gateway.sockets ?? [])][0];
+  assert.ok(serverSocket);
+  gateway.activeRequestsBySocket?.set(serverSocket, 1);
+
+  controller.abort();
+  await request;
+  await waitForCondition(
+    () =>
+      !(gateway.sockets?.has(serverSocket) ?? false) &&
+      !(gateway.activeRequestsBySocket?.has(serverSocket) ?? false),
+  );
+  releaseHealth?.();
+});
+
 test("gateway rejects oversized HTTP headers before request handling", async (t) => {
   const warnings: Array<{ message: string; fields: LogFields | undefined }> = [];
   const logger = {
