@@ -298,6 +298,42 @@ test("durable inference queue snapshots config at construction", async () => {
   }
 });
 
+test("durable inference queue creates private persisted job state", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("POSIX mode assertions are unavailable on Windows");
+    return;
+  }
+
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-private-"));
+
+  try {
+    const config = mergeConfig(createDefaultConfig("tiny"), {
+      asyncQueue: {
+        enabled: true,
+        storageDir,
+      },
+    });
+    const runtime = createRayRuntime(config);
+    const logger = new Logger("test", "error");
+    const queue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+    });
+    const queuedJob = await queue.enqueue({
+      input: "private persisted prompt",
+    });
+    const jobsDir = join(storageDir, "jobs");
+    const jobPath = join(jobsDir, `${queuedJob.id}.json`);
+    const [jobsDirStats, jobStats] = await Promise.all([fs.stat(jobsDir), fs.stat(jobPath)]);
+
+    assert.equal(jobsDirStats.mode & 0o777, 0o700);
+    assert.equal(jobStats.mode & 0o777, 0o600);
+  } finally {
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});
+
 test("durable inference queue snapshots active inference dispatches", async () => {
   const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-active-inference-"));
 

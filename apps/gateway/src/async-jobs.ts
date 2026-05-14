@@ -29,6 +29,8 @@ const RETRYABLE_JOB_ERROR_CODES = new Set([
   "gateway_error",
 ]);
 const ATOMIC_WRITE_TEMP_PREFIX = ".tmp-";
+const ASYNC_QUEUE_DIRECTORY_MODE = 0o700;
+const PERSISTED_JOB_FILE_MODE = 0o600;
 const STOP_TIMEOUT_BUFFER_MS = 1_000;
 const PERSISTED_JOB_FILE_LIMIT_BYTES = 2 * 1024 * 1024;
 const CALLBACK_DNS_LOOKUP_TIMEOUT_MS = 1_000;
@@ -1148,7 +1150,7 @@ async function writeJsonAtomic(filePath: string, body: string): Promise<void> {
   let fileHandle: Awaited<ReturnType<typeof fs.open>> | undefined;
 
   try {
-    fileHandle = await fs.open(tempPath, "w");
+    fileHandle = await fs.open(tempPath, "wx", PERSISTED_JOB_FILE_MODE);
     await fileHandle.writeFile(body, "utf8");
     await fileHandle.sync();
     await fileHandle.close();
@@ -1454,7 +1456,9 @@ export class DurableInferenceQueue {
   }
 
   private async ensureReady(): Promise<void> {
-    this.readyPromise ??= fs.mkdir(this.jobsDir, { recursive: true }).then(() => undefined);
+    this.readyPromise ??= fs
+      .mkdir(this.jobsDir, { mode: ASYNC_QUEUE_DIRECTORY_MODE, recursive: true })
+      .then(() => undefined);
     await this.readyPromise;
   }
 
