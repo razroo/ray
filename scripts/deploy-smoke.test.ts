@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  buildSmokeDeployEnv,
   collectDeploySmokeConfigPaths,
   collectPublicConfigPaths,
   formatTextSummary,
@@ -210,6 +211,28 @@ test("smokeDeployConfigs rejects malformed direct scalar inputs before rendering
       }),
     /serviceUser must be a system account name or numeric UID/,
   );
+});
+
+test("buildSmokeDeployEnv keeps deploy smoke env inert", () => {
+  const source = Object.create({ PATH: "/inherited/bin" }) as NodeJS.ProcessEnv;
+  source.PATH = "/usr/bin";
+  source.RAY_API_KEYS = "host-key";
+  source.RAY_LLAMA_CPP_CTX_SIZE = "bad";
+  (source as Record<string, unknown>).COUNT = 42;
+  Object.defineProperty(source, "__proto__", {
+    enumerable: true,
+    value: { RAY_API_KEYS: "polluted-key" },
+  });
+
+  const env = buildSmokeDeployEnv(source);
+
+  assert.equal(Object.getPrototypeOf(env), null);
+  assert.deepEqual(Object.keys(env), ["PATH"]);
+  assert.equal(env.PATH, "/usr/bin");
+  assert.equal(env.RAY_API_KEYS, undefined);
+  assert.equal(env.RAY_LLAMA_CPP_CTX_SIZE, undefined);
+  assert.equal((env as Record<string, unknown>).COUNT, undefined);
+  assert.equal((env as Record<string, unknown>).__proto__, undefined);
 });
 
 test("smokeDeployConfigs renders every checked-in deploy smoke profile", async () => {

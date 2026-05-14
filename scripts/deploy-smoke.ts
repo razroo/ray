@@ -614,11 +614,11 @@ function attachStaticExample(
   };
 }
 
-function buildSmokeDeployEnv(_env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
+export function buildSmokeDeployEnv(_env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = Object.create(null) as NodeJS.ProcessEnv;
 
   for (const [name, value] of Object.entries(_env)) {
-    if (name.startsWith("RAY_") || value === undefined) {
+    if (name.startsWith("RAY_") || typeof value !== "string") {
       continue;
     }
 
