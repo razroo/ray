@@ -13,11 +13,13 @@ import {
 
 const repoRoot = process.cwd();
 
-function createIoCapture(): {
+interface IoCapture {
   io: Pick<NodeJS.Process, "stdout" | "stderr">;
   stdout: () => string;
   stderr: () => string;
-} {
+}
+
+function createIoCapture(): IoCapture {
   let stdout = "";
   let stderr = "";
 
@@ -39,6 +41,15 @@ function createIoCapture(): {
     stdout: () => stdout,
     stderr: () => stderr,
   };
+}
+
+function assertCliSucceeded(exitCode: number, capture: IoCapture): void {
+  assert.equal(
+    exitCode,
+    0,
+    `expected gateway smoke CLI to exit 0\nstderr:\n${capture.stderr()}\nstdout:\n${capture.stdout()}`,
+  );
+  assert.equal(capture.stderr(), "");
 }
 
 test("parseArgs accepts strict gateway smoke options", () => {
@@ -383,8 +394,7 @@ test("runGatewaySmokeCli starts the tiny profile and verifies inference", async 
 
   const exitCode = await runGatewaySmokeCli(["--cwd", repoRoot, "--json"], capture.io);
 
-  assert.equal(exitCode, 0);
-  assert.equal(capture.stderr(), "");
+  assertCliSucceeded(exitCode, capture);
 
   const summary = JSON.parse(capture.stdout()) as GatewaySmokeSummary;
   assert.equal(summary.ok, true);
@@ -440,8 +450,7 @@ test("runGatewaySmokeCli verifies public auth guards and rate limiting", async (
     capture.io,
   );
 
-  assert.equal(exitCode, 0);
-  assert.equal(capture.stderr(), "");
+  assertCliSucceeded(exitCode, capture);
 
   const summary = JSON.parse(capture.stdout()) as GatewaySmokeSummary;
   assert.equal(summary.ok, true);
@@ -485,8 +494,7 @@ test("runGatewaySmokeCli verifies async queue submission and completion", async 
     capture.io,
   );
 
-  assert.equal(exitCode, 0);
-  assert.equal(capture.stderr(), "");
+  assertCliSucceeded(exitCode, capture);
 
   const summary = JSON.parse(capture.stdout()) as GatewaySmokeSummary;
   assert.equal(summary.ok, true);
@@ -520,8 +528,7 @@ test("runGatewaySmokeCli verifies authenticated public async queue submission", 
     capture.io,
   );
 
-  assert.equal(exitCode, 0);
-  assert.equal(capture.stderr(), "");
+  assertCliSucceeded(exitCode, capture);
 
   const summary = JSON.parse(capture.stdout()) as GatewaySmokeSummary;
   assert.equal(summary.ok, true);
