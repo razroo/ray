@@ -618,10 +618,9 @@ export async function runTestCli(options = {}) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const exitCode = await runTestCli();
-    process.exit(exitCode);
+    process.exitCode = await runTestCli();
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
   }
 }

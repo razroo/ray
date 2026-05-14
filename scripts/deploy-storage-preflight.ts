@@ -735,5 +735,5 @@ export async function runDeployStoragePreflightCli(
 }
 
 if (import.meta.main) {
-  process.exit(await runDeployStoragePreflightCli());
+  process.exitCode = await runDeployStoragePreflightCli();
 }

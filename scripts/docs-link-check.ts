@@ -674,6 +674,5 @@ export async function runDocsLinkCheckCli(
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const exitCode = await runDocsLinkCheckCli();
-  process.exit(exitCode);
+  process.exitCode = await runDocsLinkCheckCli();
 }

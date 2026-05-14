@@ -2995,6 +2995,5 @@ export async function runPackageRuntimeCoverageCli(
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const exitCode = await runPackageRuntimeCoverageCli();
-  process.exit(exitCode);
+  process.exitCode = await runPackageRuntimeCoverageCli();
 }
