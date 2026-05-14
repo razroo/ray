@@ -10,6 +10,7 @@ import {
   assertRequiredTarballEntries,
   buildPackCheckEnv,
   listTarballEntries,
+  listPackDestinationFiles,
   readTarballJsonEntry,
 } from "./pack-check.mjs";
 
@@ -113,6 +114,36 @@ test("listTarballEntries reads bounded npm package entries", async (t) => {
     "package/dist/index.js",
   ]);
   assert.deepEqual(await readTarballJsonEntry(tarballPath, "package/package.json"), {});
+});
+
+test("listPackDestinationFiles streams bounded pack output directories", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-pack-check-output-"));
+  const originalReaddir = fsPromises.readdir;
+  t.after(async () => {
+    Object.defineProperty(fsPromises, "readdir", {
+      configurable: true,
+      value: originalReaddir,
+    });
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  await writeFile(path.join(tempDir, "ray-sdk.tgz"), "");
+  await writeFile(path.join(tempDir, "ray-core.tgz"), "");
+
+  Object.defineProperty(fsPromises, "readdir", {
+    configurable: true,
+    value: async () => {
+      throw new Error("readdir should not be used during pack output discovery");
+    },
+  });
+
+  assert.deepEqual(await listPackDestinationFiles(tempDir), ["ray-core.tgz", "ray-sdk.tgz"]);
+
+  await writeFile(path.join(tempDir, "extra.tgz"), "");
+  await assert.rejects(
+    () => listPackDestinationFiles(tempDir, 2),
+    /Pack output directory must contain at most 2 files/,
+  );
 });
 
 test("listTarballEntries rejects oversized pack artifacts before reading", async (t) => {

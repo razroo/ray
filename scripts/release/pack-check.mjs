@@ -13,6 +13,7 @@ export const PACK_SHUTDOWN_GRACE_MS = 5_000;
 export const MAX_PACK_TARBALL_BYTES = 5 * 1024 * 1024;
 export const MAX_PACK_UNCOMPRESSED_BYTES = 20 * 1024 * 1024;
 export const MAX_PACK_TARBALL_ENTRIES = 512;
+export const MAX_PACK_OUTPUT_FILES = 32;
 const DEFAULT_PACK_CHILD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const PACK_CHILD_ENV_KEYS = ["LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TMP", "TEMP"];
 const packedManifestDependencySections = [
@@ -480,6 +481,33 @@ export function assertRequiredTarballEntries(packageName, entries, requiredEntri
   }
 }
 
+export async function listPackDestinationFiles(directory, maxFiles = MAX_PACK_OUTPUT_FILES) {
+  const files = [];
+  let directoryHandle;
+
+  try {
+    directoryHandle = await fs.opendir(directory);
+
+    for await (const entry of directoryHandle) {
+      files.push(entry.name);
+
+      if (files.length > maxFiles) {
+        throw new Error(`Pack output directory must contain at most ${maxFiles} files`);
+      }
+    }
+  } finally {
+    if (directoryHandle) {
+      try {
+        await directoryHandle.close();
+      } catch {
+        // Directory async iteration closes the handle on normal completion in some runtimes.
+      }
+    }
+  }
+
+  return files.sort((left, right) => left.localeCompare(right));
+}
+
 export async function runPackCheck() {
   await fs.rm(destination, { recursive: true, force: true });
   await fs.mkdir(destination, { recursive: true });
@@ -488,7 +516,7 @@ export async function runPackCheck() {
     await runPack(packageConfig);
   }
 
-  const packedFiles = await fs.readdir(destination);
+  const packedFiles = await listPackDestinationFiles(destination);
 
   for (const packageConfig of packages) {
     const packedFile = packedFiles.find(
