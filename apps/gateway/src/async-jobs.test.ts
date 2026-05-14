@@ -13,6 +13,32 @@ import { DurableInferenceQueue } from "./async-jobs.js";
 const PERSISTED_JOB_FILE_LIMIT_BYTES = 2 * 1024 * 1024;
 const ASYNC_QUEUE_RECOVERY_ENTRY_LIMIT = 4_096;
 const ASYNC_QUEUE_RECOVERY_TEMP_REMOVAL_LIMIT = 2_048;
+const MAX_PERSISTED_RESULT_OUTPUT_CHARS = 262_144;
+
+function persistedInferenceResult(
+  output: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    id: "req_persisted_test",
+    model: "mock-model",
+    output,
+    usage: {
+      chars: {
+        prompt: 0,
+        completion: output.length,
+        total: output.length,
+      },
+    },
+    cached: false,
+    deduplicated: false,
+    queueTimeMs: 0,
+    latencyMs: 1,
+    degraded: false,
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
 
 async function writeFilesInBatches(
   directory: string,
@@ -905,9 +931,7 @@ test("durable inference queue fails recovered pending callbacks with exhausted a
         request: {
           input: "callback crashed after final attempt was recorded",
         },
-        result: {
-          output: "done",
-        },
+        result: persistedInferenceResult("done"),
         createdAt: now,
         updatedAt: now,
         completedAt: now,
@@ -1290,6 +1314,94 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
       }),
     );
     await writeFile(
+      join(jobsDir, "job_result_good.json"),
+      JSON.stringify({
+        id: "job_result_good",
+        status: "succeeded",
+        request: {
+          input: "valid persisted result with diagnostics",
+        },
+        result: persistedInferenceResult("done", {
+          diagnostics: {
+            provider: {
+              requestShape: "llama.cpp-completion",
+              promptFormat: "prompt-scaffold",
+              promptFormatReason: "mock provider",
+              jsonRepairAttempted: false,
+              totalSlots: 1,
+              timings: {
+                totalMs: 1,
+                completionTokensPerSecond: 12,
+              },
+            },
+          },
+        }),
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        attempts: 1,
+        maxAttempts: 2,
+      }),
+    );
+    await writeFile(
+      join(jobsDir, "job_result_output_too_long.json"),
+      JSON.stringify({
+        id: "job_result_output_too_long",
+        status: "succeeded",
+        request: {
+          input: "oversized persisted result output",
+        },
+        result: persistedInferenceResult("x".repeat(MAX_PERSISTED_RESULT_OUTPUT_CHARS + 1)),
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        attempts: 1,
+        maxAttempts: 2,
+      }),
+    );
+    await writeFile(
+      join(jobsDir, "job_result_extra_field.json"),
+      JSON.stringify({
+        id: "job_result_extra_field",
+        status: "succeeded",
+        request: {
+          input: "persisted result with extra fields",
+        },
+        result: persistedInferenceResult("done", {
+          raw: {
+            stack: "secret stack",
+          },
+        }),
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        attempts: 1,
+        maxAttempts: 2,
+      }),
+    );
+    await writeFile(
+      join(jobsDir, "job_result_bad_provider_diagnostics.json"),
+      JSON.stringify({
+        id: "job_result_bad_provider_diagnostics",
+        status: "succeeded",
+        request: {
+          input: "persisted result with malformed provider diagnostics",
+        },
+        result: persistedInferenceResult("done", {
+          diagnostics: {
+            provider: {
+              tokensCached: 1_000_000_001,
+            },
+          },
+        }),
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        attempts: 1,
+        maxAttempts: 2,
+      }),
+    );
+    await writeFile(
       join(jobsDir, "job_error_message_too_long.json"),
       JSON.stringify({
         id: "job_error_message_too_long",
@@ -1379,9 +1491,7 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
         request: {
           input: "credentialed persisted callback",
         },
-        result: {
-          output: "done",
-        },
+        result: persistedInferenceResult("done"),
         createdAt: now,
         updatedAt: now,
         completedAt: now,
@@ -1402,9 +1512,7 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
         request: {
           input: "fragmented persisted callback",
         },
-        result: {
-          output: "done",
-        },
+        result: persistedInferenceResult("done"),
         createdAt: now,
         updatedAt: now,
         completedAt: now,
@@ -1425,9 +1533,7 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
         request: {
           input: "callback url with raw control character",
         },
-        result: {
-          output: "done",
-        },
+        result: persistedInferenceResult("done"),
         createdAt: now,
         updatedAt: now,
         completedAt: now,
@@ -1448,9 +1554,7 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
         request: {
           input: "callback with oversized persisted attempts",
         },
-        result: {
-          output: "done",
-        },
+        result: persistedInferenceResult("done"),
         createdAt: now,
         updatedAt: now,
         completedAt: now,
@@ -1471,9 +1575,7 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
         request: {
           input: "callback with oversized persisted error",
         },
-        result: {
-          output: "done",
-        },
+        result: persistedInferenceResult("done"),
         createdAt: now,
         updatedAt: now,
         completedAt: now,
@@ -1519,6 +1621,9 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.equal(await queue.get("job_other"), undefined);
     assert.equal(await queue.get("job_id_too_long"), undefined);
     assert.equal(await queue.get("job_attempts_too_large"), undefined);
+    assert.equal(await queue.get("job_result_output_too_long"), undefined);
+    assert.equal(await queue.get("job_result_extra_field"), undefined);
+    assert.equal(await queue.get("job_result_bad_provider_diagnostics"), undefined);
     assert.equal(await queue.get("job_error_message_too_long"), undefined);
     assert.equal(await queue.get("job_error_extra_field"), undefined);
     assert.equal(await queue.get("job_error_detail_stack"), undefined);
@@ -1535,6 +1640,9 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
       (job) => job.status === "succeeded",
     );
     assert.match(completedJob.result?.output ?? "", /good persisted job/);
+    const recoveredResultJob = await queue.get("job_result_good");
+    assert.equal(recoveredResultJob?.status, "succeeded");
+    assert.equal(recoveredResultJob?.result?.diagnostics?.provider?.totalSlots, 1);
 
     await queue.stop();
 
@@ -1543,6 +1651,9 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.equal(entries.includes("job_mismatch.json"), false);
     assert.equal(entries.includes("job_id_too_long.json"), false);
     assert.equal(entries.includes("job_attempts_too_large.json"), false);
+    assert.equal(entries.includes("job_result_output_too_long.json"), false);
+    assert.equal(entries.includes("job_result_extra_field.json"), false);
+    assert.equal(entries.includes("job_result_bad_provider_diagnostics.json"), false);
     assert.equal(entries.includes("job_error_message_too_long.json"), false);
     assert.equal(entries.includes("job_error_extra_field.json"), false);
     assert.equal(entries.includes("job_error_detail_stack.json"), false);
@@ -1554,6 +1665,7 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.equal(entries.includes("job_callback_last_error_too_long.json"), false);
     assert.equal(entries.includes("job_bad_request.json"), false);
     assert.equal(entries.includes("job_good.json"), true);
+    assert.equal(entries.includes("job_result_good.json"), true);
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }

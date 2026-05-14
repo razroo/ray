@@ -38,6 +38,12 @@ const MAX_JOB_ID_CHARS = 128;
 const MAX_CALLBACK_URL_CHARS = 2_048;
 const MAX_JOB_ERROR_MESSAGE_CHARS = 8_192;
 const MAX_JOB_ERROR_CODE_CHARS = 128;
+const MAX_INFERENCE_RESPONSE_ID_CHARS = 128;
+const MAX_PROVIDER_MODEL_ID_CHARS = 512;
+const MAX_PROVIDER_RESULT_OUTPUT_CHARS = 262_144;
+const MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS = 512;
+const MAX_PROVIDER_DIAGNOSTIC_NUMBER = 1_000_000_000;
+const MAX_PROVIDER_RESULT_USAGE_COUNT = 1_000_000_000;
 const MAX_JOB_ERROR_DETAIL_DEPTH = 5;
 const MAX_JOB_ERROR_DETAIL_KEYS = 32;
 const MAX_JOB_ERROR_DETAIL_KEY_CHARS = 128;
@@ -126,6 +132,76 @@ const CALLBACK_STATUSES = new Set<InferenceJobCallbackState["status"]>([
   "failed",
 ]);
 const JOB_ERROR_KEYS = new Set(["message", "code", "details"]);
+const INFERENCE_RESULT_KEYS = new Set([
+  "id",
+  "model",
+  "output",
+  "usage",
+  "cached",
+  "deduplicated",
+  "queueTimeMs",
+  "latencyMs",
+  "degraded",
+  "diagnostics",
+  "createdAt",
+]);
+const USAGE_KEYS = new Set(["chars", "tokens"]);
+const USAGE_BREAKDOWN_KEYS = new Set(["prompt", "completion", "total"]);
+const INFERENCE_DIAGNOSTIC_KEYS = new Set([
+  "degradation",
+  "promptCompiler",
+  "learnedOutputCap",
+  "adaptiveTuning",
+  "taskRouting",
+  "provider",
+]);
+const PROVIDER_DIAGNOSTIC_KEYS = new Set([
+  "requestShape",
+  "promptFormat",
+  "promptFormatReason",
+  "jsonRepairAttempted",
+  "jsonRepairSucceeded",
+  "modelRef",
+  "backendModel",
+  "launchPreset",
+  "totalSlots",
+  "slotId",
+  "preferredSlot",
+  "tokensCached",
+  "tokensEvaluated",
+  "truncated",
+  "contextWindow",
+  "slotRouteReason",
+  "timings",
+]);
+const PROVIDER_TIMING_KEYS = new Set([
+  "ttftMs",
+  "totalMs",
+  "promptMs",
+  "completionMs",
+  "promptTokensPerSecond",
+  "completionTokensPerSecond",
+]);
+const PROVIDER_DIAGNOSTIC_STRING_KEYS = new Set([
+  "promptFormatReason",
+  "modelRef",
+  "backendModel",
+  "launchPreset",
+  "slotRouteReason",
+]);
+const PROVIDER_DIAGNOSTIC_BOOLEAN_KEYS = new Set([
+  "jsonRepairAttempted",
+  "jsonRepairSucceeded",
+  "truncated",
+]);
+const PROVIDER_DIAGNOSTIC_INTEGER_KEYS = new Set([
+  "totalSlots",
+  "slotId",
+  "preferredSlot",
+  "tokensCached",
+  "tokensEvaluated",
+  "contextWindow",
+]);
 
 class PersistedJobValidationError extends Error {
   constructor(message: string) {
@@ -237,6 +313,10 @@ function hasUnencodedWhitespaceOrControl(value: string): boolean {
 
 function isNonNegativeSafeIntegerAtMost(value: unknown, maximum: number): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= maximum;
+}
+
+function isNonNegativeFiniteNumberAtMost(value: unknown, maximum: number): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= maximum;
 }
 
 function isPositiveSafeIntegerAtMost(value: unknown, maximum: number): value is number {
@@ -595,6 +675,273 @@ function assertPersistedJobError(value: unknown): void {
   }
 }
 
+function assertPersistedUsageBreakdown(value: unknown, label: string): void {
+  if (!isObjectRecord(value)) {
+    throw new PersistedJobValidationError(`${label} must be an object`);
+  }
+
+  for (const key of Object.keys(value)) {
+    if (!USAGE_BREAKDOWN_KEYS.has(key)) {
+      throw new PersistedJobValidationError(
+        `${label} must only contain prompt, completion, and total`,
+      );
+    }
+  }
+
+  for (const key of USAGE_BREAKDOWN_KEYS) {
+    if (!isNonNegativeSafeIntegerAtMost(value[key], MAX_PROVIDER_RESULT_USAGE_COUNT)) {
+      throw new PersistedJobValidationError(
+        `${label}.${key} must be a non-negative safe integer no greater than ${MAX_PROVIDER_RESULT_USAGE_COUNT}`,
+      );
+    }
+  }
+}
+
+function assertPersistedUsage(value: unknown): void {
+  if (!isObjectRecord(value)) {
+    throw new PersistedJobValidationError("result.usage must be an object");
+  }
+
+  for (const key of Object.keys(value)) {
+    if (!USAGE_KEYS.has(key)) {
+      throw new PersistedJobValidationError("result.usage must only contain chars and tokens");
+    }
+  }
+
+  assertPersistedUsageBreakdown(value.chars, "result.usage.chars");
+
+  if (value.tokens !== undefined) {
+    assertPersistedUsageBreakdown(value.tokens, "result.usage.tokens");
+  }
+}
+
+function assertProviderDiagnosticEnum(
+  value: unknown,
+  label: string,
+  allowed: readonly string[],
+): void {
+  if (value !== undefined && (typeof value !== "string" || !allowed.includes(value))) {
+    throw new PersistedJobValidationError(`${label} must be a valid provider diagnostic value`);
+  }
+}
+
+function assertOptionalProviderDiagnosticString(value: unknown, label: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "string") {
+    throw new PersistedJobValidationError(`${label} must be a string`);
+  }
+
+  if (value.length > MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS) {
+    throw new PersistedJobValidationError(
+      `${label} must be at most ${MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS} characters`,
+    );
+  }
+}
+
+function assertOptionalProviderDiagnosticBoolean(value: unknown, label: string): void {
+  if (value !== undefined && typeof value !== "boolean") {
+    throw new PersistedJobValidationError(`${label} must be a boolean`);
+  }
+}
+
+function assertOptionalProviderDiagnosticInteger(value: unknown, label: string): void {
+  if (
+    value !== undefined &&
+    !isNonNegativeSafeIntegerAtMost(value, MAX_PROVIDER_DIAGNOSTIC_NUMBER)
+  ) {
+    throw new PersistedJobValidationError(
+      `${label} must be a non-negative safe integer no greater than ${MAX_PROVIDER_DIAGNOSTIC_NUMBER}`,
+    );
+  }
+}
+
+function assertOptionalProviderDiagnosticNumber(value: unknown, label: string): void {
+  if (
+    value !== undefined &&
+    !isNonNegativeFiniteNumberAtMost(value, MAX_PROVIDER_DIAGNOSTIC_NUMBER)
+  ) {
+    throw new PersistedJobValidationError(
+      `${label} must be a non-negative finite number no greater than ${MAX_PROVIDER_DIAGNOSTIC_NUMBER}`,
+    );
+  }
+}
+
+function assertPersistedProviderTimings(value: unknown): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!isObjectRecord(value)) {
+    throw new PersistedJobValidationError("result.diagnostics.provider.timings must be an object");
+  }
+
+  for (const key of Object.keys(value)) {
+    if (!PROVIDER_TIMING_KEYS.has(key)) {
+      throw new PersistedJobValidationError(
+        "result.diagnostics.provider.timings contains an unknown field",
+      );
+    }
+
+    assertOptionalProviderDiagnosticNumber(
+      value[key],
+      `result.diagnostics.provider.timings.${key}`,
+    );
+  }
+}
+
+function assertPersistedProviderDiagnostics(value: unknown): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!isObjectRecord(value)) {
+    throw new PersistedJobValidationError("result.diagnostics.provider must be an object");
+  }
+
+  for (const key of Object.keys(value)) {
+    if (!PROVIDER_DIAGNOSTIC_KEYS.has(key)) {
+      throw new PersistedJobValidationError(
+        "result.diagnostics.provider contains an unknown field",
+      );
+    }
+  }
+
+  assertProviderDiagnosticEnum(value.requestShape, "result.diagnostics.provider.requestShape", [
+    "openai-chat",
+    "llama.cpp-completion",
+  ]);
+  assertProviderDiagnosticEnum(value.promptFormat, "result.diagnostics.provider.promptFormat", [
+    "llama.cpp-template",
+    "prompt-scaffold",
+    "ray-chat-fallback",
+  ]);
+
+  for (const key of PROVIDER_DIAGNOSTIC_STRING_KEYS) {
+    assertOptionalProviderDiagnosticString(value[key], `result.diagnostics.provider.${key}`);
+  }
+
+  for (const key of PROVIDER_DIAGNOSTIC_BOOLEAN_KEYS) {
+    assertOptionalProviderDiagnosticBoolean(value[key], `result.diagnostics.provider.${key}`);
+  }
+
+  for (const key of PROVIDER_DIAGNOSTIC_INTEGER_KEYS) {
+    assertOptionalProviderDiagnosticInteger(value[key], `result.diagnostics.provider.${key}`);
+  }
+
+  assertPersistedProviderTimings(value.timings);
+}
+
+function assertPersistedInferenceDiagnostics(value: unknown): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!isObjectRecord(value)) {
+    throw new PersistedJobValidationError("result.diagnostics must be an object");
+  }
+
+  for (const key of Object.keys(value)) {
+    if (!INFERENCE_DIAGNOSTIC_KEYS.has(key)) {
+      throw new PersistedJobValidationError("result.diagnostics contains an unknown field");
+    }
+  }
+
+  assertPersistedProviderDiagnostics(value.provider);
+
+  for (const key of INFERENCE_DIAGNOSTIC_KEYS) {
+    if (key === "provider" || value[key] === undefined) {
+      continue;
+    }
+
+    assertPersistedJobErrorDetails(
+      value[key],
+      {
+        chars: MAX_JOB_ERROR_DETAIL_TOTAL_CHARS,
+        nodes: MAX_JOB_ERROR_DETAIL_NODES,
+      },
+      new WeakSet(),
+      `result.diagnostics.${key}`,
+    );
+  }
+}
+
+function assertPersistedInferenceResult(value: unknown): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!isObjectRecord(value)) {
+    throw new PersistedJobValidationError("result must be an object when present");
+  }
+
+  for (const key of Object.keys(value)) {
+    if (!INFERENCE_RESULT_KEYS.has(key)) {
+      throw new PersistedJobValidationError("result contains an unknown field");
+    }
+  }
+
+  if (
+    typeof value.id !== "string" ||
+    value.id.length === 0 ||
+    value.id.length > MAX_INFERENCE_RESPONSE_ID_CHARS
+  ) {
+    throw new PersistedJobValidationError("result.id must be a bounded non-empty string");
+  }
+
+  if (
+    typeof value.model !== "string" ||
+    value.model.length === 0 ||
+    value.model.length > MAX_PROVIDER_MODEL_ID_CHARS
+  ) {
+    throw new PersistedJobValidationError("result.model must be a bounded non-empty string");
+  }
+
+  if (typeof value.output !== "string") {
+    throw new PersistedJobValidationError("result.output must be a string");
+  }
+
+  if (value.output.length > MAX_PROVIDER_RESULT_OUTPUT_CHARS) {
+    throw new PersistedJobValidationError(
+      `result.output must be at most ${MAX_PROVIDER_RESULT_OUTPUT_CHARS} characters`,
+    );
+  }
+
+  assertPersistedUsage(value.usage);
+
+  if (typeof value.cached !== "boolean") {
+    throw new PersistedJobValidationError("result.cached must be a boolean");
+  }
+
+  if (typeof value.deduplicated !== "boolean") {
+    throw new PersistedJobValidationError("result.deduplicated must be a boolean");
+  }
+
+  if (!isNonNegativeFiniteNumberAtMost(value.queueTimeMs, MAX_PROVIDER_DIAGNOSTIC_NUMBER)) {
+    throw new PersistedJobValidationError(
+      `result.queueTimeMs must be a non-negative finite number no greater than ${MAX_PROVIDER_DIAGNOSTIC_NUMBER}`,
+    );
+  }
+
+  if (!isNonNegativeFiniteNumberAtMost(value.latencyMs, MAX_PROVIDER_DIAGNOSTIC_NUMBER)) {
+    throw new PersistedJobValidationError(
+      `result.latencyMs must be a non-negative finite number no greater than ${MAX_PROVIDER_DIAGNOSTIC_NUMBER}`,
+    );
+  }
+
+  if (typeof value.degraded !== "boolean") {
+    throw new PersistedJobValidationError("result.degraded must be a boolean");
+  }
+
+  assertPersistedInferenceDiagnostics(value.diagnostics);
+
+  if (!isValidTimestamp(value.createdAt)) {
+    throw new PersistedJobValidationError("result.createdAt must be a valid timestamp");
+  }
+}
+
 function assertPersistedCallbackState(value: unknown): void {
   if (value === undefined) {
     return;
@@ -706,6 +1053,7 @@ function validatePersistedJobRecord(value: unknown, expectedJobId?: string): Inf
 
   assertOptionalTimestamp(value.startedAt, "persisted async job startedAt");
   assertOptionalTimestamp(value.completedAt, "persisted async job completedAt");
+  assertPersistedInferenceResult(value.result);
   assertPersistedJobError(value.error);
   assertPersistedCallbackState(value.callback);
 
