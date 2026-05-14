@@ -18,6 +18,15 @@ function parseContentLength(value) {
   return /^\d+$/.test(normalized) && Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
+function isJsonContentType(value) {
+  if (!value) {
+    return false;
+  }
+
+  const mediaType = value.split(";", 1)[0].trim().toLowerCase();
+  return mediaType === "application/json" || mediaType.endsWith("+json");
+}
+
 async function readResponseTextWithinLimit(response, limitBytes, label) {
   const contentLength = parseContentLength(response.headers.get("content-length"));
   if (contentLength !== undefined && contentLength > limitBytes) {
@@ -70,12 +79,21 @@ export async function fetchNpmMetadata(pkg, options = {}) {
     headers: {
       accept: "application/json",
     },
+    redirect: "manual",
     signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!res.ok) {
     await res.body?.cancel().catch(() => undefined);
     throw new Error(`Failed to fetch npm metadata for ${pkg}: ${res.status}`);
+  }
+
+  const contentType = res.headers.get("content-type");
+  if (!isJsonContentType(contentType)) {
+    await res.body?.cancel().catch(() => undefined);
+    throw new Error(
+      `Failed to fetch npm metadata for ${pkg}: expected JSON response, got ${contentType ?? "missing content-type"}`,
+    );
   }
 
   const raw = await readResponseTextWithinLimit(res, maxBytes, `${pkg} npm metadata`);
