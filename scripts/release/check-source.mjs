@@ -12,6 +12,7 @@ export const releasePackageNames = {
 };
 const semverPattern =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const localOnlyDependencySpecPattern = /^(?:file|link|portal):|^(?:\.{1,2}\/|\/)/;
 
 function usage() {
   return "Usage: bun ./scripts/release/check-source.mjs <version>";
@@ -75,7 +76,7 @@ async function readPackageJsonBounded(packagePath) {
   return parsed;
 }
 
-function validateNoFileDependencies(packagePath, pkg) {
+function validateNoLocalOnlyDependencies(packagePath, pkg) {
   for (const section of [
     "dependencies",
     "devDependencies",
@@ -91,9 +92,9 @@ function validateNoFileDependencies(packagePath, pkg) {
     }
 
     for (const [name, spec] of Object.entries(deps)) {
-      if (typeof spec === "string" && spec.startsWith("file:")) {
+      if (typeof spec === "string" && localOnlyDependencySpecPattern.test(spec)) {
         throw new Error(
-          `${section}["${name}"] is "${spec}" in ${packagePath}; file: dependencies are published verbatim and break consumers.`,
+          `${section}["${name}"] is "${spec}" in ${packagePath}; local-only dependency specs break published packages.`,
         );
       }
     }
@@ -140,7 +141,7 @@ export async function checkReleaseSource(version, options = {}) {
       );
     }
 
-    validateNoFileDependencies(manifestKey, pkg);
+    validateNoLocalOnlyDependencies(manifestKey, pkg);
     checked.push(`${pkg.name}: ${pkg.version}`);
   }
 

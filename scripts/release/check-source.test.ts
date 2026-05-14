@@ -40,7 +40,7 @@ test("checkReleaseSource accepts linked package versions for a release tag", asy
   ]);
 });
 
-test("checkReleaseSource rejects mismatched package versions and file dependencies", async (t) => {
+test("checkReleaseSource rejects mismatched package versions and local-only dependencies", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-release-check-source-bad-"));
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
@@ -70,7 +70,33 @@ test("checkReleaseSource rejects mismatched package versions and file dependenci
 
   await assert.rejects(
     () => checkReleaseSource("1.2.3", { cwd: tempDir }),
-    /file: dependencies are published verbatim/,
+    /dependencies\["@razroo\/ray-core"\] is "file:\.\.\/core".*local-only dependency specs break published packages/,
+  );
+
+  await writePackageJson(tempDir, "packages/sdk/package.json", {
+    name: "@razroo/ray-sdk",
+    version: "1.2.3",
+    dependencies: {
+      "@razroo/ray-core": "link:../core",
+    },
+  });
+
+  await assert.rejects(
+    () => checkReleaseSource("1.2.3", { cwd: tempDir }),
+    /dependencies\["@razroo\/ray-core"\] is "link:\.\.\/core".*local-only dependency specs break published packages/,
+  );
+
+  await writePackageJson(tempDir, "packages/sdk/package.json", {
+    name: "@razroo/ray-sdk",
+    version: "1.2.3",
+    optionalDependencies: {
+      "@razroo/ray-core": "../core",
+    },
+  });
+
+  await assert.rejects(
+    () => checkReleaseSource("1.2.3", { cwd: tempDir }),
+    /optionalDependencies\["@razroo\/ray-core"\] is "\.\.\/core".*local-only dependency specs break published packages/,
   );
 });
 
