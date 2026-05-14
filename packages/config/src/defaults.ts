@@ -758,6 +758,19 @@ function assertSafeOverrideKeys(
   }
 }
 
+function setMergedConfigProperty(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
 function mergeConfigValue<T>(base: T, override?: DeepPartial<T>): T {
   if (override === undefined) {
     return structuredClone(base);
@@ -785,10 +798,11 @@ function mergeConfigValue<T>(base: T, override?: DeepPartial<T>): T {
 
   for (const key of Object.keys(baseRecord)) {
     const baseValue = baseRecord[key];
-    const overrideValue = overrideRecord[key];
+    const hasOverrideValue = Object.prototype.hasOwnProperty.call(overrideRecord, key);
+    const overrideValue = hasOverrideValue ? overrideRecord[key] : undefined;
 
-    if (overrideValue === undefined) {
-      result[key] = structuredClone(baseValue);
+    if (!hasOverrideValue || overrideValue === undefined) {
+      setMergedConfigProperty(result, key, structuredClone(baseValue));
       continue;
     }
 
@@ -797,7 +811,7 @@ function mergeConfigValue<T>(base: T, override?: DeepPartial<T>): T {
         throw new TypeError("override must be an array when merging array config");
       }
 
-      result[key] = structuredClone(overrideValue);
+      setMergedConfigProperty(result, key, structuredClone(overrideValue));
       continue;
     }
 
@@ -810,11 +824,15 @@ function mergeConfigValue<T>(base: T, override?: DeepPartial<T>): T {
         throw new TypeError("override must be an object when merging object config");
       }
 
-      result[key] = mergeConfigValue(baseValue, overrideValue as DeepPartial<typeof baseValue>);
+      setMergedConfigProperty(
+        result,
+        key,
+        mergeConfigValue(baseValue, overrideValue as DeepPartial<typeof baseValue>),
+      );
       continue;
     }
 
-    result[key] = structuredClone(overrideValue);
+    setMergedConfigProperty(result, key, structuredClone(overrideValue));
   }
 
   for (const [key, value] of Object.entries(overrideRecord)) {
@@ -822,7 +840,7 @@ function mergeConfigValue<T>(base: T, override?: DeepPartial<T>): T {
       continue;
     }
 
-    result[key] = structuredClone(value);
+    setMergedConfigProperty(result, key, structuredClone(value));
   }
 
   return result as T;

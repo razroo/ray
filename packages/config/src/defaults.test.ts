@@ -69,6 +69,51 @@ test("mergeConfig snapshots direct override values", () => {
   assert.equal(merged.model.adapter.seed, "initial");
 });
 
+test("mergeConfig ignores inherited direct override properties", () => {
+  const baseline = createDefaultConfig("tiny");
+  const override = Object.create({
+    server: {
+      port: 65535,
+    },
+    tags: {
+      inherited: "ignored",
+    },
+  });
+
+  const merged = mergeConfig(baseline, override as never);
+
+  assert.equal(merged.server.port, baseline.server.port);
+  assert.equal(merged.tags.inherited, undefined);
+});
+
+test("mergeConfig preserves unsafe base keys as inert own properties", () => {
+  const base: Record<string, unknown> = {
+    nested: {
+      keep: "base",
+    },
+  };
+  Object.defineProperty(base, "__proto__", {
+    value: {
+      polluted: true,
+    },
+    enumerable: true,
+  });
+
+  const merged = mergeConfig(base, {
+    nested: {
+      extra: "override",
+    },
+  }) as Record<string, unknown>;
+  const nested = merged.nested as Record<string, unknown>;
+
+  assert.equal(nested.keep, "base");
+  assert.equal(nested.extra, "override");
+  assert.deepEqual(Object.getOwnPropertyDescriptor(merged, "__proto__")?.value, {
+    polluted: true,
+  });
+  assert.equal(({} as { polluted?: boolean }).polluted, undefined);
+});
+
 test("mergeConfig rejects invalid direct override shapes", () => {
   assert.throws(
     () => mergeConfig(createDefaultConfig("tiny"), null as never),
