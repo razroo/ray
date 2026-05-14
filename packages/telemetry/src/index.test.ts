@@ -180,8 +180,27 @@ test("runtime metrics rejects invalid direct metric values", () => {
 
   assert.throws(() => metrics.increment("", 1), /metric name/);
   assert.throws(() => metrics.increment("1bad", 1), /metric name/);
-  assert.throws(() => metrics.increment("requests.total", Infinity), /metric increment/);
-  assert.throws(() => metrics.gauge("queue.depth", Number.NaN), /metric value/);
+  assert.throws(
+    () => metrics.increment("requests.total", Infinity),
+    /metric increment.*absolute value no greater than 1000000000000000/,
+  );
+  assert.throws(
+    () => metrics.increment("requests.total", 1_000_000_000_000_001),
+    /metric increment.*absolute value no greater than 1000000000000000/,
+  );
+  metrics.increment("requests.total", 1_000_000_000_000_000);
+  assert.throws(
+    () => metrics.increment("requests.total", 1),
+    /metric counter.*absolute value no greater than 1000000000000000/,
+  );
+  assert.throws(
+    () => metrics.gauge("queue.depth", Number.NaN),
+    /metric value.*absolute value no greater than 1000000000000000/,
+  );
+  assert.throws(
+    () => metrics.gauge("queue.depth", -1_000_000_000_000_001),
+    /metric value.*absolute value no greater than 1000000000000000/,
+  );
 });
 
 test("runtime metrics bounds direct metric series", () => {

@@ -23,6 +23,7 @@ const MAX_LOG_STRING_CHARS = 8_192;
 const MAX_LOG_SERVICE_NAME_CHARS = 128;
 const MAX_METRIC_SERIES = 256;
 const MAX_METRIC_NAME_CHARS = 128;
+const MAX_METRIC_ABSOLUTE_VALUE = 1_000_000_000_000_000;
 const logLevels = new Set<LogLevel>(["debug", "info", "warn", "error"]);
 const reservedLogFields = new Set(["ts", "service", "level", "message"]);
 
@@ -68,8 +69,14 @@ function assertMetricName(value: string): void {
 }
 
 function assertFiniteMetricValue(value: number, label: string): void {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new RangeError(`${label} must be a finite number`);
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    Math.abs(value) > MAX_METRIC_ABSOLUTE_VALUE
+  ) {
+    throw new RangeError(
+      `${label} must be a finite number with absolute value no greater than ${MAX_METRIC_ABSOLUTE_VALUE}`,
+    );
   }
 }
 
