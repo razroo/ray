@@ -47,6 +47,26 @@ test("parseArgs rejects malformed deploy smoke argv", () => {
     /argv\[1\] must be a string/,
   );
   assert.throws(() => parseArgs(["--domain"]), /--domain requires a value/);
+  assert.throws(
+    () => parseArgs(["--cwd", " /srv/ray"]),
+    /--cwd must be a path without surrounding whitespace/,
+  );
+  assert.throws(
+    () => parseArgs(["--gateway-runtime", "/usr/local/bin/bun\n"]),
+    /--gateway-runtime must not contain control characters/,
+  );
+  assert.throws(
+    () => parseArgs(["--domain", "ray.example.com {"]),
+    /--domain must be non-empty, at most 512 bytes/,
+  );
+  assert.throws(
+    () => parseArgs(["--domain", "ray.example.com alt.example.com"]),
+    /--domain must be non-empty, at most 512 bytes/,
+  );
+  assert.throws(
+    () => parseArgs(["--user", "ray user"]),
+    /--user must be a system account name or numeric UID/,
+  );
   assert.throws(() => parseArgs(["--unknown"]), /Unknown option: --unknown/);
   assert.throws(() => parseArgs(["examples/config"]), /Unexpected positional argument/);
 });
@@ -142,6 +162,34 @@ test("smokeDeployConfigs rejects malformed direct path inputs before rendering",
         systemdEnvFile: "/etc/ray/ray.env",
       }),
     /configPaths\[0\] must be at most 4096 bytes/,
+  );
+});
+
+test("smokeDeployConfigs rejects malformed direct scalar inputs before rendering", async () => {
+  await assert.rejects(
+    () =>
+      smokeDeployConfigs({
+        cwd: process.cwd(),
+        configPaths: [],
+        domain: "ray.example.com alt.example.com",
+        runtimeBinary: "/usr/local/bin/bun",
+        serviceUser: "ray",
+        systemdEnvFile: "/etc/ray/ray.env",
+      }),
+    /domain must be non-empty, at most 512 bytes/,
+  );
+
+  await assert.rejects(
+    () =>
+      smokeDeployConfigs({
+        cwd: process.cwd(),
+        configPaths: [],
+        domain: "ray.example.com",
+        runtimeBinary: "/usr/local/bin/bun",
+        serviceUser: "ray user",
+        systemdEnvFile: "/etc/ray/ray.env",
+      }),
+    /serviceUser must be a system account name or numeric UID/,
   );
 });
 

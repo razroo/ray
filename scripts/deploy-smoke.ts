@@ -19,6 +19,7 @@ const MAX_CONFIG_FILES = 128;
 const MAX_DEPLOY_SMOKE_CONFIGS = MAX_CONFIG_FILES + EXTRA_DEPLOY_CONFIG_FILES.length;
 const MAX_CLI_ARGS = 24;
 const MAX_CLI_ARG_BYTES = 4_096;
+const MAX_DEPLOY_SMOKE_DOMAIN_BYTES = 512;
 const MAX_DEPLOY_SMOKE_PATH_BYTES = 4_096;
 const MAX_STATIC_EXAMPLE_BYTES = 256 * 1024;
 
@@ -131,6 +132,55 @@ function assertDeploySmokePathValue(value: unknown, label: string): asserts valu
   }
 }
 
+function assertDeploySmokeDomainValue(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty Caddy site address`);
+  }
+
+  const address = value.trim();
+
+  if (
+    address.length === 0 ||
+    address !== value ||
+    hasUnsafeDeploySmokeDomainCharacter(address) ||
+    Buffer.byteLength(address, "utf8") > MAX_DEPLOY_SMOKE_DOMAIN_BYTES
+  ) {
+    throw new Error(
+      `${label} must be non-empty, at most ${MAX_DEPLOY_SMOKE_DOMAIN_BYTES} bytes, and cannot contain control characters, whitespace, or braces`,
+    );
+  }
+}
+
+function hasUnsafeDeploySmokeDomainCharacter(value: string): boolean {
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+
+    if (
+      code <= 0x1f ||
+      code === 0x7f ||
+      character.trim().length === 0 ||
+      character === "{" ||
+      character === "}"
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function assertDeploySmokeServiceUserValue(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty system account name or numeric UID`);
+  }
+
+  if (!/^(?:[A-Za-z_][A-Za-z0-9_-]{0,30}|[0-9]{1,10})$/.test(value)) {
+    throw new Error(
+      `${label} must be a system account name or numeric UID using only letters, digits, underscores, or hyphens`,
+    );
+  }
+}
+
 export function parseArgs(argv: string[]): DeploySmokeArgs {
   assertArgv(argv);
 
@@ -150,37 +200,49 @@ export function parseArgs(argv: string[]): DeploySmokeArgs {
     const current = argv[index];
 
     if (current === "--cwd") {
-      args.cwd = requireFlagValue(current, argv[index + 1]);
+      const cwd = requireFlagValue(current, argv[index + 1]);
+      assertDeploySmokePathValue(cwd, current);
+      args.cwd = cwd;
       index += 1;
       continue;
     }
 
     if (current === "--config-dir") {
-      args.configDir = requireFlagValue(current, argv[index + 1]);
+      const configDir = requireFlagValue(current, argv[index + 1]);
+      assertDeploySmokePathValue(configDir, current);
+      args.configDir = configDir;
       index += 1;
       continue;
     }
 
     if (current === "--domain") {
-      args.domain = requireFlagValue(current, argv[index + 1]);
+      const domain = requireFlagValue(current, argv[index + 1]);
+      assertDeploySmokeDomainValue(domain, current);
+      args.domain = domain;
       index += 1;
       continue;
     }
 
     if (current === "--gateway-runtime") {
-      args.runtimeBinary = requireFlagValue(current, argv[index + 1]);
+      const runtimeBinary = requireFlagValue(current, argv[index + 1]);
+      assertDeploySmokePathValue(runtimeBinary, current);
+      args.runtimeBinary = runtimeBinary;
       index += 1;
       continue;
     }
 
     if (current === "--user") {
-      args.serviceUser = requireFlagValue(current, argv[index + 1]);
+      const serviceUser = requireFlagValue(current, argv[index + 1]);
+      assertDeploySmokeServiceUserValue(serviceUser, current);
+      args.serviceUser = serviceUser;
       index += 1;
       continue;
     }
 
     if (current === "--systemd-env-file") {
-      args.systemdEnvFile = requireFlagValue(current, argv[index + 1]);
+      const systemdEnvFile = requireFlagValue(current, argv[index + 1]);
+      assertDeploySmokePathValue(systemdEnvFile, current);
+      args.systemdEnvFile = systemdEnvFile;
       index += 1;
       continue;
     }
@@ -292,6 +354,8 @@ export async function smokeDeployConfigs(options: {
   assertDeploySmokePathValue(options.cwd, "cwd");
   assertDeploySmokePathValue(options.runtimeBinary, "runtimeBinary");
   assertDeploySmokePathValue(options.systemdEnvFile, "systemdEnvFile");
+  assertDeploySmokeDomainValue(options.domain, "domain");
+  assertDeploySmokeServiceUserValue(options.serviceUser, "serviceUser");
   for (const [index, configPath] of options.configPaths.entries()) {
     assertDeploySmokePathValue(configPath, `configPaths[${index}]`);
   }
