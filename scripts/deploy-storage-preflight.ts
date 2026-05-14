@@ -30,6 +30,8 @@ const ENV_FILE_STORAGE_PATH_KEYS = [
   "RAY_LLAMA_CPP_MODEL_PATH",
   "RAY_LLAMA_CPP_BINARY_PATH",
   "RAY_ASYNC_QUEUE_STORAGE_DIR",
+  "RAY_LLAMA_CPP_BINARY_SOURCE_PATH",
+  "RAY_MODEL_SOURCE_PATH",
 ] as const;
 
 export interface DeployStoragePreflightArgs {
@@ -68,7 +70,7 @@ Usage:
   bun ./scripts/deploy-storage-preflight.ts [options]
 
 Options:
-  --path <path>          Absolute path to check. Repeatable. Defaults to /, /var/cache/apt, /var/lib/apt, /etc/ray, /etc/systemd/system, /etc/caddy, /srv/ray, /srv/ray/.ray/bun-install-cache, /var/lib/ray, /tmp, /var/tmp, plus model, llama.cpp binary, and async-queue paths from --env-file when set.
+  --path <path>          Absolute path to check. Repeatable. Defaults to /, /var/cache/apt, /var/lib/apt, /etc/ray, /etc/systemd/system, /etc/caddy, /srv/ray, /srv/ray/.ray/bun-install-cache, /var/lib/ray, /tmp, /var/tmp, plus model, llama.cpp binary, async-queue, and artifact staging source paths from --env-file when set.
   --min-free-mib <n>    Required free storage in MiB. Default: RAY_DEPLOY_MIN_FREE_STORAGE_MIB or ${DEFAULT_MIN_FREE_STORAGE_MIB}. Use 0 to skip the threshold.
   --env-file <path>      Load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from a bounded dotenv file unless --min-free-mib is set.
   --ray-env-file <path>  Alias for --env-file.
@@ -421,6 +423,18 @@ function parseDeployStorageEnvironmentFile(contents: string): DeployStorageEnvir
   const asyncQueueStorageDir = values.get("RAY_ASYNC_QUEUE_STORAGE_DIR");
   if (isNonEmptyEnvValue(asyncQueueStorageDir)) {
     storagePaths.push(normalizeStoragePath(asyncQueueStorageDir, "RAY_ASYNC_QUEUE_STORAGE_DIR"));
+  }
+
+  const llamaCppBinarySourcePath = values.get("RAY_LLAMA_CPP_BINARY_SOURCE_PATH");
+  if (isNonEmptyEnvValue(llamaCppBinarySourcePath)) {
+    storagePaths.push(
+      normalizeStoragePath(llamaCppBinarySourcePath, "RAY_LLAMA_CPP_BINARY_SOURCE_PATH"),
+    );
+  }
+
+  const modelSourcePath = values.get("RAY_MODEL_SOURCE_PATH");
+  if (isNonEmptyEnvValue(modelSourcePath)) {
+    storagePaths.push(normalizeStoragePath(modelSourcePath, "RAY_MODEL_SOURCE_PATH"));
   }
 
   return {

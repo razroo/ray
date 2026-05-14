@@ -1012,7 +1012,7 @@ function validateDeployWorkflowStoragePreflight(
       workflowPath,
       line: workflowLineNumber(lines, "RAY_DEPLOY_MIN_FREE_STORAGE_MIB"),
       message:
-        "VPS deploy workflow must run on deploy-storage-preflight script changes and preflight remote free storage before APT package bootstrap, repository sync follow-up, config/unit/Caddy writes, Bun install-cache use, Bun production install, and env-file model, llama.cpp binary, or async-queue storage use so small VPS disks fail clearly before deploy work fills them.",
+        "VPS deploy workflow must run on deploy-storage-preflight script changes and preflight remote free storage before APT package bootstrap, repository sync follow-up, config/unit/Caddy writes, Bun install-cache use, Bun production install, and env-file model, llama.cpp binary, async-queue, or artifact source storage use so small VPS disks fail clearly before deploy work fills them.",
     },
   ];
 }
@@ -1949,6 +1949,8 @@ function validateDeployStoragePreflightScript(
     contents.includes("RAY_LLAMA_CPP_MODEL_PATH") &&
     contents.includes("RAY_LLAMA_CPP_BINARY_PATH") &&
     contents.includes("RAY_ASYNC_QUEUE_STORAGE_DIR") &&
+    contents.includes("RAY_LLAMA_CPP_BINARY_SOURCE_PATH") &&
+    contents.includes("RAY_MODEL_SOURCE_PATH") &&
     contents.includes("realpath") &&
     contents.includes("checkRealPath") &&
     contents.includes("resolveCheckRealPathIfDifferent") &&
@@ -1965,7 +1967,7 @@ function validateDeployStoragePreflightScript(
       scriptPath,
       line: workflowLineNumber(lines, "DEFAULT_STORAGE_PATHS"),
       message:
-        "Manual deploy storage preflight must check /, /var/cache/apt, /var/lib/apt, /etc/ray, /etc/systemd/system, /etc/caddy, /srv/ray/.ray/bun-install-cache, and /var/tmp by default, load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from --ray-env-file, include custom env-file model, llama.cpp binary, plus async-queue storage paths, and report resolved symlink targets so operator-run package installs, config writes, artifact staging, and Bun installs use the same disk headroom guard as the manual deploy helpers.",
+        "Manual deploy storage preflight must check /, /var/cache/apt, /var/lib/apt, /etc/ray, /etc/systemd/system, /etc/caddy, /srv/ray/.ray/bun-install-cache, and /var/tmp by default, load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from --ray-env-file, include custom env-file model, llama.cpp binary, async-queue, and artifact staging source storage paths, and report resolved symlink targets so operator-run package installs, config writes, artifact staging, and Bun installs use the same disk headroom guard as the manual deploy helpers.",
     },
   ];
 }
@@ -2167,8 +2169,15 @@ function validateDeployStoragePreflightDoc(
   if (
     !contents.includes("deploy:storage") ||
     !contents.includes("RAY_MODEL_PATH") ||
-    !contents.includes("RAY_ASYNC_QUEUE_STORAGE_DIR") ||
-    contents.includes("RAY_LLAMA_CPP_BINARY_PATH")
+    !contents.includes("RAY_ASYNC_QUEUE_STORAGE_DIR")
+  ) {
+    return [];
+  }
+
+  if (
+    contents.includes("RAY_LLAMA_CPP_BINARY_PATH") &&
+    contents.includes("RAY_LLAMA_CPP_BINARY_SOURCE_PATH") &&
+    contents.includes("RAY_MODEL_SOURCE_PATH")
   ) {
     return [];
   }
@@ -2180,7 +2189,7 @@ function validateDeployStoragePreflightDoc(
       docPath,
       line: workflowLineNumber(lines, "RAY_MODEL_PATH"),
       message:
-        "Runtime docs that list env-file deploy storage paths must include RAY_LLAMA_CPP_BINARY_PATH along with model and async-queue paths so manual small-VPS preflight guidance matches the deploy-storage helper.",
+        "Runtime docs that list env-file deploy storage paths must include RAY_LLAMA_CPP_BINARY_PATH, RAY_LLAMA_CPP_BINARY_SOURCE_PATH, and RAY_MODEL_SOURCE_PATH along with model and async-queue paths so manual small-VPS preflight guidance matches the deploy-storage helper.",
     },
   ];
 }

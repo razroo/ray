@@ -157,7 +157,8 @@ expands dependencies, or deploy writes config, units, and the Caddyfile; set
 `--ray-env-file /etc/ray/ray.env` to raise or lower the default 1024 MiB
 threshold without shell-sourcing the rest of the env file. When that env file
 sets a custom `RAY_MODEL_PATH`, `RAY_LLAMA_CPP_MODEL_PATH`,
-`RAY_LLAMA_CPP_BINARY_PATH`, or `RAY_ASYNC_QUEUE_STORAGE_DIR`, the preflight
+`RAY_LLAMA_CPP_BINARY_PATH`, `RAY_ASYNC_QUEUE_STORAGE_DIR`,
+`RAY_LLAMA_CPP_BINARY_SOURCE_PATH`, or `RAY_MODEL_SOURCE_PATH`, the preflight
 checks those volumes too.
 Use `sudo /usr/local/bin/bun run deploy:storage -- --ray-env-file /etc/ray/ray.env`
 when the env file is installed as root-owned `0600`.

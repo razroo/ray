@@ -166,7 +166,8 @@ install cache, Ray state, `/tmp`, and `/var/tmp` volumes with the same
 `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` threshold used by the manual deploy helpers without
 shell-sourcing the rest of the env file.
 When the env file sets a custom `RAY_MODEL_PATH`, `RAY_LLAMA_CPP_MODEL_PATH`,
-`RAY_LLAMA_CPP_BINARY_PATH`, or `RAY_ASYNC_QUEUE_STORAGE_DIR`, the preflight
+`RAY_LLAMA_CPP_BINARY_PATH`, `RAY_ASYNC_QUEUE_STORAGE_DIR`,
+`RAY_LLAMA_CPP_BINARY_SOURCE_PATH`, or `RAY_MODEL_SOURCE_PATH`, the preflight
 checks those volumes too.
 Use the same `sudo /usr/local/bin/bun run` form for other manual helpers that
 load a root-owned `0600` `/etc/ray/ray.env`.

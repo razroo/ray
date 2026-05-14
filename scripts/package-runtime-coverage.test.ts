@@ -602,7 +602,7 @@ test("validatePackageRuntimeCoverage requires bounded render temp cleanup", asyn
   );
 });
 
-test("validatePackageRuntimeCoverage requires deploy storage docs to mention binary path", async (t) => {
+test("validatePackageRuntimeCoverage requires deploy storage docs to mention artifact paths", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-storage-doc-"));
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
@@ -636,8 +636,9 @@ test("validatePackageRuntimeCoverage requires deploy storage docs to mention bin
       "timeout 60s sudo /usr/local/bin/bun run deploy:storage -- --ray-env-file /etc/ray/ray.env",
       "```",
       "",
-      "When the env file sets a custom `RAY_MODEL_PATH`, `RAY_LLAMA_CPP_MODEL_PATH`, or",
-      "`RAY_ASYNC_QUEUE_STORAGE_DIR`, the preflight checks those volumes too.",
+      "When the env file sets a custom `RAY_MODEL_PATH`, `RAY_LLAMA_CPP_MODEL_PATH`,",
+      "`RAY_LLAMA_CPP_BINARY_PATH`, or `RAY_ASYNC_QUEUE_STORAGE_DIR`, the preflight",
+      "checks those volumes too.",
       "",
     ].join("\n"),
   );

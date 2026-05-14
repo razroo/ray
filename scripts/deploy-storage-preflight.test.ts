@@ -87,6 +87,8 @@ test("loadDeployStoragePreflightArgs applies bounded ray env file thresholds", a
       "RAY_LLAMA_CPP_MODEL_PATH=/ignored/fallback.gguf",
       "RAY_LLAMA_CPP_BINARY_PATH=/opt/ray/bin/llama-server",
       "RAY_ASYNC_QUEUE_STORAGE_DIR=/mnt/ray/async-queue",
+      "RAY_LLAMA_CPP_BINARY_SOURCE_PATH=/mnt/ray/staging/llama-server",
+      'RAY_MODEL_SOURCE_PATH="/mnt/ray/staging/local 1b.gguf"',
       "RAY_API_KEYS=not-retained-by-storage-preflight",
       "",
     ].join("\n"),
@@ -112,6 +114,8 @@ test("loadDeployStoragePreflightArgs applies bounded ray env file thresholds", a
     "/mnt/ray/models/local 1b.gguf",
     "/opt/ray/bin/llama-server",
     "/mnt/ray/async-queue",
+    "/mnt/ray/staging/llama-server",
+    "/mnt/ray/staging/local 1b.gguf",
   ]);
 
   const fromFlag = await loadDeployStoragePreflightArgs(
@@ -120,11 +124,16 @@ test("loadDeployStoragePreflightArgs applies bounded ray env file thresholds", a
   );
   assert.equal(fromFlag.minFreeStorageMiB, 128);
   assert.equal(fromFlag.minFreeStorageMiBSource, "flag");
-  assert.deepEqual(fromFlag.paths.slice(-2), ["/opt/ray/bin/llama-server", "/mnt/ray/async-queue"]);
-  assert.deepEqual(fromFlag.paths.slice(-3), [
+  assert.deepEqual(fromFlag.paths.slice(-2), [
+    "/mnt/ray/staging/llama-server",
+    "/mnt/ray/staging/local 1b.gguf",
+  ]);
+  assert.deepEqual(fromFlag.paths.slice(-5), [
     "/mnt/ray/models/local 1b.gguf",
     "/opt/ray/bin/llama-server",
     "/mnt/ray/async-queue",
+    "/mnt/ray/staging/llama-server",
+    "/mnt/ray/staging/local 1b.gguf",
   ]);
 
   const explicitPath = await loadDeployStoragePreflightArgs(
@@ -184,6 +193,12 @@ test("loadDeployStoragePreflightArgs rejects malformed ray env file thresholds",
   await assert.rejects(
     () => loadDeployStoragePreflightArgs(["--ray-env-file", envFile], {}),
     /RAY_MODEL_PATH must be absolute/,
+  );
+
+  await writeFile(envFile, "RAY_MODEL_SOURCE_PATH=models/source.gguf\n");
+  await assert.rejects(
+    () => loadDeployStoragePreflightArgs(["--ray-env-file", envFile], {}),
+    /RAY_MODEL_SOURCE_PATH must be absolute/,
   );
 });
 
@@ -306,7 +321,7 @@ test("runDeployStoragePreflightCli reports malformed thresholds", async () => {
   assert.match(stderr.join(""), /--min-free-mib must be less than or equal to/);
 });
 
-test("runDeployStoragePreflightCli help documents env-file binary storage paths", async () => {
+test("runDeployStoragePreflightCli help documents env-file artifact storage paths", async () => {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const code = await runDeployStoragePreflightCli(
@@ -331,5 +346,8 @@ test("runDeployStoragePreflightCli help documents env-file binary storage paths"
   assert.equal(code, 0);
   assert.deepEqual(stderr, []);
   assert.match(stdout.join(""), /Defaults to \//);
-  assert.match(stdout.join(""), /model, llama\.cpp binary, and async-queue paths/);
+  assert.match(
+    stdout.join(""),
+    /model, llama\.cpp binary, async-queue, and artifact staging source paths/,
+  );
 });
