@@ -278,7 +278,7 @@ test("assertPackedPackageManifest rejects broken entry point targets", () => {
   );
 });
 
-test("assertPackedPackageManifest rejects local-only dependencies and lifecycle scripts", () => {
+test("assertPackedPackageManifest rejects local-only dependencies and package scripts", () => {
   assert.throws(
     () =>
       assertPackedPackageManifest(
@@ -318,6 +318,6 @@ test("assertPackedPackageManifest rejects local-only dependencies and lifecycle 
         }),
         safePackedManifestEntries,
       ),
-    /@razroo\/ray-sdk package\.json must not publish lifecycle script postinstall/,
+    /@razroo\/ray-sdk package\.json must not publish scripts/,
   );
 });

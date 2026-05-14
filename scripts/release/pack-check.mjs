@@ -19,14 +19,6 @@ const packedManifestDependencySections = [
   "peerDependencies",
   "optionalDependencies",
 ];
-const packedLifecycleScripts = new Set([
-  "preinstall",
-  "install",
-  "postinstall",
-  "prepare",
-  "prepublish",
-  "prepublishOnly",
-]);
 const unsafeManifestKeys = new Set(["__proto__", "constructor", "prototype"]);
 const localOnlyDependencySpecPattern = /^(?:workspace|file|link|portal):|^(?:\.{1,2}\/|\/)/;
 const semverPattern =
@@ -384,23 +376,9 @@ function assertNoLocalOnlyDependencySpecs(packageName, manifest) {
   }
 }
 
-function assertNoPackedLifecycleScripts(packageName, manifest) {
-  const scripts = manifest.scripts;
-  if (scripts === undefined) {
-    return;
-  }
-  if (!isRecord(scripts)) {
-    throw new Error(`${packageName} package.json scripts must be an object`);
-  }
-
-  for (const [name, command] of Object.entries(scripts)) {
-    assertNoUnsafeManifestKey(name, `${packageName} package.json scripts`);
-    if (packedLifecycleScripts.has(name)) {
-      throw new Error(`${packageName} package.json must not publish lifecycle script ${name}`);
-    }
-    if (typeof command !== "string") {
-      throw new Error(`${packageName} package.json scripts.${name} must be a string`);
-    }
+function assertNoPackedPackageScripts(packageName, manifest) {
+  if (manifest.scripts !== undefined) {
+    throw new Error(`${packageName} package.json must not publish scripts`);
   }
 }
 
@@ -437,7 +415,7 @@ export function assertPackedPackageManifest(packageName, manifest, entries) {
   }
 
   assertNoLocalOnlyDependencySpecs(packageName, manifest);
-  assertNoPackedLifecycleScripts(packageName, manifest);
+  assertNoPackedPackageScripts(packageName, manifest);
 }
 
 export function assertRequiredTarballEntries(packageName, entries, requiredEntries) {

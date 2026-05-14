@@ -26,9 +26,6 @@
       "default": "./dist/index.js"
     }
   },
-  "scripts": {
-    "release:check-source": "bun ./scripts/release/check-source.mjs"
-  },
   "files": [
     "dist",
     "src",

@@ -123,8 +123,8 @@ bun run release:verify-npm -- <version-you-just-published>
 Sanity-check `package.json` matches the semver you intend for the tag:
 
 ```bash
-cd packages/core && bun run release:check-source -- "$(bun -e 'console.log(require("./package.json").version)')"
-cd packages/sdk && bun run release:check-source -- "$(bun -e 'console.log(require("./package.json").version)')"
+bun ./packages/core/scripts/release/check-source.mjs "$(bun -e 'console.log(require("./packages/core/package.json").version)')"
+bun ./packages/sdk/scripts/release/check-source.mjs "$(bun -e 'console.log(require("./packages/sdk/package.json").version)')"
 ```
 
 ## Consumers
