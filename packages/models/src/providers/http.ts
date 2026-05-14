@@ -64,7 +64,9 @@ const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 const unsafeAdapterRecordKeys = new Set(["__proto__", "constructor", "prototype"]);
 const reservedAdapterHeaderNames = new Set([
   "connection",
+  "content-encoding",
   "content-length",
+  "content-type",
   "host",
   "keep-alive",
   "proxy-authenticate",
