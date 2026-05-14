@@ -62,6 +62,7 @@ const workflowReleaseGatePattern = /\bbun\s+run\s+release:gate\b/;
 const workflowNpmPublishPattern = /\bnpm\s+publish\b/;
 const workflowBunPackPattern = /\bbun\s+(?:pm\s+)?pack\b/;
 const workflowGitHubApiPattern = /\bgh\s+api\b/;
+const canonicalReleaseRepositoryPattern = /github\.repository\s*==\s*['"]razroo\/ray['"]/;
 
 export interface PackageRuntimeCoverageArgs {
   cwd: string;
@@ -1821,6 +1822,16 @@ async function validateWorkflow(
       workflowPath,
       message:
         "npm release workflows must set timeout-minutes so a stuck registry or quality wait cannot hold a release job indefinitely.",
+    });
+  }
+
+  if (publishesToNpm && !canonicalReleaseRepositoryPattern.test(contents)) {
+    diagnostics.push({
+      level: "error",
+      code: "workflow_npm_release_canonical_repo_guard_missing",
+      workflowPath,
+      message:
+        "npm release workflows must guard publish jobs with github.repository == 'razroo/ray' so forks cannot accidentally run the official package publish path.",
     });
   }
 

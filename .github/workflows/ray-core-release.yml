@@ -24,7 +24,7 @@ defaults:
 
 jobs:
   publish:
-    if: startsWith(github.ref_name, 'core-v')
+    if: github.repository == 'razroo/ray' && startsWith(github.ref_name, 'core-v')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:

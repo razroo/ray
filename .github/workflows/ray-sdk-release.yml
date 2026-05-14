@@ -25,7 +25,7 @@ defaults:
 
 jobs:
   publish:
-    if: startsWith(github.ref_name, 'sdk-v')
+    if: github.repository == 'razroo/ray' && startsWith(github.ref_name, 'sdk-v')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
