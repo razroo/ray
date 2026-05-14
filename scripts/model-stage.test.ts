@@ -246,6 +246,10 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
   const commandsText = plan.commands.join("\n");
   assert.match(commandsText, /timeout 30s stat -c %s -- '\.\/bin\/llama-server'/);
   assert.match(commandsText, /timeout 30s df -Pm '\/usr\/local\/bin'/);
+  assert.match(commandsText, /timeout 30s stat -c %d -- '\/usr\/local\/bin'/);
+  assert.match(commandsText, /timeout 30s stat -c %d -- '\/var\/lib\/ray\/models'/);
+  assert.match(commandsText, /binary_target_dev/);
+  assert.match(commandsText, /model_target_dev/);
   assert.match(commandsText, /keep at least 64 MiB free after copying llama-server/);
   assert.match(
     commandsText,
@@ -258,6 +262,8 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
     commandsText,
     /shared target filesystem for \/usr\/local\/bin and \/var\/lib\/ray\/models/,
   );
+  assert.doesNotMatch(commandsText, /binary_fs/);
+  assert.doesNotMatch(commandsText, /model_fs/);
   assert.match(commandsText, /timeout 30s df -Pm '\/var\/lib\/ray\/models'/);
   assert.match(commandsText, /GGUF source does not start with the GGUF header/);
   assert.match(

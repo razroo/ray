@@ -614,11 +614,15 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
     binarySourcePath,
   )})" || exit "$?"; source_bytes="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s stat -c %s -- ${shellQuote(
     sourcePath,
+  )})" || exit "$?"; binary_target_dev="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s stat -c %d -- ${shellQuote(
+    plan.binaryDirectory,
+  )})" || exit "$?"; model_target_dev="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s stat -c %d -- ${shellQuote(
+    plan.modelDirectory,
   )})" || exit "$?"; binary_df_output="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s df -Pm ${shellQuote(
     plan.binaryDirectory,
   )})" || exit "$?"; df_output="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s df -Pm ${shellQuote(
     plan.modelDirectory,
-  )})" || exit "$?"; binary_fs="$(printf '%s\\n' "$binary_df_output" | awk 'NR==2 {print $1}')"; model_fs="$(printf '%s\\n' "$df_output" | awk 'NR==2 {print $1}')"; if test -n "$binary_fs" && test "$binary_fs" = "$model_fs"; then binary_source_mib="$(((\${binary_source_bytes:-0} + ${
+  )})" || exit "$?"; if test -n "$binary_target_dev" && test "$binary_target_dev" = "$model_target_dev"; then binary_source_mib="$(((\${binary_source_bytes:-0} + ${
     BYTES_PER_MIB - 1
   }) / ${BYTES_PER_MIB}))"; test "$binary_source_mib" -ge 1 || binary_source_mib=1; source_mib="$(((\${source_bytes:-0} + ${
     BYTES_PER_MIB - 1
