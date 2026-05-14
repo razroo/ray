@@ -2624,6 +2624,56 @@ test("diagnoseConfig warns when async retained jobs can exceed storage reserve",
   assert.match(diagnostic.message, /RAY_ASYNC_QUEUE_MAX_JOBS/);
 });
 
+test("diagnoseConfig flags async queue inode headroom below retained job capacity", () => {
+  const config = mergeConfig(createDefaultConfig("1b"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir: "/var/lib/ray/async-queue",
+      maxJobs: 256,
+    },
+  });
+
+  assert.ok(
+    !diagnoseConfig(config, process.env, undefined, {
+      preflight: {
+        asyncQueueStoragePath: "/var/lib/ray/async-queue",
+        asyncQueueStorageCheckPath: "/var/lib/ray",
+        asyncQueueStorageStatus: "parent",
+        asyncQueueStorageAvailableInodes: 512,
+      },
+    }).some((entry) => entry.code === "async_queue_storage_inodes_low"),
+  );
+
+  const renderDiagnostic = diagnoseConfig(config, process.env, undefined, {
+    preflight: {
+      asyncQueueStoragePath: "/var/lib/ray/async-queue",
+      asyncQueueStorageCheckPath: "/var/lib/ray",
+      asyncQueueStorageStatus: "parent",
+      asyncQueueStorageAvailableInodes: 127,
+    },
+  }).find((entry) => entry.code === "async_queue_storage_inodes_low");
+
+  assert.ok(renderDiagnostic);
+  assert.equal(renderDiagnostic.level, "warn");
+
+  const doctorDiagnostic = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      asyncQueueStoragePath: "/var/lib/ray/async-queue",
+      asyncQueueStorageCheckPath: "/var/lib/ray",
+      asyncQueueStorageStatus: "parent",
+      asyncQueueStorageAvailableInodes: 127,
+    },
+  }).find((entry) => entry.code === "async_queue_storage_inodes_low");
+
+  assert.ok(doctorDiagnostic);
+  assert.equal(doctorDiagnostic.level, "error");
+  assert.match(doctorDiagnostic.message, /127 free inode/);
+  assert.match(doctorDiagnostic.message, /asyncQueue\.maxJobs \(256\)/);
+  assert.match(doctorDiagnostic.message, /RAY_ASYNC_QUEUE_MAX_JOBS/);
+  assert.match(doctorDiagnostic.message, /durable job/);
+});
+
 test("diagnoseConfig warns when non-strict async queue storage is below reserved headroom", () => {
   const config = mergeConfig(createDefaultConfig("1b"), {
     asyncQueue: {

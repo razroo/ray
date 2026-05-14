@@ -123,6 +123,7 @@ export interface DeploymentPreflight {
   asyncQueueStorageCheckRealPath?: string;
   asyncQueueStorageStatus?: AsyncQueueStorageStatus;
   asyncQueueStorageAvailableMiB?: number;
+  asyncQueueStorageAvailableInodes?: number;
   asyncQueueStorageError?: string;
   asyncQueueStorageAccessStatus?: ServiceUserAccessStatus;
   asyncQueueStorageAccessError?: string;
@@ -1267,6 +1268,10 @@ function formatMiB(value: number): string {
   return `${value.toLocaleString("en-US")} MiB`;
 }
 
+function formatCount(value: number): string {
+  return Math.floor(value).toLocaleString("en-US");
+}
+
 function formatFileMode(mode: number): string {
   return `0${(mode & 0o777).toString(8).padStart(3, "0")}`;
 }
@@ -1755,6 +1760,11 @@ function resolveAvailableStorageMiB(stats: StorageStats): number | undefined {
   }
 
   return Math.floor((availableBlocks * blockSize) / BYTES_PER_MIB);
+}
+
+function resolveAvailableStorageInodes(stats: StorageStats): number | undefined {
+  const availableInodes = statValueToNumber(stats.ffree);
+  return availableInodes === undefined ? undefined : Math.floor(availableInodes);
 }
 
 function getPresetMemoryBudgetMiB(preset: LlamaCppLaunchProfile["preset"]): number {
@@ -3663,6 +3673,21 @@ export function diagnoseConfig(
       });
     }
 
+    if (
+      preflight?.asyncQueueStorageAvailableInodes !== undefined &&
+      preflight.asyncQueueStorageAvailableInodes < config.asyncQueue.maxJobs
+    ) {
+      diagnostics.push({
+        level: strictFilesystem ? "error" : "warn",
+        code: "async_queue_storage_inodes_low",
+        message: `Async queue storage has ${formatCount(
+          preflight.asyncQueueStorageAvailableInodes,
+        )} free inode(s) at ${asyncQueueStorageDiagnosticPath}, below asyncQueue.maxJobs (${formatCount(
+          config.asyncQueue.maxJobs,
+        )}). Each retained durable job needs a filesystem entry, so lower RAY_ASYNC_QUEUE_MAX_JOBS, prune or move asyncQueue.storageDir, or use a filesystem with more free inodes before accepting durable jobs on this VPS.`,
+      });
+    }
+
     if (!path.isAbsolute(config.asyncQueue.storageDir)) {
       diagnostics.push({
         level: "warn",
@@ -4740,6 +4765,7 @@ async function collectAsyncQueueStoragePreflight(
 
       const storageStats = await statfs(checkPath);
       const availableMiB = resolveAvailableStorageMiB(storageStats);
+      const availableInodes = resolveAvailableStorageInodes(storageStats);
       const storageStatus = checkPath === storagePath ? "directory" : "parent";
       const asyncQueueStorageCheckRealPath = await resolveRealPathIfDifferent(checkPath);
       const managedByStateDirectory =
@@ -4761,6 +4787,9 @@ async function collectAsyncQueueStoragePreflight(
         ...(asyncQueueStorageCheckRealPath ? { asyncQueueStorageCheckRealPath } : {}),
         asyncQueueStorageStatus: storageStatus,
         ...(availableMiB !== undefined ? { asyncQueueStorageAvailableMiB: availableMiB } : {}),
+        ...(availableInodes !== undefined
+          ? { asyncQueueStorageAvailableInodes: availableInodes }
+          : {}),
         ...(managedByStateDirectory ? { asyncQueueStorageManagedByStateDirectory: true } : {}),
         ...(serviceUserAccess
           ? {
