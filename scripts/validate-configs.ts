@@ -175,6 +175,11 @@ function assertConfigValidationPathValue(value: unknown, label: string): asserts
   }
 }
 
+function isPathInside(parentPath: string, candidatePath: string): boolean {
+  const relative = path.relative(parentPath, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 export function parseArgs(argv: string[]): ValidateConfigsArgs {
   assertArgv(argv);
 
@@ -239,7 +244,11 @@ export function parseArgs(argv: string[]): ValidateConfigsArgs {
 export async function collectConfigPaths(cwd: string, configDir: string): Promise<string[]> {
   assertConfigValidationPathValue(cwd, "cwd");
   assertConfigValidationPathValue(configDir, "configDir");
-  const absoluteConfigDir = path.resolve(cwd, configDir);
+  const root = path.resolve(cwd);
+  const absoluteConfigDir = path.resolve(root, configDir);
+  if (!isPathInside(root, absoluteConfigDir)) {
+    throw new Error("configDir must stay inside cwd");
+  }
   const configPaths: string[] = [];
   let directory: Awaited<ReturnType<typeof opendir>> | undefined;
 
@@ -1330,17 +1339,25 @@ export async function validateConfigFiles(options: {
   }
 
   assertConfigValidationPathValue(options.cwd, "cwd");
+  const cwd = path.resolve(options.cwd);
   for (const [index, configPath] of options.configPaths.entries()) {
     assertConfigValidationPathValue(configPath, `configPaths[${index}]`);
   }
+  const configPaths = options.configPaths.map((configPath, index) => {
+    const resolvedPath = path.resolve(cwd, configPath);
+    if (!isPathInside(cwd, resolvedPath)) {
+      throw new Error(`configPaths[${index}] must stay inside cwd`);
+    }
+    return resolvedPath;
+  });
 
   const env = withSmokeAuthEnv(options.env ?? process.env);
   const results: ConfigValidationResult[] = [];
 
-  for (const configPath of options.configPaths) {
+  for (const configPath of configPaths) {
     try {
       const inspected = await loadAndDiagnoseDeployment({
-        cwd: options.cwd,
+        cwd,
         configPath,
         env,
         inspectHostStorage: false,

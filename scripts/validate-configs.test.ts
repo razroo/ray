@@ -93,6 +93,10 @@ test("collectConfigPaths rejects malformed direct paths before reading directori
     () => collectConfigPaths(process.cwd(), `configs/${"a".repeat(4096)}`),
     /configDir must be at most 4096 bytes/,
   );
+  await assert.rejects(
+    () => collectConfigPaths(process.cwd(), path.dirname(process.cwd())),
+    /configDir must stay inside cwd/,
+  );
 });
 
 test("validateConfigFiles rejects excessive config inputs before rendering", async () => {
@@ -126,6 +130,14 @@ test("validateConfigFiles rejects malformed direct paths before rendering", asyn
       }),
     /configPaths\[0\] must be at most 4096 bytes/,
   );
+  await assert.rejects(
+    () =>
+      validateConfigFiles({
+        cwd: process.cwd(),
+        configPaths: [path.join(path.dirname(process.cwd()), "outside.json")],
+      }),
+    /configPaths\[0\] must stay inside cwd/,
+  );
 });
 
 test("validateConfigFiles requires explicit public runtime guardrails", async (t) => {
@@ -154,7 +166,7 @@ test("validateConfigFiles requires explicit public runtime guardrails", async (t
   );
 
   const summary = await validateConfigFiles({
-    cwd: process.cwd(),
+    cwd: tempDir,
     configPaths: [configPath],
     env: {
       ...process.env,
@@ -303,7 +315,7 @@ test("validateConfigFiles rejects public backend secret headers and extra launch
   await writeFile(configPath, JSON.stringify(publicConfig), "utf8");
 
   const summary = await validateConfigFiles({
-    cwd: process.cwd(),
+    cwd: tempDir,
     configPaths: [configPath],
     env: {
       ...process.env,
