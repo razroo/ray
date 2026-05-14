@@ -559,13 +559,14 @@ test("assertPackedPackageManifest rejects broken entry point targets", () => {
           exports: {
             ".": {
               types: "./dist/index.d.ts",
-              default: "./dist/missing.js",
+              development: "./src/missing.ts",
+              default: "./dist/index.js",
             },
           },
         }),
         safePackedManifestEntries,
       ),
-    /@razroo\/ray-sdk package\.json exports\["\."\]\.default points to missing entry package\/dist\/missing\.js/,
+    /@razroo\/ray-sdk package\.json exports\["\."\]\.development points to missing entry package\/src\/missing\.ts/,
   );
 
   assert.throws(
@@ -611,6 +612,26 @@ test("assertPackedPackageManifest requires root export types", () => {
         safePackedManifestEntries,
       ),
     /@razroo\/ray-sdk package\.json exports\["\."\] must be an object/,
+  );
+});
+
+test("assertPackedPackageManifest requires root export default", () => {
+  assert.throws(
+    () =>
+      assertPackedPackageManifest(
+        "@razroo/ray-sdk",
+        safePackedManifest({
+          exports: {
+            ".": {
+              types: "./dist/index.d.ts",
+              development: "./src/index.ts",
+              default: "./dist/other.js",
+            },
+          },
+        }),
+        [...safePackedManifestEntries, "package/dist/other.js"],
+      ),
+    /@razroo\/ray-sdk package\.json exports\["\."\]\.default must match package\.json main/,
   );
 });
 

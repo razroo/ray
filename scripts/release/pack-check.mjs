@@ -577,7 +577,7 @@ function assertNoPackedPackageScripts(packageName, manifest) {
   }
 }
 
-function assertRootExportTypes(packageName, manifest) {
+function assertRootExportEntrypoints(packageName, manifest) {
   if (!isRecord(manifest.exports)) {
     throw new Error(`${packageName} package.json exports must be an object`);
   }
@@ -589,6 +589,12 @@ function assertRootExportTypes(packageName, manifest) {
 
   if (rootExport.types !== manifest.types) {
     throw new Error(`${packageName} package.json exports["."].types must match package.json types`);
+  }
+
+  if (rootExport.default !== manifest.main) {
+    throw new Error(
+      `${packageName} package.json exports["."].default must match package.json main`,
+    );
   }
 }
 
@@ -617,7 +623,7 @@ export function assertPackedPackageManifest(packageName, manifest, entries) {
   if (manifest.exports === undefined) {
     throw new Error(`${packageName} package.json exports must be present`);
   }
-  assertRootExportTypes(packageName, manifest);
+  assertRootExportEntrypoints(packageName, manifest);
 
   const exportTargets = [];
   collectExportTargets(packageName, manifest.exports, "exports", exportTargets);
