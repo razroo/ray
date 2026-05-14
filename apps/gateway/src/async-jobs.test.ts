@@ -392,6 +392,10 @@ test("durable inference queue stores sanitized job requests", async () => {
       metadata: {
         team: "ops",
       },
+      responseFormat: {
+        type: "json_object",
+        leakedField: "do not persist",
+      },
       cache: false,
       leakedField: "do not persist",
       callbackUrl: "https://example.com/callback",
@@ -408,8 +412,10 @@ test("durable inference queue stores sanitized job requests", async () => {
     assert.equal(queuedRequest.system, "answer briefly");
     assert.equal(queuedRequest.leakedField, undefined);
     assert.equal(queuedRequest.callbackUrl, undefined);
+    assert.deepEqual(queuedRequest.responseFormat, { type: "json_object" });
     assert.equal(queuedRaw.request?.leakedField, undefined);
     assert.equal(queuedRaw.request?.callbackUrl, undefined);
+    assert.deepEqual(queuedRaw.request?.responseFormat, { type: "json_object" });
     await rm(join(jobsDir, `${queuedJob.id}.json`), { force: true });
 
     const now = new Date().toISOString();
@@ -420,6 +426,10 @@ test("durable inference queue stores sanitized job requests", async () => {
         status: "queued",
         request: {
           input: "  sanitize recovered request  ",
+          responseFormat: {
+            type: "text",
+            leakedField: "disk-only secret",
+          },
           leakedField: "disk-only secret",
         },
         createdAt: now,
@@ -448,7 +458,9 @@ test("durable inference queue stores sanitized job requests", async () => {
 
     assert.equal(recovered.request.input, "sanitize recovered request");
     assert.equal((recovered.request as Record<string, unknown>).leakedField, undefined);
+    assert.deepEqual(recovered.request.responseFormat, { type: "text" });
     assert.equal(recoveredRaw.request?.leakedField, undefined);
+    assert.deepEqual(recoveredRaw.request?.responseFormat, { type: "text" });
 
     await queueAfterRestart.stop();
   } finally {

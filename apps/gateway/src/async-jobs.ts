@@ -1211,7 +1211,7 @@ function normalizeRequestForStorage(
   }
 
   if (normalized.responseFormat !== undefined) {
-    stored.responseFormat = { ...normalized.responseFormat };
+    stored.responseFormat = { type: normalized.responseFormat.type };
   }
 
   if (normalized.dedupeKey !== undefined) {
