@@ -209,6 +209,15 @@ function truncateLogKey(value: string): string {
   }
 }
 
+function setLogObjectProperty(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
 function sanitizeLogValue(value: unknown, seen: WeakSet<object>, depth = 0): unknown {
   if (value === null || value === undefined) {
     return value;
@@ -289,16 +298,15 @@ function sanitizeLogValue(value: unknown, seen: WeakSet<object>, depth = 0): unk
 
     for (const key of keys.slice(0, MAX_LOG_OBJECT_KEYS)) {
       const safeKey = truncateLogKey(key);
+      let sanitized: unknown;
 
       try {
-        output[safeKey] = sanitizeLogValue(
-          (value as Record<string, unknown>)[key],
-          seen,
-          depth + 1,
-        );
+        sanitized = sanitizeLogValue((value as Record<string, unknown>)[key], seen, depth + 1);
       } catch (error) {
-        output[safeKey] = `[Thrown: ${truncateLogString(toErrorMessage(error))}]`;
+        sanitized = `[Thrown: ${truncateLogString(toErrorMessage(error))}]`;
       }
+
+      setLogObjectProperty(output, safeKey, sanitized);
     }
 
     if (keys.length > MAX_LOG_OBJECT_KEYS) {
@@ -342,12 +350,15 @@ function copyLogFields(line: LogLine, fields?: LogFields): void {
   for (const key of keys.slice(0, MAX_LOG_OBJECT_KEYS)) {
     const targetKey = reservedLogFields.has(key) ? `field.${key}` : key;
     const safeTargetKey = truncateLogKey(targetKey);
+    let value: unknown;
 
     try {
-      line[safeTargetKey] = fields[key];
+      value = fields[key];
     } catch (error) {
-      line[safeTargetKey] = `[Thrown: ${truncateLogString(toErrorMessage(error))}]`;
+      value = `[Thrown: ${truncateLogString(toErrorMessage(error))}]`;
     }
+
+    setLogObjectProperty(line, safeTargetKey, value);
   }
 
   if (keys.length > MAX_LOG_OBJECT_KEYS) {

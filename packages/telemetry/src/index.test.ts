@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Logger, RuntimeMetrics, serializeError } from "./index.js";
+import { Logger, RuntimeMetrics, serializeError, type LogFields } from "./index.js";
 
 test("logger rejects invalid direct config", () => {
   assert.throws(() => new Logger("", "info"), /serviceName/);
@@ -96,6 +96,46 @@ test("logger protects core fields and throwing top-level accessors", () => {
   assert.equal(parsed["field.ts"], "spoofed");
   assert.equal(parsed.explode, "[Thrown: boom]");
   assert.equal(parsed[`k${"x".repeat(104)}...[truncated 36 chars]`], "bounded-key");
+});
+
+test("logger emits unsafe field keys as inert own properties", () => {
+  const originalLog = console.log;
+  let line = "";
+  console.log = (value?: unknown) => {
+    line = String(value);
+  };
+
+  try {
+    assert.doesNotThrow(() => {
+      new Logger("ray-test", "debug").info(
+        "safe log",
+        JSON.parse(
+          '{"__proto__":{"polluted":true},"constructor":"shadowed","nested":{"__proto__":{"deep":true},"constructor":"nested-shadowed"}}',
+        ) as LogFields,
+      );
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  const parsed = JSON.parse(line) as {
+    __proto__: { polluted: boolean };
+    constructor: string;
+    nested: {
+      __proto__: { deep: boolean };
+      constructor: string;
+    };
+  };
+
+  assert.equal(Object.getPrototypeOf(parsed), Object.prototype);
+  assert.equal(Object.prototype.hasOwnProperty.call(parsed, "__proto__"), true);
+  assert.deepEqual(parsed.__proto__, { polluted: true });
+  assert.equal(parsed.constructor, "shadowed");
+  assert.equal(Object.prototype.hasOwnProperty.call(parsed.nested, "__proto__"), true);
+  assert.deepEqual(parsed.nested.__proto__, { deep: true });
+  assert.equal(parsed.nested.constructor, "nested-shadowed");
+  assert.equal(({} as { polluted?: boolean; deep?: boolean }).polluted, undefined);
+  assert.equal(({} as { polluted?: boolean; deep?: boolean }).deep, undefined);
 });
 
 test("logger does not throw when field accessors fail", () => {
