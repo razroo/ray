@@ -9,7 +9,7 @@ Aligned with [roadmap Phase 1 exit criteria](roadmap.md) and day-one operator ex
 1. **Clean install and build**
 
    ```bash
-   bun install
+   bun install --frozen-lockfile
    bun run build
    ```
 

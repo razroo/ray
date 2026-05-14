@@ -110,7 +110,7 @@ Requires [**GitHub CLI**](https://cli.github.com/) (`gh`) authenticated (`gh aut
 From the repo root (mirrors CI’s **`release:gate`**):
 
 ```bash
-bun install
+bun install --frozen-lockfile
 bun run release:gate
 ```
 

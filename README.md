@@ -162,7 +162,7 @@ Deliberate omissions in the MVP:
 ### Install
 
 ```bash
-bun install
+bun install --frozen-lockfile
 ```
 
 ### Run locally (tiny profile — mock provider)

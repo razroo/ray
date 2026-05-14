@@ -19,7 +19,7 @@ Ray is being built as a lean inference runtime for cheap VPS hardware. Contribut
 ## Development
 
 1. Install Node 20+ and Bun 1.3+.
-2. Run `bun install`.
+2. Run `bun install --frozen-lockfile`.
 3. Start the default sub-1B `llama.cpp` path with `bun run dev`, or use `bun run dev:tiny` if you do not have a local model backend running yet.
 4. Build with `bun run build`.
 5. Run tests with `bun run test`.
