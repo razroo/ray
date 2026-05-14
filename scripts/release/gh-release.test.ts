@@ -30,6 +30,7 @@ async function createReleaseHelperFixture(
   options: {
     ghReleaseViewScript: string;
     localTagMode?: "absent" | "annotated-at-head" | "lightweight-at-head" | "wrong-target";
+    remoteTagMode?: "absent" | "annotated-at-head" | "lightweight-at-head" | "wrong-target";
   },
 ): Promise<{ binDir: string; logPath: string; scriptPath: string; tempDir: string }> {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-gh-release-helper-"));
@@ -44,6 +45,7 @@ async function createReleaseHelperFixture(
   const binDir = path.join(tempDir, "bin");
   const logPath = path.join(tempDir, "commands.log");
   const localTagMode = options.localTagMode ?? "absent";
+  const remoteTagMode = options.remoteTagMode ?? "absent";
 
   await writeExecutable(
     path.join(binDir, "timeout"),
@@ -85,6 +87,7 @@ async function createReleaseHelperFixture(
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       `LOCAL_TAG_MODE=${JSON.stringify(localTagMode)}`,
+      `REMOTE_TAG_MODE=${JSON.stringify(remoteTagMode)}`,
       'printf "git %s\\n" "$*" >> "${RAY_TEST_LOG:?}"',
       'if [ "${1:-}" = "status" ]; then',
       "  exit 0",
@@ -127,7 +130,31 @@ async function createReleaseHelperFixture(
       "  exit 0",
       "fi",
       'if [ "${1:-}" = "ls-remote" ]; then',
-      "  exit 2",
+      '  if [ "$REMOTE_TAG_MODE" = "absent" ]; then',
+      "    exit 2",
+      "  fi",
+      '  tag_ref=""',
+      '  for arg in "$@"; do',
+      '    if [[ "$arg" == refs/tags/* && "$arg" != *"^{}" ]]; then',
+      '      tag_ref="$arg"',
+      "    fi",
+      "  done",
+      '  tag_name="${tag_ref#refs/tags/}"',
+      '  if [ -z "$tag_name" ]; then',
+      '    echo "missing tag ref" >&2',
+      "    exit 98",
+      "  fi",
+      '  if [ "$REMOTE_TAG_MODE" = "lightweight-at-head" ]; then',
+      '    printf "abcdef1234567890\\trefs/tags/%s\\n" "$tag_name"',
+      "    exit 0",
+      "  fi",
+      '  printf "tagobject123456789\\trefs/tags/%s\\n" "$tag_name"',
+      '  if [ "$REMOTE_TAG_MODE" = "wrong-target" ]; then',
+      '    printf "deadbeef00000000\\trefs/tags/%s^{}\\n" "$tag_name"',
+      "  else",
+      '    printf "abcdef1234567890\\trefs/tags/%s^{}\\n" "$tag_name"',
+      "  fi",
+      "  exit 0",
       "fi",
       'if [ "${1:-}" = "push" ] && [ "${2:-}" != "--atomic" ]; then',
       '  echo "release tag push must be atomic" >&2',
@@ -227,7 +254,7 @@ test("gh release helper gates destructive releases on clean synced main", async 
     contents,
     /run_required_bounded "checking GitHub CLI authentication" 60 gh auth status/,
   );
-  assert.match(contents, /remote_tag_exists "\$tag"/);
+  assert.match(contents, /remote_release_tag_ready "\$tag" "\$LOCAL_HEAD"/);
   assert.match(contents, /github_release_exists "\$tag"/);
   assert.match(contents, /bun \.\/scripts\/release\/check-source\.mjs "\$VER"/);
 });
@@ -240,7 +267,12 @@ test("gh release helper bounds network release operations", async () => {
   assert.match(contents, /timeout "\$\{seconds\}s" "\$@"/);
   assert.match(contents, /return 124/);
   assert.match(contents, /git fetch --tags origin refs\/heads\/main:refs\/remotes\/origin\/main/);
-  assert.match(contents, /run_bounded 60 git ls-remote --exit-code --tags origin/);
+  assert.match(
+    contents,
+    /run_bounded 60 git ls-remote --exit-code --tags origin "refs\/tags\/\$tag" "refs\/tags\/\$tag\^\{\}"/,
+  );
+  assert.match(contents, /remote_release_tag_ready\(\) \{/);
+  assert.match(contents, /fail "timed out checking remote tag \$tag"/);
   assert.match(contents, /fail "could not check remote tag \$tag \(exit \$status\)"/);
   assert.match(contents, /local_release_tag_ready\(\) \{/);
   assert.match(contents, /git cat-file -t "refs\/tags\/\$tag"/);
@@ -329,6 +361,68 @@ test("gh release helper reuses matching local annotated tags", async (t) => {
   assert.match(commandLog, /^git rev-parse core-v1\.2\.3\^\{\}$/m);
   assert.doesNotMatch(commandLog, /^git tag -a /m);
   assert.match(commandLog, /^git push --atomic origin core-v1\.2\.3 sdk-v1\.2\.3$/m);
+});
+
+test("gh release helper resumes after remote tags or releases already exist safely", async (t) => {
+  const fixture = await createReleaseHelperFixture(t, {
+    ghReleaseViewScript: [
+      '  if [ "${3:-}" = "core-v1.2.3" ]; then',
+      "    exit 0",
+      "  fi",
+      '  echo "release not found" >&2',
+      "  exit 1",
+    ].join("\n"),
+    localTagMode: "annotated-at-head",
+    remoteTagMode: "annotated-at-head",
+  });
+
+  const result = await runFixtureReleaseHelper(fixture);
+
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /Reusing remote annotated tag core-v1\.2\.3/);
+  assert.match(result.stdout, /Reusing remote annotated tag sdk-v1\.2\.3/);
+  assert.match(result.stdout, /Reusing GitHub release core-v1\.2\.3/);
+  assert.match(result.stdout, /Release tags already present on origin/);
+
+  const commandLog = await readFile(fixture.logPath, "utf8");
+  assert.doesNotMatch(commandLog, /^git tag -a /m);
+  assert.doesNotMatch(commandLog, /^git push /m);
+  assert.doesNotMatch(
+    commandLog,
+    /^gh release create core-v1\.2\.3 --generate-notes --title core-v1\.2\.3$/m,
+  );
+  assert.match(
+    commandLog,
+    /^gh release create sdk-v1\.2\.3 --generate-notes --title sdk-v1\.2\.3$/m,
+  );
+});
+
+test("gh release helper rejects unsafe existing remote tags", async (t) => {
+  const lightweightFixture = await createReleaseHelperFixture(t, {
+    ghReleaseViewScript: ['  echo "release not found" >&2', "  exit 1"].join("\n"),
+    remoteTagMode: "lightweight-at-head",
+  });
+
+  const lightweightResult = await runFixtureReleaseHelper(lightweightFixture);
+
+  assert.notEqual(lightweightResult.code, 0);
+  assert.match(
+    lightweightResult.stderr,
+    /remote tag core-v1\.2\.3 already exists but is not an annotated tag or could not be peeled/,
+  );
+
+  const wrongTargetFixture = await createReleaseHelperFixture(t, {
+    ghReleaseViewScript: ['  echo "release not found" >&2', "  exit 1"].join("\n"),
+    remoteTagMode: "wrong-target",
+  });
+
+  const wrongTargetResult = await runFixtureReleaseHelper(wrongTargetFixture);
+
+  assert.notEqual(wrongTargetResult.code, 0);
+  assert.match(
+    wrongTargetResult.stderr,
+    /remote tag core-v1\.2\.3 points at deadbeef00000000, expected abcdef1234567890/,
+  );
 });
 
 test("gh release helper rejects unsafe existing local tags", async (t) => {

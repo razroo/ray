@@ -104,7 +104,7 @@ bun run release:github -- --dry-run   # plan only
 bun run release:github -- --yes     # tag, git push --atomic tags, gh release create ×2
 ```
 
-Requires [**GitHub CLI**](https://cli.github.com/) (`gh`) authenticated (`gh auth login`). If a transient push failure leaves local annotated tags at the release commit, the helper reuses them on retry; local lightweight tags or tags pointing elsewhere fail closed. NPM publish still runs in Actions when each release is **published**.
+Requires [**GitHub CLI**](https://cli.github.com/) (`gh`) authenticated (`gh auth login`). If a transient failure leaves local or remote annotated tags at the release commit, or creates one GitHub Release before the other, the helper reuses the safe pieces on retry and creates only what is still missing; local or remote lightweight tags, tags pointing elsewhere, and ambiguous release probes fail closed. NPM publish still runs in Actions when each release is **published**.
 
 ## Verify locally before tagging
 
