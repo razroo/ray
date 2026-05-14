@@ -3120,6 +3120,39 @@ test("diagnoseConfig warns when the generated Caddy site address is local", () =
       `${caddySiteAddress} should be treated as a local Caddy site address`,
     );
   }
+
+  for (const caddySiteAddress of [
+    "0.0.0.0:443",
+    "10.0.0.5",
+    "172.20.1.10:8443",
+    "192.168.1.10",
+    "100.64.0.2",
+    "203.0.113.10",
+    "[fd00::1]:443",
+    "[fe80::1]:443",
+    "[2001:db8::1]:443",
+  ]) {
+    const nonPublicDiagnostics = diagnoseConfig(config, process.env, undefined, {
+      preflight: {
+        caddySiteAddress,
+      },
+    });
+
+    assert.ok(
+      nonPublicDiagnostics.some((entry) => entry.code === "caddy_site_address_local"),
+      `${caddySiteAddress} should be treated as a non-public Caddy site address`,
+    );
+  }
+
+  const publicDiagnostics = diagnoseConfig(config, process.env, undefined, {
+    preflight: {
+      caddySiteAddress: "ray.example.com",
+    },
+  });
+  assert.equal(
+    publicDiagnostics.some((entry) => entry.code === "caddy_site_address_local"),
+    false,
+  );
 });
 
 test("loadAndDiagnoseDeployment warns when EnvironmentFile permissions are open in strict mode", async (t) => {

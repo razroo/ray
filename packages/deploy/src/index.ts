@@ -491,6 +491,73 @@ function isLoopbackHost(value: string): boolean {
   return false;
 }
 
+function isNonPublicIpv4Address(value: string): boolean {
+  const octets = value.split(".").map((octet) => Number(octet));
+  const [first = -1, second = -1, third = -1] = octets;
+
+  return (
+    first === 0 ||
+    first === 10 ||
+    first === 127 ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 0 && third === 0) ||
+    (first === 192 && second === 0 && third === 2) ||
+    (first === 192 && second === 168) ||
+    (first === 198 && (second === 18 || second === 19)) ||
+    (first === 198 && second === 51 && third === 100) ||
+    (first === 203 && second === 0 && third === 113) ||
+    first >= 224 ||
+    (first === 100 && second >= 64 && second <= 127)
+  );
+}
+
+function parseIpv6Segment(value: string | undefined): number | undefined {
+  if (value === undefined || value.length === 0) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(value, 16);
+  return Number.isInteger(parsed) && parsed >= 0 && parsed <= 0xffff ? parsed : undefined;
+}
+
+function isNonPublicIpv6Address(value: string): boolean {
+  const host = normalizeHostLiteral(value);
+  const segments = host.split(":");
+  const first = parseIpv6Segment(segments[0]);
+  const second = parseIpv6Segment(segments[1]);
+
+  if (host === "::" || host === "0:0:0:0:0:0:0:0" || isLoopbackHost(host)) {
+    return true;
+  }
+
+  if (first === undefined) {
+    return false;
+  }
+
+  return (
+    (first & 0xfe00) === 0xfc00 ||
+    (first & 0xffc0) === 0xfe80 ||
+    (first & 0xff00) === 0xff00 ||
+    (first === 0x2001 && second === 0x0db8)
+  );
+}
+
+function isNonPublicIpHost(value: string): boolean {
+  const host = normalizeHostLiteral(value);
+  const version = isIP(host);
+
+  if (version === 4) {
+    return isNonPublicIpv4Address(host);
+  }
+
+  if (version === 6) {
+    return isNonPublicIpv6Address(host);
+  }
+
+  return false;
+}
+
 function isWildcardBindHost(value: string): boolean {
   const host = normalizeHostLiteral(value);
   return host === "0.0.0.0" || host === "::" || host === "0:0:0:0:0:0:0:0";
@@ -631,7 +698,12 @@ function isLocalCaddySiteAddress(value: string): boolean {
     return true;
   }
 
-  return host === "ray.local" || host.endsWith(".local") || isLoopbackHost(host);
+  return (
+    host === "ray.local" ||
+    host.endsWith(".local") ||
+    isLoopbackHost(host) ||
+    isNonPublicIpHost(host)
+  );
 }
 
 function inferRayStateDirectory(config: RayConfig): string | undefined {
@@ -2700,7 +2772,7 @@ export function diagnoseConfig(
     diagnostics.push({
       level: "warn",
       code: "caddy_site_address_local",
-      message: `Generated Caddyfile site address "${preflight.caddySiteAddress}" is local or placeholder-only. Set --domain or RAY_DEPLOY_DOMAIN to the real public DNS name before installing Caddy on a VPS.`,
+      message: `Generated Caddyfile site address "${preflight.caddySiteAddress}" is local, private, or placeholder-only. Set --domain or RAY_DEPLOY_DOMAIN to the real public DNS name before installing Caddy on a VPS.`,
     });
   }
 
