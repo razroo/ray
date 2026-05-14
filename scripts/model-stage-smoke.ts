@@ -213,6 +213,11 @@ export async function smokeModelStages(options: {
   }
 
   assertModelStageSmokePathValue(options.cwd, "cwd");
+  const serviceUser = normalizeServicePrincipal(options.serviceUser, "serviceUser");
+  const serviceGroup =
+    options.serviceGroup !== undefined
+      ? normalizeServicePrincipal(options.serviceGroup, "serviceGroup")
+      : undefined;
   for (const [index, configPath] of options.configPaths.entries()) {
     assertModelStageSmokePathValue(configPath, `configPaths[${index}]`);
   }
@@ -226,8 +231,8 @@ export async function smokeModelStages(options: {
         cwd: options.cwd,
         configPath,
         env,
-        serviceUser: options.serviceUser,
-        ...(options.serviceGroup ? { serviceGroup: options.serviceGroup } : {}),
+        serviceUser,
+        ...(serviceGroup !== undefined ? { serviceGroup } : {}),
       });
       results.push(toSuccessResult(configPath, plan));
     } catch (error) {

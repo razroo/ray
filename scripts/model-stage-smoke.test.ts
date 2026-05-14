@@ -93,6 +93,29 @@ test("smokeModelStages rejects malformed direct path inputs before rendering", a
   );
 });
 
+test("smokeModelStages rejects malformed direct principal inputs before rendering", async () => {
+  await assert.rejects(
+    () =>
+      smokeModelStages({
+        cwd: process.cwd(),
+        configPaths: [],
+        serviceUser: "ray user",
+      }),
+    /serviceUser must be a system account name/,
+  );
+
+  await assert.rejects(
+    () =>
+      smokeModelStages({
+        cwd: process.cwd(),
+        configPaths: [],
+        serviceUser: "ray",
+        serviceGroup: "ray group",
+      }),
+    /serviceGroup must be a system account name/,
+  );
+});
+
 test("smokeModelStages renders every checked-in public staging plan", async () => {
   const cwd = process.cwd();
   const configPaths = await collectPublicConfigPaths(cwd, "examples/config");
