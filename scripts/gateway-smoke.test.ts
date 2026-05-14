@@ -220,6 +220,28 @@ test("smokeGateway rejects malformed direct inputs before startup", async () => 
       }),
     /host must not contain control characters or whitespace/,
   );
+
+  await assert.rejects(
+    () =>
+      smokeGateway({
+        cwd: repoRoot,
+        configPath: "./examples/config/ray.tiny.json",
+        host: "127.0.0.1",
+        port: 65_536,
+      }),
+    /port must be a positive integer less than or equal to 65535/,
+  );
+
+  await assert.rejects(
+    () =>
+      smokeGateway({
+        cwd: repoRoot,
+        configPath: "./examples/config/ray.tiny.json",
+        host: "127.0.0.1",
+        timeoutMs: Number.NaN,
+      }),
+    /timeoutMs must be a positive integer less than or equal to 120000/,
+  );
 });
 
 test("formatTextSummary reports the checked gateway endpoints", () => {

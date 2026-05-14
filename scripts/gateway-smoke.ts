@@ -15,6 +15,7 @@ const MAX_CLI_ARGS = 16;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_GATEWAY_SMOKE_HOST_BYTES = 255;
 const MAX_GATEWAY_SMOKE_PATH_BYTES = 4_096;
+const MAX_GATEWAY_SMOKE_PORT = 65_535;
 const MAX_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_TEXT_BYTES = 256 * 1024;
 const PUBLIC_SAFETY_API_KEY = "ray-gateway-smoke";
@@ -222,20 +223,41 @@ function assertGatewaySmokeHostValue(value: unknown, label: string): asserts val
   throw new Error(`${label} must be localhost or a loopback IP address`);
 }
 
+function assertPositiveInteger(
+  value: unknown,
+  label: string,
+  maximum: number,
+): asserts value is number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value > maximum) {
+    throw new Error(`${label} must be a positive integer less than or equal to ${maximum}`);
+  }
+}
+
 function parsePositiveInteger(value: string, label: string, maximum: number): number {
   const normalized = value.trim();
-  const parsed = Number(normalized);
 
-  if (
-    !/^\d+$/.test(normalized) ||
-    !Number.isSafeInteger(parsed) ||
-    parsed <= 0 ||
-    parsed > maximum
-  ) {
+  if (!/^\d+$/.test(normalized)) {
     throw new Error(`${label} must be a positive integer less than or equal to ${maximum}`);
   }
 
+  const parsed = Number(normalized);
+  assertPositiveInteger(parsed, label, maximum);
+
   return parsed;
+}
+
+function normalizeOptionalPositiveInteger(
+  value: unknown,
+  label: string,
+  maximum: number,
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  assertPositiveInteger(value, label, maximum);
+
+  return value;
 }
 
 export function parseArgs(argv: string[]): GatewaySmokeArgs {
@@ -276,7 +298,11 @@ export function parseArgs(argv: string[]): GatewaySmokeArgs {
     }
 
     if (current === "--port") {
-      args.port = parsePositiveInteger(requireFlagValue(current, argv[index + 1]), current, 65_535);
+      args.port = parsePositiveInteger(
+        requireFlagValue(current, argv[index + 1]),
+        current,
+        MAX_GATEWAY_SMOKE_PORT,
+      );
       index += 1;
       continue;
     }
@@ -1118,7 +1144,14 @@ export async function smokeGateway(options: {
   assertGatewaySmokeHostValue(options.host, "host");
   const cwd = path.resolve(options.cwd);
   const host = options.host;
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const portOverride = normalizeOptionalPositiveInteger(
+    options.port,
+    "port",
+    MAX_GATEWAY_SMOKE_PORT,
+  );
+  const timeoutMs =
+    normalizeOptionalPositiveInteger(options.timeoutMs, "timeoutMs", MAX_TIMEOUT_MS) ??
+    DEFAULT_TIMEOUT_MS;
   const configEnv = Object.create(null) as NodeJS.ProcessEnv;
   let asyncStorageDir: string | undefined;
   let gateway: Awaited<ReturnType<typeof startGateway>> | undefined;
@@ -1127,7 +1160,7 @@ export async function smokeGateway(options: {
     configPath: options.configPath,
     env: configEnv,
   });
-  const port = options.port ?? (await reserveTcpPort(host));
+  const port = portOverride ?? (await reserveTcpPort(host));
   const baseConfig = cloneConfigForSmoke(loaded.config, host, port);
   if (options.asyncQueue) {
     asyncStorageDir = await mkdtemp(path.join(tmpdir(), "ray-gateway-smoke-async-"));
