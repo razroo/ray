@@ -515,7 +515,7 @@ export function normalizeInferenceRequest(
       });
     }
 
-    normalized.responseFormat = resolvedRequest.responseFormat;
+    normalized.responseFormat = { type: resolvedRequest.responseFormat.type };
   }
 
   if (isNonEmptyString(request.dedupeKey)) {

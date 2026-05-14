@@ -2298,6 +2298,42 @@ test("runtime passes sanitized provider preparation requests to inference", asyn
   assert.equal(observedRequest?.extra, undefined);
 });
 
+test("runtime passes sanitized direct response formats to inference", async () => {
+  let observedRequest:
+    | (Parameters<ModelProvider["infer"]>[0] & {
+        responseFormat?: { extra?: unknown };
+      })
+    | undefined;
+  const provider: ModelProvider = {
+    kind: "mock",
+    modelId: "sanitized-direct-response-format-model",
+    capabilities: {
+      streaming: false,
+      quantized: false,
+      localBackend: true,
+    },
+    async infer(request) {
+      observedRequest = request as typeof observedRequest;
+      return {
+        output: "ok",
+      };
+    },
+  };
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+
+  await runtime.infer({
+    input: "hello world",
+    cache: false,
+    responseFormat: {
+      type: "json_object",
+      extra: "not retained",
+    },
+  } as unknown as Parameters<typeof runtime.infer>[0]);
+
+  assert.deepEqual(observedRequest?.responseFormat, { type: "json_object" });
+  assert.equal(observedRequest?.responseFormat?.extra, undefined);
+});
+
 test("runtime rejects invalid provider preparation token counts before scheduling", async () => {
   let inferCalled = false;
   const provider: ModelProvider = {
