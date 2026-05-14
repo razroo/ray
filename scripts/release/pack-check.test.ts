@@ -532,6 +532,7 @@ function safePackedManifest(overrides: Record<string, unknown> = {}): Record<str
     types: "./dist/index.d.ts",
     exports: {
       ".": {
+        types: "./dist/index.d.ts",
         development: "./src/index.ts",
         default: "./dist/index.js",
       },
@@ -557,6 +558,7 @@ test("assertPackedPackageManifest rejects broken entry point targets", () => {
         safePackedManifest({
           exports: {
             ".": {
+              types: "./dist/index.d.ts",
               default: "./dist/missing.js",
             },
           },
@@ -576,6 +578,39 @@ test("assertPackedPackageManifest rejects broken entry point targets", () => {
         safePackedManifestEntries,
       ),
     /@razroo\/ray-sdk package\.json main must start with \.\//,
+  );
+});
+
+test("assertPackedPackageManifest requires root export types", () => {
+  assert.throws(
+    () =>
+      assertPackedPackageManifest(
+        "@razroo/ray-sdk",
+        safePackedManifest({
+          exports: {
+            ".": {
+              development: "./src/index.ts",
+              default: "./dist/index.js",
+            },
+          },
+        }),
+        safePackedManifestEntries,
+      ),
+    /@razroo\/ray-sdk package\.json exports\["\."\]\.types must match package\.json types/,
+  );
+
+  assert.throws(
+    () =>
+      assertPackedPackageManifest(
+        "@razroo/ray-sdk",
+        safePackedManifest({
+          exports: {
+            ".": "./dist/index.js",
+          },
+        }),
+        safePackedManifestEntries,
+      ),
+    /@razroo\/ray-sdk package\.json exports\["\."\] must be an object/,
   );
 });
 
