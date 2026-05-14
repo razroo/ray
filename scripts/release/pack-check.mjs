@@ -14,6 +14,8 @@ export const MAX_PACK_TARBALL_BYTES = 5 * 1024 * 1024;
 export const MAX_PACK_UNCOMPRESSED_BYTES = 20 * 1024 * 1024;
 export const MAX_PACK_TARBALL_ENTRIES = 512;
 export const MAX_PACK_OUTPUT_FILES = 32;
+export const MAX_PACK_PACKAGE_NAME_BYTES = 256;
+export const MAX_PACK_PATH_BYTES = 4_096;
 const DEFAULT_PACK_CHILD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const PACK_CHILD_ENV_KEYS = ["LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TMP", "TEMP"];
 const packedManifestDependencySections = [
@@ -94,8 +96,52 @@ export function buildPackCheckEnv(env = process.env) {
   return childEnv;
 }
 
-export async function runPack(packageConfig, options = {}) {
+function assertCleanPackString(value, label, maxBytes) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} must not contain control characters`);
+  }
+
+  if (value.trim() !== value) {
+    throw new Error(`${label} must not contain surrounding whitespace`);
+  }
+
+  if (Buffer.byteLength(value, "utf8") > maxBytes) {
+    throw new Error(`${label} must be at most ${maxBytes} bytes`);
+  }
+}
+
+function assertPackPackageConfig(packageConfig) {
+  if (!isRecord(packageConfig)) {
+    throw new Error("packageConfig must be an object");
+  }
+
+  assertCleanPackString(packageConfig.name, "packageConfig.name", MAX_PACK_PACKAGE_NAME_BYTES);
+  assertCleanPackString(packageConfig.cwd, "packageConfig.cwd", MAX_PACK_PATH_BYTES);
+}
+
+function resolveRunPackTimeoutMs(options) {
+  if (!isRecord(options)) {
+    throw new Error("options must be an object");
+  }
+
   const timeoutMs = options.timeoutMs ?? PACK_TIMEOUT_MS;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > PACK_TIMEOUT_MS) {
+    throw new Error(
+      `timeoutMs must be a positive safe integer less than or equal to ${PACK_TIMEOUT_MS}`,
+    );
+  }
+
+  return timeoutMs;
+}
+
+export async function runPack(packageConfig, options = {}) {
+  assertPackPackageConfig(packageConfig);
+  const timeoutMs = resolveRunPackTimeoutMs(options);
+
   await new Promise((resolve, reject) => {
     const child = spawn(bunBin, ["pm", "pack", "--destination", destination], {
       cwd: packageConfig.cwd,

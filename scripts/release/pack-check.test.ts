@@ -13,6 +13,7 @@ import {
   listPackDestinationFiles,
   readTarballJsonEntry,
   resolvePackedTarballs,
+  runPack,
 } from "./pack-check.mjs";
 
 function writeOctal(buffer: Buffer, offset: number, length: number, value: number): void {
@@ -92,6 +93,34 @@ test("buildPackCheckEnv keeps pack child environments minimal", () => {
   assert.equal(env.HOME, undefined);
   assert.equal(env.LD_PRELOAD, undefined);
   assert.equal(env.TEMP, undefined);
+});
+
+test("runPack rejects malformed direct options before spawning", async () => {
+  await assert.rejects(() => runPack(null as never), /packageConfig must be an object/);
+  await assert.rejects(
+    () => runPack({ name: "", cwd: "/tmp" } as never),
+    /packageConfig\.name must be a non-empty string/,
+  );
+  await assert.rejects(
+    () => runPack({ name: "@razroo/ray-core", cwd: " /tmp/ray" } as never),
+    /packageConfig\.cwd must not contain surrounding whitespace/,
+  );
+  await assert.rejects(
+    () => runPack({ name: "@razroo/ray-core", cwd: `/tmp/${"x".repeat(4096)}` } as never),
+    /packageConfig\.cwd must be at most 4096 bytes/,
+  );
+  await assert.rejects(
+    () => runPack({ name: "@razroo/ray-core", cwd: "/tmp/ray" }, null as never),
+    /options must be an object/,
+  );
+  await assert.rejects(
+    () => runPack({ name: "@razroo/ray-core", cwd: "/tmp/ray" }, { timeoutMs: 0 }),
+    /timeoutMs must be a positive safe integer less than or equal to 120000/,
+  );
+  await assert.rejects(
+    () => runPack({ name: "@razroo/ray-core", cwd: "/tmp/ray" }, { timeoutMs: Infinity }),
+    /timeoutMs must be a positive safe integer less than or equal to 120000/,
+  );
 });
 
 test("listTarballEntries reads bounded npm package entries", async (t) => {
