@@ -1116,6 +1116,7 @@ test("validatePackageRuntimeCoverage rejects lightweight release tag workflow co
       'name: "@razroo/ray-core Release to npm"',
       '#   TAG="core-v$(bun -e \'console.log(require("./packages/core/package.json").version)\')"',
       '#   git tag "$TAG" && git push origin "$TAG"',
+      "#   bun run release:github -- --yes",
       "jobs:",
       "  publish:",
       "    if: github.repository == 'razroo/ray'",
@@ -1145,6 +1146,62 @@ test("validatePackageRuntimeCoverage rejects lightweight release tag workflow co
       (diagnostic) =>
         diagnostic.code === "workflow_npm_release_lightweight_tag_doc" && diagnostic.line === 3,
     ),
+  );
+  assert.ok(
+    diagnostics.some(
+      (diagnostic) =>
+        diagnostic.code === "workflow_npm_release_manual_command_doc" && diagnostic.line === 3,
+    ),
+  );
+});
+
+test("validatePackageRuntimeCoverage requires guarded release helper workflow comments", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-release-helper-docs-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const workflowDir = path.join(tempDir, ".github", "workflows");
+  await mkdir(workflowDir, { recursive: true });
+  await writeFile(
+    path.join(workflowDir, "ray-sdk-release.yml"),
+    [
+      'name: "@razroo/ray-sdk Release to npm"',
+      "# Cutting a release:",
+      '#   git tag -a "$TAG" -m "Release $TAG"',
+      '#   git push origin "$TAG"',
+      '#   gh release create "$TAG" --generate-notes --title "$TAG"',
+      "jobs:",
+      "  publish:",
+      "    if: github.repository == 'razroo/ray'",
+      "    runs-on: ubuntu-latest",
+      "    timeout-minutes: 60",
+      "    permissions:",
+      "      id-token: write",
+      "    steps:",
+      "      - run: timeout 120s git fetch --no-tags --prune origin main:refs/remotes/origin/main",
+      '      - run: git merge-base --is-ancestor "$SHA" refs/remotes/origin/main',
+      "      - run: timeout 300s npm publish ./pkg.tgz --access public --provenance",
+      "        env:",
+      "          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
+      "",
+    ].join("\n"),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [],
+  });
+  const diagnostics = summary.results.flatMap((result) => result.diagnostics);
+
+  assert.equal(summary.ok, false);
+  assert.ok(
+    diagnostics.some((diagnostic) => diagnostic.code === "workflow_npm_release_helper_doc_missing"),
+  );
+  assert.equal(
+    diagnostics.filter(
+      (diagnostic) => diagnostic.code === "workflow_npm_release_manual_command_doc",
+    ).length,
+    3,
   );
 });
 

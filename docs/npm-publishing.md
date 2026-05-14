@@ -66,43 +66,24 @@ Infrastructure-only PRs can add an empty changeset: `bunx changeset add --empty`
 
 ## Cut a release (GH + npm)
 
-1. Ensure **`bun run version`** has been run and the version bump is committed on **`main`**.
+1. Ensure **`bun run version`** has been run and the version bump is committed and pushed on **`main`**.
 
-2. Create **annotated tags** pointing at that commit:
-
-   ```bash
-   TAG_CORE="core-v$(bun -e 'console.log(require("./packages/core/package.json").version)')"
-   TAG_SDK="sdk-v$(bun -e 'console.log(require("./packages/sdk/package.json").version)')"
-   git tag -a "$TAG_CORE" -m "Release $TAG_CORE (@razroo/ray-core)"
-   git tag -a "$TAG_SDK" -m "Release $TAG_SDK (@razroo/ray-sdk)"
-   git push --atomic origin "$TAG_CORE" "$TAG_SDK"
-   ```
-
-   Push linked package tags atomically so a failed push cannot publish only one side of the release pair.
-
-3. Create GitHub Releases (fires the npm workflows):
+2. Create both annotated tags and GitHub Releases with the guarded helper:
 
    ```bash
-   gh release create "$TAG_CORE" --generate-notes --title "$TAG_CORE"
-   gh release create "$TAG_SDK" --generate-notes --title "$TAG_SDK"
+   bun run release:github -- --dry-run
+   bun run release:github -- --yes
    ```
 
-4. Workflow behavior:
+   The helper checks that the working tree is clean, `main` is synced with `origin/main`, package versions match, and GitHub CLI auth is available. It creates annotated `core-v…` and `sdk-v…` tags, pushes them atomically, creates both GitHub Releases, and safely reuses already-created annotated tags or releases on retry.
+
+3. Workflow behavior:
    - Confirms the release tag commit is reachable from `origin/main`.
    - Uses **`gh api`** to confirm the **`quality`** check run on the tagged commit succeeded (geometra-style gate before npm).
    - Runs **`packages/*/scripts/release/check-source.mjs`** so the tag matches `package.json`.
    - **`bun run build`**, **`bun pm pack`**, then **`npm publish <tarball> --provenance`** with OIDC provenance (`id-token: write`).
 
-5. Omit or delete a faulty GitHub Release and tag before re-cutting; avoid amending published tags.
-
-### One-command tags + GitHub Releases (`gh`)
-
-After **`bun run version`** is committed on **`main`** and pushed (`git push origin main`), you can create both tags and GitHub Releases with:
-
-```bash
-bun run release:github -- --dry-run   # plan only
-bun run release:github -- --yes     # tag, git push --atomic tags, gh release create ×2
-```
+4. Omit or delete a faulty GitHub Release and tag before re-cutting; avoid amending published tags.
 
 Requires [**GitHub CLI**](https://cli.github.com/) (`gh`) authenticated (`gh auth login`). If a transient failure leaves local or remote annotated tags at the release commit, or creates one GitHub Release before the other, the helper reuses the safe pieces on retry and creates only what is still missing; local or remote lightweight tags, tags pointing elsewhere, and ambiguous release probes fail closed. NPM publish still runs in Actions when each release is **published**.
 

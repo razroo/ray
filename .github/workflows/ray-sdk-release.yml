@@ -3,10 +3,9 @@ name: "@razroo/ray-sdk Release to npm"
 # Publish when a GitHub Release whose tag starts with `sdk-v` is published.
 # Publish @razroo/ray-core first if its version changed; SDK releases often follow core.
 #
-# Cutting a release (after bumping packages/sdk/package.json version):
-#   TAG="sdk-v$(bun -e 'console.log(require("./packages/sdk/package.json").version)')"
-#   git tag -a "$TAG" -m "Release $TAG (@razroo/ray-sdk)" && git push origin "$TAG"
-#   gh release create "$TAG" --generate-notes --title "$TAG"
+# Cut releases with the guarded helper from main:
+#   bun run release:github -- --dry-run
+#   bun run release:github -- --yes
 
 on:
   release:

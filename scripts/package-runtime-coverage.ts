@@ -70,6 +70,9 @@ const workflowReleaseMainAncestryPattern =
 const workflowIdTokenWritePattern = /^\s*id-token:\s*write\s*$/m;
 const workflowNpmTokenPattern = /NODE_AUTH_TOKEN:\s*\$\{\{\s*secrets\.NPM_TOKEN\s*\}\}/;
 const workflowLightweightReleaseTagCommentPattern = /^\s*#\s*git\s+tag\s+"\$TAG"(?:\s|$)/;
+const workflowManualReleaseCommandCommentPattern =
+  /^\s*#\s*(?:git\s+(?:tag|push)\b|gh\s+release\s+create\b)/;
+const workflowReleaseGithubHelperCommentPattern = /^\s*#.*\bbun\s+run\s+release:github\b/;
 const releaseTagVariablePattern = /\$(?:\{TAG(?:_(?:CORE|SDK))?\}|TAG(?:_(?:CORE|SDK))?)/;
 const releaseDocGitTagCommandPattern = /^git\s+tag\s+/;
 const releaseDocAnnotatedGitTagCommandPattern = /^git\s+tag\s+(?:-a|--annotate)\b/;
@@ -1863,6 +1866,20 @@ function validateNpmReleaseWorkflowTagDocs(
   }
 
   const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
+  const documentsGuardedHelper = lines.some((line) =>
+    workflowReleaseGithubHelperCommentPattern.test(line),
+  );
+
+  if (!documentsGuardedHelper) {
+    diagnostics.push({
+      level: "error",
+      code: "workflow_npm_release_helper_doc_missing",
+      workflowPath,
+      message:
+        "npm release workflow cutting comments must point maintainers at `bun run release:github` so release tags and GitHub Releases use the guarded helper.",
+    });
+  }
+
   for (const [index, rawLine] of lines.entries()) {
     if (workflowLightweightReleaseTagCommentPattern.test(rawLine)) {
       diagnostics.push({
@@ -1872,6 +1889,17 @@ function validateNpmReleaseWorkflowTagDocs(
         line: index + 1,
         message:
           "npm release workflow cutting comments must use annotated git tags so operator docs do not recommend lightweight release tags.",
+      });
+    }
+
+    if (workflowManualReleaseCommandCommentPattern.test(rawLine)) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_npm_release_manual_command_doc",
+        workflowPath,
+        line: index + 1,
+        message:
+          "npm release workflow cutting comments must not document direct git tag, git push, or gh release create commands; use `bun run release:github` instead.",
       });
     }
   }

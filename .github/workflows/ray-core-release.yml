@@ -2,10 +2,9 @@ name: "@razroo/ray-core Release to npm"
 
 # Publish when a GitHub Release whose tag starts with `core-v` is published.
 #
-# Cutting a release (after bumping packages/core/package.json version):
-#   TAG="core-v$(bun -e 'console.log(require("./packages/core/package.json").version)')"
-#   git tag -a "$TAG" -m "Release $TAG (@razroo/ray-core)" && git push origin "$TAG"
-#   gh release create "$TAG" --generate-notes --title "$TAG"
+# Cut releases with the guarded helper from main:
+#   bun run release:github -- --dry-run
+#   bun run release:github -- --yes
 
 on:
   release:
