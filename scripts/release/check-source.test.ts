@@ -74,6 +74,47 @@ test("checkReleaseSource rejects mismatched package versions and file dependenci
   );
 });
 
+test("checkReleaseSource rejects malformed release tags and package name drift", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-release-check-source-name-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  await writePackageJson(tempDir, "packages/core/package.json", {
+    name: "@razroo/ray-core",
+    version: "1.2.3",
+  });
+  await writePackageJson(tempDir, "packages/sdk/package.json", {
+    name: "@razroo/ray-sdk",
+    version: "1.2.3",
+  });
+
+  await assert.rejects(
+    () => checkReleaseSource("1.2", { cwd: tempDir }),
+    /release version must be a valid SemVer string/,
+  );
+
+  await writePackageJson(tempDir, "packages/core/package.json", {
+    name: "@razroo/ray-core-next",
+    version: "1.2.3",
+  });
+
+  await assert.rejects(
+    () => checkReleaseSource("1.2.3", { cwd: tempDir }),
+    /packages\/core\/package\.json must be named @razroo\/ray-core before publishing/,
+  );
+
+  await writePackageJson(tempDir, "packages/core/package.json", {
+    name: "@razroo/ray-core",
+    version: "latest",
+  });
+
+  await assert.rejects(
+    () => checkReleaseSource("1.2.3", { cwd: tempDir }),
+    /packages\/core\/package\.json version must be a valid SemVer string/,
+  );
+});
+
 test("package-local release source checks use the bounded root verifier", async () => {
   const packageChecks = [
     {

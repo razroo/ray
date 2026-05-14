@@ -4,9 +4,28 @@ import { pathToFileURL } from "node:url";
 
 export const MAX_PACKAGE_JSON_BYTES = 256 * 1024;
 export const releasePackageManifests = ["packages/core/package.json", "packages/sdk/package.json"];
+export const releasePackageNames = {
+  "packages/core/package.json": "@razroo/ray-core",
+  "packages/sdk/package.json": "@razroo/ray-sdk",
+};
+const semverPattern =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
 function usage() {
   return "Usage: bun ./scripts/release/check-source.mjs <version>";
+}
+
+function normalizeManifestPath(manifest) {
+  return manifest.replaceAll("\\", "/");
+}
+
+function validateReleaseVersion(version) {
+  if (typeof version !== "string" || version.trim().length === 0) {
+    throw new Error(usage());
+  }
+  if (version !== version.trim() || !semverPattern.test(version)) {
+    throw new Error(`release version must be a valid SemVer string without whitespace: ${version}`);
+  }
 }
 
 async function readPackageJsonBounded(packagePath) {
@@ -57,9 +76,7 @@ function validateNoFileDependencies(packagePath, pkg) {
 }
 
 export async function checkReleaseSource(version, options = {}) {
-  if (typeof version !== "string" || version.trim().length === 0) {
-    throw new Error(usage());
-  }
+  validateReleaseVersion(version);
 
   const root = path.resolve(options.cwd ?? process.cwd());
   const manifests = options.manifests ?? releasePackageManifests;
@@ -67,16 +84,29 @@ export async function checkReleaseSource(version, options = {}) {
 
   for (const manifest of manifests) {
     const packagePath = path.resolve(root, manifest);
+    const relativePackagePath = path.relative(root, packagePath);
+    const manifestKey = normalizeManifestPath(relativePackagePath);
     const pkg = await readPackageJsonBounded(packagePath);
+    const expectedName = releasePackageNames[manifestKey];
 
-    if (pkg.version !== version) {
+    if (expectedName !== undefined && pkg.name !== expectedName) {
       throw new Error(
-        `${path.relative(root, packagePath)} version ${pkg.version ?? "unknown"} does not match release tag ${version}. Bump package.json, commit, and retag before publishing.`,
+        `${manifestKey} must be named ${expectedName} before publishing; found ${typeof pkg.name === "string" ? pkg.name : "unknown"}.`,
       );
     }
 
-    validateNoFileDependencies(path.relative(root, packagePath), pkg);
-    checked.push(`${pkg.name ?? path.relative(root, packagePath)}: ${pkg.version}`);
+    if (typeof pkg.version !== "string" || !semverPattern.test(pkg.version)) {
+      throw new Error(`${manifestKey} version must be a valid SemVer string before publishing.`);
+    }
+
+    if (pkg.version !== version) {
+      throw new Error(
+        `${manifestKey} version ${pkg.version} does not match release tag ${version}. Bump package.json, commit, and retag before publishing.`,
+      );
+    }
+
+    validateNoFileDependencies(manifestKey, pkg);
+    checked.push(`${pkg.name}: ${pkg.version}`);
   }
 
   return checked;
