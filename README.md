@@ -315,22 +315,24 @@ Use a bare public DNS name such as `ray.example.com`, or an explicit
 `https://` address, for `RAY_DEPLOY_DOMAIN`; `http://` makes the generated
 Caddy site HTTP-only, and doctor warns before a public VPS endpoint is exposed
 without automatic HTTPS.
-`RAY_DEPLOY_SERVICE_USER` accepts an account name or numeric UID; workflow
-deploys create missing named accounts, while numeric UIDs must already resolve
-to an account on the VPS.
-The GitHub VPS workflow also honors `RAY_DEPLOY_DOMAIN`,
-`RAY_DEPLOY_INSTALL_CADDY`, `RAY_DEPLOY_MEMORY_MIB`,
-`RAY_DEPLOY_MIN_FREE_STORAGE_MIB`, `RAY_DEPLOY_READY_TIMEOUT_SECONDS`,
-`RAY_DEPLOY_SERVICE_USER`, `RAY_GATEWAY_RUNTIME_BINARY`, and
-`RAY_DEPLOY_CADDY_BINARY` from
-`RAY_ENV_FILE_CONTENTS` before repository variables when wiring remote
+`RAY_DEPLOY_SERVICE_USER` accepts an account name or numeric UID; the VPS
+walkthrough creates missing named accounts during the manual bootstrap commands,
+while numeric UIDs must already resolve to an account on the VPS.
+Downstream deployment automation can use the same deploy CLI precedence by
+loading `/etc/ray/ray.env` first, then applying explicit operator-provided
+values for `RAY_DEPLOY_DOMAIN`, `RAY_DEPLOY_INSTALL_CADDY`,
+`RAY_DEPLOY_MEMORY_MIB`, `RAY_DEPLOY_MIN_FREE_STORAGE_MIB`,
+`RAY_DEPLOY_READY_TIMEOUT_SECONDS`, `RAY_DEPLOY_SERVICE_USER`,
+`RAY_GATEWAY_RUNTIME_BINARY`, and `RAY_DEPLOY_CADDY_BINARY` when wiring remote
 prerequisites, early and env-aware storage preflight, doctor, render, readiness
-waits, and generated service commands.
+waits, and generated service commands. This repository does not ship a
+repo-owned VPS deployment workflow; keep that automation in an operator fork or
+deployment system when you need it.
 When no explicit deploy memory override is set, render, doctor, and model
 staging use `model.operational.memoryClassMiB` before falling back to the
 launch-profile preset, while still clamping to lower detected host RAM.
-When those CLI-consumed settings come from repository variables instead, the
-workflow appends the resolved non-secret values to `/etc/ray/ray.env` when they
+When those CLI-consumed settings come from automation variables instead of the
+env file, persist the resolved non-secret values to `/etc/ray/ray.env` when they
 are absent so later manual `doctor`, `render`, and `model:stage` runs read the
 same service user, domain, memory target, storage cushion, readiness timeout,
 and runtime paths.
@@ -338,7 +340,7 @@ Because `/etc/ray/ray.env` should usually be `0600` and root-owned, run manual
 helpers that read it with privileges that can read that file, for example
 `sudo /usr/local/bin/bun run ... -- --ray-env-file /etc/ray/ray.env`.
 Set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` when doctor should enforce a larger
-checkout/Bun install cushion, or when the workflow or manual
+checkout/Bun install cushion, or when manual or downstream automated
 `sudo /usr/local/bin/bun run deploy:storage -- --ray-env-file /etc/ray/ray.env`
 check should require more or less than the default 1024 MiB free on the root,
 APT cache/state, `/etc/ray`, `/etc/systemd/system`, `/etc/caddy`, Caddy state
@@ -350,14 +352,14 @@ Doctor uses the same value for Caddy state under `/var/lib/caddy` when present,
 strict `/var/log`, `/tmp`, and `/var/tmp` journal/log and temporary-storage
 headroom, and the generated `WorkingDirectory` storage cushion, with a 512 MiB
 floor for the synced checkout and Bun production install.
-The workflow cleans APT archives and package lists after missing bootstrap
-packages are installed so package-manager residue does not consume the disk
-cushion. When `--ray-env-file` is supplied, the same preflight also checks custom
-`RAY_MODEL_PATH` or `RAY_LLAMA_CPP_MODEL_PATH`, `RAY_LLAMA_CPP_BINARY_PATH`,
-`RAY_ASYNC_QUEUE_STORAGE_DIR`, `RAY_LLAMA_CPP_BINARY_SOURCE_PATH`, and
-`RAY_MODEL_SOURCE_PATH` volumes; relative source paths resolve from the current
-working directory. Set it to `0` only when you intentionally want to skip that
-preflight.
+The VPS walkthrough cleans APT archives and package lists after missing
+bootstrap packages are installed so package-manager residue does not consume the
+disk cushion. When `--ray-env-file` is supplied, the same preflight also checks
+custom `RAY_MODEL_PATH` or `RAY_LLAMA_CPP_MODEL_PATH`,
+`RAY_LLAMA_CPP_BINARY_PATH`, `RAY_ASYNC_QUEUE_STORAGE_DIR`,
+`RAY_LLAMA_CPP_BINARY_SOURCE_PATH`, and `RAY_MODEL_SOURCE_PATH` volumes;
+relative source paths resolve from the current working directory. Set it to `0`
+only when you intentionally want to skip that preflight.
 
 Create `/var/lib/ray/models` on the VPS and put the GGUF at `RAY_MODEL_PATH`
 before starting the generated llama.cpp service or running doctor.

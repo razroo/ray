@@ -69,6 +69,8 @@ const workflowReleaseMainAncestryPattern =
   /git\s+merge-base\s+--is-ancestor\s+"\$SHA"\s+refs\/remotes\/origin\/main/;
 const workflowIdTokenWritePattern = /^\s*id-token:\s*write\s*$/m;
 const workflowNpmTokenPattern = /NODE_AUTH_TOKEN:\s*\$\{\{\s*secrets\.NPM_TOKEN\s*\}\}/;
+const repoOwnedVpsWorkflowDocPattern =
+  /\b(?:GitHub VPS workflow|workflow bootstrap|workflow appends|RAY_ENV_FILE_CONTENTS|repository variables|The deploy workflow)\b/;
 
 export interface PackageRuntimeCoverageArgs {
   cwd: string;
@@ -2468,6 +2470,17 @@ async function validateRuntimeDoc(
         line: index + 1,
         message:
           "Runtime docs must not put documentation-domain callbackUrl values in executable examples. Omit callbackUrl or use an operator-owned endpoint.",
+      });
+    }
+
+    if (repoOwnedVpsWorkflowDocPattern.test(line)) {
+      diagnostics.push({
+        level: "error",
+        code: "runtime_doc_repo_owned_vps_workflow_language",
+        docPath,
+        line: index + 1,
+        message:
+          "Runtime docs must describe VPS deployment as manual operator tooling or downstream automation, not as a repo-owned GitHub VPS workflow.",
       });
     }
 

@@ -136,6 +136,49 @@ test("validatePackageRuntimeCoverage rejects repo-owned VPS deploy workflows", a
   );
 });
 
+test("validatePackageRuntimeCoverage rejects repo-owned VPS workflow wording in docs", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-vps-doc-tone-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const rootPackageJson = path.join(tempDir, "package.json");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify(
+      {
+        name: "ray-test",
+        packageManager: "bun@1.3.9",
+        engines: {
+          bun: ">=1.3.0",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    path.join(tempDir, "README.md"),
+    [
+      "# Ray",
+      "",
+      "The GitHub VPS workflow also honors RAY_ENV_FILE_CONTENTS before repository variables.",
+      "",
+    ].join("\n"),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson],
+  });
+  const codes = summary.results.flatMap((result) =>
+    result.diagnostics.map((diagnostic) => diagnostic.code),
+  );
+
+  assert.equal(summary.ok, false);
+  assert.ok(codes.includes("runtime_doc_repo_owned_vps_workflow_language"));
+});
+
 test("validatePackageRuntimeCoverage rejects excessive package inputs before scanning", async () => {
   await assert.rejects(
     () =>
