@@ -5,7 +5,7 @@ name: "@razroo/ray-sdk Release to npm"
 #
 # Cutting a release (after bumping packages/sdk/package.json version):
 #   TAG="sdk-v$(bun -e 'console.log(require("./packages/sdk/package.json").version)')"
-#   git tag "$TAG" && git push origin "$TAG"
+#   git tag -a "$TAG" -m "Release $TAG (@razroo/ray-sdk)" && git push origin "$TAG"
 #   gh release create "$TAG" --generate-notes --title "$TAG"
 
 on:

@@ -69,6 +69,7 @@ const workflowReleaseMainAncestryPattern =
   /git\s+merge-base\s+--is-ancestor\s+"\$SHA"\s+refs\/remotes\/origin\/main/;
 const workflowIdTokenWritePattern = /^\s*id-token:\s*write\s*$/m;
 const workflowNpmTokenPattern = /NODE_AUTH_TOKEN:\s*\$\{\{\s*secrets\.NPM_TOKEN\s*\}\}/;
+const workflowLightweightReleaseTagCommentPattern = /^\s*#\s*git\s+tag\s+"\$TAG"(?:\s|$)/;
 const repoOwnedVpsWorkflowDocPattern =
   /\b(?:GitHub VPS workflow|workflow bootstrap|workflow appends|RAY_ENV_FILE_CONTENTS|repository variables|The deploy workflow)\b/;
 
@@ -1848,6 +1849,32 @@ function validateDeployWorkflowRayEnvReadGuards(
   return diagnostics;
 }
 
+function validateNpmReleaseWorkflowTagDocs(
+  workflowPath: string,
+  publishesToNpm: boolean,
+  lines: string[],
+): PackageRuntimeCoverageDiagnostic[] {
+  if (!publishesToNpm) {
+    return [];
+  }
+
+  const diagnostics: PackageRuntimeCoverageDiagnostic[] = [];
+  for (const [index, rawLine] of lines.entries()) {
+    if (workflowLightweightReleaseTagCommentPattern.test(rawLine)) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_npm_release_lightweight_tag_doc",
+        workflowPath,
+        line: index + 1,
+        message:
+          "npm release workflow cutting comments must use annotated git tags so operator docs do not recommend lightweight release tags.",
+      });
+    }
+  }
+
+  return diagnostics;
+}
+
 async function validateWorkflow(
   workflowPath: string,
 ): Promise<{ lineCount: number; diagnostics: PackageRuntimeCoverageDiagnostic[] }> {
@@ -1912,6 +1939,8 @@ async function validateWorkflow(
       message: "npm release workflows must publish with NODE_AUTH_TOKEN from secrets.NPM_TOKEN.",
     });
   }
+
+  diagnostics.push(...validateNpmReleaseWorkflowTagDocs(workflowPath, publishesToNpm, lines));
 
   if (runsReleaseGate && !hasJobTimeout) {
     diagnostics.push({
