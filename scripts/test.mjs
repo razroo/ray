@@ -161,10 +161,14 @@ function assertTestCommandArgs(args) {
   }
 }
 
-function assertTestCommandIo(io) {
+function assertStderrIo(io, label) {
   if (!isRecord(io) || !isRecord(io.stderr) || typeof io.stderr.write !== "function") {
-    throw new Error("test command io.stderr.write must be a function");
+    throw new Error(`${label} io.stderr.write must be a function`);
   }
+}
+
+function assertTestCommandIo(io) {
+  assertStderrIo(io, "test command");
 }
 
 function assertTestSkipNames(skipNames) {
@@ -539,18 +543,40 @@ function formatTestCommand(binary, args) {
 }
 
 export async function runTestCli(options = {}) {
-  const rootPath = options.root ?? process.cwd();
+  if (!isRecord(options)) {
+    throw new Error("test runner options must be an object");
+  }
+
+  const rootPath = readOption(options, "root", process.cwd());
   assertTestPathValue(rootPath, "root");
   const root = path.resolve(rootPath);
-  const io = options.io ?? process;
-  const env = options.env ?? process.env;
-  const versions = options.versions ?? process.versions;
-  const runCommand = options.runCommand ?? runTestCommand;
-  const diskPreflight = options.diskPreflight ?? assertTestDiskHeadroom;
+  const io = readOption(options, "io", process);
+  assertStderrIo(io, "test runner");
+  const env = readOption(options, "env", process.env);
+  if (env === null || typeof env !== "object") {
+    throw new Error("env must be an object");
+  }
+  const versions = readOption(options, "versions", process.versions);
+  if (!isRecord(versions)) {
+    throw new Error("versions must be an object");
+  }
+  const runCommand = readOption(options, "runCommand", runTestCommand);
+  if (typeof runCommand !== "function") {
+    throw new Error("runCommand must be a function");
+  }
+  const diskPreflight = readOption(options, "diskPreflight", assertTestDiskHeadroom);
+  if (typeof diskPreflight !== "function") {
+    throw new Error("diskPreflight must be a function");
+  }
   const bunBinary =
     readOwnEnvValue(env, "RAY_BUN_BINARY") ?? (versions.bun ? process.execPath : "bun");
   const nodeBinary = readOwnEnvValue(env, "RAY_NODE_BINARY") ?? "node";
-  const commandTimeoutMs = options.commandTimeoutMs ?? resolveTestCommandTimeoutMs(env);
+  const commandTimeoutMs = readOption(
+    options,
+    "commandTimeoutMs",
+    resolveTestCommandTimeoutMs(env),
+  );
+  assertPositiveIntegerAtMost(commandTimeoutMs, "commandTimeoutMs", MAX_TEST_COMMAND_TIMEOUT_MS);
 
   try {
     assertTestPathValue(bunBinary, "Bun test binary");
@@ -561,7 +587,7 @@ export async function runTestCli(options = {}) {
     return 1;
   }
 
-  const discovered = await collectTestFiles(root, options.discovery ?? {});
+  const discovered = await collectTestFiles(root, readOption(options, "discovery", {}));
 
   if (discovered.testFiles.length === 0) {
     io.stderr.write("No built test files were found. Run `bun run build` first.\n");

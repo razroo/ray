@@ -237,6 +237,30 @@ test("runTestCli rejects malformed runtime binary overrides before dispatch", as
   assert.match(stderr.join(""), /Bun test binary must not contain control characters/);
 });
 
+test("runTestCli rejects malformed direct options before dispatch", async () => {
+  await assert.rejects(() => runTestCli(null), /test runner options must be an object/);
+  await assert.rejects(
+    () =>
+      runTestCli({
+        io: {
+          stderr: {},
+        },
+      }),
+    /test runner io\.stderr\.write must be a function/,
+  );
+  await assert.rejects(() => runTestCli({ env: null }), /env must be an object/);
+  await assert.rejects(() => runTestCli({ versions: null }), /versions must be an object/);
+  await assert.rejects(() => runTestCli({ runCommand: "run" }), /runCommand must be a function/);
+  await assert.rejects(
+    () => runTestCli({ diskPreflight: "preflight" }),
+    /diskPreflight must be a function/,
+  );
+  await assert.rejects(
+    () => runTestCli({ commandTimeoutMs: MAX_TEST_COMMAND_TIMEOUT_MS + 1 }),
+    /commandTimeoutMs must be a positive safe integer no greater than 3600000/,
+  );
+});
+
 test("runTestCli ignores inherited environment overrides", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-test-runner-env-"));
   t.after(async () => {
