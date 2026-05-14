@@ -2095,6 +2095,36 @@ test("durable inference queue bounds callback hostname resolution during admissi
     );
 
     assert.ok(Date.now() - startedAt < 500);
+
+    const emptyQueue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+      lookupImpl: async () => [],
+    });
+    await assert.rejects(
+      () =>
+        emptyQueue.enqueue({
+          input: "Do not accept empty DNS results",
+          callbackUrl: "https://empty-dns.example/ray-callback",
+        }),
+      /callbackUrl hostname did not resolve to any IP addresses/,
+    );
+
+    const invalidAddressQueue = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+      lookupImpl: async () => [{ address: "not-an-ip-address" }],
+    });
+    await assert.rejects(
+      () =>
+        invalidAddressQueue.enqueue({
+          input: "Do not accept malformed DNS addresses",
+          callbackUrl: "https://invalid-dns.example/ray-callback",
+        }),
+      /callbackUrl hostname resolved to an invalid address/,
+    );
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }

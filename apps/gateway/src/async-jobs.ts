@@ -958,7 +958,32 @@ async function resolveCallbackAddresses(
         }, timeoutMs);
       }),
     ]);
-    return records.map((record) => record.address);
+    const addresses = records.map((record) => record.address);
+
+    if (addresses.length === 0) {
+      throw new RayError("callbackUrl hostname did not resolve to any IP addresses", {
+        code: "invalid_request",
+        status: 400,
+        details: {
+          hostname: normalized,
+        },
+      });
+    }
+
+    for (const address of addresses) {
+      if (typeof address !== "string" || isIP(address) === 0) {
+        throw new RayError("callbackUrl hostname resolved to an invalid address", {
+          code: "invalid_request",
+          status: 400,
+          details: {
+            hostname: normalized,
+            address: typeof address === "string" ? truncateJobErrorString(address, 128) : undefined,
+          },
+        });
+      }
+    }
+
+    return addresses;
   } catch (error) {
     if (error instanceof RayError) {
       throw error;
