@@ -1096,6 +1096,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.equal(summary.ok, false);
   assert.ok(codes.includes("root_package_manager_not_bun"));
   assert.ok(codes.includes("root_bun_engine_missing"));
+  assert.ok(codes.includes("release_gate_changeset_status_missing"));
   assert.ok(codes.includes("release_gate_public_auth_validate_missing"));
   assert.ok(codes.includes("release_gate_tiny_gateway_smoke_missing"));
   assert.ok(codes.includes("release_gate_tiny_public_smoke_missing"));
@@ -1495,6 +1496,7 @@ test("validatePackageRuntimeCoverage matches release gate smoke steps exactly", 
   assert.ok(codes.includes("release_gate_tiny_gateway_smoke_missing"));
   assert.ok(codes.includes("release_gate_tiny_public_smoke_missing"));
   assert.ok(codes.includes("release_gate_tiny_async_smoke_missing"));
+  assert.ok(codes.includes("release_gate_changeset_status_missing"));
   assert.ok(!codes.includes("release_gate_tiny_public_async_smoke_missing"));
   assert.ok(!codes.includes("release_gate_public_auth_validate_missing"));
 });
@@ -1517,6 +1519,7 @@ test("validatePackageRuntimeCoverage requires release docs to list every tiny sm
         },
         scripts: {
           "release:gate": [
+            "bun run changeset:status",
             "RAY_API_KEYS=smoke bun run validate:config:public",
             "bun run smoke:tiny",
             "bun run smoke:tiny:public",

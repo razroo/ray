@@ -645,6 +645,17 @@ function validateScripts(
   }
 
   const releaseGate = scripts["release:gate"];
+  if (releaseGate !== undefined && !releaseGateHasStep(releaseGate, "bun run changeset:status")) {
+    diagnostics.push({
+      level: "error",
+      code: "release_gate_changeset_status_missing",
+      packagePath: packageJsonPath,
+      scriptName: "release:gate",
+      message:
+        'Script "release:gate" must run bun run changeset:status so stale or invalid release metadata cannot block the next version step.',
+    });
+  }
+
   if (
     releaseGate !== undefined &&
     !releaseGateHasStep(releaseGate, "RAY_API_KEYS=smoke bun run validate:config:public")
