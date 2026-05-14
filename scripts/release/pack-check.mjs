@@ -22,7 +22,7 @@ const DEFAULT_PACK_CHILD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/b
 const PACK_CHILD_ENV_KEYS = ["LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TMP", "TEMP"];
 const HELP = `Usage: bun scripts/release/pack-check.mjs [--help]
 
-Build npm pack artifacts for @razroo/ray-core and @razroo/ray-sdk, then verify
+Build npm pack artifacts for public @razroo/ray packages, then verify
 that the tarballs contain the required runtime files and safe package metadata.
 
 Options:
@@ -56,6 +56,45 @@ const packages = [
     name: "@razroo/ray-sdk",
     cwd: path.join(root, "packages/sdk"),
     expectedFragment: "ray-sdk",
+    requiredEntries: [
+      "package/package.json",
+      "package/dist/index.js",
+      "package/dist/index.d.ts",
+      "package/src/index.ts",
+      "package/README.md",
+      "package/CHANGELOG.md",
+    ],
+  },
+  {
+    name: "@razroo/ray-tuner",
+    cwd: path.join(root, "packages/tuner"),
+    expectedFragment: "ray-tuner",
+    requiredEntries: [
+      "package/package.json",
+      "package/dist/index.js",
+      "package/dist/index.d.ts",
+      "package/src/index.ts",
+      "package/README.md",
+      "package/CHANGELOG.md",
+    ],
+  },
+  {
+    name: "@razroo/ray-prompt-cache",
+    cwd: path.join(root, "packages/prompt-cache"),
+    expectedFragment: "ray-prompt-cache",
+    requiredEntries: [
+      "package/package.json",
+      "package/dist/index.js",
+      "package/dist/index.d.ts",
+      "package/src/index.ts",
+      "package/README.md",
+      "package/CHANGELOG.md",
+    ],
+  },
+  {
+    name: "@razroo/ray-task-profiles",
+    cwd: path.join(root, "packages/task-profiles"),
+    expectedFragment: "ray-task-profiles",
     requiredEntries: [
       "package/package.json",
       "package/dist/index.js",

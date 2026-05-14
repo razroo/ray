@@ -128,6 +128,9 @@ packages/
   deploy/
   config/
   telemetry/
+  tuner/                # llama.cpp VPS tuning helpers (published as @razroo/ray-tuner)
+  prompt-cache/         # prompt scaffold cache helpers (published as @razroo/ray-prompt-cache)
+  task-profiles/        # task request profiles (published as @razroo/ray-task-profiles)
   sdk/                  # HTTP client (published as @razroo/ray-sdk)
 .changeset/             # Changesets config + pending release notes
 docs/
@@ -147,6 +150,9 @@ The scaffold targets a credible first version:
 - `packages/config`: profile defaults and JSON config loading
 - `packages/telemetry`: JSON logger and lightweight in-memory metrics
 - `packages/deploy`: systemd and Caddy scaffolding for cheap VPS deployment
+- `packages/tuner`: llama.cpp VPS launch-profile tuning helpers, published as **`@razroo/ray-tuner`**
+- `packages/prompt-cache`: reusable prompt scaffold cache helpers, published as **`@razroo/ray-prompt-cache`**
+- `packages/task-profiles`: reusable task execution profiles, published as **`@razroo/ray-task-profiles`**
 - `packages/sdk`: minimal TypeScript client (`RayClient`), published as **`@razroo/ray-sdk`**
 
 Deliberate omissions in the MVP:
@@ -501,17 +507,20 @@ bun run release:check-source -- <version>
 
 TypeScript libraries for integrating with the gateway:
 
-| Package                | Role                         |
-| ---------------------- | ---------------------------- |
-| **`@razroo/ray-core`** | Shared types and errors      |
-| **`@razroo/ray-sdk`**  | `RayClient` for the HTTP API |
+| Package                         | Role                          |
+| ------------------------------- | ----------------------------- |
+| **`@razroo/ray-core`**          | Shared types and errors       |
+| **`@razroo/ray-sdk`**           | `RayClient` for the HTTP API  |
+| **`@razroo/ray-tuner`**         | llama.cpp VPS tuning helpers  |
+| **`@razroo/ray-prompt-cache`**  | Prompt scaffold cache helpers |
+| **`@razroo/ray-task-profiles`** | Task request profile helpers  |
 
 Install: `bun add @razroo/ray-sdk` (pulls **`@razroo/ray-core`**).
 
 ### Versioning and releases
 
 - **Changesets** — [`iso`](https://github.com/razroo/iso)-style workflow: `bun run changeset` on PRs that affect publishable APIs, then `bun run version` on `main` to bump linked packages and **`CHANGELOG.md`** ([`.changeset/config.json`](.changeset/config.json)).
-- **GitHub Releases** — after `bun run version` is committed and pushed on `main`, use **`bun run release:github -- --yes`** to create the linked `core-v…` and `sdk-v…` tags plus GitHub Releases through the guarded helper; workflows publish with provenance. Details: [docs/npm-publishing.md](docs/npm-publishing.md).
+- **GitHub Releases** — after `bun run version` is committed and pushed on `main`, use **`bun run release:github -- --yes`** to create linked package tags plus GitHub Releases through the guarded helper; workflows publish with provenance. Details: [docs/npm-publishing.md](docs/npm-publishing.md).
 - **Post-publish check** — `bun run release:verify-npm -- <version>` confirms npm `latest`, the concrete version metadata, package name/version, sha512 integrity, and registry-hosted tarball URL.
 
 ### Security and repository hygiene
@@ -521,7 +530,7 @@ Install: `bun add @razroo/ray-sdk` (pulls **`@razroo/ray-core`**).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Short version: keep changes scoped, run **`bun run release:gate`** before pushing, add a **changeset** when **`@razroo/ray-core`** or **`@razroo/ray-sdk`** behavior changes.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Short version: keep changes scoped, run **`bun run release:gate`** before pushing, add a **changeset** when a published **`@razroo/ray-*`** package changes.
 
 ## Architecture notes
 

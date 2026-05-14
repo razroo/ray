@@ -260,7 +260,12 @@ test("gh release helper validates syntax and dry-runs without mutating git state
   });
 
   assert.match(stdout, new RegExp(`Version:\\s+${escapedVersion}`));
-  assert.match(stdout, new RegExp(`Tags:\\s+core-v${escapedVersion}\\s+sdk-v${escapedVersion}`));
+  assert.match(
+    stdout,
+    new RegExp(
+      `Tags:\\s+core-v${escapedVersion}\\s+sdk-v${escapedVersion}\\s+tuner-v${escapedVersion}\\s+prompt-cache-v${escapedVersion}\\s+task-profiles-v${escapedVersion}`,
+    ),
+  );
   assert.match(stdout, /\[dry-run\] ok/);
 });
 
@@ -313,8 +318,7 @@ test("gh release helper bounds network release operations", async () => {
     contents,
     /run_required_bounded "pushing release tags atomically" 120 git push --atomic origin/,
   );
-  assert.match(contents, /"creating GitHub release \$TAG_CORE"/);
-  assert.match(contents, /"creating GitHub release \$TAG_SDK"/);
+  assert.match(contents, /"creating GitHub release \$tag"/);
 });
 
 test("gh release helper aborts ambiguous GitHub release probe failures before tagging", async (t) => {
@@ -355,7 +359,13 @@ test("gh release helper continues when GitHub reports releases are missing", asy
   assert.match(commandLog, /^gh auth status$/m);
   assert.match(commandLog, /^git tag -a core-v1\.2\.3 /m);
   assert.match(commandLog, /^git tag -a sdk-v1\.2\.3 /m);
-  assert.match(commandLog, /^git push --atomic origin core-v1\.2\.3 sdk-v1\.2\.3$/m);
+  assert.match(commandLog, /^git tag -a tuner-v1\.2\.3 /m);
+  assert.match(commandLog, /^git tag -a prompt-cache-v1\.2\.3 /m);
+  assert.match(commandLog, /^git tag -a task-profiles-v1\.2\.3 /m);
+  assert.match(
+    commandLog,
+    /^git push --atomic origin core-v1\.2\.3 sdk-v1\.2\.3 tuner-v1\.2\.3 prompt-cache-v1\.2\.3 task-profiles-v1\.2\.3$/m,
+  );
   assert.match(
     commandLog,
     /^gh release create core-v1\.2\.3 --generate-notes --title core-v1\.2\.3$/m,
@@ -363,6 +373,10 @@ test("gh release helper continues when GitHub reports releases are missing", asy
   assert.match(
     commandLog,
     /^gh release create sdk-v1\.2\.3 --generate-notes --title sdk-v1\.2\.3$/m,
+  );
+  assert.match(
+    commandLog,
+    /^gh release create tuner-v1\.2\.3 --generate-notes --title tuner-v1\.2\.3$/m,
   );
 });
 
@@ -382,7 +396,10 @@ test("gh release helper reuses matching local annotated tags", async (t) => {
   assert.match(commandLog, /^git cat-file -t refs\/tags\/core-v1\.2\.3$/m);
   assert.match(commandLog, /^git rev-parse core-v1\.2\.3\^\{\}$/m);
   assert.doesNotMatch(commandLog, /^git tag -a /m);
-  assert.match(commandLog, /^git push --atomic origin core-v1\.2\.3 sdk-v1\.2\.3$/m);
+  assert.match(
+    commandLog,
+    /^git push --atomic origin core-v1\.2\.3 sdk-v1\.2\.3 tuner-v1\.2\.3 prompt-cache-v1\.2\.3 task-profiles-v1\.2\.3$/m,
+  );
 });
 
 test("gh release helper resumes after remote tags or releases already exist safely", async (t) => {

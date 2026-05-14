@@ -46,27 +46,44 @@ function createTestIo() {
   };
 }
 
+const releasePackageFixtures = [
+  ["packages/core/package.json", "@razroo/ray-core"],
+  ["packages/sdk/package.json", "@razroo/ray-sdk"],
+  ["packages/tuner/package.json", "@razroo/ray-tuner"],
+  ["packages/prompt-cache/package.json", "@razroo/ray-prompt-cache"],
+  ["packages/task-profiles/package.json", "@razroo/ray-task-profiles"],
+] as const;
+
+async function writeReleasePackageSet(root: string, version: string): Promise<void> {
+  for (const [relPath, name] of releasePackageFixtures) {
+    await writePackageJson(root, relPath, {
+      name,
+      version,
+      ...(name !== "@razroo/ray-core"
+        ? {
+            dependencies: {
+              "@razroo/ray-core": "workspace:*",
+            },
+          }
+        : {}),
+    });
+  }
+}
+
 test("checkReleaseSource accepts linked package versions for a release tag", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-release-check-source-ok-"));
   t.after(async () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  await writePackageJson(tempDir, "packages/core/package.json", {
-    name: "@razroo/ray-core",
-    version: "1.2.3",
-  });
-  await writePackageJson(tempDir, "packages/sdk/package.json", {
-    name: "@razroo/ray-sdk",
-    version: "1.2.3",
-    dependencies: {
-      "@razroo/ray-core": "workspace:*",
-    },
-  });
+  await writeReleasePackageSet(tempDir, "1.2.3");
 
   assert.deepEqual(await checkReleaseSource("1.2.3", { cwd: tempDir }), [
     "@razroo/ray-core: 1.2.3",
     "@razroo/ray-sdk: 1.2.3",
+    "@razroo/ray-tuner: 1.2.3",
+    "@razroo/ray-prompt-cache: 1.2.3",
+    "@razroo/ray-task-profiles: 1.2.3",
   ]);
 });
 
@@ -136,14 +153,7 @@ test("checkReleaseSource rejects malformed release tags and package name drift",
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  await writePackageJson(tempDir, "packages/core/package.json", {
-    name: "@razroo/ray-core",
-    version: "1.2.3",
-  });
-  await writePackageJson(tempDir, "packages/sdk/package.json", {
-    name: "@razroo/ray-sdk",
-    version: "1.2.3",
-  });
+  await writeReleasePackageSet(tempDir, "1.2.3");
 
   await assert.rejects(
     () => checkReleaseSource("1.2", { cwd: tempDir }),
@@ -269,20 +279,23 @@ test("runCheckSource writes checked packages to injected stdout", async (t) => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  await writePackageJson(tempDir, "packages/core/package.json", {
-    name: "@razroo/ray-core",
-    version: "1.2.3",
-  });
-  await writePackageJson(tempDir, "packages/sdk/package.json", {
-    name: "@razroo/ray-sdk",
-    version: "1.2.3",
-  });
+  await writeReleasePackageSet(tempDir, "1.2.3");
 
   const output = createTestIo();
 
   await runCheckSource(["1.2.3"], { cwd: tempDir, io: output.io });
 
-  assert.equal(output.stdout, "@razroo/ray-core: 1.2.3\n@razroo/ray-sdk: 1.2.3\n");
+  assert.equal(
+    output.stdout,
+    [
+      "@razroo/ray-core: 1.2.3",
+      "@razroo/ray-sdk: 1.2.3",
+      "@razroo/ray-tuner: 1.2.3",
+      "@razroo/ray-prompt-cache: 1.2.3",
+      "@razroo/ray-task-profiles: 1.2.3",
+      "",
+    ].join("\n"),
+  );
   assert.equal(output.stderr, "");
 });
 

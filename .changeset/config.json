@@ -3,7 +3,15 @@
   "changelog": "@changesets/cli/changelog",
   "commit": false,
   "fixed": [],
-  "linked": [["@razroo/ray-core", "@razroo/ray-sdk"]],
+  "linked": [
+    [
+      "@razroo/ray-core",
+      "@razroo/ray-sdk",
+      "@razroo/ray-tuner",
+      "@razroo/ray-prompt-cache",
+      "@razroo/ray-task-profiles"
+    ]
+  ],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tag + GitHub Releases for linked @razroo/ray-core and @razroo/ray-sdk.
+# Tag + GitHub Releases for linked public @razroo/ray packages.
 # NPM publish runs via .github/workflows/ray-*-release.yml when each release is published.
 set -euo pipefail
 
@@ -172,8 +172,8 @@ usage() {
   sed -n '1,80p' <<'EOF'
 Usage: bash scripts/release/gh-release.sh [--dry-run | --yes]
 
-  Reads versions from packages/core and packages/sdk (must match), then:
-  1) creates annotated tags  core-v<ver>  and  sdk-v<ver>  on HEAD
+  Reads versions from public package manifests (must match), then:
+  1) creates annotated package tags on HEAD
   2) git push --atomic origin <tags>
   3) gh release create for each tag (triggers npm publish Actions)
 
@@ -197,21 +197,42 @@ for arg in "$@"; do
   esac
 done
 
-CORE_VER=$(bun --print 'require("./packages/core/package.json").version')
-SDK_VER=$(bun --print 'require("./packages/sdk/package.json").version')
-if [ "$CORE_VER" != "$SDK_VER" ]; then
-  fail "linked packages must share version; core=$CORE_VER sdk=$SDK_VER"
+CORE_VER="$(bun --print 'require("./packages/core/package.json").version')"
+SDK_VER="$(bun --print 'require("./packages/sdk/package.json").version')"
+TUNER_VER="$(bun --print 'require("./packages/tuner/package.json").version')"
+PROMPT_CACHE_VER="$(bun --print 'require("./packages/prompt-cache/package.json").version')"
+TASK_PROFILES_VER="$(bun --print 'require("./packages/task-profiles/package.json").version')"
+if [ "$CORE_VER" != "$SDK_VER" ] ||
+  [ "$CORE_VER" != "$TUNER_VER" ] ||
+  [ "$CORE_VER" != "$PROMPT_CACHE_VER" ] ||
+  [ "$CORE_VER" != "$TASK_PROFILES_VER" ]; then
+  fail "linked packages must share version; core=$CORE_VER sdk=$SDK_VER tuner=$TUNER_VER prompt-cache=$PROMPT_CACHE_VER task-profiles=$TASK_PROFILES_VER"
 fi
 
 VER="$CORE_VER"
 TAG_CORE="core-v$VER"
 TAG_SDK="sdk-v$VER"
+TAG_TUNER="tuner-v$VER"
+TAG_PROMPT_CACHE="prompt-cache-v$VER"
+TAG_TASK_PROFILES="task-profiles-v$VER"
+RELEASE_TAGS=("$TAG_CORE" "$TAG_SDK" "$TAG_TUNER" "$TAG_PROMPT_CACHE" "$TAG_TASK_PROFILES")
+
+package_name_for_tag() {
+  case "$1" in
+  "$TAG_CORE") echo "@razroo/ray-core" ;;
+  "$TAG_SDK") echo "@razroo/ray-sdk" ;;
+  "$TAG_TUNER") echo "@razroo/ray-tuner" ;;
+  "$TAG_PROMPT_CACHE") echo "@razroo/ray-prompt-cache" ;;
+  "$TAG_TASK_PROFILES") echo "@razroo/ray-task-profiles" ;;
+  *) fail "unknown release tag: $1" ;;
+  esac
+}
 
 bun ./scripts/release/check-source.mjs "$VER" >/dev/null
 
 echo "Version:  $VER"
-echo "Packages: @razroo/ray-core  @razroo/ray-sdk"
-echo "Tags:     $TAG_CORE  $TAG_SDK"
+echo "Packages: @razroo/ray-core  @razroo/ray-sdk  @razroo/ray-tuner  @razroo/ray-prompt-cache  @razroo/ray-task-profiles"
+echo "Tags:     ${RELEASE_TAGS[*]}"
 
 if [ "$DRY" = true ]; then
   echo "[dry-run] ok"
@@ -248,13 +269,10 @@ fi
 
 run_required_bounded "checking GitHub CLI authentication" 60 gh auth status >/dev/null
 
-CREATE_TAG_CORE=true
-CREATE_TAG_SDK=true
-PUSH_TAG_CORE=true
-PUSH_TAG_SDK=true
-CREATE_RELEASE_CORE=true
-CREATE_RELEASE_SDK=true
-for tag in "$TAG_CORE" "$TAG_SDK"; do
+CREATE_TAGS=()
+TAGS_TO_PUSH=()
+CREATE_RELEASE_TAGS=()
+for tag in "${RELEASE_TAGS[@]}"; do
   local_ready=false
   remote_ready=false
   if local_release_tag_ready "$tag" "$LOCAL_HEAD"; then
@@ -264,61 +282,39 @@ for tag in "$TAG_CORE" "$TAG_SDK"; do
     remote_ready=true
   fi
 
-  if [ "$local_ready" = true ] || [ "$remote_ready" = true ]; then
-    if [ "$tag" = "$TAG_CORE" ]; then
-      CREATE_TAG_CORE=false
-    else
-      CREATE_TAG_SDK=false
-    fi
+  if [ "$local_ready" != true ] && [ "$remote_ready" != true ]; then
+    CREATE_TAGS+=("$tag")
   fi
 
-  if [ "$remote_ready" = true ]; then
-    if [ "$tag" = "$TAG_CORE" ]; then
-      PUSH_TAG_CORE=false
-    else
-      PUSH_TAG_SDK=false
-    fi
+  if [ "$remote_ready" != true ]; then
+    TAGS_TO_PUSH+=("$tag")
   fi
 
   if github_release_exists "$tag"; then
     echo "Reusing GitHub release $tag"
-    if [ "$tag" = "$TAG_CORE" ]; then
-      CREATE_RELEASE_CORE=false
-    else
-      CREATE_RELEASE_SDK=false
-    fi
+  else
+    CREATE_RELEASE_TAGS+=("$tag")
   fi
 done
 
-if [ "$CREATE_TAG_CORE" = true ]; then
-  git tag -a "$TAG_CORE" -m "Release $TAG_CORE (@razroo/ray-core v$VER)"
+if [ "${#CREATE_TAGS[@]}" -gt 0 ]; then
+  for tag in "${CREATE_TAGS[@]}"; do
+    git tag -a "$tag" -m "Release $tag ($(package_name_for_tag "$tag") v$VER)"
+  done
 fi
-if [ "$CREATE_TAG_SDK" = true ]; then
-  git tag -a "$TAG_SDK" -m "Release $TAG_SDK (@razroo/ray-sdk v$VER)"
-fi
-TAGS_TO_PUSH=()
-if [ "$PUSH_TAG_CORE" = true ]; then
-  TAGS_TO_PUSH+=("$TAG_CORE")
-fi
-if [ "$PUSH_TAG_SDK" = true ]; then
-  TAGS_TO_PUSH+=("$TAG_SDK")
-fi
+
 if [ "${#TAGS_TO_PUSH[@]}" -gt 0 ]; then
   run_required_bounded "pushing release tags atomically" 120 git push --atomic origin "${TAGS_TO_PUSH[@]}"
 else
   echo "Release tags already present on origin"
 fi
 
-if [ "$CREATE_RELEASE_CORE" = true ]; then
-  run_required_bounded \
-    "creating GitHub release $TAG_CORE" \
-    120 \
-    gh release create "$TAG_CORE" --generate-notes --title "$TAG_CORE"
-fi
-if [ "$CREATE_RELEASE_SDK" = true ]; then
-  run_required_bounded \
-    "creating GitHub release $TAG_SDK" \
-    120 \
-    gh release create "$TAG_SDK" --generate-notes --title "$TAG_SDK"
+if [ "${#CREATE_RELEASE_TAGS[@]}" -gt 0 ]; then
+  for tag in "${CREATE_RELEASE_TAGS[@]}"; do
+    run_required_bounded \
+      "creating GitHub release $tag" \
+      120 \
+      gh release create "$tag" --generate-notes --title "$tag"
+  done
 fi
 echo "Done. Actions publish to npm when each release is in published state."

@@ -1,9 +1,3 @@
-import { TtlCache, type TtlCacheStats } from "@ray/cache";
-import {
-  renderPromptTemplate,
-  requirePromptTemplate,
-  type RenderedPromptTemplate,
-} from "@ray/prompts";
 import {
   RayError,
   hashValue,
@@ -11,18 +5,18 @@ import {
   type ResponseFormatType,
 } from "@razroo/ray-core";
 
+interface CacheEntry {
+  value: PromptScaffold;
+  expiresAt: number;
+  sizeBytes: number;
+}
+
 export interface PromptScaffold {
   segments: string[];
   variableOrder: string[];
   templateId?: string;
   templateVersion?: string;
   family?: string;
-}
-
-export interface PromptScaffoldTemplate {
-  rendered: RenderedPromptTemplate;
-  sentinelVariables: Record<string, string>;
-  variableOrder: string[];
 }
 
 export interface PromptScaffoldCacheKeyOptions {
@@ -47,7 +41,15 @@ export interface PromptScaffoldCacheOptions {
   maxBytes?: number;
 }
 
-export interface PromptScaffoldCacheSnapshot extends TtlCacheStats {
+export interface PromptScaffoldCacheSnapshot {
+  entries: number;
+  bytes: number;
+  maxEntries: number;
+  maxBytes: number;
+  ttlMs: number;
+  evictions: number;
+  expirations: number;
+  droppedOversizedEntries: number;
   hits: number;
   misses: number;
 }
@@ -91,6 +93,18 @@ function assertKnownObjectKeys(value: object, label: string, allowedKeys: Readon
     if (!allowedKeys.has(key)) {
       throw new TypeError(`${label} must not contain unsupported key "${key}"`);
     }
+  }
+}
+
+function assertCacheKey(value: unknown): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new TypeError("prompt scaffold cache key must be a non-empty string");
+  }
+
+  if (value.length > MAX_PROMPT_SCAFFOLD_FIELD_CHARS) {
+    throw new RangeError(
+      `prompt scaffold cache key must be at most ${MAX_PROMPT_SCAFFOLD_FIELD_CHARS} characters`,
+    );
   }
 }
 
@@ -201,22 +215,13 @@ export function buildPromptScaffoldCacheKey(options: PromptScaffoldCacheKeyOptio
   });
 }
 
-export function createSentinelTemplateVariables(templateId: string): Record<string, string> {
-  const template = requirePromptTemplate(templateId);
+export function createSentinelTemplateVariables(
+  variableOrder: readonly string[],
+): Record<string, string> {
+  assertVariableOrder(variableOrder);
   return Object.fromEntries(
-    template.variables.map((variable, index) => [variable, `__RAY_PROMPT_VAR_${index}__`]),
+    variableOrder.map((variable, index) => [variable, `__RAY_PROMPT_VAR_${index}__`]),
   );
-}
-
-export function renderPromptScaffoldTemplate(templateId: string): PromptScaffoldTemplate {
-  const template = requirePromptTemplate(templateId);
-  const sentinelVariables = createSentinelTemplateVariables(template.id);
-  const rendered = renderPromptTemplate(template.id, sentinelVariables);
-  return {
-    rendered,
-    sentinelVariables,
-    variableOrder: [...template.variables],
-  };
 }
 
 export function createPromptScaffold(options: CreatePromptScaffoldOptions): PromptScaffold {
@@ -294,64 +299,138 @@ export function renderPromptFromScaffold(
 }
 
 export class PromptScaffoldCache {
-  private readonly cache: TtlCache<PromptScaffold>;
+  private readonly store = new Map<string, CacheEntry>();
+  private readonly maxEntries: number;
+  private readonly ttlMs: number;
+  private readonly maxBytes: number;
+  private bytes = 0;
   private hits = 0;
   private misses = 0;
+  private evictions = 0;
+  private expirations = 0;
+  private droppedOversizedEntries = 0;
 
   constructor(options: PromptScaffoldCacheOptions) {
     assertRecord(options, "prompt scaffold cache options");
     assertKnownObjectKeys(options, "prompt scaffold cache options", promptScaffoldCacheOptionKeys);
 
-    this.cache = new TtlCache<PromptScaffold>({
-      maxEntries: assertPositiveSafeIntegerAtMost(
-        options.maxEntries,
-        "prompt scaffold cache maxEntries",
-        MAX_PROMPT_SCAFFOLD_ENTRIES,
-      ),
-      ttlMs: assertPositiveSafeIntegerAtMost(
-        options.ttlMs,
-        "prompt scaffold cache ttlMs",
-        MAX_PROMPT_SCAFFOLD_TTL_MS,
-      ),
-      maxBytes:
-        options.maxBytes === undefined
-          ? DEFAULT_PROMPT_SCAFFOLD_BYTES
-          : assertPositiveSafeIntegerAtMost(
-              options.maxBytes,
-              "prompt scaffold cache maxBytes",
-              MAX_PROMPT_SCAFFOLD_BYTES,
-            ),
-      sizeOf: estimatePromptScaffoldBytes,
-    });
+    this.maxEntries = assertPositiveSafeIntegerAtMost(
+      options.maxEntries,
+      "prompt scaffold cache maxEntries",
+      MAX_PROMPT_SCAFFOLD_ENTRIES,
+    );
+    this.ttlMs = assertPositiveSafeIntegerAtMost(
+      options.ttlMs,
+      "prompt scaffold cache ttlMs",
+      MAX_PROMPT_SCAFFOLD_TTL_MS,
+    );
+    this.maxBytes =
+      options.maxBytes === undefined
+        ? DEFAULT_PROMPT_SCAFFOLD_BYTES
+        : assertPositiveSafeIntegerAtMost(
+            options.maxBytes,
+            "prompt scaffold cache maxBytes",
+            MAX_PROMPT_SCAFFOLD_BYTES,
+          );
   }
 
   get(key: string): PromptScaffold | undefined {
-    const scaffold = this.cache.get(key);
-    if (scaffold === undefined) {
+    assertCacheKey(key);
+    const entry = this.store.get(key);
+    if (!entry) {
       this.misses += 1;
       return undefined;
     }
 
+    if (entry.expiresAt <= Date.now()) {
+      this.deleteEntry(key, "expired");
+      this.misses += 1;
+      return undefined;
+    }
+
+    this.store.delete(key);
+    this.store.set(key, entry);
     this.hits += 1;
-    return cloneScaffold(scaffold);
+    return cloneScaffold(entry.value);
   }
 
   set(key: string, scaffold: PromptScaffold): void {
-    this.cache.set(key, cloneScaffold(scaffold));
+    assertCacheKey(key);
+    this.purgeExpired();
+
+    const value = cloneScaffold(scaffold);
+    const sizeBytes = estimatePromptScaffoldBytes(value, key);
+    if (sizeBytes > this.maxBytes) {
+      this.droppedOversizedEntries += 1;
+      return;
+    }
+
+    if (this.store.has(key)) {
+      this.deleteEntry(key);
+    }
+
+    while (this.store.size >= this.maxEntries || this.bytes + sizeBytes > this.maxBytes) {
+      const oldestKey = this.store.keys().next().value;
+      if (oldestKey === undefined) {
+        break;
+      }
+      this.deleteEntry(oldestKey, "evicted");
+    }
+
+    this.store.set(key, {
+      value,
+      expiresAt: Date.now() + this.ttlMs,
+      sizeBytes,
+    });
+    this.bytes += sizeBytes;
   }
 
   snapshot(): PromptScaffoldCacheSnapshot {
+    this.purgeExpired();
     return {
-      ...this.cache.snapshot(),
+      entries: this.store.size,
+      bytes: this.bytes,
+      maxEntries: this.maxEntries,
+      maxBytes: this.maxBytes,
+      ttlMs: this.ttlMs,
+      evictions: this.evictions,
+      expirations: this.expirations,
+      droppedOversizedEntries: this.droppedOversizedEntries,
       hits: this.hits,
       misses: this.misses,
     };
   }
 
   clear(): void {
-    this.cache.clear();
+    this.store.clear();
+    this.bytes = 0;
     this.hits = 0;
     this.misses = 0;
+  }
+
+  private purgeExpired(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.store.entries()) {
+      if (entry.expiresAt <= now) {
+        this.deleteEntry(key, "expired");
+      }
+    }
+  }
+
+  private deleteEntry(key: string, reason?: "evicted" | "expired"): boolean {
+    const entry = this.store.get(key);
+    if (!entry) {
+      return false;
+    }
+
+    this.bytes -= entry.sizeBytes;
+    this.store.delete(key);
+    if (reason === "evicted") {
+      this.evictions += 1;
+    } else if (reason === "expired") {
+      this.expirations += 1;
+    }
+    return true;
   }
 }
 

@@ -1,7 +1,21 @@
 {
-  "name": "@ray/task-profiles",
-  "private": true,
-  "version": "0.1.0",
+  "name": "@razroo/ray-task-profiles",
+  "version": "0.3.0",
+  "description": "Task execution profiles for lean single-model Ray inference deployments",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/razroo/ray.git",
+    "directory": "packages/task-profiles"
+  },
+  "keywords": [
+    "ray",
+    "razroo",
+    "task-profiles",
+    "llm",
+    "inference",
+    "self-hosted"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -14,9 +28,16 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "!dist/**/*.test.*",
+    "!src/**/*.test.*",
+    "README.md",
+    "CHANGELOG.md"
   ],
   "dependencies": {
     "@razroo/ray-core": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

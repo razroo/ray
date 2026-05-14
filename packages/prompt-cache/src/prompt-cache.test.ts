@@ -6,25 +6,24 @@ import {
   createPromptScaffold,
   createSentinelTemplateVariables,
   renderPromptFromScaffold,
-  renderPromptScaffoldTemplate,
 } from "./index.js";
 
-test("renderPromptScaffoldTemplate creates sentinel variables for Email AI templates", () => {
-  const scaffoldTemplate = renderPromptScaffoldTemplate("email.cold_outreach.v1");
-
-  assert.equal(scaffoldTemplate.rendered.id, "email.cold_outreach.v1");
-  assert.deepEqual(scaffoldTemplate.variableOrder, [
+test("createSentinelTemplateVariables creates stable markers for template variables", () => {
+  const sentinelVariables = createSentinelTemplateVariables([
     "recipientRole",
     "topic",
     "valueProp",
     "companyContext",
   ]);
-  assert.equal(scaffoldTemplate.sentinelVariables.recipientRole, "__RAY_PROMPT_VAR_0__");
-  assert.match(scaffoldTemplate.rendered.input, /__RAY_PROMPT_VAR_0__/);
+
+  assert.equal(sentinelVariables.recipientRole, "__RAY_PROMPT_VAR_0__");
+  assert.equal(sentinelVariables.topic, "__RAY_PROMPT_VAR_1__");
+  assert.equal(sentinelVariables.valueProp, "__RAY_PROMPT_VAR_2__");
+  assert.equal(sentinelVariables.companyContext, "__RAY_PROMPT_VAR_3__");
 });
 
 test("createPromptScaffold rehydrates rendered prompts from cached segments", () => {
-  const sentinelVariables = createSentinelTemplateVariables("email.reply_rewrite.v1");
+  const sentinelVariables = createSentinelTemplateVariables(["replyText", "rewriteGoal"]);
   const prompt = [
     "System header ",
     sentinelVariables.replyText,

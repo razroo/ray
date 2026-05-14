@@ -14,15 +14,19 @@ import {
   type SchedulerSlotSnapshot,
   type WarmupInferenceRequest,
 } from "@razroo/ray-core";
-import { resolvePromptTemplateRequest } from "@ray/prompts";
+import {
+  renderPromptTemplate,
+  requirePromptTemplate,
+  resolvePromptTemplateRequest,
+} from "@ray/prompts";
 import {
   PromptScaffoldCache,
   buildPromptScaffoldCacheKey,
   createPromptScaffold,
+  createSentinelTemplateVariables,
   renderPromptFromScaffold,
-  renderPromptScaffoldTemplate,
   type PromptScaffold,
-} from "@ray/prompt-cache";
+} from "@razroo/ray-prompt-cache";
 import {
   BACKEND_RESPONSE_BODY_LIMIT_BYTES,
   MAX_ADAPTER_TIMEOUT_MS,
@@ -1530,8 +1534,9 @@ export class LlamaCppProvider implements ModelProvider {
       return cached;
     }
 
-    const scaffoldTemplate = renderPromptScaffoldTemplate(templateId);
-    const rendered = scaffoldTemplate.rendered;
+    const template = requirePromptTemplate(templateId);
+    const sentinelVariables = createSentinelTemplateVariables(template.variables);
+    const rendered = renderPromptTemplate(template.id, sentinelVariables);
     const prompt = await this.applyTemplate(
       {
         input: rendered.input,
@@ -1551,8 +1556,8 @@ export class LlamaCppProvider implements ModelProvider {
     );
     const scaffold = createPromptScaffold({
       prompt,
-      variableOrder: scaffoldTemplate.variableOrder,
-      sentinelVariables: scaffoldTemplate.sentinelVariables,
+      variableOrder: template.variables,
+      sentinelVariables,
       templateId: rendered.id,
       templateVersion: rendered.version,
       family: rendered.family,

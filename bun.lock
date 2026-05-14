@@ -62,17 +62,15 @@
       "name": "@ray/models",
       "version": "0.1.0",
       "dependencies": {
-        "@ray/prompt-cache": "workspace:*",
         "@ray/prompts": "workspace:*",
         "@razroo/ray-core": "workspace:*",
+        "@razroo/ray-prompt-cache": "workspace:*",
       },
     },
     "packages/prompt-cache": {
-      "name": "@ray/prompt-cache",
-      "version": "0.1.0",
+      "name": "@razroo/ray-prompt-cache",
+      "version": "0.3.0",
       "dependencies": {
-        "@ray/cache": "workspace:*",
-        "@ray/prompts": "workspace:*",
         "@razroo/ray-core": "workspace:*",
       },
     },
@@ -111,8 +109,8 @@
       },
     },
     "packages/task-profiles": {
-      "name": "@ray/task-profiles",
-      "version": "0.1.0",
+      "name": "@razroo/ray-task-profiles",
+      "version": "0.3.0",
       "dependencies": {
         "@razroo/ray-core": "workspace:*",
       },
@@ -125,8 +123,8 @@
       },
     },
     "packages/tuner": {
-      "name": "@ray/tuner",
-      "version": "0.1.0",
+      "name": "@razroo/ray-tuner",
+      "version": "0.3.0",
       "dependencies": {
         "@razroo/ray-core": "workspace:*",
       },
@@ -221,23 +219,23 @@
 
     "@ray/models": ["@ray/models@workspace:packages/models"],
 
-    "@ray/prompt-cache": ["@ray/prompt-cache@workspace:packages/prompt-cache"],
-
     "@ray/prompts": ["@ray/prompts@workspace:packages/prompts"],
 
     "@ray/runtime": ["@ray/runtime@workspace:packages/runtime"],
 
     "@ray/scheduler": ["@ray/scheduler@workspace:packages/scheduler"],
 
-    "@ray/task-profiles": ["@ray/task-profiles@workspace:packages/task-profiles"],
-
     "@ray/telemetry": ["@ray/telemetry@workspace:packages/telemetry"],
-
-    "@ray/tuner": ["@ray/tuner@workspace:packages/tuner"],
 
     "@razroo/ray-core": ["@razroo/ray-core@workspace:packages/core"],
 
+    "@razroo/ray-prompt-cache": ["@razroo/ray-prompt-cache@workspace:packages/prompt-cache"],
+
     "@razroo/ray-sdk": ["@razroo/ray-sdk@workspace:packages/sdk"],
+
+    "@razroo/ray-task-profiles": ["@razroo/ray-task-profiles@workspace:packages/task-profiles"],
+
+    "@razroo/ray-tuner": ["@razroo/ray-tuner@workspace:packages/tuner"],
 
     "@types/estree": ["@types/estree@1.0.8", "", {}, "sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w=="],
 

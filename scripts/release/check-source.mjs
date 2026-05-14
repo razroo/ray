@@ -7,10 +7,19 @@ const MAX_RELEASE_MANIFESTS = 16;
 const MAX_RELEASE_MANIFEST_PATH_BYTES = 4_096;
 const MAX_RELEASE_ARGV = 8;
 const MAX_RELEASE_ARG_BYTES = 4_096;
-export const releasePackageManifests = ["packages/core/package.json", "packages/sdk/package.json"];
+export const releasePackageManifests = [
+  "packages/core/package.json",
+  "packages/sdk/package.json",
+  "packages/tuner/package.json",
+  "packages/prompt-cache/package.json",
+  "packages/task-profiles/package.json",
+];
 export const releasePackageNames = {
   "packages/core/package.json": "@razroo/ray-core",
   "packages/sdk/package.json": "@razroo/ray-sdk",
+  "packages/tuner/package.json": "@razroo/ray-tuner",
+  "packages/prompt-cache/package.json": "@razroo/ray-prompt-cache",
+  "packages/task-profiles/package.json": "@razroo/ray-task-profiles",
 };
 const semverPattern =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;

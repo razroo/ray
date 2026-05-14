@@ -66,6 +66,15 @@ function createPackageMetadataFetch(version: string) {
   };
 }
 
+const expectedVerifyOutput = [
+  "@razroo/ray-core: 0.2.0",
+  "@razroo/ray-sdk: 0.2.0",
+  "@razroo/ray-tuner: 0.2.0",
+  "@razroo/ray-prompt-cache: 0.2.0",
+  "@razroo/ray-task-profiles: 0.2.0",
+  "",
+].join("\n");
+
 test("parseArgs accepts strict npm verification options", () => {
   assert.deepEqual(parseArgs(["--", "0.2.0"]), { version: "0.2.0" });
   assert.deepEqual(parseArgs(["1.2.3-beta.1"]), { version: "1.2.3-beta.1" });
@@ -150,7 +159,7 @@ test("runVerifyNpm writes checked packages to injected stdout", async () => {
     io: output.io,
   });
 
-  assert.equal(output.stdout, "@razroo/ray-core: 0.2.0\n@razroo/ray-sdk: 0.2.0\n");
+  assert.equal(output.stdout, expectedVerifyOutput);
   assert.equal(output.stderr, "");
 });
 
@@ -197,7 +206,7 @@ test("runVerifyNpmCli verifies packages with injected dependencies", async () =>
   });
 
   assert.equal(status, 0);
-  assert.equal(output.stdout, "@razroo/ray-core: 0.2.0\n@razroo/ray-sdk: 0.2.0\n");
+  assert.equal(output.stdout, expectedVerifyOutput);
   assert.equal(output.stderr, "");
 });
 
@@ -356,7 +365,7 @@ test("verifyPackageVersion rejects package names outside the release allowlist",
       verifyPackageVersion("@razroo/ray-plugin", "0.2.0", {
         fetchImpl,
       }),
-    /npm verification package must be one of: @razroo\/ray-core, @razroo\/ray-sdk/,
+    /npm verification package must be one of: @razroo\/ray-core, @razroo\/ray-sdk, @razroo\/ray-tuner, @razroo\/ray-prompt-cache, @razroo\/ray-task-profiles/,
   );
   assert.equal(fetched, false);
 });

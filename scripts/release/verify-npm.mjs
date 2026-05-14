@@ -8,7 +8,13 @@ export const VERIFY_NPM_TIMEOUT_MS = 15_000;
 export const MAX_NPM_METADATA_BYTES = 1024 * 1024;
 const MAX_VERIFY_NPM_ARGV = 8;
 const MAX_VERIFY_NPM_ARG_BYTES = 4_096;
-export const packages = ["@razroo/ray-core", "@razroo/ray-sdk"];
+export const packages = [
+  "@razroo/ray-core",
+  "@razroo/ray-sdk",
+  "@razroo/ray-tuner",
+  "@razroo/ray-prompt-cache",
+  "@razroo/ray-task-profiles",
+];
 const semverPattern =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 

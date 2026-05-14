@@ -1,7 +1,22 @@
 {
-  "name": "@ray/tuner",
-  "private": true,
-  "version": "0.1.0",
+  "name": "@razroo/ray-tuner",
+  "version": "0.3.0",
+  "description": "llama.cpp launch-profile tuner helpers for Ray VPS deployments",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/razroo/ray.git",
+    "directory": "packages/tuner"
+  },
+  "keywords": [
+    "ray",
+    "razroo",
+    "llama.cpp",
+    "tuning",
+    "vps",
+    "inference",
+    "self-hosted"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -14,9 +29,16 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "!dist/**/*.test.*",
+    "!src/**/*.test.*",
+    "README.md",
+    "CHANGELOG.md"
   ],
   "dependencies": {
     "@razroo/ray-core": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
