@@ -631,11 +631,18 @@ test("validatePackageRuntimeCoverage requires model staging headroom guards", as
     path.join(tempDir, "scripts", "model-stage.ts"),
     [
       "interface ModelStageStorageHeadroom {}",
+      "const MIN_BINARY_STAGE_FREE_AFTER_COPY_MIB = 64;",
       "const MIN_MODEL_STAGE_FREE_AFTER_COPY_MIB = 256;",
       "function evaluateModelStageStorageHeadroom() {}",
+      "function evaluateModelStageMemoryFit() {}",
+      "function assertGgufMagicHeader() {}",
+      "function assertLlamaCppBinarySupportsLaunchFlags() {}",
+      "function copyFileAtomicUnlessSame() {}",
       "function assertModelStageStorageHeadroom() {}",
+      "function assertBinaryStageStorageHeadroom() {}",
       'const HELP = "--ray-env-file RAY_DEPLOY_MEMORY_MIB";',
       "function readEnvironmentFileBounded() {}",
+      'const commands = ["df -Pm", "RAY_DEPLOY_MIN_FREE_STORAGE_MIB", ".ray-stage-"];',
       "",
     ].join("\n"),
   );
