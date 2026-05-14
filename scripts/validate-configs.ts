@@ -112,6 +112,13 @@ export interface ConfigValidationSummary {
   results: ConfigValidationResult[];
 }
 
+interface ValidateConfigFilesOptions {
+  cwd: string;
+  configPaths: string[];
+  env?: NodeJS.ProcessEnv;
+  failOnWarn?: boolean;
+}
+
 const HELP = `Validate every checked-in Ray example config.
 
 Usage:
@@ -307,6 +314,48 @@ function withSmokeAuthEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 function isRecord(value: unknown): value is ConfigRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function assertConfigValidationEnv(env: unknown): asserts env is NodeJS.ProcessEnv {
+  if (!isRecord(env)) {
+    throw new Error("config validation env must be an object");
+  }
+}
+
+function assertValidateConfigFilesOptions(
+  options: unknown,
+): asserts options is ValidateConfigFilesOptions {
+  if (!isRecord(options)) {
+    throw new Error("config validation options must be an object");
+  }
+
+  if (!Array.isArray(options.configPaths)) {
+    throw new Error("configPaths must be an array");
+  }
+
+  if (options.env !== undefined && !isRecord(options.env)) {
+    throw new Error("env must be an object when provided");
+  }
+
+  if (options.failOnWarn !== undefined && typeof options.failOnWarn !== "boolean") {
+    throw new Error("failOnWarn must be a boolean when provided");
+  }
+}
+
+function assertValidateConfigsCliIo(
+  io: unknown,
+): asserts io is Pick<NodeJS.Process, "stdout" | "stderr"> {
+  if (!isRecord(io)) {
+    throw new Error("config validation io must be an object");
+  }
+
+  if (!isRecord(io.stdout) || typeof io.stdout.write !== "function") {
+    throw new Error("config validation io.stdout.write must be a function");
+  }
+
+  if (!isRecord(io.stderr) || typeof io.stderr.write !== "function") {
+    throw new Error("config validation io.stderr.write must be a function");
+  }
 }
 
 async function readConfigPolicyFileBounded(configPath: string): Promise<string> {
@@ -1367,12 +1416,11 @@ export async function diagnosePublicConfigPolicy(
   return diagnostics;
 }
 
-export async function validateConfigFiles(options: {
-  cwd: string;
-  configPaths: string[];
-  env?: NodeJS.ProcessEnv;
-  failOnWarn?: boolean;
-}): Promise<ConfigValidationSummary> {
+export async function validateConfigFiles(
+  options: ValidateConfigFilesOptions,
+): Promise<ConfigValidationSummary> {
+  assertValidateConfigFilesOptions(options);
+
   if (options.configPaths.length > MAX_CONFIG_FILES) {
     throw new Error(`Config validation can inspect at most ${MAX_CONFIG_FILES} config files`);
   }
@@ -1500,7 +1548,10 @@ export async function runValidateConfigsCli(
   io: Pick<NodeJS.Process, "stdout" | "stderr"> = process,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<number> {
+  assertValidateConfigsCliIo(io);
+
   try {
+    assertConfigValidationEnv(env);
     const args = parseArgs(argv);
 
     if (args.help) {

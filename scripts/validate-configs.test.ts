@@ -8,6 +8,7 @@ import {
   diagnosePublicConfigPolicy,
   formatTextSummary,
   parseArgs,
+  runValidateConfigsCli,
   validateConfigFiles,
 } from "./validate-configs.ts";
 
@@ -111,6 +112,42 @@ test("validateConfigFiles rejects excessive config inputs before rendering", asy
         ),
       }),
     /at most 128 config files/,
+  );
+});
+
+test("validateConfigFiles rejects malformed direct options before rendering", async () => {
+  await assert.rejects(
+    () => validateConfigFiles(null as unknown as never),
+    /config validation options must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      validateConfigFiles({
+        cwd: process.cwd(),
+        configPaths: null,
+      } as unknown as never),
+    /configPaths must be an array/,
+  );
+
+  await assert.rejects(
+    () =>
+      validateConfigFiles({
+        cwd: process.cwd(),
+        configPaths: [],
+        env: null,
+      } as unknown as never),
+    /env must be an object when provided/,
+  );
+
+  await assert.rejects(
+    () =>
+      validateConfigFiles({
+        cwd: process.cwd(),
+        configPaths: [],
+        failOnWarn: "true",
+      } as unknown as never),
+    /failOnWarn must be a boolean when provided/,
   );
 });
 
@@ -365,6 +402,56 @@ test("diagnosePublicConfigPolicy bounds public config policy reads", async (t) =
     ["public_config_policy_unreadable"],
   );
   assert.match(diagnostics[0]?.message, /Config policy file must be at most 262144 bytes/);
+});
+
+test("runValidateConfigsCli rejects malformed direct io before parsing", async () => {
+  await assert.rejects(
+    () => runValidateConfigsCli([], null as unknown as never),
+    /config validation io must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      runValidateConfigsCli(["--help"], {
+        stdout: {},
+        stderr: {
+          write() {
+            return true;
+          },
+        },
+      } as unknown as never),
+    /config validation io\.stdout\.write must be a function/,
+  );
+
+  await assert.rejects(
+    () =>
+      runValidateConfigsCli(["--unknown"], {
+        stdout: {
+          write() {
+            return true;
+          },
+        },
+        stderr: {},
+      } as unknown as never),
+    /config validation io\.stderr\.write must be a function/,
+  );
+});
+
+test("runValidateConfigsCli reports malformed direct env before parsing", async () => {
+  let stdout = "";
+  let stderr = "";
+  const exitCode = await runValidateConfigsCli(
+    [],
+    {
+      stdout: { write: (chunk: string) => void (stdout += chunk) },
+      stderr: { write: (chunk: string) => void (stderr += chunk) },
+    },
+    null as unknown as NodeJS.ProcessEnv,
+  );
+
+  assert.equal(exitCode, 1);
+  assert.equal(stdout, "");
+  assert.match(stderr, /config validation env must be an object/);
 });
 
 test("validateConfigFiles accepts every checked-in example config", async () => {
