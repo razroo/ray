@@ -178,6 +178,29 @@ test("ttl cache rejects invalid capacity and ttl options", () => {
   );
 });
 
+test("ttl cache rejects malformed or oversized keys before measuring values", () => {
+  let measured = false;
+  const cache = new TtlCache<string>({
+    maxEntries: 2,
+    ttlMs: 10_000,
+    maxBytes: 10,
+    sizeOf: () => {
+      measured = true;
+      return 1;
+    },
+  });
+
+  assert.throws(() => cache.set("", "one"), /cache key must be a non-empty string/);
+  assert.throws(() => cache.get(123 as never), /cache key must be a non-empty string/);
+  assert.throws(
+    () => cache.set("x".repeat(4_097), "one"),
+    /cache key must be at most 4096 characters/,
+  );
+
+  assert.equal(measured, false);
+  assert.equal(cache.size(), 0);
+});
+
 test("ttl cache snapshots options at construction", () => {
   const options = { maxEntries: 2, ttlMs: 10_000 };
   const cache = new TtlCache<string>(options);

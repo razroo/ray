@@ -8,6 +8,7 @@ const MAX_CACHE_ENTRIES = 4_096;
 const MAX_CACHE_TTL_MS = 86_400_000;
 const DEFAULT_CACHE_MAX_BYTES = 2 * 1024 * 1024;
 const MAX_CACHE_BYTES = 256 * 1024 * 1024;
+const MAX_CACHE_KEY_CHARS = 4_096;
 
 export interface TtlCacheOptions<T = unknown> {
   maxEntries: number;
@@ -53,6 +54,7 @@ export class TtlCache<T> {
   }
 
   get(key: string): T | undefined {
+    assertCacheKey(key);
     const entry = this.store.get(key);
 
     if (!entry) {
@@ -71,6 +73,7 @@ export class TtlCache<T> {
   }
 
   set(key: string, value: T): void {
+    assertCacheKey(key);
     this.purgeExpired();
 
     const sizeBytes = this.resolveEntrySize(value, key);
@@ -193,6 +196,16 @@ export class TtlCache<T> {
     }
 
     return sizeBytes;
+  }
+}
+
+function assertCacheKey(value: string): void {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new TypeError("cache key must be a non-empty string");
+  }
+
+  if (value.length > MAX_CACHE_KEY_CHARS) {
+    throw new RangeError(`cache key must be at most ${MAX_CACHE_KEY_CHARS} characters`);
   }
 }
 
