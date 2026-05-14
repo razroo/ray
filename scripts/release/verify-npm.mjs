@@ -56,6 +56,34 @@ function isJsonContentType(value) {
   return mediaType === "application/json" || mediaType.endsWith("+json");
 }
 
+function readPositiveBoundedIntegerOption(options, key, defaultValue) {
+  const value = Object.hasOwn(options, key) ? options[key] : defaultValue;
+  if (!Number.isSafeInteger(value) || value <= 0 || value > defaultValue) {
+    throw new Error(
+      `npm verification ${key} must be a positive safe integer no greater than ${defaultValue}`,
+    );
+  }
+
+  return value;
+}
+
+function resolveFetchNpmOptions(options) {
+  if (!isRecord(options)) {
+    throw new Error("npm verification options must be an object");
+  }
+
+  const fetchImpl = Object.hasOwn(options, "fetchImpl") ? options.fetchImpl : fetch;
+  if (typeof fetchImpl !== "function") {
+    throw new Error("npm verification fetchImpl must be a function");
+  }
+
+  return {
+    fetchImpl,
+    maxBytes: readPositiveBoundedIntegerOption(options, "maxBytes", MAX_NPM_METADATA_BYTES),
+    timeoutMs: readPositiveBoundedIntegerOption(options, "timeoutMs", VERIFY_NPM_TIMEOUT_MS),
+  };
+}
+
 function expectedTarballPathname(pkg, version) {
   return `/${pkg}/-/${pkg.split("/").pop()}-${version}.tgz`;
 }
@@ -114,9 +142,7 @@ async function readResponseTextWithinLimit(response, limitBytes, label) {
 
 export async function fetchNpmMetadata(pkg, options = {}) {
   assertReleasePackageName(pkg);
-  const fetchImpl = options.fetchImpl ?? fetch;
-  const timeoutMs = options.timeoutMs ?? VERIFY_NPM_TIMEOUT_MS;
-  const maxBytes = options.maxBytes ?? MAX_NPM_METADATA_BYTES;
+  const { fetchImpl, maxBytes, timeoutMs } = resolveFetchNpmOptions(options);
   const res = await fetchImpl(`https://registry.npmjs.org/${encodeURIComponent(pkg)}`, {
     headers: {
       accept: "application/json",

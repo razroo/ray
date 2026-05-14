@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fetchNpmMetadata, verifyPackageVersion } from "./verify-npm.mjs";
+import { MAX_NPM_METADATA_BYTES, fetchNpmMetadata, verifyPackageVersion } from "./verify-npm.mjs";
 
 function metadata(pkg: string, version: string): string {
   return JSON.stringify({
@@ -55,6 +55,64 @@ test("fetchNpmMetadata rejects oversized declared metadata", async () => {
       }),
     /@razroo\/ray-core npm metadata exceeded 64 bytes/,
   );
+});
+
+test("fetchNpmMetadata rejects invalid options before fetching", async () => {
+  let fetchCount = 0;
+  const fetchImpl = async () => {
+    fetchCount += 1;
+    return new Response(metadata("@razroo/ray-core", "0.2.0"), {
+      headers: {
+        "content-type": "application/json",
+      },
+    });
+  };
+
+  await assert.rejects(
+    () => fetchNpmMetadata("@razroo/ray-core", null),
+    /npm verification options must be an object/,
+  );
+  await assert.rejects(
+    () =>
+      fetchNpmMetadata("@razroo/ray-core", {
+        fetchImpl: "fetch",
+      }),
+    /npm verification fetchImpl must be a function/,
+  );
+  await assert.rejects(
+    () =>
+      fetchNpmMetadata("@razroo/ray-core", {
+        fetchImpl,
+        timeoutMs: 0,
+      }),
+    /npm verification timeoutMs must be a positive safe integer no greater than 15000/,
+  );
+  await assert.rejects(
+    () =>
+      fetchNpmMetadata("@razroo/ray-core", {
+        fetchImpl,
+        timeoutMs: Infinity,
+      }),
+    /npm verification timeoutMs must be a positive safe integer no greater than 15000/,
+  );
+  await assert.rejects(
+    () =>
+      fetchNpmMetadata("@razroo/ray-core", {
+        fetchImpl,
+        maxBytes: 0,
+      }),
+    /npm verification maxBytes must be a positive safe integer no greater than 1048576/,
+  );
+  await assert.rejects(
+    () =>
+      fetchNpmMetadata("@razroo/ray-core", {
+        fetchImpl,
+        maxBytes: MAX_NPM_METADATA_BYTES + 1,
+      }),
+    /npm verification maxBytes must be a positive safe integer no greater than 1048576/,
+  );
+
+  assert.equal(fetchCount, 0);
 });
 
 test("fetchNpmMetadata rejects redirected registry metadata", async () => {
