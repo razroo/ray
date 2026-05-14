@@ -2170,7 +2170,11 @@ function validateModelStageScript(
     contents.includes("copyFileAtomicUnlessSame") &&
     contents.includes(".ray-stage-") &&
     contents.includes("--ray-env-file") &&
-    contents.includes("readEnvironmentFileBounded")
+    contents.includes("readEnvironmentFileBounded") &&
+    contents.includes("buildModelStageProbeEnv") &&
+    contents.includes("readOwnEnvString") &&
+    contents.includes("Object.create(null) as NodeJS.ProcessEnv") &&
+    contents.includes("env: buildModelStageProbeEnv()")
   ) {
     return [];
   }
@@ -2182,7 +2186,7 @@ function validateModelStageScript(
       scriptPath,
       line: workflowLineNumber(lines, "ModelStageStorageHeadroom"),
       message:
-        "Model staging must guard binary, GGUF, and combined shared-filesystem target storage headroom with device-id checks, the configured deploy storage reserve, generated backend MemoryMax fit, GGUF headers, generated llama.cpp launch flags, bounded env-file reads, and same-directory atomic replacement before a small VPS replaces working artifacts.",
+        "Model staging must guard binary, GGUF, and combined shared-filesystem target storage headroom with device-id checks, the configured deploy storage reserve, generated backend MemoryMax fit, GGUF headers, generated llama.cpp launch flags, bounded env-file reads, sanitized probe subprocess environments, and same-directory atomic replacement before a small VPS replaces working artifacts.",
     },
   ];
 }

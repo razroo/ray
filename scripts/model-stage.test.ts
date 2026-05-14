@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  buildModelStageProbeEnv,
   checkModelStageSources,
   applyModelStagePlan,
   createModelStagePlan,
@@ -63,6 +64,38 @@ const compatibleLlamaServerScript = `#!/bin/sh\ncat <<'EOF'\n${compatibleLlamaCp
 function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+test("buildModelStageProbeEnv keeps only allowlisted own env values", () => {
+  const source = Object.create({
+    PATH: "/inherited/bin",
+    RAY_API_KEYS: "inherited-secret",
+  }) as NodeJS.ProcessEnv;
+  source.PATH = "/usr/bin";
+  source.LANG = "C.UTF-8";
+  source.TMPDIR = "/tmp/ray";
+  source.TEMP = "bad\0value";
+  source.RAY_API_KEYS = "client-secret";
+  source.RAY_UPSTREAM_API_KEY = "upstream-secret";
+  source.HOME = "/root";
+  source.LD_PRELOAD = "/tmp/hook.so";
+
+  const env = buildModelStageProbeEnv(source);
+
+  assert.equal(Object.getPrototypeOf(env), null);
+  assert.deepEqual(Object.keys(env).sort(), ["LANG", "PATH", "TMPDIR"]);
+  assert.equal(env.PATH, "/usr/bin");
+  assert.equal(env.LANG, "C.UTF-8");
+  assert.equal(env.TMPDIR, "/tmp/ray");
+  assert.equal(env.RAY_API_KEYS, undefined);
+  assert.equal(env.RAY_UPSTREAM_API_KEY, undefined);
+  assert.equal(env.HOME, undefined);
+  assert.equal(env.LD_PRELOAD, undefined);
+  assert.equal(env.TEMP, undefined);
+});
 
 test("parseArgs accepts strict model staging options", () => {
   const digest = "a".repeat(64);
@@ -597,6 +630,59 @@ test("checkModelStageSources verifies concrete artifact inputs", async (t) => {
   });
 
   await assert.doesNotReject(checkModelStageSources(tempDir, plan));
+});
+
+test("checkModelStageSources runs source binary probes without ambient Ray secrets", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-probe-env-"));
+  const previousApiKeys = process.env.RAY_API_KEYS;
+  const previousUpstreamKey = process.env.RAY_UPSTREAM_API_KEY;
+  t.after(async () => {
+    if (previousApiKeys === undefined) {
+      delete process.env.RAY_API_KEYS;
+    } else {
+      process.env.RAY_API_KEYS = previousApiKeys;
+    }
+    if (previousUpstreamKey === undefined) {
+      delete process.env.RAY_UPSTREAM_API_KEY;
+    } else {
+      process.env.RAY_UPSTREAM_API_KEY = previousUpstreamKey;
+    }
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  process.env.RAY_API_KEYS = "client-secret";
+  process.env.RAY_UPSTREAM_API_KEY = "upstream-secret";
+
+  const binaryPath = path.join(tempDir, "llama-server");
+  const modelPath = path.join(tempDir, "model.gguf");
+  const capturePath = path.join(tempDir, "probe-env.txt");
+  const binaryContents = [
+    "#!/bin/sh",
+    `env | sort > ${shellQuote(capturePath)}`,
+    "cat <<'EOF'",
+    compatibleLlamaCppHelp,
+    "EOF",
+    "",
+  ].join("\n");
+  await writeFile(binaryPath, binaryContents, "utf8");
+  await writeFile(modelPath, "GGUF", "utf8");
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o644);
+
+  const plan = await createModelStagePlan({
+    cwd: tempDir,
+    configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
+    env: {},
+    binarySourcePath: "./llama-server",
+    sourcePath: "./model.gguf",
+  });
+
+  await assert.doesNotReject(checkModelStageSources(tempDir, plan));
+
+  const capturedEnv = await readFile(capturePath, "utf8");
+  assert.match(capturedEnv, /^PATH=/m);
+  assert.doesNotMatch(capturedEnv, /^RAY_API_KEYS=/m);
+  assert.doesNotMatch(capturedEnv, /^RAY_UPSTREAM_API_KEY=/m);
 });
 
 test("checkModelStageSources rejects source binaries that fail the startup probe", async (t) => {

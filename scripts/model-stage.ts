@@ -69,6 +69,8 @@ const STALE_ATOMIC_STAGE_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_ATOMIC_STAGE_TEMP_DISCOVERY_ENTRIES = 2_048;
 const MAX_ATOMIC_STAGE_TEMP_REMOVALS = 256;
 const MAX_ATOMIC_STAGE_TEMP_PATH_BYTES = 4_096;
+const DEFAULT_PROBE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const MODEL_STAGE_PROBE_ENV_KEYS = ["LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TMP", "TEMP"] as const;
 
 const execFileAsync = promisify(execFile);
 
@@ -254,6 +256,35 @@ function snapshotStageEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   }
 
   return snapshot;
+}
+
+function readOwnEnvString(env: NodeJS.ProcessEnv, key: string): string | undefined {
+  if (!Object.prototype.hasOwnProperty.call(env, key)) {
+    return undefined;
+  }
+
+  const value = env[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function isSafeProbeEnvValue(value: string): boolean {
+  return value.length > 0 && !value.includes("\0");
+}
+
+export function buildModelStageProbeEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const probeEnv = Object.create(null) as NodeJS.ProcessEnv;
+  const pathValue = readOwnEnvString(env, "PATH");
+  probeEnv.PATH =
+    pathValue !== undefined && isSafeProbeEnvValue(pathValue) ? pathValue : DEFAULT_PROBE_PATH;
+
+  for (const key of MODEL_STAGE_PROBE_ENV_KEYS) {
+    const value = readOwnEnvString(env, key);
+    if (value !== undefined && isSafeProbeEnvValue(value)) {
+      probeEnv[key] = value;
+    }
+  }
+
+  return probeEnv;
 }
 
 function parseOptionalPositiveIntegerEnv(
@@ -1076,6 +1107,7 @@ async function lookupPrincipalId(command: string, args: string[], label: string)
     timeout: PRINCIPAL_LOOKUP_TIMEOUT_MS,
     maxBuffer: PRINCIPAL_LOOKUP_MAX_BUFFER_BYTES,
     encoding: "utf8",
+    env: buildModelStageProbeEnv(),
   });
 
   return parsePrincipalId(String(stdout).trim(), label);
@@ -1087,6 +1119,7 @@ async function lookupGroupId(group: string): Promise<number> {
       timeout: PRINCIPAL_LOOKUP_TIMEOUT_MS,
       maxBuffer: PRINCIPAL_LOOKUP_MAX_BUFFER_BYTES,
       encoding: "utf8",
+      env: buildModelStageProbeEnv(),
     });
     const gid = String(stdout).trim().split(":")[2] ?? "";
     return parsePrincipalId(gid, `group ${group}`);
@@ -1517,6 +1550,7 @@ async function assertLlamaCppBinaryStarts(
       timeout: LLAMA_CPP_BINARY_SMOKE_TIMEOUT_MS,
       maxBuffer: LLAMA_CPP_BINARY_SMOKE_MAX_BUFFER_BYTES,
       encoding: "utf8",
+      env: buildModelStageProbeEnv(),
       ...(serviceIdentity ? { uid: serviceIdentity.uid, gid: serviceIdentity.gid } : {}),
     });
 
@@ -1540,6 +1574,7 @@ async function assertModelReadableByServiceUser(
       timeout: MODEL_READ_CHECK_TIMEOUT_MS,
       maxBuffer: MODEL_READ_CHECK_MAX_BUFFER_BYTES,
       encoding: "utf8",
+      env: buildModelStageProbeEnv(),
       uid: serviceIdentity.uid,
       gid: serviceIdentity.gid,
     });
