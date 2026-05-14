@@ -11,12 +11,13 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createDefaultConfig, mergeConfig } from "@ray/config";
 import {
   buildLlamaCppEnvironment,
+  buildSystemdAnalyzeVerifyEnv,
   diagnoseConfig,
   loadAndDiagnoseDeployment,
   renderCaddyfile,
@@ -115,6 +116,35 @@ test("renderSystemdService includes hardening directives", () => {
   assert.match(service, /RestrictRealtime=true/);
   assert.match(service, /UMask=077/);
   assert.doesNotMatch(service, /MemoryDenyWriteExecute=true/);
+});
+
+test("buildSystemdAnalyzeVerifyEnv ignores inherited unit path entries", () => {
+  const unitDirectory = "/tmp/ray-systemd-verify";
+  const source = Object.create({
+    PATH: "/inherited/bin",
+    SYSTEMD_UNIT_PATH: "/inherited/systemd",
+  }) as NodeJS.ProcessEnv;
+  source.PATH = "/usr/bin";
+  (source as Record<string, unknown>).COUNT = 7;
+
+  const env = buildSystemdAnalyzeVerifyEnv(unitDirectory, source);
+
+  assert.equal(Object.getPrototypeOf(env), null);
+  assert.equal(env.PATH, "/usr/bin");
+  assert.equal(env.SYSTEMD_UNIT_PATH, `${unitDirectory}${delimiter}`);
+  assert.equal("COUNT" in env, false);
+});
+
+test("buildSystemdAnalyzeVerifyEnv preserves own unit path entries", () => {
+  const unitDirectory = "/tmp/ray-systemd-verify";
+  const source = Object.create({
+    SYSTEMD_UNIT_PATH: "/inherited/systemd",
+  }) as NodeJS.ProcessEnv;
+  source.SYSTEMD_UNIT_PATH = "/etc/systemd/system";
+
+  const env = buildSystemdAnalyzeVerifyEnv(unitDirectory, source);
+
+  assert.equal(env.SYSTEMD_UNIT_PATH, `${unitDirectory}${delimiter}/etc/systemd/system`);
 });
 
 test("renderSystemdService renders optional memory controls", () => {

@@ -859,6 +859,20 @@ function snapshotDeploymentEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEn
   return snapshot;
 }
 
+export function buildSystemdAnalyzeVerifyEnv(
+  unitDirectory: string,
+  env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const snapshot = snapshotDeploymentEnvironment(env);
+  const existingUnitPath = snapshot.SYSTEMD_UNIT_PATH;
+  snapshot.SYSTEMD_UNIT_PATH =
+    typeof existingUnitPath === "string" && existingUnitPath.length > 0
+      ? `${unitDirectory}${path.delimiter}${existingUnitPath}`
+      : `${unitDirectory}${path.delimiter}`;
+
+  return snapshot;
+}
+
 function formatModelStageApplyHint(env: NodeJS.ProcessEnv): string {
   const hasBinarySource = readNonEmptyEnvValue(env[BINARY_SOURCE_ENV]) !== undefined;
   const hasModelSource = readNonEmptyEnvValue(env[MODEL_SOURCE_ENV]) !== undefined;
@@ -5137,12 +5151,7 @@ async function runSystemdAnalyzeVerify(
         timeout: SYSTEMD_ANALYZE_VERIFY_TIMEOUT_MS,
         maxBuffer: SYSTEMD_ANALYZE_VERIFY_MAX_BUFFER_BYTES,
         windowsHide: true,
-        env: {
-          ...process.env,
-          SYSTEMD_UNIT_PATH: process.env.SYSTEMD_UNIT_PATH
-            ? `${unitDirectory}${path.delimiter}${process.env.SYSTEMD_UNIT_PATH}`
-            : `${unitDirectory}${path.delimiter}`,
-        },
+        env: buildSystemdAnalyzeVerifyEnv(unitDirectory),
       },
       (error, stdout, stderr) => {
         const output = `${stdout}\n${stderr}`.trim();
