@@ -76,6 +76,14 @@ test("RayClient rejects invalid direct options", () => {
       }),
     /reserved HTTP header "host"/,
   );
+  assert.throws(
+    () =>
+      new RayClient({
+        baseUrl: "http://127.0.0.1",
+        headers: { "X-Ray-Test": "one", "x-ray-test": "two" },
+      }),
+    /duplicate HTTP header "x-ray-test"/,
+  );
 
   const headers = {};
   Object.defineProperty(headers, "x-ray-test", {

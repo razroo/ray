@@ -154,6 +154,9 @@ function snapshotHeaders(headers?: Record<string, string>): Record<string, strin
     if (reservedClientHeaderNames.has(normalizedName)) {
       throw new TypeError(`headers must not override reserved HTTP header "${name}"`);
     }
+    if (Object.prototype.hasOwnProperty.call(snapshot, normalizedName)) {
+      throw new TypeError(`headers must not contain duplicate HTTP header "${name}"`);
+    }
 
     if (typeof value !== "string") {
       throw new TypeError("headers values must be bounded strings without control characters");
