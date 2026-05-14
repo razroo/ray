@@ -128,6 +128,45 @@ export function buildBenchmarkLlamaCppServerEnv(
   return Object.assign(buildBenchmarkChildEnv(env), buildLlamaCppEnvironment(launchProfile));
 }
 
+function copyConfiguredBenchmarkSecretEnv(
+  childEnv: NodeJS.ProcessEnv,
+  sourceEnv: NodeJS.ProcessEnv,
+  name: string | undefined,
+): void {
+  if (!name) {
+    return;
+  }
+
+  const value = readOwnEnvString(sourceEnv, name);
+  if (value !== undefined && isSafeBenchmarkChildEnvValue(value)) {
+    childEnv[name] = value;
+  }
+}
+
+export function buildBenchmarkGatewayEnv(
+  config: RayConfig,
+  options: {
+    apiKey?: string;
+    env?: NodeJS.ProcessEnv;
+  } = {},
+): NodeJS.ProcessEnv {
+  const sourceEnv = options.env ?? process.env;
+  const childEnv = buildBenchmarkChildEnv(sourceEnv);
+
+  if (config.auth.enabled && config.auth.apiKeyEnv) {
+    if (options.apiKey !== undefined) {
+      assertBenchmarkApiKey(options.apiKey, "apiKey");
+      childEnv[config.auth.apiKeyEnv] = options.apiKey;
+    } else {
+      copyConfiguredBenchmarkSecretEnv(childEnv, sourceEnv, config.auth.apiKeyEnv);
+    }
+  }
+
+  copyConfiguredBenchmarkSecretEnv(childEnv, sourceEnv, config.model.adapter.apiKeyEnv);
+
+  return childEnv;
+}
+
 interface BenchmarkArgs {
   baseUrl: string;
   workloadPath?: string;
@@ -2433,13 +2472,18 @@ async function spawnBenchmarkChild(
   });
 }
 
-async function startGateway(configPath: string): Promise<ChildProcess> {
+async function startGateway(
+  configPath: string,
+  config: RayConfig,
+  apiKey: string | undefined,
+): Promise<ChildProcess> {
   return await spawnBenchmarkChild(
     "Ray gateway",
     BUN_RUNTIME_BINARY,
     ["--conditions=development", "./apps/gateway/src/index.ts", "--config", configPath],
     {
       cwd: process.cwd(),
+      env: buildBenchmarkGatewayEnv(config, { apiKey }),
     },
   );
 }
@@ -2519,7 +2563,7 @@ async function benchmarkGatewayConfig(options: {
   apiKey?: string;
 }): Promise<BenchmarkSummary> {
   await writeFile(options.configPath, JSON.stringify(options.config, null, 2));
-  const gateway = await startGateway(options.configPath);
+  const gateway = await startGateway(options.configPath, options.config, options.apiKey);
 
   try {
     const baseUrl = buildBaseUrl(options.config.server.host, options.config.server.port);

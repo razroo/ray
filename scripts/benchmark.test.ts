@@ -11,6 +11,7 @@ import {
   appendHistoryOutput,
   assertBenchmarkLlamaCppLaunchFiles,
   buildAutotuneCandidates,
+  buildBenchmarkGatewayEnv,
   buildBenchmarkLlamaCppServerEnv,
   buildBenchmarkLlamaCppServerArgs,
   loadBaseline,
@@ -365,6 +366,48 @@ test("buildBenchmarkLlamaCppServerEnv keeps llama.cpp child env minimal", () => 
   assert.equal(env.HOME, undefined);
   assert.equal(env.LD_PRELOAD, undefined);
   assert.equal(env.TEMP, undefined);
+});
+
+test("buildBenchmarkGatewayEnv keeps gateway child env minimal", () => {
+  const config = createDefaultConfig("tiny");
+  config.auth.enabled = true;
+  config.auth.apiKeyEnv = "RAY_API_KEYS";
+  config.model.adapter.apiKeyEnv = "RAY_UPSTREAM_API_KEY";
+
+  const source = Object.create({
+    PATH: "/inherited/bin",
+    RAY_API_KEYS: "inherited-secret",
+  }) as NodeJS.ProcessEnv;
+  source.PATH = "/usr/bin";
+  source.LANG = "C.UTF-8";
+  source.TMPDIR = "/tmp/ray";
+  source.RAY_API_KEYS = "source-client-secret";
+  source.RAY_UPSTREAM_API_KEY = "upstream-secret";
+  source.RAY_PROFILE = "1b";
+  source.RAY_LLAMA_CPP_THREADS = "64";
+  source.HOME = "/root";
+  source.LD_PRELOAD = "/tmp/hook.so";
+
+  const env = buildBenchmarkGatewayEnv(config, {
+    apiKey: "explicit-client-secret",
+    env: source,
+  });
+
+  assert.equal(Object.getPrototypeOf(env), null);
+  assert.equal(env.PATH, "/usr/bin");
+  assert.equal(env.LANG, "C.UTF-8");
+  assert.equal(env.TMPDIR, "/tmp/ray");
+  assert.equal(env.RAY_API_KEYS, "explicit-client-secret");
+  assert.equal(env.RAY_UPSTREAM_API_KEY, "upstream-secret");
+  assert.equal(env.RAY_PROFILE, undefined);
+  assert.equal(env.RAY_LLAMA_CPP_THREADS, undefined);
+  assert.equal(env.HOME, undefined);
+  assert.equal(env.LD_PRELOAD, undefined);
+
+  assert.throws(
+    () => buildBenchmarkGatewayEnv(config, { apiKey: "bad key", env: source }),
+    /apiKey must be a bearer-token-safe string without whitespace/,
+  );
 });
 
 test("assertBenchmarkLlamaCppLaunchFiles rejects inaccessible backend files", async (t) => {
