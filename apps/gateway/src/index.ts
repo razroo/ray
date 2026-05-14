@@ -856,6 +856,19 @@ function truncateResponseKey(value: string): string {
   }
 }
 
+function setResponseObjectProperty(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
 function sanitizeJsonResponseValue(value: unknown, seen: WeakSet<object>, depth = 0): unknown {
   if (value === null || value === undefined) {
     return value;
@@ -934,13 +947,17 @@ function sanitizeJsonResponseValue(value: unknown, seen: WeakSet<object>, depth 
       const safeKey = truncateResponseKey(key);
 
       try {
-        output[safeKey] = sanitizeJsonResponseValue(
-          (value as Record<string, unknown>)[key],
-          seen,
-          depth + 1,
+        setResponseObjectProperty(
+          output,
+          safeKey,
+          sanitizeJsonResponseValue((value as Record<string, unknown>)[key], seen, depth + 1),
         );
       } catch (error) {
-        output[safeKey] = `[Thrown: ${truncateResponseString(toErrorMessage(error))}]`;
+        setResponseObjectProperty(
+          output,
+          safeKey,
+          `[Thrown: ${truncateResponseString(toErrorMessage(error))}]`,
+        );
       }
     }
 
@@ -996,9 +1013,17 @@ function redactErrorResponseDetails(
       }
 
       try {
-        output[key] = redactErrorResponseDetails((value as Record<string, unknown>)[key], seen);
+        setResponseObjectProperty(
+          output,
+          key,
+          redactErrorResponseDetails((value as Record<string, unknown>)[key], seen),
+        );
       } catch (error) {
-        output[key] = `[Thrown: ${truncateResponseString(toErrorMessage(error))}]`;
+        setResponseObjectProperty(
+          output,
+          key,
+          `[Thrown: ${truncateResponseString(toErrorMessage(error))}]`,
+        );
       }
     }
 

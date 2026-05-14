@@ -2801,6 +2801,12 @@ test("gateway serializes unusual health details without failing the response", a
   const longKey = `k${"x".repeat(140)}`;
   circular[longKey] = "bounded-key";
   circular.self = circular;
+  Object.defineProperty(circular, "__proto__", {
+    value: {
+      polluted: true,
+    },
+    enumerable: true,
+  });
   const runtime = {
     async health() {
       return {
@@ -2835,11 +2841,17 @@ test("gateway serializes unusual health details without failing the response", a
   const response = await fetch(`http://127.0.0.1:${address.port}/health`);
   assert.equal(response.status, 200);
   const body = (await response.json()) as HealthSnapshot & {
-    provider: { details: { count: string; self: string; [key: string]: unknown } };
+    provider: {
+      details: { count: string; self: string; [key: string]: unknown };
+    };
   };
   assert.equal(body.provider.details.count, "2");
   assert.equal(body.provider.details.self, "[Circular]");
   assert.equal(body.provider.details[`k${"x".repeat(104)}...[truncated 36 chars]`], "bounded-key");
+  assert.deepEqual(Object.getOwnPropertyDescriptor(body.provider.details, "__proto__")?.value, {
+    polluted: true,
+  });
+  assert.equal(({} as { polluted?: boolean }).polluted, undefined);
   assert.ok(Object.keys(body.provider.details).every((key) => key.length <= 128));
 });
 
@@ -2849,6 +2861,13 @@ test("gateway serializes unusual error details without masking the original stat
     count: 3n,
   };
   circular.self = circular;
+  Object.defineProperty(circular, "__proto__", {
+    value: {
+      polluted: true,
+      stack: "internal stack",
+    },
+    enumerable: true,
+  });
   const runtime = {
     async infer() {
       throw new RayError("backend returned a weird diagnostic object", {
@@ -2888,12 +2907,18 @@ test("gateway serializes unusual error details without masking the original stat
       details: {
         count: string;
         self: string;
+        [key: string]: unknown;
       };
     };
   };
   assert.equal(body.error.code, "provider_weird_diagnostic");
   assert.equal(body.error.details.count, "3");
   assert.equal(body.error.details.self, "[Circular]");
+  assert.deepEqual(Object.getOwnPropertyDescriptor(body.error.details, "__proto__")?.value, {
+    polluted: true,
+  });
+  assert.equal(({} as { polluted?: boolean }).polluted, undefined);
+  assert.doesNotMatch(JSON.stringify(body.error.details), /internal stack/);
   assert.equal(response.headers.get("retry-after"), null);
 });
 
