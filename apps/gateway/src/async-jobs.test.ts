@@ -360,6 +360,102 @@ test("durable inference queue creates private persisted job state", async (t) =>
   }
 });
 
+test("durable inference queue stores sanitized job requests", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-sanitized-request-"));
+
+  try {
+    const config = mergeConfig(createDefaultConfig("tiny"), {
+      asyncQueue: {
+        enabled: true,
+        storageDir,
+        pollIntervalMs: 20,
+        dispatchConcurrency: 1,
+        callbackAllowedHosts: ["example.com"],
+      },
+      model: {
+        adapter: {
+          kind: "mock",
+          latencyMs: 5,
+        },
+      },
+    });
+    const runtime = createRayRuntime(config);
+    const logger = new Logger("test", "error");
+    const queueBeforeRestart = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+    });
+    const queuedJob = await queueBeforeRestart.enqueue({
+      input: "  sanitize direct admission  ",
+      system: "  answer briefly  ",
+      metadata: {
+        team: "ops",
+      },
+      cache: false,
+      leakedField: "do not persist",
+      callbackUrl: "https://example.com/callback",
+    } as unknown as Parameters<DurableInferenceQueue["enqueue"]>[0]);
+    const jobsDir = join(storageDir, "jobs");
+    const queuedRequest = queuedJob.request as Record<string, unknown>;
+    const queuedRaw = JSON.parse(
+      await fs.readFile(join(jobsDir, `${queuedJob.id}.json`), "utf8"),
+    ) as {
+      request?: Record<string, unknown>;
+    };
+
+    assert.equal(queuedRequest.input, "sanitize direct admission");
+    assert.equal(queuedRequest.system, "answer briefly");
+    assert.equal(queuedRequest.leakedField, undefined);
+    assert.equal(queuedRequest.callbackUrl, undefined);
+    assert.equal(queuedRaw.request?.leakedField, undefined);
+    assert.equal(queuedRaw.request?.callbackUrl, undefined);
+    await rm(join(jobsDir, `${queuedJob.id}.json`), { force: true });
+
+    const now = new Date().toISOString();
+    await writeFile(
+      join(jobsDir, "job_legacy_extra_request.json"),
+      JSON.stringify({
+        id: "job_legacy_extra_request",
+        status: "queued",
+        request: {
+          input: "  sanitize recovered request  ",
+          leakedField: "disk-only secret",
+        },
+        createdAt: now,
+        updatedAt: now,
+        attempts: 0,
+        maxAttempts: 2,
+      }),
+    );
+
+    const queueAfterRestart = new DurableInferenceQueue({
+      config: config.asyncQueue,
+      runtime,
+      logger,
+    });
+    await queueAfterRestart.start();
+
+    const recovered = await waitFor(
+      async () => queueAfterRestart.get("job_legacy_extra_request"),
+      (job) => job.status === "succeeded",
+    );
+    const recoveredRaw = JSON.parse(
+      await fs.readFile(join(jobsDir, "job_legacy_extra_request.json"), "utf8"),
+    ) as {
+      request?: Record<string, unknown>;
+    };
+
+    assert.equal(recovered.request.input, "sanitize recovered request");
+    assert.equal((recovered.request as Record<string, unknown>).leakedField, undefined);
+    assert.equal(recoveredRaw.request?.leakedField, undefined);
+
+    await queueAfterRestart.stop();
+  } finally {
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});
+
 test("durable inference queue snapshots active inference dispatches", async () => {
   const storageDir = await mkdtemp(join(tmpdir(), "ray-async-jobs-active-inference-"));
 

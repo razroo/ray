@@ -1118,6 +1118,43 @@ function cloneRequest(request: CreateInferenceJobRequest): InferenceRequest {
   return next;
 }
 
+function normalizeRequestForStorage(
+  config: RayRuntime["config"],
+  request: CreateInferenceJobRequest,
+): InferenceRequest {
+  const normalized = normalizeInferenceRequest(config, cloneRequest(request));
+  const stored: InferenceRequest = {
+    input: normalized.input,
+    maxTokens: normalized.maxTokens,
+    temperature: normalized.temperature,
+    topP: normalized.topP,
+    cache: normalized.cache,
+    metadata: { ...normalized.metadata },
+  };
+
+  if (normalized.system !== undefined) {
+    stored.system = normalized.system;
+  }
+
+  if (normalized.seed !== undefined) {
+    stored.seed = normalized.seed;
+  }
+
+  if (normalized.stop !== undefined) {
+    stored.stop = [...normalized.stop];
+  }
+
+  if (normalized.responseFormat !== undefined) {
+    stored.responseFormat = { ...normalized.responseFormat };
+  }
+
+  if (normalized.dedupeKey !== undefined) {
+    stored.dedupeKey = normalized.dedupeKey;
+  }
+
+  return stored;
+}
+
 function truncateJobErrorString(value: string, maxChars = MAX_JOB_ERROR_MESSAGE_CHARS): string {
   if (value.length <= maxChars) {
     return value;
@@ -1952,7 +1989,7 @@ export class DurableInferenceQueue {
 
   async enqueue(request: CreateInferenceJobRequest): Promise<InferenceJobRecord> {
     await this.ensureReady();
-    normalizeInferenceRequest(this.options.runtime.config, cloneRequest(request));
+    const storedRequest = normalizeRequestForStorage(this.options.runtime.config, request);
     await this.pruneCompletedJobs();
     const admissionCount = this.reserveJobAdmission();
 
@@ -1967,7 +2004,7 @@ export class DurableInferenceQueue {
       const job: InferenceJobRecord = {
         id: createRequestId("job"),
         status: "queued",
-        request: cloneRequest(request),
+        request: storedRequest,
         createdAt: now,
         updatedAt: now,
         attempts: 0,
@@ -2298,7 +2335,7 @@ export class DurableInferenceQueue {
 
   private validatePersistedInferenceRequest(job: InferenceJobRecord): void {
     try {
-      normalizeInferenceRequest(this.options.runtime.config, job.request);
+      job.request = normalizeRequestForStorage(this.options.runtime.config, job.request);
     } catch (error) {
       throw new PersistedJobValidationError(
         `persisted async job request is invalid: ${toErrorMessage(error)}`,
