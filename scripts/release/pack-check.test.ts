@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { gzipSync } from "node:zlib";
-import { assertRequiredTarballEntries, listTarballEntries } from "./pack-check.mjs";
+import {
+  assertPackedPackageManifest,
+  assertRequiredTarballEntries,
+  listTarballEntries,
+  readTarballJsonEntry,
+} from "./pack-check.mjs";
 
 function writeOctal(buffer: Buffer, offset: number, length: number, value: number): void {
   const encoded = value.toString(8).padStart(length - 1, "0");
@@ -75,6 +80,7 @@ test("listTarballEntries reads bounded npm package entries", async (t) => {
     "package/package.json",
     "package/dist/index.js",
   ]);
+  assert.deepEqual(await readTarballJsonEntry(tarballPath, "package/package.json"), {});
 });
 
 test("listTarballEntries rejects oversized pack artifacts before reading", async (t) => {
@@ -204,5 +210,114 @@ test("assertRequiredTarballEntries rejects missing publish-critical files", () =
         ],
       ),
     /@razroo\/ray-sdk package is missing required entries: package\/dist\/index\.d\.ts, package\/README\.md/,
+  );
+});
+
+const safePackedManifestEntries = [
+  "package/package.json",
+  "package/dist/index.js",
+  "package/dist/index.d.ts",
+  "package/src/index.ts",
+];
+
+function safePackedManifest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    name: "@razroo/ray-sdk",
+    version: "0.2.0",
+    publishConfig: {
+      access: "public",
+    },
+    main: "./dist/index.js",
+    types: "./dist/index.d.ts",
+    exports: {
+      ".": {
+        development: "./src/index.ts",
+        default: "./dist/index.js",
+      },
+    },
+    dependencies: {
+      "@razroo/ray-core": "0.2.0",
+    },
+    ...overrides,
+  };
+}
+
+test("assertPackedPackageManifest accepts consumer-visible package metadata", () => {
+  assert.doesNotThrow(() =>
+    assertPackedPackageManifest("@razroo/ray-sdk", safePackedManifest(), safePackedManifestEntries),
+  );
+});
+
+test("assertPackedPackageManifest rejects broken entry point targets", () => {
+  assert.throws(
+    () =>
+      assertPackedPackageManifest(
+        "@razroo/ray-sdk",
+        safePackedManifest({
+          exports: {
+            ".": {
+              default: "./dist/missing.js",
+            },
+          },
+        }),
+        safePackedManifestEntries,
+      ),
+    /@razroo\/ray-sdk package\.json exports\["\."\]\.default points to missing entry package\/dist\/missing\.js/,
+  );
+
+  assert.throws(
+    () =>
+      assertPackedPackageManifest(
+        "@razroo/ray-sdk",
+        safePackedManifest({
+          main: "../dist/index.js",
+        }),
+        safePackedManifestEntries,
+      ),
+    /@razroo\/ray-sdk package\.json main must start with \.\//,
+  );
+});
+
+test("assertPackedPackageManifest rejects local-only dependencies and lifecycle scripts", () => {
+  assert.throws(
+    () =>
+      assertPackedPackageManifest(
+        "@razroo/ray-sdk",
+        safePackedManifest({
+          dependencies: {
+            "@razroo/ray-core": "workspace:*",
+          },
+        }),
+        safePackedManifestEntries,
+      ),
+    /@razroo\/ray-sdk package\.json dependencies\.@razroo\/ray-core must not publish local-only dependency spec workspace:\*/,
+  );
+
+  assert.throws(
+    () =>
+      assertPackedPackageManifest(
+        "@razroo/ray-sdk",
+        safePackedManifest({
+          optionalDependencies: {
+            "@razroo/ray-core": "../core",
+          },
+        }),
+        safePackedManifestEntries,
+      ),
+    /@razroo\/ray-sdk package\.json optionalDependencies\.@razroo\/ray-core must not publish local-only dependency spec \.\.\/core/,
+  );
+
+  assert.throws(
+    () =>
+      assertPackedPackageManifest(
+        "@razroo/ray-sdk",
+        safePackedManifest({
+          scripts: {
+            postinstall: "node ./install.js",
+          },
+        }),
+        safePackedManifestEntries,
+      ),
+    /@razroo\/ray-sdk package\.json must not publish lifecycle script postinstall/,
   );
 });
