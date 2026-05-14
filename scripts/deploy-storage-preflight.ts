@@ -1,5 +1,6 @@
 import { open, realpath, stat, statfs } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const DEFAULT_MIN_FREE_STORAGE_MIB = 1_024;
 const MAX_MIN_FREE_STORAGE_MIB = 1_048_576;
@@ -734,6 +735,6 @@ export async function runDeployStoragePreflightCli(
   }
 }
 
-if (import.meta.main) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   process.exitCode = await runDeployStoragePreflightCli();
 }

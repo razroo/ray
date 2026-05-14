@@ -374,6 +374,14 @@ test("runDeployStoragePreflightCli reports malformed thresholds", async () => {
   assert.match(stderr.join(""), /--min-free-mib must be less than or equal to/);
 });
 
+test("deploy storage preflight entrypoint guard does not run on import", async () => {
+  const previousExitCode = process.exitCode;
+  const imported = await import(`./deploy-storage-preflight.ts?entrypoint-test=${Date.now()}`);
+
+  assert.equal(typeof imported.runDeployStoragePreflightCli, "function");
+  assert.equal(process.exitCode, previousExitCode);
+});
+
 test("runDeployStoragePreflightCli rejects malformed direct io before parsing", async () => {
   await assert.rejects(
     () => runDeployStoragePreflightCli([], null as unknown as never),
