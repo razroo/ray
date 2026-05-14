@@ -8,6 +8,8 @@ import {
   assertTestDiskHeadroom,
   buildTestCommandEnv,
   collectTestFiles,
+  MAX_TEST_DISCOVERY_DIRECTORIES,
+  MAX_TEST_SKIP_NAMES,
   MAX_TEST_COMMAND_TIMEOUT_MS,
   resolveMinimumTestFreeSpaceMiB,
   resolveTestCommandTimeoutMs,
@@ -68,6 +70,34 @@ test("collectTestFiles rejects malformed direct roots before discovery", async (
   await assert.rejects(
     () => collectTestFiles(`/${"a".repeat(4096)}`),
     /root must be at most 4096 bytes/,
+  );
+});
+
+test("collectTestFiles rejects malformed discovery options before walking", async () => {
+  await assert.rejects(
+    () => collectTestFiles(process.cwd(), null),
+    /test discovery options must be an object/,
+  );
+  await assert.rejects(
+    () => collectTestFiles(process.cwd(), { maxDirectories: MAX_TEST_DISCOVERY_DIRECTORIES + 1 }),
+    /maxDirectories must be a positive safe integer no greater than 4096/,
+  );
+  await assert.rejects(
+    () => collectTestFiles(process.cwd(), { skipNames: ["node_modules"] }),
+    /skipNames must be a Set/,
+  );
+  await assert.rejects(
+    () => collectTestFiles(process.cwd(), { skipNames: new Set(["node/modules"]) }),
+    /skipNames\[0\] must be a single path segment/,
+  );
+  await assert.rejects(
+    () =>
+      collectTestFiles(process.cwd(), {
+        skipNames: new Set(
+          Array.from({ length: MAX_TEST_SKIP_NAMES + 1 }, (_, index) => `s${index}`),
+        ),
+      }),
+    /skipNames must contain at most 64 entries/,
   );
 });
 

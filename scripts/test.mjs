@@ -11,6 +11,8 @@ export const MAX_TEST_DIRECTORY_ENTRIES = 4_096;
 export const MAX_BUILT_TEST_FILES = 512;
 export const MAX_SCRIPT_TEST_FILES = 256;
 export const MAX_TEST_PATH_BYTES = 4_096;
+export const MAX_TEST_SKIP_NAMES = 64;
+export const MAX_TEST_SKIP_NAME_BYTES = 256;
 export const DEFAULT_MIN_TEST_FREE_SPACE_MIB = 1_024;
 export const MAX_TEST_FREE_SPACE_MIB = 1_048_576;
 export const DEFAULT_TEST_COMMAND_TIMEOUT_MS = 600_000;
@@ -50,20 +52,18 @@ function isRecord(value) {
 }
 
 function resolveDiscoveryLimits(options) {
-  return {
-    maxDirectories: options.maxDirectories ?? MAX_TEST_DISCOVERY_DIRECTORIES,
-    maxFiles: options.maxFiles ?? MAX_TEST_DISCOVERY_FILES,
-    maxDirectoryEntries: options.maxDirectoryEntries ?? MAX_TEST_DIRECTORY_ENTRIES,
-    maxBuiltTestFiles: options.maxBuiltTestFiles ?? MAX_BUILT_TEST_FILES,
-    maxScriptTestFiles: options.maxScriptTestFiles ?? MAX_SCRIPT_TEST_FILES,
-    maxPathBytes: options.maxPathBytes ?? MAX_TEST_PATH_BYTES,
-  };
-}
-
-function assertPositiveInteger(value, label) {
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`${label} must be a positive safe integer`);
+  if (!isRecord(options)) {
+    throw new Error("test discovery options must be an object");
   }
+
+  return {
+    maxDirectories: readOption(options, "maxDirectories", MAX_TEST_DISCOVERY_DIRECTORIES),
+    maxFiles: readOption(options, "maxFiles", MAX_TEST_DISCOVERY_FILES),
+    maxDirectoryEntries: readOption(options, "maxDirectoryEntries", MAX_TEST_DIRECTORY_ENTRIES),
+    maxBuiltTestFiles: readOption(options, "maxBuiltTestFiles", MAX_BUILT_TEST_FILES),
+    maxScriptTestFiles: readOption(options, "maxScriptTestFiles", MAX_SCRIPT_TEST_FILES),
+    maxPathBytes: readOption(options, "maxPathBytes", MAX_TEST_PATH_BYTES),
+  };
 }
 
 function assertPositiveIntegerAtMost(value, label, maximum) {
@@ -161,6 +161,42 @@ function assertTestCommandIo(io) {
   }
 }
 
+function assertTestSkipNames(skipNames) {
+  if (!(skipNames instanceof Set)) {
+    throw new Error("skipNames must be a Set");
+  }
+
+  if (skipNames.size > MAX_TEST_SKIP_NAMES) {
+    throw new Error(`skipNames must contain at most ${MAX_TEST_SKIP_NAMES} entries`);
+  }
+
+  let index = 0;
+  for (const entry of skipNames) {
+    const label = `skipNames[${index}]`;
+    if (typeof entry !== "string" || entry.length === 0) {
+      throw new Error(`${label} must be a non-empty string`);
+    }
+
+    if (/[\0\r\n]/.test(entry)) {
+      throw new Error(`${label} must not contain control characters`);
+    }
+
+    if (entry.trim() !== entry) {
+      throw new Error(`${label} must not contain surrounding whitespace`);
+    }
+
+    if (Buffer.byteLength(entry, "utf8") > MAX_TEST_SKIP_NAME_BYTES) {
+      throw new Error(`${label} must be at most ${MAX_TEST_SKIP_NAME_BYTES} bytes`);
+    }
+
+    if (entry === "." || entry === ".." || entry.includes("/") || entry.includes("\\")) {
+      throw new Error(`${label} must be a single path segment`);
+    }
+
+    index += 1;
+  }
+}
+
 export function buildTestCommandEnv(env = process.env) {
   if (env === null || typeof env !== "object") {
     throw new Error("env must be an object");
@@ -203,12 +239,24 @@ export function resolveTestCommandTimeoutMs(env = process.env) {
 }
 
 function assertDiscoveryLimits(limits) {
-  assertPositiveInteger(limits.maxDirectories, "maxDirectories");
-  assertPositiveInteger(limits.maxFiles, "maxFiles");
-  assertPositiveInteger(limits.maxDirectoryEntries, "maxDirectoryEntries");
-  assertPositiveInteger(limits.maxBuiltTestFiles, "maxBuiltTestFiles");
-  assertPositiveInteger(limits.maxScriptTestFiles, "maxScriptTestFiles");
-  assertPositiveInteger(limits.maxPathBytes, "maxPathBytes");
+  assertPositiveIntegerAtMost(
+    limits.maxDirectories,
+    "maxDirectories",
+    MAX_TEST_DISCOVERY_DIRECTORIES,
+  );
+  assertPositiveIntegerAtMost(limits.maxFiles, "maxFiles", MAX_TEST_DISCOVERY_FILES);
+  assertPositiveIntegerAtMost(
+    limits.maxDirectoryEntries,
+    "maxDirectoryEntries",
+    MAX_TEST_DIRECTORY_ENTRIES,
+  );
+  assertPositiveIntegerAtMost(limits.maxBuiltTestFiles, "maxBuiltTestFiles", MAX_BUILT_TEST_FILES);
+  assertPositiveIntegerAtMost(
+    limits.maxScriptTestFiles,
+    "maxScriptTestFiles",
+    MAX_SCRIPT_TEST_FILES,
+  );
+  assertPositiveIntegerAtMost(limits.maxPathBytes, "maxPathBytes", MAX_TEST_PATH_BYTES);
 }
 
 function assertPathWithinLimit(root, absolutePath, maxPathBytes) {
@@ -321,6 +369,8 @@ export async function collectTestFiles(root = process.cwd(), options = {}) {
   const limits = resolveDiscoveryLimits(options);
   assertDiscoveryLimits(limits);
   assertTestPathValue(root, "root", limits.maxPathBytes);
+  const skipNames = readOption(options, "skipNames", DEFAULT_SKIP_NAMES);
+  assertTestSkipNames(skipNames);
   const resolvedRoot = path.resolve(root);
   const state = {
     root: resolvedRoot,
@@ -329,7 +379,6 @@ export async function collectTestFiles(root = process.cwd(), options = {}) {
     directoryCount: 0,
     fileCount: 0,
   };
-  const skipNames = options.skipNames ?? DEFAULT_SKIP_NAMES;
 
   await collectDirectory(resolvedRoot, state, limits, skipNames);
 
