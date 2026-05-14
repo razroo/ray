@@ -28,6 +28,36 @@ function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function assertReleaseSourceCliIo(io) {
+  if (!isRecord(io)) {
+    throw new Error("release source io must be an object");
+  }
+
+  if (!isRecord(io.stdout) || typeof io.stdout.write !== "function") {
+    throw new Error("release source io.stdout.write must be a function");
+  }
+
+  if (!isRecord(io.stderr) || typeof io.stderr.write !== "function") {
+    throw new Error("release source io.stderr.write must be a function");
+  }
+}
+
+function resolveRunCheckSourceOptions(options) {
+  if (!isRecord(options)) {
+    throw new Error("release source options must be an object");
+  }
+
+  const io = Object.hasOwn(options, "io") ? options.io : process;
+  assertReleaseSourceCliIo(io);
+  return { io };
+}
+
+function assertRunCheckSourceCliOptions(options) {
+  if (!isRecord(options)) {
+    throw new Error("release source cli options must be an object");
+  }
+}
+
 function validateReleaseVersion(version) {
   if (typeof version !== "string" || version.trim().length === 0) {
     throw new Error(usage());
@@ -199,6 +229,7 @@ export async function checkReleaseSource(version, options = {}) {
 
 export async function runCheckSource(argv = process.argv.slice(2), options = {}) {
   assertReleaseArgv(argv);
+  const { io } = resolveRunCheckSourceOptions(options);
   const args = argv.filter((arg) => arg !== "--");
   if (args.length !== 1) {
     throw new Error(usage());
@@ -206,13 +237,23 @@ export async function runCheckSource(argv = process.argv.slice(2), options = {})
   const version = args[0];
   const checked = await checkReleaseSource(version, options);
   for (const line of checked) {
-    console.log(line);
+    io.stdout.write(`${line}\n`);
+  }
+}
+
+export async function runCheckSourceCli(argv = process.argv.slice(2), io = process, options = {}) {
+  assertReleaseSourceCliIo(io);
+  assertRunCheckSourceCliOptions(options);
+
+  try {
+    await runCheckSource(argv, { ...options, io });
+    return 0;
+  } catch (error) {
+    io.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
   }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runCheckSource().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  });
+  process.exitCode = await runCheckSourceCli();
 }

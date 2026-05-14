@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { checkReleaseSource, runCheckSource } from "./check-source.mjs";
+import { checkReleaseSource, runCheckSource, runCheckSourceCli } from "./check-source.mjs";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = process.cwd();
@@ -15,6 +15,34 @@ async function writePackageJson(root: string, relPath: string, pkg: unknown): Pr
   const packagePath = path.join(root, relPath);
   await mkdir(path.dirname(packagePath), { recursive: true });
   await writeFile(packagePath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
+}
+
+function createTestIo() {
+  let stdout = "";
+  let stderr = "";
+
+  return {
+    io: {
+      stdout: {
+        write(chunk: string | Uint8Array) {
+          stdout += String(chunk);
+          return true;
+        },
+      },
+      stderr: {
+        write(chunk: string | Uint8Array) {
+          stderr += String(chunk);
+          return true;
+        },
+      },
+    },
+    get stdout() {
+      return stdout;
+    },
+    get stderr() {
+      return stderr;
+    },
+  };
 }
 
 test("checkReleaseSource accepts linked package versions for a release tag", async (t) => {
@@ -216,6 +244,78 @@ test("runCheckSource rejects malformed argv before reading packages", async () =
   await assert.rejects(
     () => runCheckSource(["1.2.3", "extra"]),
     /Usage: bun \.\/scripts\/release\/check-source\.mjs <version>/,
+  );
+});
+
+test("runCheckSource rejects malformed direct io before reading packages", async () => {
+  await assert.rejects(
+    () => runCheckSource(["1.2.3"], { io: null }),
+    /release source io must be an object/,
+  );
+  await assert.rejects(
+    () => runCheckSource(["1.2.3"], { io: { stdout: null, stderr: { write() {} } } }),
+    /release source io.stdout.write must be a function/,
+  );
+  await assert.rejects(
+    () => runCheckSource(["1.2.3"], { io: { stdout: { write() {} }, stderr: null } }),
+    /release source io.stderr.write must be a function/,
+  );
+});
+
+test("runCheckSource writes checked packages to injected stdout", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-release-check-source-io-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  await writePackageJson(tempDir, "packages/core/package.json", {
+    name: "@razroo/ray-core",
+    version: "1.2.3",
+  });
+  await writePackageJson(tempDir, "packages/sdk/package.json", {
+    name: "@razroo/ray-sdk",
+    version: "1.2.3",
+  });
+
+  const output = createTestIo();
+
+  await runCheckSource(["1.2.3"], { cwd: tempDir, io: output.io });
+
+  assert.equal(output.stdout, "@razroo/ray-core: 1.2.3\n@razroo/ray-sdk: 1.2.3\n");
+  assert.equal(output.stderr, "");
+});
+
+test("runCheckSourceCli reports release source failures to injected stderr", async () => {
+  const output = createTestIo();
+
+  const status = await runCheckSourceCli(["1.2"], output.io);
+
+  assert.equal(status, 1);
+  assert.equal(output.stdout, "");
+  assert.match(output.stderr, /release version must be a valid SemVer string/);
+});
+
+test("runCheckSourceCli rejects malformed direct io before parsing", async () => {
+  await assert.rejects(
+    () => runCheckSourceCli(["1.2.3"], null),
+    /release source io must be an object/,
+  );
+  await assert.rejects(
+    () => runCheckSourceCli(["1.2.3"], { stdout: null, stderr: { write() {} } }),
+    /release source io.stdout.write must be a function/,
+  );
+  await assert.rejects(
+    () => runCheckSourceCli(["1.2.3"], { stdout: { write() {} }, stderr: null }),
+    /release source io.stderr.write must be a function/,
+  );
+});
+
+test("runCheckSourceCli rejects malformed direct options before parsing", async () => {
+  const output = createTestIo();
+
+  await assert.rejects(
+    () => runCheckSourceCli(["1.2.3"], output.io, null),
+    /release source cli options must be an object/,
   );
 });
 
