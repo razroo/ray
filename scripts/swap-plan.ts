@@ -37,6 +37,14 @@ export interface SwapPlan {
   commands: string[];
 }
 
+interface SwapPlanOptions {
+  path?: string;
+  sizeMiB?: number;
+  minFreeAfterMiB?: number;
+  swappiness?: number;
+  sysctlOnly?: boolean;
+}
+
 const HELP = `Print a small-VPS swap-file plan for Ray llama.cpp deployments.
 
 Usage:
@@ -52,6 +60,10 @@ Options:
   --json              Print machine-readable plan JSON.
   -h, --help          Show this help.
 `;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 
 function assertArgv(argv: unknown): asserts argv is string[] {
   if (!Array.isArray(argv)) {
@@ -74,6 +86,52 @@ function assertArgv(argv: unknown): asserts argv is string[] {
     if (Buffer.byteLength(value, "utf8") > MAX_CLI_ARG_BYTES) {
       throw new Error(`argv[${index}] must be at most ${MAX_CLI_ARG_BYTES} bytes`);
     }
+  }
+}
+
+function assertSwapPlanEnv(env: unknown): asserts env is NodeJS.ProcessEnv {
+  if (!isRecord(env)) {
+    throw new Error("swap plan env must be an object");
+  }
+}
+
+function assertSwapPlanOptions(options: unknown): asserts options is SwapPlanOptions {
+  if (!isRecord(options)) {
+    throw new Error("swap plan options must be an object");
+  }
+
+  if (options.path !== undefined && typeof options.path !== "string") {
+    throw new Error("path must be a string when provided");
+  }
+
+  if (options.sizeMiB !== undefined && typeof options.sizeMiB !== "number") {
+    throw new Error("sizeMiB must be a number when provided");
+  }
+
+  if (options.minFreeAfterMiB !== undefined && typeof options.minFreeAfterMiB !== "number") {
+    throw new Error("minFreeAfterMiB must be a number when provided");
+  }
+
+  if (options.swappiness !== undefined && typeof options.swappiness !== "number") {
+    throw new Error("swappiness must be a number when provided");
+  }
+
+  if (options.sysctlOnly !== undefined && typeof options.sysctlOnly !== "boolean") {
+    throw new Error("sysctlOnly must be a boolean when provided");
+  }
+}
+
+function assertSwapPlanCliIo(io: unknown): asserts io is Pick<NodeJS.Process, "stdout" | "stderr"> {
+  if (!isRecord(io)) {
+    throw new Error("swap plan io must be an object");
+  }
+
+  if (!isRecord(io.stdout) || typeof io.stdout.write !== "function") {
+    throw new Error("swap plan io.stdout.write must be a function");
+  }
+
+  if (!isRecord(io.stderr) || typeof io.stderr.write !== "function") {
+    throw new Error("swap plan io.stderr.write must be a function");
   }
 }
 
@@ -182,6 +240,7 @@ function readOwnEnvValue(env: NodeJS.ProcessEnv, name: string): string | undefin
 
 export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): SwapPlanArgs {
   assertArgv(argv);
+  assertSwapPlanEnv(env);
 
   const envMinFreeAfterMiB = parseOptionalMinFreeAfterMiBEnv(
     readOwnEnvValue(env, DEPLOY_MIN_FREE_STORAGE_ENV),
@@ -324,15 +383,9 @@ function buildSwapActivationCommand(
   return `sh -c ${shellQuote(script)}`;
 }
 
-export function createSwapPlan(
-  options: {
-    path?: string;
-    sizeMiB?: number;
-    minFreeAfterMiB?: number;
-    swappiness?: number;
-    sysctlOnly?: boolean;
-  } = {},
-): SwapPlan {
+export function createSwapPlan(options: SwapPlanOptions = {}): SwapPlan {
+  assertSwapPlanOptions(options);
+
   const sysctlOnly = options.sysctlOnly ?? false;
   if (sysctlOnly && options.path !== undefined) {
     throw new Error("path cannot be used with sysctlOnly");
@@ -420,6 +473,8 @@ export async function runSwapPlanCli(
   io: Pick<NodeJS.Process, "stdout" | "stderr"> = process,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<number> {
+  assertSwapPlanCliIo(io);
+
   try {
     const args = parseArgs(argv, env);
 

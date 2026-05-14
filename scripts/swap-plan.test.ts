@@ -41,6 +41,10 @@ test("parseArgs accepts strict swap plan options", () => {
 
 test("parseArgs rejects malformed swap plan argv", () => {
   assert.throws(() => parseArgs(null as unknown as string[]), /argv must be an array/);
+  assert.throws(
+    () => parseArgs([], null as unknown as NodeJS.ProcessEnv),
+    /swap plan env must be an object/,
+  );
   assert.throws(() => parseArgs(["--path"]), /--path requires a value/);
   assert.throws(() => parseArgs(["--path", "swapfile"]), /swap path must be absolute/);
   assert.throws(() => parseArgs(["--path", "/var/lib/ray/swap file"]), /must not contain/);
@@ -64,6 +68,33 @@ test("parseArgs rejects malformed swap plan argv", () => {
   );
   assert.throws(() => parseArgs(["--unknown"]), /Unknown option: --unknown/);
   assert.throws(() => parseArgs(["/swapfile"]), /Unexpected positional argument/);
+});
+
+test("createSwapPlan rejects malformed direct options before rendering", () => {
+  assert.throws(
+    () => createSwapPlan(null as unknown as never),
+    /swap plan options must be an object/,
+  );
+  assert.throws(
+    () => createSwapPlan({ path: 10 } as unknown as never),
+    /path must be a string when provided/,
+  );
+  assert.throws(
+    () => createSwapPlan({ sizeMiB: "1024" } as unknown as never),
+    /sizeMiB must be a number when provided/,
+  );
+  assert.throws(
+    () => createSwapPlan({ minFreeAfterMiB: "512" } as unknown as never),
+    /minFreeAfterMiB must be a number when provided/,
+  );
+  assert.throws(
+    () => createSwapPlan({ swappiness: "10" } as unknown as never),
+    /swappiness must be a number when provided/,
+  );
+  assert.throws(
+    () => createSwapPlan({ sysctlOnly: "true" } as unknown as never),
+    /sysctlOnly must be a boolean when provided/,
+  );
 });
 
 test("createSwapPlan prints guarded swap-file commands", () => {
@@ -219,6 +250,56 @@ test("runSwapPlanCli prints JSON sysctl-only output", async () => {
   assert.equal(parsed.sysctlOnly, true);
   assert.equal(parsed.commands.length, 3);
   assert.doesNotMatch(parsed.commands.join("\n"), /fallocate|mkswap|swapon --show/);
+});
+
+test("runSwapPlanCli rejects malformed direct io before parsing", async () => {
+  await assert.rejects(
+    () => runSwapPlanCli([], null as unknown as never),
+    /swap plan io must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      runSwapPlanCli(["--help"], {
+        stdout: {},
+        stderr: {
+          write() {
+            return true;
+          },
+        },
+      } as unknown as never),
+    /swap plan io\.stdout\.write must be a function/,
+  );
+
+  await assert.rejects(
+    () =>
+      runSwapPlanCli(["--unknown"], {
+        stdout: {
+          write() {
+            return true;
+          },
+        },
+        stderr: {},
+      } as unknown as never),
+    /swap plan io\.stderr\.write must be a function/,
+  );
+});
+
+test("runSwapPlanCli reports malformed direct env before planning", async () => {
+  let stdout = "";
+  let stderr = "";
+  const exitCode = await runSwapPlanCli(
+    [],
+    {
+      stdout: { write: (chunk: string) => (stdout += chunk) },
+      stderr: { write: (chunk: string) => (stderr += chunk) },
+    },
+    null as unknown as NodeJS.ProcessEnv,
+  );
+
+  assert.equal(exitCode, 1);
+  assert.equal(stdout, "");
+  assert.match(stderr, /swap plan env must be an object/);
 });
 
 test("runSwapPlanCli honors deploy storage reserve for swap headroom", async () => {
