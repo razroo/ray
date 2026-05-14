@@ -28,6 +28,7 @@
       "@ray/prompts": ["packages/prompts/src/index.ts"],
       "@ray/runtime": ["packages/runtime/src/index.ts"],
       "@ray/scheduler": ["packages/scheduler/src/index.ts"],
+      "@ray/task-profiles": ["packages/task-profiles/src/index.ts"],
       "@ray/tuner": ["packages/tuner/src/index.ts"],
       "@razroo/ray-sdk": ["packages/sdk/src/index.ts"],
       "@ray/telemetry": ["packages/telemetry/src/index.ts"]
