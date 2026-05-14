@@ -229,6 +229,10 @@ function isValidTimestamp(value: unknown): value is string {
   return typeof value === "string" && Number.isFinite(Date.parse(value));
 }
 
+function hasUnencodedWhitespaceOrControl(value: string): boolean {
+  return /[\0-\x20\x7f]/u.test(value);
+}
+
 function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
@@ -452,6 +456,12 @@ function assertPersistedCallbackState(value: unknown): void {
   if (value.url.length > MAX_CALLBACK_URL_CHARS) {
     throw new PersistedJobValidationError(
       `callback.url must be at most ${MAX_CALLBACK_URL_CHARS} characters`,
+    );
+  }
+
+  if (hasUnencodedWhitespaceOrControl(value.url)) {
+    throw new PersistedJobValidationError(
+      "callback.url must not contain unencoded whitespace or control characters",
     );
   }
 
@@ -1061,7 +1071,7 @@ async function normalizeCallbackUrl(
     });
   }
 
-  if (/[\0-\x20\x7f]/u.test(callbackUrl)) {
+  if (hasUnencodedWhitespaceOrControl(callbackUrl)) {
     throw new RayError("callbackUrl must not contain unencoded whitespace or control characters", {
       code: "invalid_request",
       status: 400,
