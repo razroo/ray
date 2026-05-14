@@ -25,6 +25,7 @@ const packages = [
     expectedFragment: "ray-sdk",
   },
 ];
+const allowedTarEntryTypes = new Set(["", "\0", "0", "5"]);
 
 export async function runPack(packageConfig, options = {}) {
   const timeoutMs = options.timeoutMs ?? PACK_TIMEOUT_MS;
@@ -131,6 +132,57 @@ function assertSafePackEntryPath(entryPath, filePath) {
   }
 }
 
+function parseTarOctalField(header, offset, length, label, filePath) {
+  const raw = header
+    .toString("ascii", offset, offset + length)
+    .replace(/\0.*$/, "")
+    .trim();
+  if (raw.length === 0) {
+    return 0;
+  }
+  if (!/^[0-7]+$/.test(raw)) {
+    throw new Error(`Pack tarball contains an invalid ${label}: ${filePath}`);
+  }
+
+  return Number.parseInt(raw, 8);
+}
+
+function checksumTarHeader(header) {
+  const checksumHeader = Buffer.from(header);
+  checksumHeader.fill(" ", 148, 156);
+  let checksum = 0;
+  for (const value of checksumHeader) {
+    checksum += value;
+  }
+  return checksum;
+}
+
+function assertValidTarHeaderChecksum(header, filePath) {
+  const expected = parseTarOctalField(header, 148, 8, "header checksum", filePath);
+  const actual = checksumTarHeader(header);
+
+  if (expected !== actual) {
+    throw new Error(`Pack tarball contains an invalid header checksum: ${filePath}`);
+  }
+}
+
+function assertSafeTarEntryType(header, entryPath, filePath) {
+  const typeflag = header.toString("ascii", 156, 157);
+  if (allowedTarEntryTypes.has(typeflag)) {
+    return;
+  }
+
+  const label =
+    typeflag === "1"
+      ? "hard link"
+      : typeflag === "2"
+        ? "symbolic link"
+        : typeflag === "3" || typeflag === "4"
+          ? "device"
+          : `type ${JSON.stringify(typeflag)}`;
+  throw new Error(`Pack tarball contains an unsafe ${label} entry: ${entryPath} in ${filePath}`);
+}
+
 export async function listTarballEntries(filePath, options = {}) {
   const maxTarballBytes = options.maxTarballBytes ?? MAX_PACK_TARBALL_BYTES;
   const maxUncompressedBytes = options.maxUncompressedBytes ?? MAX_PACK_UNCOMPRESSED_BYTES;
@@ -157,18 +209,15 @@ export async function listTarballEntries(filePath, options = {}) {
       break;
     }
 
+    assertValidTarHeaderChecksum(header, filePath);
+
     const name = header.toString("utf8", 0, 100).replace(/\0.*$/, "");
     const prefix = header.toString("utf8", 345, 500).replace(/\0.*$/, "");
-    const sizeRaw = header.toString("utf8", 124, 136).replace(/\0.*$/, "").trim();
-
-    if (sizeRaw && !/^[0-7]+$/.test(sizeRaw)) {
-      throw new Error(`Pack tarball contains an invalid entry size: ${filePath}`);
-    }
-
-    const size = Number.parseInt(sizeRaw || "0", 8);
+    const size = parseTarOctalField(header, 124, 12, "entry size", filePath);
 
     const entryPath = prefix ? `${prefix}/${name}` : name;
     assertSafePackEntryPath(entryPath, filePath);
+    assertSafeTarEntryType(header, entryPath, filePath);
 
     entries.push(entryPath);
     if (entries.length > maxEntries) {

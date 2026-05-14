@@ -12,7 +12,9 @@ function writeOctal(buffer: Buffer, offset: number, length: number, value: numbe
   buffer[offset + length - 1] = 0;
 }
 
-function createTar(entries: Array<{ name: string; contents?: string }>): Buffer {
+function createTar(
+  entries: Array<{ name: string; contents?: string; typeflag?: string; linkName?: string }>,
+): Buffer {
   const blocks: Buffer[] = [];
 
   for (const entry of entries) {
@@ -25,7 +27,10 @@ function createTar(entries: Array<{ name: string; contents?: string }>): Buffer 
     writeOctal(header, 124, 12, contents.length);
     writeOctal(header, 136, 12, 0);
     header.fill(" ", 148, 156);
-    header.write("0", 156, 1, "ascii");
+    header.write(entry.typeflag ?? "0", 156, 1, "ascii");
+    if (entry.linkName) {
+      header.write(entry.linkName, 157, 100, "utf8");
+    }
     header.write("ustar", 257, 5, "ascii");
     header.write("00", 263, 2, "ascii");
 
@@ -124,6 +129,43 @@ test("listTarballEntries rejects unsafe tar entry paths", async (t) => {
     await assert.rejects(
       () => listTarballEntries(tarballPath),
       /Pack tarball contains an unsafe entry path/,
+    );
+  }
+});
+
+test("listTarballEntries rejects corrupt tar headers", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-pack-check-checksum-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const tarballPath = path.join(tempDir, "package.tgz");
+  const tar = createTar([{ name: "package/package.json", contents: "{}" }]);
+  tar[0] = "P".charCodeAt(0);
+  await writeFile(tarballPath, gzipSync(tar));
+
+  await assert.rejects(
+    () => listTarballEntries(tarballPath),
+    /Pack tarball contains an invalid header checksum/,
+  );
+});
+
+test("listTarballEntries rejects unsafe tar entry types", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-pack-check-types-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const tarballPath = path.join(tempDir, "package.tgz");
+
+  for (const entry of [
+    { name: "package/external", typeflag: "1", linkName: "../outside" },
+    { name: "package/external", typeflag: "2", linkName: "/etc/passwd" },
+    { name: "package/null", typeflag: "3" },
+  ]) {
+    await writeFile(tarballPath, gzipSync(createTar([entry])));
+
+    await assert.rejects(
+      () => listTarballEntries(tarballPath),
+      /Pack tarball contains an unsafe (hard link|symbolic link|device) entry/,
     );
   }
 });
