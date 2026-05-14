@@ -204,6 +204,9 @@ export async function verifyPackageVersion(pkg, version, options = {}) {
   if (tarballUrl.protocol !== "https:" || tarballUrl.hostname !== "registry.npmjs.org") {
     throw new Error(`${pkg} npm metadata version ${version} has unexpected tarball URL origin`);
   }
+  if (tarballUrl.username || tarballUrl.password || tarballUrl.search || tarballUrl.hash) {
+    throw new Error(`${pkg} npm metadata version ${version} has decorated tarball URL`);
+  }
 
   const pathname = decodeUrlPathname(tarballUrl, pkg, version);
   if (pathname !== expectedTarballPathname(pkg, version)) {
