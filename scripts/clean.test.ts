@@ -4,7 +4,7 @@ import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { cleanWorkspace } from "./clean.mjs";
+import { MAX_CLEAN_REMOVALS, cleanWorkspace } from "./clean.mjs";
 
 async function pathExists(filePath: string): Promise<boolean> {
   try {
@@ -133,6 +133,21 @@ test("cleanWorkspace rejects malformed clean rules before walking", async () => 
   await assert.rejects(
     () => cleanWorkspace(process.cwd(), { removableNames: ["dist"] }),
     /removableNames must be a Set/,
+  );
+});
+
+test("cleanWorkspace rejects malformed clean options before walking", async () => {
+  await assert.rejects(
+    () => cleanWorkspace(process.cwd(), null),
+    /clean options must be an object/,
+  );
+  await assert.rejects(
+    () => cleanWorkspace(process.cwd(), { verifyRoot: "false" }),
+    /verifyRoot must be a boolean/,
+  );
+  await assert.rejects(
+    () => cleanWorkspace(process.cwd(), { maxRemovals: MAX_CLEAN_REMOVALS + 1 }),
+    /maxRemovals must be a positive safe integer no greater than 2048/,
   );
 });
 

@@ -22,9 +22,23 @@ export const DEFAULT_SKIP_NAMES = new Set([
   "tmp",
 ]);
 
-function assertPositiveInteger(value, label) {
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`${label} must be a positive safe integer`);
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function readCleanOption(options, key, defaultValue) {
+  return Object.hasOwn(options, key) ? options[key] : defaultValue;
+}
+
+function assertBoolean(value, label) {
+  if (typeof value !== "boolean") {
+    throw new Error(`${label} must be a boolean`);
+  }
+}
+
+function assertPositiveIntegerAtMost(value, label, maximum) {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > maximum) {
+    throw new Error(`${label} must be a positive safe integer no greater than ${maximum}`);
   }
 }
 
@@ -88,16 +102,24 @@ function assertCleanSuffixes(value, label) {
 }
 
 function resolveCleanOptions(options) {
+  if (!isRecord(options)) {
+    throw new Error("clean options must be an object");
+  }
+
   return {
-    removableNames: options.removableNames ?? DEFAULT_REMOVABLE_NAMES,
-    removableSuffixes: options.removableSuffixes ?? DEFAULT_REMOVABLE_SUFFIXES,
-    skipNames: options.skipNames ?? DEFAULT_SKIP_NAMES,
-    verifyRoot: options.verifyRoot ?? true,
-    maxDirectories: options.maxDirectories ?? MAX_CLEAN_DIRECTORIES,
-    maxFiles: options.maxFiles ?? MAX_CLEAN_FILES,
-    maxDirectoryEntries: options.maxDirectoryEntries ?? MAX_CLEAN_DIRECTORY_ENTRIES,
-    maxRemovals: options.maxRemovals ?? MAX_CLEAN_REMOVALS,
-    maxPathBytes: options.maxPathBytes ?? MAX_CLEAN_PATH_BYTES,
+    removableNames: readCleanOption(options, "removableNames", DEFAULT_REMOVABLE_NAMES),
+    removableSuffixes: readCleanOption(options, "removableSuffixes", DEFAULT_REMOVABLE_SUFFIXES),
+    skipNames: readCleanOption(options, "skipNames", DEFAULT_SKIP_NAMES),
+    verifyRoot: readCleanOption(options, "verifyRoot", true),
+    maxDirectories: readCleanOption(options, "maxDirectories", MAX_CLEAN_DIRECTORIES),
+    maxFiles: readCleanOption(options, "maxFiles", MAX_CLEAN_FILES),
+    maxDirectoryEntries: readCleanOption(
+      options,
+      "maxDirectoryEntries",
+      MAX_CLEAN_DIRECTORY_ENTRIES,
+    ),
+    maxRemovals: readCleanOption(options, "maxRemovals", MAX_CLEAN_REMOVALS),
+    maxPathBytes: readCleanOption(options, "maxPathBytes", MAX_CLEAN_PATH_BYTES),
   };
 }
 
@@ -105,11 +127,16 @@ function assertCleanOptions(options) {
   assertCleanNameSet(options.removableNames, "removableNames");
   assertCleanSuffixes(options.removableSuffixes, "removableSuffixes");
   assertCleanNameSet(options.skipNames, "skipNames");
-  assertPositiveInteger(options.maxDirectories, "maxDirectories");
-  assertPositiveInteger(options.maxFiles, "maxFiles");
-  assertPositiveInteger(options.maxDirectoryEntries, "maxDirectoryEntries");
-  assertPositiveInteger(options.maxRemovals, "maxRemovals");
-  assertPositiveInteger(options.maxPathBytes, "maxPathBytes");
+  assertBoolean(options.verifyRoot, "verifyRoot");
+  assertPositiveIntegerAtMost(options.maxDirectories, "maxDirectories", MAX_CLEAN_DIRECTORIES);
+  assertPositiveIntegerAtMost(options.maxFiles, "maxFiles", MAX_CLEAN_FILES);
+  assertPositiveIntegerAtMost(
+    options.maxDirectoryEntries,
+    "maxDirectoryEntries",
+    MAX_CLEAN_DIRECTORY_ENTRIES,
+  );
+  assertPositiveIntegerAtMost(options.maxRemovals, "maxRemovals", MAX_CLEAN_REMOVALS);
+  assertPositiveIntegerAtMost(options.maxPathBytes, "maxPathBytes", MAX_CLEAN_PATH_BYTES);
 }
 
 function assertPathWithinLimit(root, absolutePath, maxPathBytes) {
