@@ -266,18 +266,73 @@ function parseBoolean(value: string | undefined, label: string): boolean | undef
 function parseCommaSeparatedStrings(
   value: string | undefined,
   label: string,
+  maxEntries = MAX_CONFIG_STRING_ARRAY_ENTRIES,
+  maxEntryChars = MAX_CONFIG_STRING_ARRAY_ENTRY_CHARS,
 ): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const maxChars = maxEntries * maxEntryChars + Math.max(0, maxEntries - 1);
+  if (value.length > maxChars) {
+    throw new RayError(`Expected ${label} to be at most ${maxChars} characters`, {
+      code: "config_validation_error",
+      status: 500,
+      details: {
+        actualChars: value.length,
+        maxChars,
+      },
+    });
+  }
+
   if (!isNonEmptyString(value)) {
     return undefined;
   }
 
-  const entries = value.split(",").map((entry) => entry.trim());
-  if (entries.some((entry) => entry.length === 0)) {
-    throw new RayError(`Expected ${label} to be comma-separated non-empty values`, {
-      code: "config_validation_error",
-      status: 500,
-      details: { value },
-    });
+  const entries: string[] = [];
+  let start = 0;
+
+  while (start <= value.length) {
+    if (entries.length >= maxEntries) {
+      throw new RayError(`Expected ${label} to contain at most ${maxEntries} values`, {
+        code: "config_validation_error",
+        status: 500,
+        details: {
+          maxEntries,
+        },
+      });
+    }
+
+    const separatorIndex = value.indexOf(",", start);
+    const end = separatorIndex === -1 ? value.length : separatorIndex;
+    const entry = value.slice(start, end).trim();
+
+    if (entry.length === 0) {
+      throw new RayError(`Expected ${label} to be comma-separated non-empty values`, {
+        code: "config_validation_error",
+        status: 500,
+        details: { value },
+      });
+    }
+
+    if (entry.length > maxEntryChars) {
+      throw new RayError(`Expected ${label} entries to be at most ${maxEntryChars} characters`, {
+        code: "config_validation_error",
+        status: 500,
+        details: {
+          actualChars: entry.length,
+          maxChars: maxEntryChars,
+        },
+      });
+    }
+
+    entries.push(entry);
+
+    if (separatorIndex === -1) {
+      break;
+    }
+
+    start = separatorIndex + 1;
   }
 
   return entries;
@@ -610,6 +665,8 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
   const asyncQueueCallbackAllowedHosts = parseCommaSeparatedStrings(
     env.RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS,
     "RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS",
+    MAX_CONFIG_STRING_ARRAY_ENTRIES,
+    MAX_CALLBACK_ALLOWED_HOST_CHARS,
   );
   const cacheEnabled = parseBoolean(env.RAY_CACHE_ENABLED, "RAY_CACHE_ENABLED");
   const cacheMaxEntries = parsePositiveInteger(env.RAY_CACHE_MAX_ENTRIES, "RAY_CACHE_MAX_ENTRIES");
@@ -682,6 +739,8 @@ function applyEnvOverrides(config: RayConfig, env: NodeJS.ProcessEnv): RayConfig
   const promptCompilerFamilyMetadataKeys = parseCommaSeparatedStrings(
     env.RAY_PROMPT_COMPILER_FAMILY_METADATA_KEYS,
     "RAY_PROMPT_COMPILER_FAMILY_METADATA_KEYS",
+    MAX_PROMPT_FAMILY_METADATA_KEYS,
+    MAX_PROMPT_FAMILY_METADATA_KEY_CHARS,
   );
   const adaptiveTuningEnabled = parseBoolean(
     env.RAY_ADAPTIVE_TUNING_ENABLED,

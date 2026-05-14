@@ -943,6 +943,17 @@ test("loadRayConfig rejects malformed environment overrides", async () => {
       cwd: process.cwd(),
       configPath: "./examples/config/ray.1b.json",
       env: {
+        RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS: "a".repeat(16_256),
+      },
+    }),
+    /Expected RAY_ASYNC_QUEUE_CALLBACK_ALLOWED_HOSTS to be at most 16255 characters/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
         RAY_SCHEDULER_BATCH_WINDOW_MS: "-1",
       },
     }),
@@ -969,6 +980,31 @@ test("loadRayConfig rejects malformed environment overrides", async () => {
       },
     }),
     /Expected RAY_PROMPT_COMPILER_FAMILY_METADATA_KEYS to be comma-separated non-empty values/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_PROMPT_COMPILER_FAMILY_METADATA_KEYS: Array.from(
+          { length: 17 },
+          (_value, index) => `family${index}`,
+        ).join(","),
+      },
+    }),
+    /Expected RAY_PROMPT_COMPILER_FAMILY_METADATA_KEYS to contain at most 16 values/,
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: "./examples/config/ray.1b.json",
+      env: {
+        RAY_PROMPT_COMPILER_FAMILY_METADATA_KEYS: "a".repeat(129),
+      },
+    }),
+    /Expected RAY_PROMPT_COMPILER_FAMILY_METADATA_KEYS entries to be at most 128 characters/,
   );
 
   await assert.rejects(
