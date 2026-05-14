@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { checkReleaseSource, runCheckSource, runCheckSourceCli } from "./check-source.mjs";
 
@@ -382,6 +383,19 @@ test("package-local release source checks use the bounded root verifier", async 
     assert.doesNotMatch(scriptSource, /console\./);
 
     const pkg = JSON.parse(await readFile(check.packagePath, "utf8")) as { version: string };
+    const previousExitCode = process.exitCode;
+    const imported = await import(
+      `${pathToFileURL(check.scriptPath).href}?import-test=${Date.now()}-${check.name}`
+    );
+    assert.equal(typeof imported.runPackageCheckSourceCli, "function");
+    assert.equal(process.exitCode, previousExitCode);
+
+    const output = createTestIo();
+    const importedStatus = await imported.runPackageCheckSourceCli([pkg.version], output.io);
+    assert.equal(importedStatus, 0);
+    assert.equal(output.stdout.trim(), `${check.name}: ${pkg.version}`);
+    assert.equal(output.stderr, "");
+
     const { stdout } = await execFileAsync(process.execPath, [check.scriptPath, pkg.version], {
       cwd: repoRoot,
       timeout: 5_000,
