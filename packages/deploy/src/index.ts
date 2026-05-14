@@ -91,6 +91,7 @@ type GatewayEntrypointImportStatus = "ok" | "failed";
 type ConfigFileStatus = BinaryPreflightStatus;
 type WorkingDirectoryStatus = "found" | "missing" | "not_directory" | "unreadable";
 type WorkingDirectoryStorageStatus = "available" | "unreadable";
+type SystemLogStorageStatus = "available" | "missing" | "not_directory" | "unreadable";
 type EnvFileStatus = "found" | "missing" | "unreadable";
 type ServiceUserStatus = "found" | "missing" | "unreadable";
 type ServiceUserAccessStatus = "ok" | "blocked";
@@ -162,6 +163,11 @@ export interface DeploymentPreflight {
   workingDirectoryStorageStatus?: WorkingDirectoryStorageStatus;
   workingDirectoryAvailableMiB?: number;
   workingDirectoryStorageError?: string;
+  systemLogStoragePath?: string;
+  systemLogStorageRealPath?: string;
+  systemLogStorageStatus?: SystemLogStorageStatus;
+  systemLogStorageAvailableMiB?: number;
+  systemLogStorageError?: string;
   llamaCppBinaryRealPath?: string;
   llamaCppBinaryPath?: string;
   llamaCppBinaryStatus?: LlamaCppBinaryStatus;
@@ -251,6 +257,7 @@ const LLAMA_CPP_SYSTEMD_SERVICE = "ray-llama-cpp.service";
 const RAY_STATE_DIRECTORY_NAME = "ray";
 const RAY_STATE_DIRECTORY_PATH = "/var/lib/ray";
 const RAY_STATE_DIRECTORY_PARENT_PATH = path.dirname(RAY_STATE_DIRECTORY_PATH);
+const SYSTEM_LOG_STORAGE_PATH = "/var/log";
 const GATEWAY_ENTRYPOINT_RELATIVE_PATH = "apps/gateway/dist/index.js";
 const DEFAULT_GATEWAY_RUNTIME_BINARY = "/usr/local/bin/bun";
 const DEFAULT_CADDY_RUNTIME_BINARY = "/usr/bin/caddy";
@@ -1290,13 +1297,6 @@ function resolveDeployStorageCushionMiB(
     });
     return DEFAULT_DEPLOY_MIN_FREE_STORAGE_MIB;
   }
-}
-
-function resolveWorkingDirectoryStorageCushionMiB(
-  env: NodeJS.ProcessEnv,
-  diagnostics: DeploymentDiagnostic[],
-): number {
-  return Math.max(MIN_WORKING_DIRECTORY_FREE_MIB, resolveDeployStorageCushionMiB(env, diagnostics));
 }
 
 function parseRuntimeVersion(value: string): ParsedRuntimeVersion | undefined {
@@ -2609,9 +2609,10 @@ export function diagnoseConfig(
   const strictFilesystem = options.strictFilesystem === true;
   const preflight = options.preflight;
   const gatewayBindsLoopback = isLoopbackHost(config.server.host);
-  const workingDirectoryStorageCushionMiB = resolveWorkingDirectoryStorageCushionMiB(
-    env,
-    diagnostics,
+  const deployStorageCushionMiB = resolveDeployStorageCushionMiB(env, diagnostics);
+  const workingDirectoryStorageCushionMiB = Math.max(
+    MIN_WORKING_DIRECTORY_FREE_MIB,
+    deployStorageCushionMiB,
   );
 
   if (!gatewayBindsLoopback) {
@@ -2955,6 +2956,59 @@ export function diagnoseConfig(
           });
         }
       }
+    }
+  }
+
+  if (strictFilesystem && preflight?.systemLogStorageStatus !== undefined) {
+    const systemLogStoragePath = preflight.systemLogStoragePath ?? SYSTEM_LOG_STORAGE_PATH;
+    const systemLogStorageDiagnosticPath = formatPathWithRealTarget(
+      systemLogStoragePath,
+      preflight.systemLogStorageRealPath,
+    );
+
+    if (preflight.systemLogStorageStatus === "missing") {
+      diagnostics.push({
+        level: "error",
+        code: "system_log_storage_missing",
+        message: `System log storage was not found at ${systemLogStoragePath}. Generated Ray services write to the systemd journal, so verify persistent logging before restarting them on this VPS.`,
+      });
+    } else if (preflight.systemLogStorageStatus === "not_directory") {
+      diagnostics.push({
+        level: "error",
+        code: "system_log_storage_not_directory",
+        message: `System log storage at ${systemLogStoragePath} is not a directory. Generated Ray services write to the systemd journal, so fix /var/log before restarting them on this VPS.`,
+      });
+    } else if (preflight.systemLogStorageStatus === "unreadable") {
+      diagnostics.push({
+        level: "error",
+        code: "system_log_storage_unreadable",
+        message: `Doctor could not inspect free space for system logs at ${systemLogStorageDiagnosticPath}${preflight.systemLogStorageError ? ` (${preflight.systemLogStorageError})` : ""}. Verify /var/log has enough journal/log headroom before restarting Ray services.`,
+      });
+    } else if (preflight.systemLogStorageAvailableMiB === undefined) {
+      diagnostics.push({
+        level: "error",
+        code: "system_log_storage_unreadable",
+        message: `Doctor could not resolve free space for system logs at ${systemLogStorageDiagnosticPath}. Verify /var/log has enough journal/log headroom before restarting Ray services.`,
+      });
+    } else if (
+      deployStorageCushionMiB > 0 &&
+      preflight.systemLogStorageAvailableMiB < deployStorageCushionMiB
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "system_log_storage_low",
+        message: `System log storage has ${formatMiB(preflight.systemLogStorageAvailableMiB)} free at ${systemLogStorageDiagnosticPath}, below the ${formatMiB(deployStorageCushionMiB)} deploy storage cushion from RAY_DEPLOY_MIN_FREE_STORAGE_MIB. Free /var/log space or move persistent journal/log storage before restarting Ray services on this VPS.`,
+      });
+    } else {
+      const threshold =
+        deployStorageCushionMiB > 0
+          ? `, satisfying the ${formatMiB(deployStorageCushionMiB)} deploy storage cushion from RAY_DEPLOY_MIN_FREE_STORAGE_MIB`
+          : " with deploy storage threshold checks disabled by RAY_DEPLOY_MIN_FREE_STORAGE_MIB=0";
+      diagnostics.push({
+        level: "info",
+        code: "system_log_storage_ok",
+        message: `System log storage has ${formatMiB(preflight.systemLogStorageAvailableMiB)} free at ${systemLogStorageDiagnosticPath}${threshold}.`,
+      });
     }
   }
 
@@ -5019,6 +5073,67 @@ async function collectWorkingDirectoryPreflight(
   }
 }
 
+async function collectSystemLogStoragePreflight(
+  strictFilesystem: boolean,
+): Promise<Partial<DeploymentPreflight>> {
+  if (!strictFilesystem) {
+    return {};
+  }
+
+  try {
+    const logStat = await stat(SYSTEM_LOG_STORAGE_PATH);
+
+    if (!logStat.isDirectory()) {
+      return {
+        systemLogStoragePath: SYSTEM_LOG_STORAGE_PATH,
+        systemLogStorageStatus: "not_directory",
+        systemLogStorageError: "not a directory",
+      };
+    }
+
+    const systemLogStorageRealPath = await resolveRealPathIfDifferent(SYSTEM_LOG_STORAGE_PATH);
+
+    try {
+      const storageStats = await statfs(SYSTEM_LOG_STORAGE_PATH);
+      const availableMiB = resolveAvailableStorageMiB(storageStats);
+
+      if (availableMiB === undefined) {
+        return {
+          ...(systemLogStorageRealPath ? { systemLogStorageRealPath } : {}),
+          systemLogStoragePath: SYSTEM_LOG_STORAGE_PATH,
+          systemLogStorageStatus: "unreadable",
+          systemLogStorageError: "free space could not be resolved",
+        };
+      }
+
+      return {
+        ...(systemLogStorageRealPath ? { systemLogStorageRealPath } : {}),
+        systemLogStoragePath: SYSTEM_LOG_STORAGE_PATH,
+        systemLogStorageStatus: "available",
+        systemLogStorageAvailableMiB: availableMiB,
+      };
+    } catch (error) {
+      return {
+        ...(systemLogStorageRealPath ? { systemLogStorageRealPath } : {}),
+        systemLogStoragePath: SYSTEM_LOG_STORAGE_PATH,
+        systemLogStorageStatus: "unreadable",
+        systemLogStorageError: toErrorMessage(error),
+      };
+    }
+  } catch (error) {
+    const code =
+      error !== null && typeof error === "object" && "code" in error
+        ? (error as { code?: string }).code
+        : undefined;
+
+    return {
+      systemLogStoragePath: SYSTEM_LOG_STORAGE_PATH,
+      systemLogStorageStatus: code === "ENOENT" ? "missing" : "unreadable",
+      systemLogStorageError: toErrorMessage(error),
+    };
+  }
+}
+
 async function collectGatewayRuntimePreflight(
   runtimeBinary: string | undefined,
   serviceUserIdentity: ServiceUserIdentity | undefined,
@@ -5613,6 +5728,9 @@ async function collectDeploymentPreflight(
     options.strictFilesystem === true,
     serviceUserIdentity,
   );
+  const systemLogStoragePreflight = await collectSystemLogStoragePreflight(
+    options.strictFilesystem === true,
+  );
   const gatewayEntrypointPreflight = await collectGatewayEntrypointPreflight(
     options.cwd,
     options.strictFilesystem === true,
@@ -5651,6 +5769,7 @@ async function collectDeploymentPreflight(
       ...serviceUserPreflight,
       ...configFilePreflight,
       ...workingDirectoryPreflight,
+      ...systemLogStoragePreflight,
       ...gatewayEntrypointPreflight,
       ...runtimePreflight,
       ...gatewayEntrypointImportPreflight,
@@ -5708,6 +5827,7 @@ async function collectDeploymentPreflight(
     ...serviceUserPreflight,
     ...configFilePreflight,
     ...workingDirectoryPreflight,
+    ...systemLogStoragePreflight,
     ...gatewayEntrypointPreflight,
     ...runtimePreflight,
     ...gatewayEntrypointImportPreflight,

@@ -3513,6 +3513,65 @@ test("diagnoseConfig reports adequate working directory storage for strict deplo
   assert.match(diagnostic.message, /deployment cushion/);
 });
 
+test("diagnoseConfig errors when strict system log storage is below the deploy cushion", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, {}, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      systemLogStoragePath: "/var/log",
+      systemLogStorageStatus: "available",
+      systemLogStorageAvailableMiB: 1023,
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "system_log_storage_low");
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /1,023 MiB/);
+  assert.match(diagnostic.message, /1,024 MiB/);
+  assert.match(diagnostic.message, /RAY_DEPLOY_MIN_FREE_STORAGE_MIB/);
+  assert.match(diagnostic.message, /journal\/log/);
+});
+
+test("diagnoseConfig reports adequate system log storage for strict deploys", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, {}, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      systemLogStoragePath: "/var/log",
+      systemLogStorageStatus: "available",
+      systemLogStorageAvailableMiB: 1024,
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "system_log_storage_ok");
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+  assert.match(diagnostic.message, /1,024 MiB/);
+  assert.match(diagnostic.message, /deploy storage cushion/);
+});
+
+test("diagnoseConfig errors when strict system log storage cannot be inspected", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      systemLogStoragePath: "/var/log",
+      systemLogStorageStatus: "unreadable",
+      systemLogStorageError: "statfs failed",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "system_log_storage_unreadable");
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /statfs failed/);
+  assert.match(diagnostic.message, /\/var\/log/);
+});
+
 test("diagnoseConfig honors deploy storage reserve for working directory headroom", () => {
   const config = createDefaultConfig("tiny");
   const diagnostics = diagnoseConfig(
@@ -3530,6 +3589,31 @@ test("diagnoseConfig honors deploy storage reserve for working directory headroo
   );
 
   const diagnostic = diagnostics.find((entry) => entry.code === "working_directory_storage_low");
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /1,536 MiB/);
+  assert.match(diagnostic.message, /2,048 MiB/);
+  assert.match(diagnostic.message, /RAY_DEPLOY_MIN_FREE_STORAGE_MIB/);
+});
+
+test("diagnoseConfig honors deploy storage reserve for system log headroom", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(
+    config,
+    { RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "2048" },
+    undefined,
+    {
+      strictFilesystem: true,
+      preflight: {
+        systemLogStoragePath: "/var/log",
+        systemLogStorageStatus: "available",
+        systemLogStorageAvailableMiB: 1536,
+      },
+    },
+  );
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "system_log_storage_low");
 
   assert.ok(diagnostic);
   assert.equal(diagnostic.level, "error");
@@ -4800,6 +4884,41 @@ test("loadAndDiagnoseDeployment records working directory storage headroom in st
   assert.ok(
     inspected.diagnostics.some((entry) =>
       ["working_directory_storage_ok", "working_directory_storage_low"].includes(entry.code),
+    ),
+  );
+});
+
+test("loadAndDiagnoseDeployment records system log storage headroom in strict mode", async (t) => {
+  const tempDir = await mkRayDeployTempDir("ray-deploy-log-storage-");
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    strictFilesystem: true,
+  });
+
+  assert.equal(inspected.preflight.systemLogStoragePath, "/var/log");
+  assert.ok(
+    ["available", "missing", "not_directory", "unreadable"].includes(
+      inspected.preflight.systemLogStorageStatus ?? "",
+    ),
+  );
+  assert.ok(
+    inspected.diagnostics.some((entry) =>
+      [
+        "system_log_storage_ok",
+        "system_log_storage_low",
+        "system_log_storage_missing",
+        "system_log_storage_not_directory",
+        "system_log_storage_unreadable",
+      ].includes(entry.code),
     ),
   );
 });
