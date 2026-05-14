@@ -3,6 +3,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const MAX_PACKAGE_JSON_BYTES = 256 * 1024;
+const MAX_RELEASE_MANIFESTS = 16;
+const MAX_RELEASE_MANIFEST_PATH_BYTES = 4_096;
 export const releasePackageManifests = ["packages/core/package.json", "packages/sdk/package.json"];
 export const releasePackageNames = {
   "packages/core/package.json": "@razroo/ray-core",
@@ -26,6 +28,29 @@ function validateReleaseVersion(version) {
   if (version !== version.trim() || !semverPattern.test(version)) {
     throw new Error(`release version must be a valid SemVer string without whitespace: ${version}`);
   }
+}
+
+function assertReleaseManifestPathValue(value, label) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty path`);
+  }
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} must not contain control characters`);
+  }
+
+  if (value.trim() !== value) {
+    throw new Error(`${label} must be a path without surrounding whitespace`);
+  }
+
+  if (Buffer.byteLength(value, "utf8") > MAX_RELEASE_MANIFEST_PATH_BYTES) {
+    throw new Error(`${label} must be at most ${MAX_RELEASE_MANIFEST_PATH_BYTES} bytes`);
+  }
+}
+
+function isPathInside(parentPath, candidatePath) {
+  const relative = path.relative(parentPath, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 async function readPackageJsonBounded(packagePath) {
@@ -80,10 +105,20 @@ export async function checkReleaseSource(version, options = {}) {
 
   const root = path.resolve(options.cwd ?? process.cwd());
   const manifests = options.manifests ?? releasePackageManifests;
+  if (!Array.isArray(manifests) || manifests.length === 0) {
+    throw new Error("manifests must be a non-empty array of paths");
+  }
+  if (manifests.length > MAX_RELEASE_MANIFESTS) {
+    throw new Error(`manifests must contain at most ${MAX_RELEASE_MANIFESTS} entries`);
+  }
   const checked = [];
 
-  for (const manifest of manifests) {
+  for (const [index, manifest] of manifests.entries()) {
+    assertReleaseManifestPathValue(manifest, `manifests[${index}]`);
     const packagePath = path.resolve(root, manifest);
+    if (!isPathInside(root, packagePath)) {
+      throw new Error(`manifests[${index}] must stay inside cwd`);
+    }
     const relativePackagePath = path.relative(root, packagePath);
     const manifestKey = normalizeManifestPath(relativePackagePath);
     const pkg = await readPackageJsonBounded(packagePath);

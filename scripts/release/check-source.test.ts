@@ -115,6 +115,40 @@ test("checkReleaseSource rejects malformed release tags and package name drift",
   );
 });
 
+test("checkReleaseSource rejects malformed manifest inputs before reading packages", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-release-check-source-paths-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  await assert.rejects(
+    () =>
+      checkReleaseSource("1.2.3", {
+        cwd: tempDir,
+        manifests: [],
+      }),
+    /manifests must be a non-empty array of paths/,
+  );
+
+  await assert.rejects(
+    () =>
+      checkReleaseSource("1.2.3", {
+        cwd: tempDir,
+        manifests: [" packages/core/package.json"],
+      }),
+    /manifests\[0\] must be a path without surrounding whitespace/,
+  );
+
+  await assert.rejects(
+    () =>
+      checkReleaseSource("1.2.3", {
+        cwd: tempDir,
+        manifests: [path.join(path.dirname(tempDir), "outside-package.json")],
+      }),
+    /manifests\[0\] must stay inside cwd/,
+  );
+});
+
 test("package-local release source checks use the bounded root verifier", async () => {
   const packageChecks = [
     {
