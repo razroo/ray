@@ -1242,6 +1242,68 @@ function assertGatewayHostHeader(hostHeader: string | undefined): void {
   }
 }
 
+function isAbsoluteGatewayRequestTarget(requestTarget: string): boolean {
+  return /^[A-Za-z][A-Za-z0-9+.-]*:/.test(requestTarget);
+}
+
+function assertGatewayRequestTargetForm(
+  requestTarget: string,
+  hostHeader: string | undefined,
+): void {
+  if (requestTarget.startsWith("//")) {
+    throw new RayError("Request URL authority must be provided by the Host header", {
+      code: "invalid_request",
+      status: 400,
+    });
+  }
+
+  if (!isAbsoluteGatewayRequestTarget(requestTarget) && !requestTarget.startsWith("/")) {
+    throw new RayError("Request URL must use origin-form or HTTP absolute-form", {
+      code: "invalid_request",
+      status: 400,
+    });
+  }
+
+  if (!isAbsoluteGatewayRequestTarget(requestTarget)) {
+    return;
+  }
+
+  let parsed: URL;
+
+  try {
+    parsed = new URL(requestTarget);
+  } catch (error) {
+    throw new RayError("Request URL is invalid", {
+      code: "invalid_request",
+      status: 400,
+      details: {
+        message: toErrorMessage(error),
+      },
+    });
+  }
+
+  if (parsed.protocol !== "http:" || !hostHeader) {
+    throw new RayError("Request URL must use origin-form or HTTP absolute-form", {
+      code: "invalid_request",
+      status: 400,
+    });
+  }
+
+  const expectedHost = new URL(`http://${hostHeader}`).host.toLowerCase();
+  const requestHost = parsed.host.toLowerCase();
+
+  if (requestHost !== expectedHost) {
+    throw new RayError("Absolute request URL authority must match the Host header", {
+      code: "invalid_request",
+      status: 400,
+      details: {
+        host: truncateResponseString(hostHeader, 128),
+        requestHost: truncateResponseString(parsed.host, 128),
+      },
+    });
+  }
+}
+
 function parseGatewayRequestUrl(request: IncomingMessage): URL {
   const requestTarget = request.url ?? "/";
 
@@ -1268,6 +1330,7 @@ function parseGatewayRequestUrl(request: IncomingMessage): URL {
 
   const hostHeader = request.headers.host;
   assertGatewayHostHeader(hostHeader);
+  assertGatewayRequestTargetForm(requestTarget, hostHeader);
 
   try {
     return new URL(requestTarget, `http://${hostHeader ?? "127.0.0.1"}`);

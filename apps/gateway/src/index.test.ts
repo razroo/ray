@@ -579,6 +579,59 @@ test("gateway rejects malformed request targets without leaking sockets", async 
   assert.match(response, /"code": "invalid_request"/);
 });
 
+test("gateway rejects mismatched absolute-form request targets without leaking sockets", async (t) => {
+  const gateway = createGatewayServer({
+    config: createDefaultConfig("tiny"),
+  });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await readRawUnfinishedRequestResponse(gateway.server, [
+    "GET http://example.com/livez HTTP/1.1",
+    `Host: 127.0.0.1:${address.port}`,
+    "Content-Length: 32",
+    "",
+    "",
+  ]);
+
+  assert.match(response, /^HTTP\/1\.1 400 /);
+  assert.match(response, /\r\nconnection: close\r\n/i);
+  assert.match(response, /"code": "invalid_request"/);
+  assert.match(response, /Absolute request URL authority must match the Host header/);
+});
+
+test("gateway accepts same-host HTTP absolute-form request targets", async (t) => {
+  const gateway = createGatewayServer({
+    config: createDefaultConfig("tiny"),
+  });
+
+  await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => gateway.server.close());
+
+  const address = gateway.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const response = await readRawUnfinishedRequestResponse(gateway.server, [
+    `GET http://127.0.0.1:${address.port}/livez HTTP/1.1`,
+    `Host: 127.0.0.1:${address.port}`,
+    "Content-Length: 32",
+    "",
+    "",
+  ]);
+
+  assert.match(response, /^HTTP\/1\.1 200 /);
+  assert.match(response, /\r\nconnection: close\r\n/i);
+  assert.match(response, /"status": "ok"/);
+});
+
 test("gateway rejects malformed Host headers without leaking sockets", async (t) => {
   const gateway = createGatewayServer({
     config: createDefaultConfig("tiny"),
