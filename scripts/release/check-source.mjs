@@ -1,4 +1,4 @@
-import { stat, readFile } from "node:fs/promises";
+import { promises as fs } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -55,17 +55,27 @@ function isPathInside(parentPath, candidatePath) {
 }
 
 async function readPackageJsonBounded(packagePath) {
-  const stats = await stat(packagePath);
-  if (!stats.isFile()) {
-    throw new Error(`package.json path must be a file: ${packagePath}`);
-  }
-  if (stats.size > MAX_PACKAGE_JSON_BYTES) {
-    throw new Error(`package.json must be at most ${MAX_PACKAGE_JSON_BYTES} bytes: ${packagePath}`);
-  }
+  let raw;
+  const fileHandle = await fs.open(packagePath, "r");
+  try {
+    const stats = await fileHandle.stat();
+    if (!stats.isFile()) {
+      throw new Error(`package.json path must be a file: ${packagePath}`);
+    }
+    if (stats.size > MAX_PACKAGE_JSON_BYTES) {
+      throw new Error(
+        `package.json must be at most ${MAX_PACKAGE_JSON_BYTES} bytes: ${packagePath}`,
+      );
+    }
 
-  const raw = await readFile(packagePath, "utf8");
-  if (Buffer.byteLength(raw, "utf8") > MAX_PACKAGE_JSON_BYTES) {
-    throw new Error(`package.json must be at most ${MAX_PACKAGE_JSON_BYTES} bytes: ${packagePath}`);
+    raw = await fileHandle.readFile("utf8");
+    if (Buffer.byteLength(raw, "utf8") > MAX_PACKAGE_JSON_BYTES) {
+      throw new Error(
+        `package.json must be at most ${MAX_PACKAGE_JSON_BYTES} bytes: ${packagePath}`,
+      );
+    }
+  } finally {
+    await fileHandle.close();
   }
 
   const parsed = JSON.parse(raw);

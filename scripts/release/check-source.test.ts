@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { promises as fsPromises } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -172,6 +173,49 @@ test("checkReleaseSource rejects malformed manifest inputs before reading packag
         manifests: [path.join(path.dirname(tempDir), "outside-package.json")],
       }),
     /manifests\[0\] must stay inside cwd/,
+  );
+});
+
+test("checkReleaseSource rejects package manifests that exceed the byte cap after stat", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-release-check-source-post-read-size-"));
+  const originalOpen = fsPromises.open;
+  t.after(async () => {
+    Object.defineProperty(fsPromises, "open", {
+      configurable: true,
+      value: originalOpen,
+    });
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  await writePackageJson(tempDir, "packages/core/package.json", {
+    name: "@razroo/ray-core",
+    version: "1.2.3",
+  });
+
+  Object.defineProperty(fsPromises, "open", {
+    configurable: true,
+    value: async (...args: Parameters<typeof fsPromises.open>) => {
+      const handle = await originalOpen(...args);
+      return {
+        stat: async () => ({
+          isFile: () => true,
+          size: 2,
+        }),
+        readFile: async () => "x".repeat(256 * 1024 + 1),
+        close: async () => {
+          await handle.close();
+        },
+      } as Awaited<ReturnType<typeof fsPromises.open>>;
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      checkReleaseSource("1.2.3", {
+        cwd: tempDir,
+        manifests: ["packages/core/package.json"],
+      }),
+    /package\.json must be at most 262144 bytes/,
   );
 });
 
