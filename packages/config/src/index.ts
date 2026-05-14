@@ -216,7 +216,21 @@ async function readConfigFileBounded(configPath: string): Promise<string> {
       });
     }
 
-    return await fileHandle.readFile("utf8");
+    const raw = await fileHandle.readFile("utf8");
+    const actualBytes = Buffer.byteLength(raw, "utf8");
+    if (actualBytes > MAX_CONFIG_FILE_BYTES) {
+      throw new RayError(`Config file must be at most ${MAX_CONFIG_FILE_BYTES} bytes`, {
+        code: "config_validation_error",
+        status: 500,
+        details: {
+          configPath,
+          actualBytes,
+          maxBytes: MAX_CONFIG_FILE_BYTES,
+        },
+      });
+    }
+
+    return raw;
   } finally {
     await fileHandle?.close().catch(() => undefined);
   }

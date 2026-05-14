@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { promises as fsPromises } from "node:fs";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -120,6 +121,47 @@ test("loadRayConfig rejects oversized config files before parsing", async (t) =>
     loadRayConfig({
       cwd: tempDir,
       configPath: "ray.huge.json",
+      env: {},
+    }),
+    /Config file must be at most 262144 bytes/,
+  );
+});
+
+test("loadRayConfig rejects config files that exceed the byte cap after stat", async (t) => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ray-config-file-post-read-limit-"));
+  const originalOpen = fsPromises.open;
+  t.after(async () => {
+    Object.defineProperty(fsPromises, "open", {
+      configurable: true,
+      value: originalOpen,
+    });
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const configPath = join(tempDir, "ray.raced.json");
+  await writeFile(configPath, "{}", "utf8");
+
+  Object.defineProperty(fsPromises, "open", {
+    configurable: true,
+    value: async (...args: Parameters<typeof fsPromises.open>) => {
+      const handle = await originalOpen(...args);
+      return {
+        stat: async () => ({
+          isFile: () => true,
+          size: 2,
+        }),
+        readFile: async () => "x".repeat(256 * 1024 + 1),
+        close: async () => {
+          await handle.close();
+        },
+      } as Awaited<ReturnType<typeof fsPromises.open>>;
+    },
+  });
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: tempDir,
+      configPath: "ray.raced.json",
       env: {},
     }),
     /Config file must be at most 262144 bytes/,
