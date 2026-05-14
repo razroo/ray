@@ -163,6 +163,19 @@ export interface ModelStageCliOptions {
   applyOptions?: ModelStageApplyOptions;
 }
 
+interface ModelStagePlanOptions {
+  cwd: string;
+  configPath: string;
+  env?: NodeJS.ProcessEnv;
+  envFile?: string;
+  serviceUser?: string;
+  serviceGroup?: string;
+  binarySourcePath?: string;
+  binarySha256?: string;
+  sourcePath?: string;
+  sha256?: string;
+}
+
 export interface ModelStageMemoryFit {
   sourceMiB: number;
   nonModelWorkingSetMiB: number;
@@ -200,6 +213,10 @@ Artifact source paths and checksums may also come from ${BINARY_SOURCE_ENV},
 ${BINARY_SHA256_ENV}, ${MODEL_SOURCE_ENV}, and ${MODEL_SHA256_ENV}. CLI flags win.
 `;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function assertArgv(argv: unknown): asserts argv is string[] {
   if (!Array.isArray(argv)) {
     throw new Error("argv must be an array of strings");
@@ -220,6 +237,73 @@ function assertArgv(argv: unknown): asserts argv is string[] {
 
     if (Buffer.byteLength(value, "utf8") > MAX_CLI_ARG_BYTES) {
       throw new Error(`argv[${index}] must be at most ${MAX_CLI_ARG_BYTES} bytes`);
+    }
+  }
+}
+
+function assertModelStageEnv(env: unknown): asserts env is NodeJS.ProcessEnv {
+  if (!isRecord(env)) {
+    throw new Error("model stage env must be an object");
+  }
+}
+
+function assertModelStagePlanOptions(options: unknown): asserts options is ModelStagePlanOptions {
+  if (!isRecord(options)) {
+    throw new Error("model stage options must be an object");
+  }
+
+  if (options.env !== undefined && !isRecord(options.env)) {
+    throw new Error("env must be an object when provided");
+  }
+
+  for (const key of [
+    "cwd",
+    "configPath",
+    "envFile",
+    "serviceUser",
+    "serviceGroup",
+    "binarySourcePath",
+    "binarySha256",
+    "sourcePath",
+    "sha256",
+  ] as const) {
+    if (options[key] !== undefined && typeof options[key] !== "string") {
+      throw new Error(`${key} must be a string when provided`);
+    }
+  }
+}
+
+function assertModelStageCliIo(
+  io: unknown,
+): asserts io is Pick<NodeJS.Process, "stdout" | "stderr"> {
+  if (!isRecord(io)) {
+    throw new Error("model stage io must be an object");
+  }
+
+  if (!isRecord(io.stdout) || typeof io.stdout.write !== "function") {
+    throw new Error("model stage io.stdout.write must be a function");
+  }
+
+  if (!isRecord(io.stderr) || typeof io.stderr.write !== "function") {
+    throw new Error("model stage io.stderr.write must be a function");
+  }
+}
+
+function assertModelStageCliOptions(options: unknown): asserts options is ModelStageCliOptions {
+  if (!isRecord(options)) {
+    throw new Error("model stage cli options must be an object");
+  }
+
+  if (options.applyOptions !== undefined) {
+    if (!isRecord(options.applyOptions)) {
+      throw new Error("applyOptions must be an object when provided");
+    }
+
+    if (
+      options.applyOptions.resolveAvailableStorageMiB !== undefined &&
+      typeof options.applyOptions.resolveAvailableStorageMiB !== "function"
+    ) {
+      throw new Error("applyOptions.resolveAvailableStorageMiB must be a function when provided");
     }
   }
 }
@@ -765,6 +849,8 @@ export async function createModelStagePlan(options: {
   sourcePath?: string;
   sha256?: string;
 }): Promise<ModelStagePlan> {
+  assertModelStagePlanOptions(options);
+
   const cwdValue = normalizeOptionalPath(options.cwd, "cwd");
   const configPath = normalizeOptionalPath(options.configPath, "configPath");
   const envFile = options.envFile ? normalizeOptionalPath(options.envFile, "envFile") : undefined;
@@ -1754,7 +1840,11 @@ export async function runModelStageCli(
   env: NodeJS.ProcessEnv = process.env,
   options: ModelStageCliOptions = {},
 ): Promise<number> {
+  assertModelStageCliIo(io);
+  assertModelStageCliOptions(options);
+
   try {
+    assertModelStageEnv(env);
     const args = parseArgs(argv);
 
     if (args.help) {

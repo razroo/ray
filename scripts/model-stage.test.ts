@@ -445,6 +445,43 @@ test("createModelStagePlan rejects malformed staging source paths from env", asy
   );
 });
 
+test("createModelStagePlan rejects malformed direct options before loading inputs", async () => {
+  await assert.rejects(
+    () => createModelStagePlan(null as unknown as never),
+    /model stage options must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      createModelStagePlan({
+        cwd: repoRoot,
+        configPath: "./examples/config/ray.1b.generic.public.json",
+        env: null,
+      } as unknown as never),
+    /env must be an object when provided/,
+  );
+
+  await assert.rejects(
+    () =>
+      createModelStagePlan({
+        cwd: repoRoot,
+        configPath: "./examples/config/ray.1b.generic.public.json",
+        serviceUser: 10,
+      } as unknown as never),
+    /serviceUser must be a string when provided/,
+  );
+
+  await assert.rejects(
+    () =>
+      createModelStagePlan({
+        cwd: repoRoot,
+        configPath: "./examples/config/ray.1b.generic.public.json",
+        sourcePath: 10,
+      } as unknown as never),
+    /sourcePath must be a string when provided/,
+  );
+});
+
 test("createModelStagePlan rejects oversized direct paths before loading inputs", async () => {
   const oversizedPath = "x".repeat(4_097);
 
@@ -1455,6 +1492,81 @@ test("formatApplyResult prints the staged artifact summary", () => {
   assert.match(text, /GGUF: \/var\/lib\/ray\/models\/local\.gguf/);
   assert.match(text, /GGUF service-user read: ok/);
   assert.match(text, /Run doctor before restarting ray-llama-cpp\.service/);
+});
+
+test("runModelStageCli rejects malformed direct io before parsing", async () => {
+  await assert.rejects(
+    () => runModelStageCli([], null as unknown as never),
+    /model stage io must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      runModelStageCli(["--help"], {
+        stdout: {},
+        stderr: {
+          write() {
+            return true;
+          },
+        },
+      } as unknown as never),
+    /model stage io\.stdout\.write must be a function/,
+  );
+
+  await assert.rejects(
+    () =>
+      runModelStageCli(["--unknown"], {
+        stdout: {
+          write() {
+            return true;
+          },
+        },
+        stderr: {},
+      } as unknown as never),
+    /model stage io\.stderr\.write must be a function/,
+  );
+});
+
+test("runModelStageCli rejects malformed direct cli options before parsing", async () => {
+  const io = {
+    stdout: { write() {} },
+    stderr: { write() {} },
+  } as Pick<NodeJS.Process, "stdout" | "stderr">;
+
+  await assert.rejects(
+    () => runModelStageCli([], io, {}, null as unknown as never),
+    /model stage cli options must be an object/,
+  );
+
+  await assert.rejects(
+    () => runModelStageCli([], io, {}, { applyOptions: null } as unknown as never),
+    /applyOptions must be an object when provided/,
+  );
+
+  await assert.rejects(
+    () =>
+      runModelStageCli([], io, {}, {
+        applyOptions: { resolveAvailableStorageMiB: "probe" },
+      } as unknown as never),
+    /applyOptions\.resolveAvailableStorageMiB must be a function when provided/,
+  );
+});
+
+test("runModelStageCli reports malformed direct env before planning", async () => {
+  let stdout = "";
+  let stderr = "";
+  const exitCode = await runModelStageCli(
+    [],
+    {
+      stdout: { write: (chunk: string) => void (stdout += chunk) },
+      stderr: { write: (chunk: string) => void (stderr += chunk) },
+    },
+    null as unknown as NodeJS.ProcessEnv,
+  );
+
+  assert.equal(exitCode, 1);
+  assert.equal(stdout, "");
+  assert.match(stderr, /model stage env must be an object/);
 });
 
 test("runModelStageCli loads ray env file overrides", async (t) => {
