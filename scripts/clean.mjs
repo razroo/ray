@@ -11,6 +11,8 @@ export const MAX_CLEAN_PATH_BYTES = 4_096;
 export const MAX_CLEAN_RULES = 64;
 export const MAX_CLEAN_RULE_BYTES = 256;
 export const MAX_CLEAN_PACKAGE_JSON_BYTES = 512 * 1024;
+const MAX_CLEAN_CLI_ARGS = 4;
+const MAX_CLEAN_CLI_ARG_BYTES = 4_096;
 export const DEFAULT_REMOVABLE_NAMES = new Set(["dist"]);
 export const DEFAULT_REMOVABLE_SUFFIXES = [".tsbuildinfo"];
 export const DEFAULT_SKIP_NAMES = new Set([
@@ -22,8 +24,65 @@ export const DEFAULT_SKIP_NAMES = new Set([
   "tmp",
 ]);
 
+const HELP = `Remove Ray workspace build artifacts.
+
+Usage:
+  bun ./scripts/clean.mjs [options]
+
+Options:
+  --cwd <path>  Repository root to clean. Default: current directory.
+  --json        Print machine-readable cleanup summary JSON.
+  -h, --help    Show this help.
+`;
+
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function assertArgv(argv) {
+  if (!Array.isArray(argv)) {
+    throw new Error("argv must be an array of strings");
+  }
+
+  if (argv.length > MAX_CLEAN_CLI_ARGS) {
+    throw new Error(`argv must contain at most ${MAX_CLEAN_CLI_ARGS} entries`);
+  }
+
+  for (const [index, value] of argv.entries()) {
+    if (typeof value !== "string") {
+      throw new Error(`argv[${index}] must be a string`);
+    }
+
+    if (value.includes("\0")) {
+      throw new Error(`argv[${index}] must not contain NUL bytes`);
+    }
+
+    if (Buffer.byteLength(value, "utf8") > MAX_CLEAN_CLI_ARG_BYTES) {
+      throw new Error(`argv[${index}] must be at most ${MAX_CLEAN_CLI_ARG_BYTES} bytes`);
+    }
+  }
+}
+
+function requireFlagValue(flag, value) {
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value`);
+  }
+
+  return value;
+}
+
+function assertCleanCliIo(io) {
+  if (!isRecord(io)) {
+    throw new Error("clean io must be an object");
+  }
+
+  if (!isRecord(io.stdout) || typeof io.stdout.write !== "function") {
+    throw new Error("clean io.stdout.write must be a function");
+  }
+
+  if (!isRecord(io.stderr) || typeof io.stderr.write !== "function") {
+    throw new Error("clean io.stderr.write must be a function");
+  }
 }
 
 function readCleanOption(options, key, defaultValue) {
@@ -162,6 +221,46 @@ function assertCleanPathValue(value, label, maxPathBytes) {
   if (Buffer.byteLength(value, "utf8") > maxPathBytes) {
     throw new Error(`${label} must be at most ${maxPathBytes} bytes`);
   }
+}
+
+export function parseArgs(argv) {
+  assertArgv(argv);
+
+  const args = {
+    cwd: ".",
+    json: false,
+    help: false,
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const current = argv[index];
+
+    if (current === "-h" || current === "--help") {
+      args.help = true;
+      continue;
+    }
+
+    if (current === "--json") {
+      args.json = true;
+      continue;
+    }
+
+    if (current === "--cwd") {
+      const cwd = requireFlagValue(current, argv[index + 1]);
+      assertCleanPathValue(cwd, "--cwd", MAX_CLEAN_PATH_BYTES);
+      args.cwd = cwd;
+      index += 1;
+      continue;
+    }
+
+    if (current.startsWith("-")) {
+      throw new Error(`Unknown option: ${current}`);
+    }
+
+    throw new Error(`Unexpected positional argument: ${current}`);
+  }
+
+  return args;
 }
 
 async function readPackageJsonBounded(packageJsonPath) {
@@ -330,11 +429,29 @@ export async function cleanWorkspace(root = process.cwd(), options = {}) {
   };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+export async function runCleanCli(argv = process.argv.slice(2), io = process) {
+  assertCleanCliIo(io);
+
   try {
-    await cleanWorkspace();
+    const args = parseArgs(argv);
+
+    if (args.help) {
+      io.stdout.write(HELP);
+      return 0;
+    }
+
+    const summary = await cleanWorkspace(args.cwd);
+    if (args.json) {
+      io.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+    }
+
+    return 0;
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
+    io.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
   }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = await runCleanCli();
 }
