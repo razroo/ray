@@ -1427,6 +1427,20 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
       }),
     );
     await writeFile(
+      join(jobsDir, "job_attempts_exceed_max.json"),
+      JSON.stringify({
+        id: "job_attempts_exceed_max",
+        status: "queued",
+        request: {
+          input: "persisted job with attempts beyond max attempts",
+        },
+        createdAt: now,
+        updatedAt: now,
+        attempts: 2,
+        maxAttempts: 1,
+      }),
+    );
+    await writeFile(
       join(jobsDir, "job_succeeded_without_result.json"),
       JSON.stringify({
         id: "job_succeeded_without_result",
@@ -1916,6 +1930,7 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.equal(await queue.get("job_other"), undefined);
     assert.equal(await queue.get("job_id_too_long"), undefined);
     assert.equal(await queue.get("job_attempts_too_large"), undefined);
+    assert.equal(await queue.get("job_attempts_exceed_max"), undefined);
     assert.equal(await queue.get("job_succeeded_without_result"), undefined);
     assert.equal(await queue.get("job_succeeded_with_error"), undefined);
     assert.equal(await queue.get("job_failed_without_error"), undefined);
@@ -1956,6 +1971,7 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.equal(entries.includes("job_mismatch.json"), false);
     assert.equal(entries.includes("job_id_too_long.json"), false);
     assert.equal(entries.includes("job_attempts_too_large.json"), false);
+    assert.equal(entries.includes("job_attempts_exceed_max.json"), false);
     assert.equal(entries.includes("job_succeeded_without_result.json"), false);
     assert.equal(entries.includes("job_succeeded_with_error.json"), false);
     assert.equal(entries.includes("job_failed_without_error.json"), false);

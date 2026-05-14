@@ -1158,6 +1158,12 @@ function validatePersistedJobRecord(value: unknown, expectedJobId?: string): Inf
     );
   }
 
+  if (value.attempts > value.maxAttempts) {
+    throw new PersistedJobValidationError(
+      "persisted async job attempts must not exceed maxAttempts",
+    );
+  }
+
   assertOptionalTimestamp(value.startedAt, "persisted async job startedAt");
   assertOptionalTimestamp(value.completedAt, "persisted async job completedAt");
   assertPersistedInferenceResult(value.result);
