@@ -1948,7 +1948,12 @@ function validateDeployStoragePreflightScript(
     contents.includes("RAY_MODEL_PATH") &&
     contents.includes("RAY_LLAMA_CPP_MODEL_PATH") &&
     contents.includes("RAY_LLAMA_CPP_BINARY_PATH") &&
-    contents.includes("RAY_ASYNC_QUEUE_STORAGE_DIR")
+    contents.includes("RAY_ASYNC_QUEUE_STORAGE_DIR") &&
+    contents.includes("realpath") &&
+    contents.includes("checkRealPath") &&
+    contents.includes("resolveCheckRealPathIfDifferent") &&
+    contents.includes("formatCheckedStoragePath") &&
+    contents.includes("resolves to")
   ) {
     return [];
   }
@@ -1960,7 +1965,7 @@ function validateDeployStoragePreflightScript(
       scriptPath,
       line: workflowLineNumber(lines, "DEFAULT_STORAGE_PATHS"),
       message:
-        "Manual deploy storage preflight must check /, /var/cache/apt, /var/lib/apt, /etc/ray, /etc/systemd/system, /etc/caddy, /srv/ray/.ray/bun-install-cache, and /var/tmp by default, load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from --ray-env-file, and include custom env-file model, llama.cpp binary, plus async-queue storage paths so operator-run package installs, config writes, artifact staging, and Bun installs use the same disk headroom guard as the manual deploy helpers.",
+        "Manual deploy storage preflight must check /, /var/cache/apt, /var/lib/apt, /etc/ray, /etc/systemd/system, /etc/caddy, /srv/ray/.ray/bun-install-cache, and /var/tmp by default, load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from --ray-env-file, include custom env-file model, llama.cpp binary, plus async-queue storage paths, and report resolved symlink targets so operator-run package installs, config writes, artifact staging, and Bun installs use the same disk headroom guard as the manual deploy helpers.",
     },
   ];
 }

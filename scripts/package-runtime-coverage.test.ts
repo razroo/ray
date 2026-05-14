@@ -282,6 +282,58 @@ test("validatePackageRuntimeCoverage requires root filesystem deploy storage pre
   assert.ok(codes.includes("deploy_storage_bun_cache_preflight_missing"));
 });
 
+test("validatePackageRuntimeCoverage requires deploy storage symlink target reporting", async (t) => {
+  const tempDir = await mkdtemp(
+    path.join(tmpdir(), "ray-package-runtime-coverage-storage-realpath-"),
+  );
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  await mkdir(path.join(tempDir, "scripts"), { recursive: true });
+  const rootPackageJson = path.join(tempDir, "package.json");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify(
+      {
+        name: "ray-test",
+        packageManager: "bun@1.3.9",
+        engines: {
+          bun: ">=1.3.0",
+        },
+        scripts: {
+          "deploy:storage": "bun ./scripts/deploy-storage-preflight.ts",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    path.join(tempDir, "scripts", "deploy-storage-preflight.ts"),
+    [
+      'const DEFAULT_STORAGE_PATHS = ["/", "/var/cache/apt", "/var/lib/apt", "/etc/ray", "/etc/systemd/system", "/etc/caddy", "/srv/ray", "/srv/ray/.ray/bun-install-cache", "/var/lib/ray", "/tmp", "/var/tmp"] as const;',
+      'const HELP = "--ray-env-file RAY_DEPLOY_MIN_FREE_STORAGE_MIB";',
+      "async function loadDeployStoragePreflightArgs() {}",
+      "async function readEnvironmentFileBounded() {}",
+      'const ENV_FILE_STORAGE_PATH_KEYS = ["RAY_MODEL_PATH", "RAY_LLAMA_CPP_MODEL_PATH", "RAY_LLAMA_CPP_BINARY_PATH", "RAY_ASYNC_QUEUE_STORAGE_DIR"] as const;',
+      "",
+    ].join("\n"),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson],
+  });
+  const codes = summary.results.flatMap((result) =>
+    result.diagnostics.map((diagnostic) => diagnostic.code),
+  );
+
+  assert.equal(summary.ok, false);
+  assert.equal(summary.runtimeScriptCount, 1);
+  assert.ok(codes.includes("deploy_storage_bun_cache_preflight_missing"));
+});
+
 test("validatePackageRuntimeCoverage requires VPS deploy trigger for storage preflight changes", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-coverage-workflow-"));
   t.after(async () => {
