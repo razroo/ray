@@ -31,6 +31,12 @@ export interface DeployScriptCoverageArgs {
   help: boolean;
 }
 
+interface DeployScriptCoverageOptions {
+  cwd: string;
+  configPaths: string[];
+  scripts: Record<string, string>;
+}
+
 export interface DeployScriptCoverageDiagnostic {
   level: "error";
   code: string;
@@ -141,6 +147,10 @@ Options:
   -h, --help             Show this help.
 `;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function assertArgv(argv: unknown): asserts argv is string[] {
   if (!Array.isArray(argv)) {
     throw new Error("argv must be an array of strings");
@@ -188,6 +198,50 @@ function assertDeployScriptPathValue(value: unknown, label: string): asserts val
 
   if (Buffer.byteLength(value, "utf8") > MAX_DEPLOY_SCRIPT_PATH_BYTES) {
     throw new Error(`${label} must be at most ${MAX_DEPLOY_SCRIPT_PATH_BYTES} bytes`);
+  }
+}
+
+function assertDeployScriptsRecord(value: unknown): asserts value is Record<string, string> {
+  if (!isRecord(value)) {
+    throw new Error("scripts must be an object");
+  }
+
+  let index = 0;
+  for (const command of Object.values(value)) {
+    if (typeof command !== "string") {
+      throw new Error(`scripts[${index}] must be a string`);
+    }
+    index += 1;
+  }
+}
+
+function assertDeployScriptCoverageOptions(
+  options: unknown,
+): asserts options is DeployScriptCoverageOptions {
+  if (!isRecord(options)) {
+    throw new Error("deploy script coverage options must be an object");
+  }
+
+  if (!Array.isArray(options.configPaths)) {
+    throw new Error("configPaths must be an array");
+  }
+
+  assertDeployScriptsRecord(options.scripts);
+}
+
+function assertDeployScriptCoverageCliIo(
+  io: unknown,
+): asserts io is Pick<NodeJS.Process, "stdout" | "stderr"> {
+  if (!isRecord(io)) {
+    throw new Error("deploy script coverage io must be an object");
+  }
+
+  if (!isRecord(io.stdout) || typeof io.stdout.write !== "function") {
+    throw new Error("deploy script coverage io.stdout.write must be a function");
+  }
+
+  if (!isRecord(io.stderr) || typeof io.stderr.write !== "function") {
+    throw new Error("deploy script coverage io.stderr.write must be a function");
   }
 }
 
@@ -442,6 +496,7 @@ export function validateDeployScriptCoverage(options: {
   configPaths: string[];
   scripts: Record<string, string>;
 }): DeployScriptCoverageSummary {
+  assertDeployScriptCoverageOptions(options);
   if (options.configPaths.length > MAX_DEPLOY_SCRIPT_CONFIGS) {
     throw new Error(
       `Deploy script coverage can inspect at most ${MAX_DEPLOY_SCRIPT_CONFIGS} config files`,
@@ -565,6 +620,8 @@ export async function runDeployScriptCoverageCli(
   argv = process.argv.slice(2),
   io: Pick<NodeJS.Process, "stdout" | "stderr"> = process,
 ): Promise<number> {
+  assertDeployScriptCoverageCliIo(io);
+
   try {
     const args = parseArgs(argv);
 

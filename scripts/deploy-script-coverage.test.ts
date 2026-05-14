@@ -118,6 +118,45 @@ test("validateDeployScriptCoverage rejects excessive config inputs before matchi
   );
 });
 
+test("validateDeployScriptCoverage rejects malformed direct options before matching scripts", () => {
+  assert.throws(
+    () => validateDeployScriptCoverage(null as never),
+    /deploy script coverage options must be an object/,
+  );
+
+  assert.throws(
+    () =>
+      validateDeployScriptCoverage({
+        cwd: process.cwd(),
+        configPaths: null,
+        scripts: {},
+      } as never),
+    /configPaths must be an array/,
+  );
+
+  assert.throws(
+    () =>
+      validateDeployScriptCoverage({
+        cwd: process.cwd(),
+        configPaths: [],
+        scripts: null,
+      } as never),
+    /scripts must be an object/,
+  );
+
+  assert.throws(
+    () =>
+      validateDeployScriptCoverage({
+        cwd: process.cwd(),
+        configPaths: [],
+        scripts: {
+          "render:service": 42,
+        },
+      } as never),
+    /scripts\[0\] must be a string/,
+  );
+});
+
 test("validateDeployScriptCoverage rejects malformed direct paths before matching scripts", () => {
   assert.throws(
     () =>
@@ -174,6 +213,39 @@ test("validateDeployScriptCoverage catches missing and mistargeted package alias
   assert.equal(summary.ok, false);
   assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "script_missing"));
   assert.ok(diagnostics.some((diagnostic) => diagnostic.code === "script_wrong_config"));
+});
+
+test("runDeployScriptCoverageCli rejects malformed direct io before parsing", async () => {
+  await assert.rejects(
+    () => runDeployScriptCoverageCli([], null as never),
+    /deploy script coverage io must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      runDeployScriptCoverageCli(["--help"], {
+        stdout: {},
+        stderr: {
+          write() {
+            return true;
+          },
+        },
+      } as never),
+    /deploy script coverage io\.stdout\.write must be a function/,
+  );
+
+  await assert.rejects(
+    () =>
+      runDeployScriptCoverageCli(["--unknown"], {
+        stdout: {
+          write() {
+            return true;
+          },
+        },
+        stderr: {},
+      } as never),
+    /deploy script coverage io\.stderr\.write must be a function/,
+  );
 });
 
 test("runDeployScriptCoverageCli prints JSON output", async () => {
