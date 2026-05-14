@@ -233,6 +233,7 @@ const MIN_PROVIDER_RESULT_OUTPUT_CHARS = 8_192;
 const MAX_PROVIDER_RESULT_OUTPUT_CHARS = 262_144;
 const MAX_PROVIDER_RESULT_CHARS_PER_TOKEN = 64;
 const MAX_PROVIDER_RESULT_DIAGNOSTIC_STRING_CHARS = 512;
+const MAX_PROVIDER_DIAGNOSTIC_NUMBER = 1_000_000_000;
 const MAX_PROVIDER_RESULT_USAGE_COUNT = 1_000_000_000;
 const MAX_PROVIDER_MODEL_ID_CHARS = 512;
 const MAX_PROVIDER_HEALTH_CHECKED_AT_CHARS = 128;
@@ -2839,10 +2840,19 @@ function assertOptionalProviderPreparationDiagnosticInteger(value: unknown, fiel
     return;
   }
 
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw createProviderPreparationError(`${field} must be a non-negative safe integer`, {
-      field,
-    });
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > MAX_PROVIDER_DIAGNOSTIC_NUMBER
+  ) {
+    throw createProviderPreparationError(
+      `${field} must be a non-negative safe integer no greater than ${MAX_PROVIDER_DIAGNOSTIC_NUMBER}`,
+      {
+        field,
+        maxValue: MAX_PROVIDER_DIAGNOSTIC_NUMBER,
+      },
+    );
   }
 }
 
@@ -2851,10 +2861,19 @@ function assertOptionalProviderPreparationDiagnosticNumber(value: unknown, field
     return;
   }
 
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    throw createProviderPreparationError(`${field} must be a non-negative finite number`, {
-      field,
-    });
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > MAX_PROVIDER_DIAGNOSTIC_NUMBER
+  ) {
+    throw createProviderPreparationError(
+      `${field} must be a non-negative finite number no greater than ${MAX_PROVIDER_DIAGNOSTIC_NUMBER}`,
+      {
+        field,
+        maxValue: MAX_PROVIDER_DIAGNOSTIC_NUMBER,
+      },
+    );
   }
 }
 
@@ -3161,8 +3180,16 @@ function assertOptionalProviderResultInteger(value: unknown, field: string): voi
     return;
   }
 
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw createProviderResultError(`${field} must be a non-negative safe integer`, { field });
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > MAX_PROVIDER_DIAGNOSTIC_NUMBER
+  ) {
+    throw createProviderResultError(
+      `${field} must be a non-negative safe integer no greater than ${MAX_PROVIDER_DIAGNOSTIC_NUMBER}`,
+      { field, maxValue: MAX_PROVIDER_DIAGNOSTIC_NUMBER },
+    );
   }
 }
 
@@ -3171,8 +3198,16 @@ function assertOptionalProviderResultNumber(value: unknown, field: string): void
     return;
   }
 
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    throw createProviderResultError(`${field} must be a non-negative finite number`, { field });
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > MAX_PROVIDER_DIAGNOSTIC_NUMBER
+  ) {
+    throw createProviderResultError(
+      `${field} must be a non-negative finite number no greater than ${MAX_PROVIDER_DIAGNOSTIC_NUMBER}`,
+      { field, maxValue: MAX_PROVIDER_DIAGNOSTIC_NUMBER },
+    );
   }
 }
 

@@ -2578,6 +2578,55 @@ test("runtime rejects malformed provider preparation diagnostics before scheduli
   assert.equal(inferCalled, false);
 });
 
+test("runtime rejects oversized provider preparation diagnostics before scheduling", async () => {
+  let inferCalled = false;
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "oversized-preparation-diagnostics-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async prepare(request) {
+      return {
+        request,
+        promptTokens: 8,
+        diagnostics: {
+          totalSlots: 1_000_000_001,
+        },
+      };
+    },
+    async infer() {
+      inferCalled = true;
+      return {
+        output: "should not run",
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      cache: false,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_preparation_invalid");
+      assert.equal(
+        (error as { details?: { field?: string } }).details?.field,
+        "diagnostics.totalSlots",
+      );
+      assert.equal((error as { details?: { maxValue?: number } }).details?.maxValue, 1_000_000_000);
+      return true;
+    },
+  );
+
+  assert.equal(inferCalled, false);
+});
+
 test("runtime rejects malformed provider result output before caching", async () => {
   let inferCalls = 0;
   const provider: ModelProvider = {
@@ -2763,6 +2812,47 @@ test("runtime rejects malformed provider result diagnostics before metrics", asy
         (error as { details?: { field?: string } }).details?.field,
         "diagnostics.tokensCached",
       );
+      return true;
+    },
+  );
+});
+
+test("runtime rejects oversized provider result diagnostics before metrics", async () => {
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "oversized-result-diagnostics-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async infer() {
+      return {
+        output: "ok",
+        diagnostics: {
+          timings: {
+            completionTokensPerSecond: 1_000_000_001,
+          },
+        },
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("tiny"), { provider });
+
+  await assert.rejects(
+    runtime.infer({
+      input: "hello world",
+      cache: false,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { code?: string }).code, "provider_result_invalid");
+      assert.equal(
+        (error as { details?: { field?: string } }).details?.field,
+        "diagnostics.timings.completionTokensPerSecond",
+      );
+      assert.equal((error as { details?: { maxValue?: number } }).details?.maxValue, 1_000_000_000);
       return true;
     },
   );
