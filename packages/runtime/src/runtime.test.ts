@@ -900,6 +900,38 @@ test("runtime health exposes queue saturation ratios", async () => {
   await second;
 });
 
+test("readCgroupMemorySnapshot rejects invalid direct options", async () => {
+  await assert.rejects(
+    () => readCgroupMemorySnapshot(null as never),
+    /cgroup memory reader options must be an object/,
+  );
+  await assert.rejects(
+    () =>
+      readCgroupMemorySnapshot({
+        extra: "not-supported",
+      } as never),
+    /cgroup memory reader options must not contain unsupported key "extra"/,
+  );
+  await assert.rejects(
+    () => readCgroupMemorySnapshot(JSON.parse('{"__proto__":"polluted"}') as never),
+    /cgroup memory reader options must not contain unsafe key "__proto__"/,
+  );
+  await assert.rejects(
+    () =>
+      readCgroupMemorySnapshot({
+        readTextFile: "not-a-function",
+      } as never),
+    /cgroup memory reader options\.readTextFile must be a function when provided/,
+  );
+  await assert.rejects(
+    () =>
+      readCgroupMemorySnapshot({
+        procSelfCgroupPath: 123,
+      } as never),
+    /cgroup memory reader options\.procSelfCgroupPath must be a string when provided/,
+  );
+});
+
 test("readCgroupMemorySnapshot reads unified cgroup memory files", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-cgroup-memory-"));
   t.after(async () => {
@@ -1062,6 +1094,38 @@ test("readCgroupMemorySnapshot skips oversized direct paths before telemetry rea
   assert.deepEqual(rootCalls, ["self-cgroup"]);
 });
 
+test("readCgroupCpuSnapshot rejects invalid direct options", async () => {
+  await assert.rejects(
+    () => readCgroupCpuSnapshot(null as never),
+    /cgroup CPU reader options must be an object/,
+  );
+  await assert.rejects(
+    () =>
+      readCgroupCpuSnapshot({
+        extra: "not-supported",
+      } as never),
+    /cgroup CPU reader options must not contain unsupported key "extra"/,
+  );
+  await assert.rejects(
+    () => readCgroupCpuSnapshot(JSON.parse('{"__proto__":"polluted"}') as never),
+    /cgroup CPU reader options must not contain unsafe key "__proto__"/,
+  );
+  await assert.rejects(
+    () =>
+      readCgroupCpuSnapshot({
+        readTextFile: "not-a-function",
+      } as never),
+    /cgroup CPU reader options\.readTextFile must be a function when provided/,
+  );
+  await assert.rejects(
+    () =>
+      readCgroupCpuSnapshot({
+        cgroupV1CpuRoot: 123,
+      } as never),
+    /cgroup CPU reader options\.cgroupV1CpuRoot must be a string when provided/,
+  );
+});
+
 test("readCgroupCpuSnapshot reads unified cgroup cpu.stat files", async (t) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ray-cgroup-cpu-"));
   t.after(async () => {
@@ -1167,6 +1231,38 @@ test("readCgroupCpuSnapshot skips oversized proc cgroup paths before telemetry r
 
   assert.equal(snapshot, undefined);
   assert.deepEqual(calls, ["self-cgroup"]);
+});
+
+test("readLinuxPressureSnapshot rejects invalid direct options", async () => {
+  await assert.rejects(
+    () => readLinuxPressureSnapshot(null as never),
+    /Linux pressure reader options must be an object/,
+  );
+  await assert.rejects(
+    () =>
+      readLinuxPressureSnapshot({
+        extra: "not-supported",
+      } as never),
+    /Linux pressure reader options must not contain unsupported key "extra"/,
+  );
+  await assert.rejects(
+    () => readLinuxPressureSnapshot(JSON.parse('{"__proto__":"polluted"}') as never),
+    /Linux pressure reader options must not contain unsafe key "__proto__"/,
+  );
+  await assert.rejects(
+    () =>
+      readLinuxPressureSnapshot({
+        readTextFile: "not-a-function",
+      } as never),
+    /Linux pressure reader options\.readTextFile must be a function when provided/,
+  );
+  await assert.rejects(
+    () =>
+      readLinuxPressureSnapshot({
+        memoryPressurePath: 123,
+      } as never),
+    /Linux pressure reader options\.memoryPressurePath must be a string when provided/,
+  );
 });
 
 test("readLinuxPressureSnapshot reads bounded PSI files", async (t) => {

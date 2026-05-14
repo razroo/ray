@@ -237,6 +237,31 @@ const runtimeOptionKeys = new Set([
   "cgroupCpu",
   "linuxPressure",
 ]);
+const cgroupMemoryReaderOptionKeys = new Set([
+  "procSelfCgroupPath",
+  "cgroupV2Root",
+  "cgroupV1MemoryRoot",
+  "readTextFile",
+]);
+const cgroupCpuReaderOptionKeys = new Set([
+  "procSelfCgroupPath",
+  "cgroupV2Root",
+  "cgroupV1CpuRoot",
+  "readTextFile",
+]);
+const linuxPressureReaderOptionKeys = new Set([
+  "memoryPressurePath",
+  "cpuPressurePath",
+  "readTextFile",
+]);
+const readerPathOptionKeys = new Set([
+  "procSelfCgroupPath",
+  "cgroupV2Root",
+  "cgroupV1MemoryRoot",
+  "cgroupV1CpuRoot",
+  "memoryPressurePath",
+  "cpuPressurePath",
+]);
 const MAX_LEARNED_FAMILY_HISTORY_KEYS = 512;
 const MAX_PROVIDER_PREPARATION_SLOT_SNAPSHOTS = 256;
 const MAX_PROVIDER_SLOT_UPDATED_AT_CHARS = 128;
@@ -409,6 +434,30 @@ function assertCreateRayRuntimeOptions(value: unknown): asserts value is CreateR
       typeof entry !== "function"
     ) {
       throw new TypeError(`runtime options ${key} must be false or a function when provided`);
+    }
+  }
+}
+
+function assertReaderOptions(value: unknown, label: string, allowedKeys: Set<string>): void {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+
+  for (const [key, entry] of runtimeOptionEntries(value)) {
+    if (unsafeObjectKeys.has(key)) {
+      throw new TypeError(`${label} must not contain unsafe key "${key}"`);
+    }
+
+    if (!allowedKeys.has(key)) {
+      throw new TypeError(`${label} must not contain unsupported key "${key}"`);
+    }
+
+    if (key === "readTextFile" && entry !== undefined && typeof entry !== "function") {
+      throw new TypeError(`${label}.readTextFile must be a function when provided`);
+    }
+
+    if (readerPathOptionKeys.has(key) && entry !== undefined && typeof entry !== "string") {
+      throw new TypeError(`${label}.${key} must be a string when provided`);
     }
   }
 }
@@ -1841,6 +1890,8 @@ function resolveCgroupCpuCandidates(
 export async function readCgroupMemorySnapshot(
   options: CgroupMemoryReaderOptions = {},
 ): Promise<CgroupMemorySnapshot | undefined> {
+  assertReaderOptions(options, "cgroup memory reader options", cgroupMemoryReaderOptionKeys);
+
   const readTextFile = options.readTextFile ?? defaultReadTextFile;
   const procSelfCgroupPath = options.procSelfCgroupPath ?? PROC_SELF_CGROUP;
   let procCgroup: string;
@@ -1980,6 +2031,8 @@ export async function readCgroupMemorySnapshot(
 export async function readCgroupCpuSnapshot(
   options: CgroupCpuReaderOptions = {},
 ): Promise<CgroupCpuSnapshot | undefined> {
+  assertReaderOptions(options, "cgroup CPU reader options", cgroupCpuReaderOptionKeys);
+
   const readTextFile = options.readTextFile ?? defaultReadTextFile;
   const procSelfCgroupPath = options.procSelfCgroupPath ?? PROC_SELF_CGROUP;
   let procCgroup: string;
@@ -2038,6 +2091,8 @@ export async function readCgroupCpuSnapshot(
 export async function readLinuxPressureSnapshot(
   options: LinuxPressureReaderOptions = {},
 ): Promise<LinuxPressureSnapshot | undefined> {
+  assertReaderOptions(options, "Linux pressure reader options", linuxPressureReaderOptionKeys);
+
   const readTextFile = options.readTextFile ?? defaultReadTextFile;
   const memoryPressurePath = options.memoryPressurePath ?? PROC_PRESSURE_MEMORY;
   const cpuPressurePath = options.cpuPressurePath ?? PROC_PRESSURE_CPU;
