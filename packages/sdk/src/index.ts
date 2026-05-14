@@ -31,6 +31,14 @@ const MAX_RAY_CLIENT_HEADER_VALUE_CHARS = 8_192;
 const MAX_RAY_CLIENT_API_KEY_CHARS = 1_024;
 const MAX_JOB_ID_CHARS = 128;
 const unsafeHeaderNames = new Set(["__proto__", "constructor", "prototype"]);
+const clientOptionKeys = new Set([
+  "baseUrl",
+  "apiKey",
+  "headers",
+  "timeoutMs",
+  "requestBodyLimitBytes",
+  "responseBodyLimitBytes",
+]);
 const reservedClientHeaderNames = new Set([
   "connection",
   "content-encoding",
@@ -119,6 +127,16 @@ function assertHeaderValue(value: string): void {
 function assertClientOptions(value: unknown): asserts value is RayClientOptions {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("RayClient options must be an object");
+  }
+
+  for (const [key] of objectEntries(value, "RayClient options")) {
+    if (unsafeHeaderNames.has(key)) {
+      throw new TypeError(`RayClient options must not contain unsafe key "${key}"`);
+    }
+
+    if (!clientOptionKeys.has(key)) {
+      throw new TypeError(`RayClient options must not contain unsupported key "${key}"`);
+    }
   }
 }
 

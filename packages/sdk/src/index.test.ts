@@ -5,6 +5,19 @@ import { RayClient } from "./index.js";
 
 test("RayClient rejects invalid direct options", () => {
   assert.throws(() => new RayClient(null as never), /RayClient options must be an object/);
+  assert.throws(
+    () =>
+      new RayClient({
+        baseUrl: "http://127.0.0.1",
+        extra: "not-supported",
+      } as never),
+    /RayClient options must not contain unsupported key "extra"/,
+  );
+  assert.throws(
+    () =>
+      new RayClient(JSON.parse('{"baseUrl":"http://127.0.0.1","__proto__":"polluted"}') as never),
+    /RayClient options must not contain unsafe key "__proto__"/,
+  );
   assert.throws(() => new RayClient({ baseUrl: "ftp://127.0.0.1" }), /baseUrl/);
   assert.throws(() => new RayClient({ baseUrl: "http://127.0.0.1/?debug=true" }), /baseUrl/);
   assert.throws(
