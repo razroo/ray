@@ -606,6 +606,25 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
   const binaryChecksumPreflight = plan.binarySha256
     ? `printf '%s  %s\\n' ${shellQuote(plan.binarySha256)} ${shellQuote(binarySourcePath)} | timeout ${STAGE_BINARY_CHECKSUM_TIMEOUT_SECONDS}s sha256sum -c -`
     : undefined;
+  const combinedStorageReserveMiB = Math.max(
+    plan.binaryStorageReserveMiB,
+    plan.modelStorageReserveMiB,
+  );
+  const combinedStoragePreflight = `binary_source_bytes="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s stat -c %s -- ${shellQuote(
+    binarySourcePath,
+  )})" || exit "$?"; source_bytes="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s stat -c %s -- ${shellQuote(
+    sourcePath,
+  )})" || exit "$?"; binary_df_output="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s df -Pm ${shellQuote(
+    plan.binaryDirectory,
+  )})" || exit "$?"; df_output="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s df -Pm ${shellQuote(
+    plan.modelDirectory,
+  )})" || exit "$?"; binary_fs="$(printf '%s\\n' "$binary_df_output" | awk 'NR==2 {print $1}')"; model_fs="$(printf '%s\\n' "$df_output" | awk 'NR==2 {print $1}')"; if test -n "$binary_fs" && test "$binary_fs" = "$model_fs"; then binary_source_mib="$(((\${binary_source_bytes:-0} + ${
+    BYTES_PER_MIB - 1
+  }) / ${BYTES_PER_MIB}))"; test "$binary_source_mib" -ge 1 || binary_source_mib=1; source_mib="$(((\${source_bytes:-0} + ${
+    BYTES_PER_MIB - 1
+  }) / ${BYTES_PER_MIB}))"; test "$source_mib" -ge 1 || source_mib=1; combined_source_mib="$((binary_source_mib + source_mib))"; combined_required_mib="$((combined_source_mib + ${combinedStorageReserveMiB}))"; binary_available_mib="$(printf '%s\\n' "$binary_df_output" | awk 'NR==2 {print $4}')"; available_mib="$(printf '%s\\n' "$df_output" | awk 'NR==2 {print $4}')"; combined_available_mib="$binary_available_mib"; test "\${available_mib:-0}" -ge "\${combined_available_mib:-0}" || combined_available_mib="$available_mib"; test "\${combined_available_mib:-0}" -ge "\${combined_required_mib:-0}" || { printf '%s\\n' ${shellQuote(
+    `Not enough free space on the shared target filesystem for ${plan.binaryDirectory} and ${plan.modelDirectory}: keep at least ${combinedStorageReserveMiB} MiB free after copying llama-server and the GGUF.`,
+  )} >&2; exit 1; }; fi`;
   const modelStoragePreflight = `source_bytes="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s stat -c %s -- ${shellQuote(
     sourcePath,
   )})" || exit "$?"; df_output="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s df -Pm ${shellQuote(
@@ -668,6 +687,7 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
     ...(binaryChecksumPreflight ? [binaryChecksumPreflight] : []),
     binarySourceLaunchFlagPreflight,
     ...(modelMemoryPreflight ? [modelMemoryPreflight] : []),
+    combinedStoragePreflight,
     modelStoragePreflight,
     modelFormatPreflight,
     ...(modelChecksumPreflight ? [modelChecksumPreflight] : []),
@@ -1330,9 +1350,23 @@ async function assertArtifactStageStorageHeadroom(
   }
 }
 
+async function targetDirectoriesShareDevice(
+  firstDirectory: string,
+  secondDirectory: string,
+): Promise<boolean> {
+  if (path.resolve(firstDirectory) === path.resolve(secondDirectory)) {
+    return true;
+  }
+
+  const [firstStats, secondStats] = await Promise.all([
+    stat(firstDirectory),
+    stat(secondDirectory),
+  ]);
+  return firstStats.dev === secondStats.dev;
+}
+
 async function assertCombinedStageStorageHeadroom(
-  artifacts: Array<{ sourcePath: string; label: string }>,
-  targetDirectory: string,
+  artifacts: Array<{ sourcePath: string; label: string; targetDirectory: string }>,
   reserveMiB: number,
   options: ModelStageApplyOptions = {},
 ): Promise<void> {
@@ -1346,18 +1380,39 @@ async function assertCombinedStageStorageHeadroom(
       stats: await stat(artifact.sourcePath),
     })),
   );
-  const availableMiB = await resolveStageAvailableStorageMiB(
-    artifacts[0]?.sourcePath ?? targetDirectory,
-    targetDirectory,
-    options,
+  const targetDirectories = new Map<string, { sourcePath: string; targetDirectory: string }>();
+  for (const artifact of artifacts) {
+    const resolvedDirectory = path.resolve(artifact.targetDirectory);
+    if (!targetDirectories.has(resolvedDirectory)) {
+      targetDirectories.set(resolvedDirectory, {
+        sourcePath: artifact.sourcePath,
+        targetDirectory: artifact.targetDirectory,
+      });
+    }
+  }
+
+  const storageChecks = await Promise.all(
+    [...targetDirectories.values()].map(async (target) => ({
+      targetDirectory: target.targetDirectory,
+      availableMiB: await resolveStageAvailableStorageMiB(
+        target.sourcePath,
+        target.targetDirectory,
+        options,
+      ),
+    })),
   );
 
-  if (availableMiB === undefined) {
+  if (storageChecks.some((check) => check.availableMiB === undefined)) {
     throw new Error(
-      `Could not inspect free space for combined artifact target directory: ${targetDirectory}`,
+      `Could not inspect free space for combined artifact target filesystem: ${storageChecks
+        .map((check) => check.targetDirectory)
+        .join(" and ")}`,
     );
   }
 
+  const availableMiB = Math.min(
+    ...storageChecks.map((check) => check.availableMiB).filter((value) => value !== undefined),
+  );
   const sourceMiB = sourceStats.reduce(
     (total, entry) => total + Math.max(1, Math.ceil(entry.stats.size / BYTES_PER_MIB)),
     0,
@@ -1366,8 +1421,12 @@ async function assertCombinedStageStorageHeadroom(
 
   if (availableMiB < requiredMiB) {
     const labels = sourceStats.map((entry) => entry.label).join(" and ");
+    const targetDescription =
+      storageChecks.length === 1
+        ? storageChecks[0]?.targetDirectory
+        : `shared filesystem for ${storageChecks.map((check) => check.targetDirectory).join(" and ")}`;
     throw new Error(
-      `Not enough free space in ${targetDirectory}: combined ${labels} sources are ${sourceMiB} MiB and staging keeps a ${reserveMiB} MiB reserve, requiring ${requiredMiB} MiB free but only ${availableMiB} MiB is available.`,
+      `Not enough free space in ${targetDescription}: combined ${labels} sources are ${sourceMiB} MiB and staging keeps a ${reserveMiB} MiB reserve, requiring ${requiredMiB} MiB free but only ${availableMiB} MiB is available.`,
     );
   }
 }
@@ -1497,13 +1556,22 @@ export async function applyModelStagePlan(
   await mkdir(modelTargetDirectory, { recursive: true, mode: 0o755 });
   await mkdir(binaryTargetDirectory, { recursive: true, mode: 0o755 });
 
-  if (shouldCopyBinary && shouldCopyModel && targetsShareDirectory) {
+  const targetsShareFilesystem =
+    shouldCopyBinary &&
+    shouldCopyModel &&
+    (targetsShareDirectory ||
+      (await targetDirectoriesShareDevice(binaryTargetDirectory, modelTargetDirectory)));
+
+  if (targetsShareFilesystem) {
     await assertCombinedStageStorageHeadroom(
       [
-        { sourcePath: binarySourcePath, label: "llama-server" },
-        { sourcePath: modelSourcePath, label: "GGUF" },
+        {
+          sourcePath: binarySourcePath,
+          label: "llama-server",
+          targetDirectory: binaryTargetDirectory,
+        },
+        { sourcePath: modelSourcePath, label: "GGUF", targetDirectory: modelTargetDirectory },
       ],
-      modelTargetDirectory,
       Math.max(plan.binaryStorageReserveMiB, plan.modelStorageReserveMiB),
       options,
     );

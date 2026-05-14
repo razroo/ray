@@ -355,8 +355,9 @@ before starting the generated llama.cpp service or running doctor.
 
 Use `sudo /usr/local/bin/bun run model:stage -- --config ./examples/config/ray.1b.generic.public.json --ray-env-file /etc/ray/ray.env --binary-source ./llama-server --source ./local-1b-q4.gguf`
 to print the exact install, ownership, optional checksum, binary/GGUF target
-storage-headroom that honors `RAY_DEPLOY_MIN_FREE_STORAGE_MIB`, GGUF header, and
-service-user read/execute plus `llama-server --help` startup and generated
+storage-headroom that honors `RAY_DEPLOY_MIN_FREE_STORAGE_MIB`, shared-filesystem
+combined headroom when both artifacts land on the same VPS volume, GGUF header,
+and service-user read/execute plus `llama-server --help` startup and generated
 launch-flag support checks for the resolved `llama-server` and `RAY_MODEL_PATH`.
 Printed install commands copy through same-directory `.ray-stage-*` temp files
 and only move them into place after the temp artifact passes service-user checks,
