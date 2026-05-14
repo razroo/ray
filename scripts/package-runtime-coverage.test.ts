@@ -845,7 +845,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
       "      - run: npm run build",
       "      - run: yarn test",
       "      - run: bun install",
-      "      - run: npm publish ./pkg.tgz --access public",
+      "      - run: npm publish ./pkg.tgz",
       "      - run: curl -fsS http://127.0.0.1:${HEALTH_PORT}/readyz",
       "      - run: curl -fsSL https://bun.sh/install | bash -s bun-v1.3.9",
       "      - run: ssh -o ConnectTimeout=15 ray.example.com uptime",
@@ -951,7 +951,11 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("workflow_bun_install_timeout_missing"));
   assert.ok(codes.includes("workflow_npm_release_job_timeout_missing"));
   assert.ok(codes.includes("workflow_npm_release_canonical_repo_guard_missing"));
+  assert.ok(codes.includes("workflow_npm_publish_id_token_missing"));
+  assert.ok(codes.includes("workflow_npm_publish_auth_token_missing"));
   assert.ok(codes.includes("workflow_npm_publish_timeout_missing"));
+  assert.ok(codes.includes("workflow_npm_publish_public_access_missing"));
+  assert.ok(codes.includes("workflow_npm_publish_provenance_missing"));
   assert.ok(codes.includes("unbounded_workflow_health_probe"));
   assert.ok(codes.includes("unbounded_workflow_curl_install"));
   assert.ok(codes.includes("workflow_curl_install_body_timeout_missing"));

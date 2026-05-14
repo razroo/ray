@@ -63,6 +63,8 @@ const workflowNpmPublishPattern = /\bnpm\s+publish\b/;
 const workflowBunPackPattern = /\bbun\s+(?:pm\s+)?pack\b/;
 const workflowGitHubApiPattern = /\bgh\s+api\b/;
 const canonicalReleaseRepositoryPattern = /github\.repository\s*==\s*['"]razroo\/ray['"]/;
+const workflowIdTokenWritePattern = /^\s*id-token:\s*write\s*$/m;
+const workflowNpmTokenPattern = /NODE_AUTH_TOKEN:\s*\$\{\{\s*secrets\.NPM_TOKEN\s*\}\}/;
 
 export interface PackageRuntimeCoverageArgs {
   cwd: string;
@@ -1835,6 +1837,25 @@ async function validateWorkflow(
     });
   }
 
+  if (publishesToNpm && !workflowIdTokenWritePattern.test(contents)) {
+    diagnostics.push({
+      level: "error",
+      code: "workflow_npm_publish_id_token_missing",
+      workflowPath,
+      message:
+        "npm release workflows must grant id-token: write so npm publish can attach provenance.",
+    });
+  }
+
+  if (publishesToNpm && !workflowNpmTokenPattern.test(contents)) {
+    diagnostics.push({
+      level: "error",
+      code: "workflow_npm_publish_auth_token_missing",
+      workflowPath,
+      message: "npm release workflows must publish with NODE_AUTH_TOKEN from secrets.NPM_TOKEN.",
+    });
+  }
+
   if (runsReleaseGate && !hasJobTimeout) {
     diagnostics.push({
       level: "error",
@@ -1925,6 +1946,28 @@ async function validateWorkflow(
         line: index + 1,
         message:
           "Workflow npm publish commands must run under timeout so registry stalls cannot hold release jobs indefinitely.",
+      });
+    }
+
+    if (workflowNpmPublishPattern.test(line) && !line.includes("--access public")) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_npm_publish_public_access_missing",
+        workflowPath,
+        line: index + 1,
+        message:
+          "Workflow npm publish commands must pass --access public for the scoped public Ray packages.",
+      });
+    }
+
+    if (workflowNpmPublishPattern.test(line) && !line.includes("--provenance")) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_npm_publish_provenance_missing",
+        workflowPath,
+        line: index + 1,
+        message:
+          "Workflow npm publish commands must pass --provenance so package releases carry npm provenance.",
       });
     }
 
