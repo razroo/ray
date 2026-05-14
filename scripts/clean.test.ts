@@ -68,6 +68,44 @@ test("cleanWorkspace rejects non-Ray roots before walking", async (t) => {
   assert.equal(await pathExists(path.join(tempDir, "dist")), true);
 });
 
+test("cleanWorkspace rejects oversized package.json files after stat", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-clean-root-post-read-limit-"));
+  const originalOpen = fs.open;
+  t.after(async () => {
+    Object.defineProperty(fs, "open", {
+      configurable: true,
+      value: originalOpen,
+    });
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const packageJsonPath = path.join(tempDir, "package.json");
+  await writeRayPackageJson(tempDir);
+
+  Object.defineProperty(fs, "open", {
+    configurable: true,
+    value: async (...args: Parameters<typeof fs.open>) => {
+      const handle = await originalOpen(...args);
+      if (String(args[0]) !== packageJsonPath) {
+        return handle;
+      }
+
+      return {
+        stat: async () => ({
+          isFile: () => true,
+          size: 64,
+        }),
+        readFile: async () => "x".repeat(512 * 1024 + 1),
+        close: async () => {
+          await handle.close();
+        },
+      } as Awaited<ReturnType<typeof fs.open>>;
+    },
+  });
+
+  await assert.rejects(() => cleanWorkspace(tempDir), /package\.json must be at most 524288 bytes/);
+});
+
 test("cleanWorkspace rejects malformed direct roots before walking", async () => {
   await assert.rejects(
     () => cleanWorkspace(" /srv/ray"),

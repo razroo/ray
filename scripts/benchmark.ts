@@ -12,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -807,10 +807,10 @@ async function readTextFileBounded(
   limitBytes: number,
   label: string,
 ): Promise<string> {
-  let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
+  let fileHandle: Awaited<ReturnType<typeof fs.open>> | undefined;
 
   try {
-    fileHandle = await open(filePath, "r");
+    fileHandle = await fs.open(filePath, "r");
     const stats = await fileHandle.stat();
 
     if (!stats.isFile()) {
@@ -821,7 +821,12 @@ async function readTextFileBounded(
       throw new Error(`${label} file must be at most ${limitBytes} bytes: ${filePath}`);
     }
 
-    return await fileHandle.readFile("utf8");
+    const contents = await fileHandle.readFile("utf8");
+    if (Buffer.byteLength(contents, "utf8") > limitBytes) {
+      throw new Error(`${label} file must be at most ${limitBytes} bytes: ${filePath}`);
+    }
+
+    return contents;
   } finally {
     await fileHandle?.close().catch(() => undefined);
   }

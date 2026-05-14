@@ -152,7 +152,12 @@ async function readPackageJsonBounded(packageJsonPath) {
       throw new Error(`package.json must be at most ${MAX_CLEAN_PACKAGE_JSON_BYTES} bytes`);
     }
 
-    return await fileHandle.readFile("utf8");
+    const contents = await fileHandle.readFile("utf8");
+    if (Buffer.byteLength(contents, "utf8") > MAX_CLEAN_PACKAGE_JSON_BYTES) {
+      throw new Error(`package.json must be at most ${MAX_CLEAN_PACKAGE_JSON_BYTES} bytes`);
+    }
+
+    return contents;
   } finally {
     await fileHandle?.close().catch(() => undefined);
   }

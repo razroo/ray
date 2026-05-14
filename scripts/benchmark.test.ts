@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { promises as fs } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -453,6 +454,47 @@ test("loadWorkload rejects oversized benchmark workload files before parsing", a
   });
   const workloadPath = path.join(tempDir, "huge-workload.jsonl");
   await writeFile(workloadPath, "x".repeat(1_048_577), "utf8");
+
+  await assert.rejects(
+    () => loadWorkload(workloadPath),
+    /Workload file must be at most 1048576 bytes/,
+  );
+});
+
+test("loadWorkload rejects benchmark workload files that exceed the byte cap after stat", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-benchmark-workload-post-read-limit-"));
+  const originalOpen = fs.open;
+  t.after(async () => {
+    Object.defineProperty(fs, "open", {
+      configurable: true,
+      value: originalOpen,
+    });
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const workloadPath = path.join(tempDir, "workload.jsonl");
+  await writeFile(workloadPath, `${JSON.stringify({ input: "ping" })}\n`, "utf8");
+
+  Object.defineProperty(fs, "open", {
+    configurable: true,
+    value: async (...args: Parameters<typeof fs.open>) => {
+      const handle = await originalOpen(...args);
+      if (String(args[0]) !== workloadPath) {
+        return handle;
+      }
+
+      return {
+        stat: async () => ({
+          isFile: () => true,
+          size: 20,
+        }),
+        readFile: async () => `${"x".repeat(1_048_577)}\n`,
+        close: async () => {
+          await handle.close();
+        },
+      } as Awaited<ReturnType<typeof fs.open>>;
+    },
+  });
 
   await assert.rejects(
     () => loadWorkload(workloadPath),
