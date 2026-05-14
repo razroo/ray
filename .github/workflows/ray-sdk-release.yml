@@ -27,6 +27,7 @@ jobs:
   publish:
     if: startsWith(github.ref_name, 'sdk-v')
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
 
@@ -57,8 +58,11 @@ jobs:
           STATUS=""
           CONCLUSION=""
           while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-            read -r STATUS CONCLUSION <<<"$(gh api "repos/${{ github.repository }}/commits/$SHA/check-runs" \
-              --jq '[.check_runs[] | select(.name == "quality")] | sort_by(.started_at) | last | "\(.status // "missing") \(.conclusion // "null")"')"
+            CHECK_RUN="$(timeout 30s gh api "repos/${{ github.repository }}/commits/$SHA/check-runs" \
+              --jq '[.check_runs[] | select(.name == "quality")] | sort_by(.started_at) | last | "\(.status // "missing") \(.conclusion // "null")"' || true)"
+            read -r STATUS CONCLUSION <<<"$CHECK_RUN"
+            STATUS="${STATUS:-missing}"
+            CONCLUSION="${CONCLUSION:-null}"
             echo "quality check-run: status=$STATUS conclusion=$CONCLUSION"
             if [ "$STATUS" = "completed" ]; then
               break
@@ -76,14 +80,14 @@ jobs:
           echo "Quality checks succeeded for $SHA"
 
       - name: Verify package.json version matches release tag
-        run: bun ./scripts/release/check-source.mjs "$VERSION"
+        run: timeout 60s bun ./scripts/release/check-source.mjs "$VERSION"
 
       - name: Install (workspace root)
-        run: bun install --frozen-lockfile
+        run: timeout 300s bun install --frozen-lockfile
         working-directory: .
 
       - name: Build
-        run: bun run build
+        run: timeout 300s bun run build
         working-directory: .
 
       - name: Pack package
@@ -91,10 +95,10 @@ jobs:
         run: |
           set -euo pipefail
           PACK_DIR="$RUNNER_TEMP/ray-packs"
-          rm -rf "$PACK_DIR"
-          mkdir -p "$PACK_DIR"
-          bun pm pack --destination "$PACK_DIR"
-          TARBALL="$(find "$PACK_DIR" -name '*.tgz' -print -quit)"
+          timeout 60s rm -rf "$PACK_DIR"
+          timeout 30s mkdir -p "$PACK_DIR"
+          timeout 120s bun pm pack --destination "$PACK_DIR"
+          TARBALL="$(timeout 30s find "$PACK_DIR" -name '*.tgz' -print -quit)"
           if [ -z "$TARBALL" ]; then
             echo "::error::Bun did not produce a package tarball."
             exit 1
@@ -103,6 +107,6 @@ jobs:
 
       - name: Publish to npm (with provenance)
         working-directory: .
-        run: npm publish "${{ steps.pack.outputs.tarball }}" --access public --provenance
+        run: timeout 300s npm publish "${{ steps.pack.outputs.tarball }}" --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
