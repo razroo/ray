@@ -2477,6 +2477,24 @@ function assertOptionalNonNegativeSafeInteger(
   }
 }
 
+function assertOptionalNonNegativeSafeIntegerAtMost(
+  value: unknown,
+  field: string,
+  maximum: number,
+): asserts value is number | undefined {
+  assertOptionalNonNegativeSafeInteger(value, field);
+
+  if (value !== undefined && value > maximum) {
+    throw createProviderPreparationError(
+      `${field} must be a non-negative safe integer no greater than ${maximum}`,
+      {
+        field,
+        maxValue: maximum,
+      },
+    );
+  }
+}
+
 function assertProviderPreparationLane(value: unknown): asserts value is ScheduleLane | undefined {
   if (value === undefined) {
     return;
@@ -3009,7 +3027,10 @@ function normalizeProviderPreparationDiagnostics(value: unknown): ProviderDiagno
   return Object.keys(diagnostics).length > 0 ? diagnostics : undefined;
 }
 
-function normalizeProviderSlotSnapshots(value: unknown): SchedulerSlotSnapshot[] | undefined {
+function normalizeProviderSlotSnapshots(
+  value: unknown,
+  config: RayConfig,
+): SchedulerSlotSnapshot[] | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -3041,7 +3062,11 @@ function normalizeProviderSlotSnapshots(value: unknown): SchedulerSlotSnapshot[]
     }
 
     const snapshot = slot as Partial<SchedulerSlotSnapshot>;
-    assertOptionalNonNegativeSafeInteger(snapshot.id, `slotSnapshots[${index}].id`);
+    assertOptionalNonNegativeSafeIntegerAtMost(
+      snapshot.id,
+      `slotSnapshots[${index}].id`,
+      MAX_PROVIDER_DIAGNOSTIC_NUMBER,
+    );
     const id = snapshot.id;
     if (id === undefined) {
       throw createProviderPreparationError(`slotSnapshots[${index}].id is required`, {
@@ -3072,18 +3097,27 @@ function normalizeProviderSlotSnapshots(value: unknown): SchedulerSlotSnapshot[]
       );
     }
 
-    assertOptionalNonNegativeSafeInteger(snapshot.taskId, `slotSnapshots[${index}].taskId`);
-    assertOptionalNonNegativeSafeInteger(
+    assertOptionalNonNegativeSafeIntegerAtMost(
+      snapshot.taskId,
+      `slotSnapshots[${index}].taskId`,
+      MAX_PROVIDER_DIAGNOSTIC_NUMBER,
+    );
+    assertOptionalNonNegativeSafeIntegerAtMost(
       snapshot.contextWindow,
       `slotSnapshots[${index}].contextWindow`,
+      config.model.contextWindow,
     );
-    assertOptionalNonNegativeSafeInteger(
+    const slotContextWindow = snapshot.contextWindow ?? config.model.contextWindow;
+
+    assertOptionalNonNegativeSafeIntegerAtMost(
       snapshot.promptTokens,
       `slotSnapshots[${index}].promptTokens`,
+      slotContextWindow,
     );
-    assertOptionalNonNegativeSafeInteger(
+    assertOptionalNonNegativeSafeIntegerAtMost(
       snapshot.cacheTokens,
       `slotSnapshots[${index}].cacheTokens`,
+      slotContextWindow,
     );
 
     const normalized: SchedulerSlotSnapshot = {
@@ -3128,9 +3162,13 @@ function normalizeProviderRequestPreparation(
 
   assertOptionalPositiveSafeInteger(value.promptTokens, "promptTokens");
   assertProviderPreparationLane(value.lane);
-  assertOptionalNonNegativeSafeInteger(value.preferredSlot, "preferredSlot");
+  assertOptionalNonNegativeSafeIntegerAtMost(
+    value.preferredSlot,
+    "preferredSlot",
+    MAX_PROVIDER_DIAGNOSTIC_NUMBER,
+  );
   const affinityKey = normalizeProviderPreparationAffinityKey(value.affinityKey);
-  const slotSnapshots = normalizeProviderSlotSnapshots(value.slotSnapshots);
+  const slotSnapshots = normalizeProviderSlotSnapshots(value.slotSnapshots, config);
   const diagnostics = normalizeProviderPreparationDiagnostics(value.diagnostics);
   const request = normalizeProviderPreparationRequest(value.request, config);
 
