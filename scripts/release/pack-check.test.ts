@@ -104,3 +104,26 @@ test("listTarballEntries rejects excessive tar entries", async (t) => {
     /Pack tarball must contain at most 2 entries/,
   );
 });
+
+test("listTarballEntries rejects unsafe tar entry paths", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-pack-check-paths-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const tarballPath = path.join(tempDir, "package.tgz");
+
+  for (const entryName of [
+    "../package.json",
+    "/package/package.json",
+    "package/../package.json",
+    "package\\package.json",
+    "package/\npackage.json",
+  ]) {
+    await writeFile(tarballPath, gzipSync(createTar([{ name: entryName, contents: "{}" }])));
+
+    await assert.rejects(
+      () => listTarballEntries(tarballPath),
+      /Pack tarball contains an unsafe entry path/,
+    );
+  }
+});

@@ -106,6 +106,31 @@ async function gunzipBounded(compressed, maxBytes, filePath) {
   });
 }
 
+function assertSafePackEntryPath(entryPath, filePath) {
+  if (
+    !entryPath ||
+    entryPath.includes("\\") ||
+    /[\0\r\n]/.test(entryPath) ||
+    path.posix.isAbsolute(entryPath)
+  ) {
+    throw new Error(`Pack tarball contains an unsafe entry path: ${entryPath || "[empty]"}`);
+  }
+
+  const segments = entryPath.split("/");
+  if (
+    segments.some(
+      (segment, index) =>
+        segment === "." || segment === ".." || (segment === "" && index !== segments.length - 1),
+    )
+  ) {
+    throw new Error(`Pack tarball contains an unsafe entry path: ${entryPath}`);
+  }
+
+  if (segments[0] !== "package") {
+    throw new Error(`Pack tarball entry is outside the package root: ${entryPath} in ${filePath}`);
+  }
+}
+
 export async function listTarballEntries(filePath, options = {}) {
   const maxTarballBytes = options.maxTarballBytes ?? MAX_PACK_TARBALL_BYTES;
   const maxUncompressedBytes = options.maxUncompressedBytes ?? MAX_PACK_UNCOMPRESSED_BYTES;
@@ -142,7 +167,10 @@ export async function listTarballEntries(filePath, options = {}) {
 
     const size = Number.parseInt(sizeRaw || "0", 8);
 
-    entries.push(prefix ? `${prefix}/${name}` : name);
+    const entryPath = prefix ? `${prefix}/${name}` : name;
+    assertSafePackEntryPath(entryPath, filePath);
+
+    entries.push(entryPath);
     if (entries.length > maxEntries) {
       throw new Error(`Pack tarball must contain at most ${maxEntries} entries: ${filePath}`);
     }
