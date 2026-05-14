@@ -389,6 +389,7 @@ test("validatePackageRuntimeCoverage requires VPS deploy trigger for storage pre
       '          check_free_storage /etc/caddy "Caddy config directory"',
       '          check_free_storage /srv/ray "synced checkout"',
       '          check_free_storage /var/lib/ray "Ray state"',
+      '          check_free_storage /var/log "system journal and service logs"',
       '          check_free_storage /tmp "temporary directory"',
       '          check_free_storage /var/tmp "persistent temporary directory"',
       '          BUN_INSTALL_CACHE_DIR="/srv/ray/.ray/bun-install-cache"',

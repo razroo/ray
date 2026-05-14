@@ -32,6 +32,7 @@ test("parseArgs accepts deploy storage preflight options", () => {
     "/srv/ray",
     "/srv/ray/.ray/bun-install-cache",
     "/var/lib/ray",
+    "/var/log",
     "/tmp",
     "/var/tmp",
   ]);
@@ -109,6 +110,7 @@ test("loadDeployStoragePreflightArgs applies bounded ray env file thresholds", a
     "/srv/ray",
     "/srv/ray/.ray/bun-install-cache",
     "/var/lib/ray",
+    "/var/log",
     "/tmp",
     "/var/tmp",
     "/mnt/ray/models/local 1b.gguf",
@@ -206,9 +208,9 @@ test("checkDeployStorageHeadroom rejects malformed direct options before probing
   await assert.rejects(
     () =>
       checkDeployStorageHeadroom({
-        paths: Array.from({ length: 17 }, (_value, index) => `/srv/ray-${index}`),
+        paths: Array.from({ length: 21 }, (_value, index) => `/srv/ray-${index}`),
       }),
-    /at most 16 storage paths/,
+    /at most 20 storage paths/,
   );
   await assert.rejects(
     () => checkDeployStorageHeadroom({ paths: ["/srv/ray"], minFreeStorageMiB: -1 }),

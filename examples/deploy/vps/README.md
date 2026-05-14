@@ -150,10 +150,10 @@ readable by the generated service user without a recursive permission walk over
 `node_modules`.
 The storage preflight checks the root filesystem, APT cache/state, `/etc/ray`,
 `/etc/systemd/system`, `/etc/caddy`, `/srv/ray`, `/var/lib/ray`, `/tmp`,
-`/var/tmp`, and the repo-scoped Bun install cache at
+`/var/log`, `/var/tmp`, and the repo-scoped Bun install cache at
 `/srv/ray/.ray/bun-install-cache` before package bootstrap, the Bun install
-expands dependencies, or deploy writes config, units, and the Caddyfile; set
-`RAY_DEPLOY_MIN_FREE_STORAGE_MIB` in the process env or pass
+expands dependencies, deploy writes config, units, and the Caddyfile, or systemd
+journal output accumulates; set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` in the process env or pass
 `--ray-env-file /etc/ray/ray.env` to raise or lower the default 1024 MiB
 threshold without shell-sourcing the rest of the env file. When that env file
 sets a custom `RAY_MODEL_PATH`, `RAY_LLAMA_CPP_MODEL_PATH`,

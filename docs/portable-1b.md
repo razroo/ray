@@ -162,9 +162,9 @@ timeout 60s sudo /usr/local/bin/bun run deploy:storage -- --ray-env-file /etc/ra
 ```
 
 It checks the root filesystem, APT cache/state, the checkout, repo-scoped Bun
-install cache, Ray state, `/tmp`, and `/var/tmp` volumes with the same
-`RAY_DEPLOY_MIN_FREE_STORAGE_MIB` threshold used by the manual deploy helpers without
-shell-sourcing the rest of the env file.
+install cache, Ray state, system logs under `/var/log`, `/tmp`, and `/var/tmp`
+volumes with the same `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` threshold used by the
+manual deploy helpers without shell-sourcing the rest of the env file.
 When the env file sets a custom `RAY_MODEL_PATH`, `RAY_LLAMA_CPP_MODEL_PATH`,
 `RAY_LLAMA_CPP_BINARY_PATH`, `RAY_ASYNC_QUEUE_STORAGE_DIR`,
 `RAY_LLAMA_CPP_BINARY_SOURCE_PATH`, or `RAY_MODEL_SOURCE_PATH`, the preflight
