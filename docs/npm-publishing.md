@@ -2,7 +2,7 @@
 
 Ray publishes **library** packages from this monorepo for TypeScript consumers. The gateway app (`apps/gateway`) stays source-first in the repo and is not published as an npm CLI in this layout.
 
-Push-time automation follows [**geometra**](https://github.com/razroo/geometra)-style naming: [**Quality checks**](../.github/workflows/quality.yml) runs a single job **`quality`** that executes **`bun run release:gate`** under Node 20 and Node 22. The gate covers lint, format check, full test build, all checked-in config validation, auth-backed public config validation, automated tiny gateway inference (`bun run smoke:tiny`), public safety (`bun run smoke:tiny:public`), async queue (`bun run smoke:tiny:async`), and public async queue (`bun run smoke:tiny:public-async`) smokes, public deploy bundle smoke rendering, public deploy package-script coverage, Bun-first package, workflow, runtime-doc coverage, Markdown local-link validation, public model staging smoke rendering, and Bun pack smoke checks. Tags and **`gh release create`** follow the **`iso`** pattern ([**ray-core-release.yml**](../.github/workflows/ray-core-release.yml), [**ray-sdk-release.yml**](../.github/workflows/ray-sdk-release.yml)); publish workflows are additionally gated to the canonical `razroo/ray` repository and poll for the **`quality`** check run before `npm publish`, same idea as geometra's release workflow waiting on **`quality`**.
+Push-time automation follows [**geometra**](https://github.com/razroo/geometra)-style naming: [**Quality checks**](../.github/workflows/quality.yml) runs a single job **`quality`** that executes **`bun run release:gate`** under Node 20 and Node 22. The gate covers lint, format check, full test build, all checked-in config validation, auth-backed public config validation, automated tiny gateway inference (`bun run smoke:tiny`), public safety (`bun run smoke:tiny:public`), async queue (`bun run smoke:tiny:async`), and public async queue (`bun run smoke:tiny:public-async`) smokes, public deploy bundle smoke rendering, public deploy package-script coverage, Bun-first package, workflow, runtime-doc coverage, Markdown local-link validation, public model staging smoke rendering, and Bun pack smoke checks. Tags and **`gh release create`** follow the **`iso`** pattern ([**ray-core-release.yml**](../.github/workflows/ray-core-release.yml), [**ray-sdk-release.yml**](../.github/workflows/ray-sdk-release.yml)); publish workflows are additionally gated to the canonical `razroo/ray` repository, verify the release tag commit is reachable from `origin/main`, and poll for the **`quality`** check run before `npm publish`, same idea as geometra's release workflow waiting on **`quality`**.
 
 ## Packages
 
@@ -88,6 +88,7 @@ Infrastructure-only PRs can add an empty changeset: `bunx changeset add --empty`
    ```
 
 4. Workflow behavior:
+   - Confirms the release tag commit is reachable from `origin/main`.
    - Uses **`gh api`** to confirm the **`quality`** check run on the tagged commit succeeded (geometra-style gate before npm).
    - Runs **`packages/*/scripts/release/check-source.mjs`** so the tag matches `package.json`.
    - **`bun run build`**, **`bun pm pack`**, then **`npm publish <tarball> --provenance`** with OIDC provenance (`id-token: write`).

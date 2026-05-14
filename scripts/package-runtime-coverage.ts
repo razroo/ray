@@ -63,6 +63,10 @@ const workflowNpmPublishPattern = /\bnpm\s+publish\b/;
 const workflowBunPackPattern = /\bbun\s+(?:pm\s+)?pack\b/;
 const workflowGitHubApiPattern = /\bgh\s+api\b/;
 const canonicalReleaseRepositoryPattern = /github\.repository\s*==\s*['"]razroo\/ray['"]/;
+const workflowReleaseMainFetchPattern =
+  /git\s+fetch\b[^\n]*\borigin\s+main:refs\/remotes\/origin\/main/;
+const workflowReleaseMainAncestryPattern =
+  /git\s+merge-base\s+--is-ancestor\s+"\$SHA"\s+refs\/remotes\/origin\/main/;
 const workflowIdTokenWritePattern = /^\s*id-token:\s*write\s*$/m;
 const workflowNpmTokenPattern = /NODE_AUTH_TOKEN:\s*\$\{\{\s*secrets\.NPM_TOKEN\s*\}\}/;
 
@@ -1834,6 +1838,20 @@ async function validateWorkflow(
       workflowPath,
       message:
         "npm release workflows must guard publish jobs with github.repository == 'razroo/ray' so forks cannot accidentally run the official package publish path.",
+    });
+  }
+
+  if (
+    publishesToNpm &&
+    (!workflowReleaseMainFetchPattern.test(contents) ||
+      !workflowReleaseMainAncestryPattern.test(contents))
+  ) {
+    diagnostics.push({
+      level: "error",
+      code: "workflow_npm_release_main_ancestry_guard_missing",
+      workflowPath,
+      message:
+        "npm release workflows must verify the release tag commit is reachable from origin/main before publishing packages.",
     });
   }
 

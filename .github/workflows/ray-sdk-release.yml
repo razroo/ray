@@ -46,6 +46,21 @@ jobs:
           VERSION="${GITHUB_REF_NAME#sdk-v}"
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
+      - name: Verify release commit is on main
+        working-directory: .
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            timeout 120s git fetch --no-tags --prune --unshallow origin main:refs/remotes/origin/main
+          else
+            timeout 120s git fetch --no-tags --prune origin main:refs/remotes/origin/main
+          fi
+          if ! git merge-base --is-ancestor "$SHA" refs/remotes/origin/main; then
+            echo "::error::Release tag ${GITHUB_REF_NAME} (${SHA}) must point at a commit on main."
+            exit 1
+          fi
+
       - name: Verify Quality checks passed for release commit
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

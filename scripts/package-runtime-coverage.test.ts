@@ -1038,6 +1038,7 @@ test("validatePackageRuntimeCoverage requires bounded npm release workflow comma
   assert.equal(summary.ok, false);
   assert.ok(codes.includes("workflow_npm_release_job_timeout_missing"));
   assert.ok(codes.includes("workflow_npm_release_canonical_repo_guard_missing"));
+  assert.ok(codes.includes("workflow_npm_release_main_ancestry_guard_missing"));
   assert.ok(codes.includes("workflow_gh_api_timeout_missing"));
   assert.ok(codes.includes("workflow_bun_pack_timeout_missing"));
   assert.ok(codes.includes("workflow_npm_publish_timeout_missing"));
