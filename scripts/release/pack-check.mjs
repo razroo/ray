@@ -264,6 +264,10 @@ async function inspectTarball(filePath, options = {}) {
   }
 
   const compressed = await fs.readFile(filePath);
+  if (compressed.byteLength > maxTarballBytes) {
+    throw new Error(`Pack tarball must be at most ${maxTarballBytes} bytes: ${filePath}`);
+  }
+
   const buffer = await gunzipBounded(compressed, maxUncompressedBytes, filePath);
   const entries = [];
   const files = new Map();

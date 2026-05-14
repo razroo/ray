@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { promises as fsPromises } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -121,6 +122,47 @@ test("listTarballEntries rejects oversized pack artifacts before reading", async
   });
   const tarballPath = path.join(tempDir, "package.tgz");
   await writeFile(tarballPath, Buffer.alloc(128));
+
+  await assert.rejects(
+    () => listTarballEntries(tarballPath, { maxTarballBytes: 64 }),
+    /Pack tarball must be at most 64 bytes/,
+  );
+});
+
+test("listTarballEntries rejects pack artifacts that exceed the byte cap after stat", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-pack-check-post-read-size-"));
+  const originalReadFile = fsPromises.readFile;
+  const originalStat = fsPromises.stat;
+  t.after(async () => {
+    Object.defineProperty(fsPromises, "readFile", {
+      configurable: true,
+      value: originalReadFile,
+    });
+    Object.defineProperty(fsPromises, "stat", {
+      configurable: true,
+      value: originalStat,
+    });
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const tarballPath = path.join(tempDir, "package.tgz");
+  await writeFile(tarballPath, Buffer.alloc(1));
+
+  Object.defineProperty(fsPromises, "stat", {
+    configurable: true,
+    value: async (...args: Parameters<typeof fsPromises.stat>) => {
+      const stats = await originalStat(...args);
+      return {
+        ...stats,
+        isFile: () => true,
+        size: 1,
+      };
+    },
+  });
+  Object.defineProperty(fsPromises, "readFile", {
+    configurable: true,
+    value: async () => Buffer.alloc(65),
+  });
 
   await assert.rejects(
     () => listTarballEntries(tarballPath, { maxTarballBytes: 64 }),
