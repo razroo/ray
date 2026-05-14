@@ -14,9 +14,28 @@ import {
   createGatewayRequestHandler,
   createGatewayServer,
   parseCliArgs,
+  runGatewayCli,
   startGateway,
   stopGateway,
 } from "./index.js";
+
+function createTestIo() {
+  let stderr = "";
+
+  return {
+    io: {
+      stderr: {
+        write(chunk: string | Uint8Array) {
+          stderr += String(chunk);
+          return true;
+        },
+      },
+    },
+    get stderr() {
+      return stderr;
+    },
+  };
+}
 
 async function closeServer(server: Server): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -182,6 +201,10 @@ test("gateway rejects invalid direct helper options", async () => {
   await assert.rejects(
     () => startGateway({ config, configPath: 42 } as never),
     /configPath must be a string/,
+  );
+  await assert.rejects(
+    () => startGateway({ config, configPath: "ray\0config.json" } as never),
+    /configPath must not contain control characters/,
   );
   await assert.rejects(
     () => startGateway({ config, warmupRetry: null } as never),
@@ -519,6 +542,103 @@ test("gateway parseCliArgs rejects ambiguous or malformed options", () => {
   );
   assert.throws(() => parseCliArgs(["--config", "x".repeat(4_097)]), /--config must be at most/);
   assert.throws(() => parseCliArgs(["--config", 42] as unknown as string[]), /argv\[1\]/);
+});
+
+test("runGatewayCli rejects malformed direct io and options before boot", async () => {
+  const output = createTestIo();
+
+  await assert.rejects(() => runGatewayCli([], null as never), /gateway cli io must be an object/);
+  await assert.rejects(
+    () => runGatewayCli([], { stderr: {} } as never),
+    /gateway cli io\.stderr\.write must be a function/,
+  );
+  await assert.rejects(
+    () => runGatewayCli([], output.io, null as never),
+    /gateway cli options must be an object/,
+  );
+  await assert.rejects(
+    () => runGatewayCli([], output.io, { loadConfig: null } as never),
+    /loadConfig must be a function/,
+  );
+  await assert.rejects(
+    () => runGatewayCli([], output.io, { cwd: " /srv/ray" }),
+    /cwd must be a path without surrounding whitespace/,
+  );
+});
+
+test("runGatewayCli reports boot failures to injected stderr", async () => {
+  const output = createTestIo();
+  const status = await runGatewayCli(["--config", "./missing.json"], output.io, {
+    now: () => new Date("2026-05-14T00:00:00.000Z"),
+    loadConfig: async () => {
+      throw new Error("missing config");
+    },
+  });
+
+  assert.equal(status, 1);
+  const parsed = JSON.parse(output.stderr) as {
+    ts?: string;
+    level?: string;
+    message?: string;
+    error?: { message?: string };
+  };
+  assert.equal(parsed.ts, "2026-05-14T00:00:00.000Z");
+  assert.equal(parsed.level, "error");
+  assert.equal(parsed.message, "gateway boot failed");
+  assert.equal(parsed.error?.message, "missing config");
+});
+
+test("runGatewayCli starts the gateway and wires signal shutdown", async () => {
+  const output = createTestIo();
+  const config = createDefaultConfig("tiny");
+  const signals = new Map<NodeJS.Signals, () => void>();
+  const exitCodes: number[] = [];
+  const stoppedSignals: Array<NodeJS.Signals | undefined> = [];
+  const fakeGateway = {
+    logger: {
+      error() {
+        throw new Error("shutdown should not log errors");
+      },
+    },
+  } as never;
+
+  const status = await runGatewayCli(["--config", "./ray.json"], output.io, {
+    cwd: "/srv/ray",
+    loadConfig: async (options) => {
+      assert.deepEqual(options, {
+        cwd: "/srv/ray",
+        configPath: "./ray.json",
+      });
+      return {
+        config,
+        configPath: "/srv/ray/ray.json",
+      };
+    },
+    startGateway: async (options) => {
+      assert.equal(options.config, config);
+      assert.equal(options.configPath, "/srv/ray/ray.json");
+      return fakeGateway;
+    },
+    stopGateway: async (_gateway, options) => {
+      stoppedSignals.push(options?.signal);
+    },
+    onSignal: (signal, listener) => {
+      signals.set(signal, listener);
+    },
+    setExitCode: (code) => {
+      exitCodes.push(code);
+    },
+  });
+
+  assert.equal(status, 0);
+  assert.equal(output.stderr, "");
+  assert.deepEqual(Array.from(signals.keys()), ["SIGINT", "SIGTERM"]);
+
+  signals.get("SIGTERM")?.();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(stoppedSignals, ["SIGTERM"]);
+  assert.deepEqual(exitCodes, [0]);
 });
 
 test("startGateway rejects malformed warmup retry options before listening", async () => {

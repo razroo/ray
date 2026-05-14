@@ -31,6 +31,22 @@ interface CliOptions {
   configPath?: string;
 }
 
+interface GatewayCliIo {
+  stderr: {
+    write(chunk: string | Uint8Array): unknown;
+  };
+}
+
+interface RunGatewayCliOptions {
+  cwd?: string;
+  loadConfig?: typeof loadRayConfig;
+  startGateway?: typeof startGateway;
+  stopGateway?: typeof stopGateway;
+  onSignal?: (signal: NodeJS.Signals, listener: () => void) => unknown;
+  setExitCode?: (code: number) => void;
+  now?: () => Date;
+}
+
 const MAX_GATEWAY_CLI_ARGS = 16;
 const MAX_GATEWAY_CLI_ARG_BYTES = 8_192;
 const MAX_GATEWAY_CONFIG_PATH_CHARS = 4_096;
@@ -83,6 +99,15 @@ const startGatewayOptionKeys = new Set([
   ...createGatewayHandlerOptionKeys,
   "configPath",
   "warmupRetry",
+]);
+const runGatewayCliOptionKeys = new Set([
+  "cwd",
+  "loadConfig",
+  "startGateway",
+  "stopGateway",
+  "onSignal",
+  "setExitCode",
+  "now",
 ]);
 const gatewayWarmupRetryOptionKeys = new Set(["initialDelayMs", "maxDelayMs"]);
 const stopGatewayOptionKeys = new Set(["signal", "timeoutMs"]);
@@ -204,6 +229,56 @@ function assertOptionalGatewayFunction(value: unknown, label: string): void {
   if (value !== undefined && typeof value !== "function") {
     throw new Error(`${label} must be a function`);
   }
+}
+
+function assertGatewayCliIo(io: unknown): asserts io is GatewayCliIo {
+  if (io === null || typeof io !== "object" || Array.isArray(io)) {
+    throw new Error("gateway cli io must be an object");
+  }
+
+  const stderr = (io as { stderr?: unknown }).stderr;
+  if (
+    stderr === null ||
+    typeof stderr !== "object" ||
+    Array.isArray(stderr) ||
+    typeof (stderr as { write?: unknown }).write !== "function"
+  ) {
+    throw new Error("gateway cli io.stderr.write must be a function");
+  }
+}
+
+function assertGatewayCliPathValue(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty path`);
+  }
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} must not contain control characters`);
+  }
+
+  if (value.trim() !== value) {
+    throw new Error(`${label} must be a path without surrounding whitespace`);
+  }
+
+  if (value.length > MAX_GATEWAY_CONFIG_PATH_CHARS) {
+    throw new Error(`${label} must be at most ${MAX_GATEWAY_CONFIG_PATH_CHARS} characters`);
+  }
+}
+
+function assertRunGatewayCliOptions(value: unknown): asserts value is RunGatewayCliOptions {
+  assertGatewayOptionsObject(value, "gateway cli options");
+  assertGatewayOptionKeys(value, "gateway cli options", runGatewayCliOptionKeys);
+
+  if (value.cwd !== undefined) {
+    assertGatewayCliPathValue(value.cwd, "cwd");
+  }
+
+  assertOptionalGatewayFunction(value.loadConfig, "loadConfig");
+  assertOptionalGatewayFunction(value.startGateway, "startGateway");
+  assertOptionalGatewayFunction(value.stopGateway, "stopGateway");
+  assertOptionalGatewayFunction(value.onSignal, "onSignal");
+  assertOptionalGatewayFunction(value.setExitCode, "setExitCode");
+  assertOptionalGatewayFunction(value.now, "now");
 }
 
 function assertGatewayHandlerDependencies(value: Record<string, unknown>): void {
@@ -765,7 +840,7 @@ function requireFlagValue(flag: string, value: string | undefined): string {
 }
 
 function assertConfigPathFlagValue(value: string, flag: string): void {
-  if (/[\r\n]/.test(value)) {
+  if (/[\0\r\n]/.test(value)) {
     throw new Error(`${flag} must not contain control characters`);
   }
 
@@ -2368,49 +2443,75 @@ export async function stopGateway(
   }
 }
 
-async function main(): Promise<void> {
-  const cli = parseCliArgs(process.argv.slice(2));
-  const { config, configPath } = await loadRayConfig({
-    cwd: process.cwd(),
-    ...(cli.configPath ? { configPath: cli.configPath } : {}),
-  });
+export async function runGatewayCli(
+  argv: string[] = process.argv.slice(2),
+  io: GatewayCliIo = process,
+  options: RunGatewayCliOptions = {},
+): Promise<number> {
+  assertGatewayCliIo(io);
+  assertRunGatewayCliOptions(options);
 
-  const gateway = await startGateway({
-    config,
-    ...(configPath ? { configPath } : {}),
-  });
+  const loadConfig = options.loadConfig ?? loadRayConfig;
+  const start = options.startGateway ?? startGateway;
+  const stop = options.stopGateway ?? stopGateway;
+  const onSignal =
+    options.onSignal ??
+    ((signal: NodeJS.Signals, listener: () => void) => {
+      process.on(signal, listener);
+    });
+  const setExitCode =
+    options.setExitCode ??
+    ((code: number) => {
+      process.exitCode = code;
+    });
+  const now = options.now ?? (() => new Date());
 
-  const shutdown = async (signal: NodeJS.Signals) => {
-    try {
-      await stopGateway(gateway, { signal });
-      process.exit(0);
-    } catch (error) {
-      gateway.logger.error("gateway shutdown failed", {
-        signal,
-        error: serializeError(error),
-      });
-      process.exit(1);
-    }
-  };
+  try {
+    const cli = parseCliArgs(argv);
+    const { config, configPath } = await loadConfig({
+      cwd: options.cwd ?? process.cwd(),
+      ...(cli.configPath ? { configPath: cli.configPath } : {}),
+    });
 
-  process.on("SIGINT", () => {
-    void shutdown("SIGINT");
-  });
-  process.on("SIGTERM", () => {
-    void shutdown("SIGTERM");
-  });
-}
+    const gateway = await start({
+      config,
+      ...(configPath ? { configPath } : {}),
+    });
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  void main().catch((error) => {
-    console.error(
-      JSON.stringify({
-        ts: new Date().toISOString(),
+    const shutdown = async (signal: NodeJS.Signals) => {
+      try {
+        await stop(gateway, { signal });
+        setExitCode(0);
+      } catch (error) {
+        gateway.logger.error("gateway shutdown failed", {
+          signal,
+          error: serializeError(error),
+        });
+        setExitCode(1);
+      }
+    };
+
+    onSignal("SIGINT", () => {
+      void shutdown("SIGINT");
+    });
+    onSignal("SIGTERM", () => {
+      void shutdown("SIGTERM");
+    });
+
+    return 0;
+  } catch (error) {
+    io.stderr.write(
+      `${JSON.stringify({
+        ts: now().toISOString(),
         level: "error",
         message: "gateway boot failed",
         error: serializeError(error),
-      }),
+      })}\n`,
     );
-    process.exit(1);
-  });
+    return 1;
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = await runGatewayCli();
 }
