@@ -20,6 +20,9 @@ const MAX_SCHEDULER_QUEUED_TOKENS = 262_144;
 const MAX_SCHEDULER_INFLIGHT_TOKENS = 65_536;
 const MAX_REQUEST_TIMEOUT_MS = 120_000;
 const MAX_SCHEDULER_BATCH_WINDOW_MS = 1_000;
+const MAX_SCHEDULER_BACKEND_SLOTS = 64;
+const MAX_SCHEDULER_SLOT_DIAGNOSTIC_NUMBER = 1_000_000_000;
+const MAX_SCHEDULER_SLOT_UPDATED_AT_CHARS = 64;
 
 function createRequestTimeoutError(): RayError {
   return new RayError("The inference request exceeded the scheduler timeout", {
@@ -54,6 +57,22 @@ function assertNonNegativeSafeIntegerAtMost(value: number, label: string, maximu
   if (value > maximum) {
     throw new RangeError(`${label} must be less than or equal to ${maximum}`);
   }
+}
+
+function assertOptionalNonNegativeSafeIntegerAtMost(
+  value: unknown,
+  label: string,
+  maximum: number,
+): asserts value is number | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  if (typeof value !== "number") {
+    throw new TypeError(`${label} must be a number`);
+  }
+
+  assertNonNegativeSafeIntegerAtMost(value, label, maximum);
 }
 
 function assertBoolean(value: boolean, label: string): void {
@@ -142,6 +161,96 @@ function assertScheduleHandler<T>(
   if (typeof value !== "function") {
     throw new TypeError("schedule.handler must be a function");
   }
+}
+
+function normalizeBackendSlotSnapshots(value: unknown): SchedulerSlotSnapshot[] {
+  if (!Array.isArray(value)) {
+    throw new TypeError("scheduler backend slots must be an array");
+  }
+
+  if (value.length > MAX_SCHEDULER_BACKEND_SLOTS) {
+    throw new RangeError(
+      `scheduler backend slots must contain at most ${MAX_SCHEDULER_BACKEND_SLOTS} entries`,
+    );
+  }
+
+  const slots: SchedulerSlotSnapshot[] = [];
+
+  for (const [index, slot] of value.entries()) {
+    if (slot === null || typeof slot !== "object" || Array.isArray(slot)) {
+      throw new TypeError(`scheduler backend slots[${index}] must be an object`);
+    }
+
+    const snapshot = slot as Partial<SchedulerSlotSnapshot>;
+    if (snapshot.id === undefined) {
+      throw new TypeError(`scheduler backend slots[${index}].id is required`);
+    }
+    assertOptionalNonNegativeSafeIntegerAtMost(
+      snapshot.id,
+      `scheduler backend slots[${index}].id`,
+      MAX_SCHEDULER_SLOT_DIAGNOSTIC_NUMBER,
+    );
+
+    if (typeof snapshot.isProcessing !== "boolean") {
+      throw new TypeError(`scheduler backend slots[${index}].isProcessing must be a boolean`);
+    }
+
+    if (
+      typeof snapshot.updatedAt !== "string" ||
+      snapshot.updatedAt.length === 0 ||
+      snapshot.updatedAt.length > MAX_SCHEDULER_SLOT_UPDATED_AT_CHARS
+    ) {
+      throw new TypeError(`scheduler backend slots[${index}].updatedAt must be a bounded string`);
+    }
+
+    assertOptionalNonNegativeSafeIntegerAtMost(
+      snapshot.taskId,
+      `scheduler backend slots[${index}].taskId`,
+      MAX_SCHEDULER_SLOT_DIAGNOSTIC_NUMBER,
+    );
+    assertOptionalNonNegativeSafeIntegerAtMost(
+      snapshot.contextWindow,
+      `scheduler backend slots[${index}].contextWindow`,
+      MAX_SCHEDULER_SLOT_DIAGNOSTIC_NUMBER,
+    );
+    const maxSlotTokens = snapshot.contextWindow ?? MAX_SCHEDULER_SLOT_DIAGNOSTIC_NUMBER;
+    assertOptionalNonNegativeSafeIntegerAtMost(
+      snapshot.promptTokens,
+      `scheduler backend slots[${index}].promptTokens`,
+      maxSlotTokens,
+    );
+    assertOptionalNonNegativeSafeIntegerAtMost(
+      snapshot.cacheTokens,
+      `scheduler backend slots[${index}].cacheTokens`,
+      maxSlotTokens,
+    );
+
+    const normalized: SchedulerSlotSnapshot = {
+      id: snapshot.id,
+      isProcessing: snapshot.isProcessing,
+      updatedAt: snapshot.updatedAt,
+    };
+
+    if (snapshot.taskId !== undefined) {
+      normalized.taskId = snapshot.taskId;
+    }
+
+    if (snapshot.contextWindow !== undefined) {
+      normalized.contextWindow = snapshot.contextWindow;
+    }
+
+    if (snapshot.promptTokens !== undefined) {
+      normalized.promptTokens = snapshot.promptTokens;
+    }
+
+    if (snapshot.cacheTokens !== undefined) {
+      normalized.cacheTokens = snapshot.cacheTokens;
+    }
+
+    slots.push(normalized);
+  }
+
+  return slots;
 }
 
 function normalizeSchedulerConfig(config: SchedulerConfig): SchedulerConfig {
@@ -325,9 +434,10 @@ export class RequestScheduler<T> {
   }
 
   updateBackendSlots(slots: SchedulerSlotSnapshot[]): void {
+    const normalizedSlots = normalizeBackendSlotSnapshots(slots);
     this.backendSlots.clear();
 
-    for (const slot of slots) {
+    for (const slot of normalizedSlots) {
       this.backendSlots.set(slot.id, slot);
     }
   }

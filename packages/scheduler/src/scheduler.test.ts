@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import type { SchedulerConfig } from "@razroo/ray-core";
+import type { SchedulerConfig, SchedulerSlotSnapshot } from "@razroo/ray-core";
 import { RequestScheduler } from "./index.js";
 
 function createSchedulerConfig(overrides: Partial<SchedulerConfig> = {}): SchedulerConfig {
@@ -135,6 +135,123 @@ test("scheduler snapshots resource limits at construction", async () => {
     results.map((result) => result.value),
     ["first", "second"],
   );
+});
+
+test("scheduler rejects malformed backend slot snapshots", () => {
+  const scheduler = new RequestScheduler<string>(createSchedulerConfig());
+  const validSlot = {
+    id: 1,
+    isProcessing: false,
+    updatedAt: new Date().toISOString(),
+  };
+  scheduler.updateBackendSlots([validSlot]);
+
+  assert.throws(
+    () => scheduler.updateBackendSlots(null as never),
+    /backend slots must be an array/,
+  );
+  assert.throws(
+    () =>
+      scheduler.updateBackendSlots(
+        Array.from({ length: 65 }, (_value, index) => ({
+          id: index,
+          isProcessing: false,
+          updatedAt: new Date().toISOString(),
+        })),
+      ),
+    /backend slots must contain at most 64 entries/,
+  );
+  assert.throws(
+    () =>
+      scheduler.updateBackendSlots([
+        {
+          isProcessing: false,
+          updatedAt: new Date().toISOString(),
+        } as never,
+      ]),
+    /backend slots\[0\]\.id is required/,
+  );
+  assert.throws(
+    () =>
+      scheduler.updateBackendSlots([
+        {
+          id: 1_000_000_001,
+          isProcessing: false,
+          updatedAt: new Date().toISOString(),
+        },
+      ]),
+    /backend slots\[0\]\.id/,
+  );
+  assert.throws(
+    () =>
+      scheduler.updateBackendSlots([
+        {
+          id: 1,
+          isProcessing: "false" as never,
+          updatedAt: new Date().toISOString(),
+        },
+      ]),
+    /backend slots\[0\]\.isProcessing/,
+  );
+  assert.throws(
+    () =>
+      scheduler.updateBackendSlots([
+        {
+          id: 1,
+          isProcessing: false,
+          updatedAt: "x".repeat(65),
+        },
+      ]),
+    /backend slots\[0\]\.updatedAt/,
+  );
+  assert.throws(
+    () =>
+      scheduler.updateBackendSlots([
+        {
+          id: 1,
+          isProcessing: false,
+          updatedAt: new Date().toISOString(),
+          contextWindow: 8,
+          promptTokens: 9,
+        },
+      ]),
+    /backend slots\[0\]\.promptTokens/,
+  );
+
+  const schedulerState = scheduler as unknown as {
+    backendSlots: Map<number, SchedulerSlotSnapshot>;
+  };
+  assert.equal(schedulerState.backendSlots.has(1), true);
+});
+
+test("scheduler snapshots backend slot inputs", () => {
+  const scheduler = new RequestScheduler<string>(createSchedulerConfig());
+  const slot = {
+    id: 2,
+    taskId: 3,
+    isProcessing: false,
+    contextWindow: 128,
+    promptTokens: 32,
+    cacheTokens: 16,
+    updatedAt: new Date().toISOString(),
+    extra: "discarded",
+  } as SchedulerSlotSnapshot & { extra?: string };
+
+  scheduler.updateBackendSlots([slot]);
+  slot.isProcessing = true;
+  slot.extra = "mutated";
+
+  const schedulerState = scheduler as unknown as {
+    backendSlots: Map<number, SchedulerSlotSnapshot & { extra?: unknown }>;
+  };
+  const stored = schedulerState.backendSlots.get(2);
+
+  assert.equal(stored?.taskId, 3);
+  assert.equal(stored?.isProcessing, false);
+  assert.equal(stored?.contextWindow, 128);
+  assert.equal(stored?.promptTokens, 32);
+  assert.equal(stored?.cacheTokens, 16);
+  assert.equal(stored?.extra, undefined);
 });
 
 test("scheduler deduplicates matching inflight work", async () => {
