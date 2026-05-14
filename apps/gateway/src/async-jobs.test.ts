@@ -1249,6 +1249,13 @@ test("durable inference queue persists bounded JSON-safe job error details", asy
     const longKey = `k${"x".repeat(140)}`;
     details[longKey] = "bounded-key";
     details.self = details;
+    Object.defineProperty(details, "__proto__", {
+      value: {
+        polluted: true,
+        stack: "secret stack",
+      },
+      enumerable: true,
+    });
     Object.defineProperty(details, "explode", {
       enumerable: true,
       get() {
@@ -1306,6 +1313,7 @@ test("durable inference queue persists bounded JSON-safe job error details", asy
     };
     const errorDetails = persisted.error?.details;
 
+    assert.ok(errorDetails);
     assert.equal(failedJob.error?.code, "provider_upstream_error");
     assert.equal(errorDetails?.count, "2");
     assert.match(errorDetails?.huge ?? "", /\[truncated \d+ chars\]$/);
@@ -1317,6 +1325,11 @@ test("durable inference queue persists bounded JSON-safe job error details", asy
     assert.equal(errorDetails?.cause?.name, "Error");
     assert.equal(errorDetails?.cause?.message, "backend failed");
     assert.equal(errorDetails?.cause?.stack, undefined);
+    assert.deepEqual(Object.getOwnPropertyDescriptor(errorDetails, "__proto__")?.value, {
+      polluted: true,
+    });
+    assert.equal(({} as { polluted?: boolean }).polluted, undefined);
+    assert.doesNotMatch(JSON.stringify(errorDetails), /secret stack/);
     assert.equal(errorDetails?.[`k${"x".repeat(104)}...[truncated 36 chars]`], "bounded-key");
     assert.equal(errorDetails?.[longKey], undefined);
     assert.ok(Object.keys(errorDetails ?? {}).every((key) => key.length <= 128));

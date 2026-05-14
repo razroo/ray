@@ -1328,6 +1328,19 @@ function truncateJobErrorDetailKey(value: string): string {
   }
 }
 
+function setJobErrorDetailProperty(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
 function truncateJobErrorDetailString(value: string, budget: JobErrorDetailBudget): string {
   const allowedChars = Math.min(value.length, MAX_JOB_ERROR_DETAIL_STRING_CHARS, budget.chars);
 
@@ -1448,14 +1461,17 @@ function sanitizeJobErrorDetail(
       }
 
       try {
-        output[safeKey] = sanitizeJobErrorDetail(
-          (value as Record<string, unknown>)[key],
-          budget,
-          seen,
-          depth + 1,
+        setJobErrorDetailProperty(
+          output,
+          safeKey,
+          sanitizeJobErrorDetail((value as Record<string, unknown>)[key], budget, seen, depth + 1),
         );
       } catch (error) {
-        output[safeKey] = `[Thrown: ${truncateJobErrorString(toErrorMessage(error))}]`;
+        setJobErrorDetailProperty(
+          output,
+          safeKey,
+          `[Thrown: ${truncateJobErrorString(toErrorMessage(error))}]`,
+        );
       }
     }
 
