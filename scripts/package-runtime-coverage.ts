@@ -262,6 +262,11 @@ function assertDiscoveryPathWithinLimit(root: string, absolutePath: string): voi
   }
 }
 
+function isPathInside(parentPath: string, candidatePath: string): boolean {
+  const relative = path.relative(parentPath, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 async function collectPackageJsonPathsFromDirectory(
   currentDirectory: string,
   state: PackageDiscoveryState,
@@ -2593,6 +2598,15 @@ export async function validatePackageRuntimeCoverage(options: {
   for (const [index, packageJsonPath] of options.packageJsonPaths.entries()) {
     assertRuntimeCoveragePathValue(packageJsonPath, `packageJsonPaths[${index}]`);
   }
+  const packageJsonPaths = options.packageJsonPaths
+    .map((filePath, index) => {
+      const resolvedPath = path.resolve(cwd, filePath);
+      if (!isPathInside(cwd, resolvedPath)) {
+        throw new Error(`packageJsonPaths[${index}] must stay inside cwd`);
+      }
+      return resolvedPath;
+    })
+    .sort();
 
   const results: PackageRuntimeCoverageResult[] = [];
   const workflowPaths = await collectWorkflowPaths(cwd);
@@ -2607,9 +2621,7 @@ export async function validatePackageRuntimeCoverage(options: {
   ).filter((scriptPath): scriptPath is string => scriptPath !== undefined);
   let rootScripts: Record<string, string> = {};
 
-  for (const packageJsonPath of options.packageJsonPaths.map((filePath) =>
-    path.resolve(filePath),
-  )) {
+  for (const packageJsonPath of packageJsonPaths) {
     try {
       const parsedPackage = await readPackageJson(packageJsonPath);
       const packageName = typeof parsedPackage.name === "string" ? parsedPackage.name : undefined;
@@ -2774,7 +2786,7 @@ export async function validatePackageRuntimeCoverage(options: {
 
   return {
     ok: errorCount === 0,
-    packageCount: options.packageJsonPaths.length,
+    packageCount: packageJsonPaths.length,
     workflowCount: workflowPaths.length,
     docCount: runtimeDocPaths.length,
     runtimeScriptCount: runtimeScriptPaths.length,

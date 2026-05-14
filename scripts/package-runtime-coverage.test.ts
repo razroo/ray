@@ -184,6 +184,14 @@ test("validatePackageRuntimeCoverage rejects malformed direct paths before scann
       }),
     /packageJsonPaths\[0\] must be at most 4096 bytes/,
   );
+  await assert.rejects(
+    () =>
+      validatePackageRuntimeCoverage({
+        cwd: repoRoot,
+        packageJsonPaths: [path.join(path.dirname(repoRoot), "package.json")],
+      }),
+    /packageJsonPaths\[0\] must stay inside cwd/,
+  );
 });
 
 test("validatePackageRuntimeCoverage requires config and Bun cache storage preflight coverage", async (t) => {
