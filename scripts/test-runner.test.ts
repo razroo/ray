@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   assertTestDiskHeadroom,
+  buildTestCommandEnv,
   collectTestFiles,
   resolveMinimumTestFreeSpaceMiB,
   resolveTestCommandTimeoutMs,
@@ -237,6 +238,37 @@ test("runTestCli ignores inherited environment overrides", async (t) => {
     { binary: "node", timeoutMs: 600_000 },
     { binary: "bun", timeoutMs: 600_000 },
   ]);
+});
+
+test("buildTestCommandEnv keeps child test environments minimal", () => {
+  const source = Object.create({
+    PATH: "/inherited/bin",
+    RAY_API_KEYS: "inherited-secret",
+  }) as NodeJS.ProcessEnv;
+  source.PATH = "/usr/bin";
+  source.LANG = "C.UTF-8";
+  source.TMPDIR = "/tmp/ray-tests";
+  source.HOME = "/home/ray";
+  source.CI = "true";
+  source.RAY_API_KEYS = "direct-secret";
+  source.RAY_PROFILE = "1b";
+  source.NODE_OPTIONS = "--require /tmp/hook.js";
+  source.LD_PRELOAD = "/tmp/hook.so";
+  source.TEMP = `bad${String.fromCharCode(0)}value`;
+
+  const env = buildTestCommandEnv(source);
+
+  assert.equal(Object.getPrototypeOf(env), null);
+  assert.equal(env.PATH, "/usr/bin");
+  assert.equal(env.LANG, "C.UTF-8");
+  assert.equal(env.TMPDIR, "/tmp/ray-tests");
+  assert.equal(env.HOME, "/home/ray");
+  assert.equal(env.CI, "true");
+  assert.equal(env.RAY_API_KEYS, undefined);
+  assert.equal(env.RAY_PROFILE, undefined);
+  assert.equal(env.NODE_OPTIONS, undefined);
+  assert.equal(env.LD_PRELOAD, undefined);
+  assert.equal(env.TEMP, undefined);
 });
 
 test("runTestCommand times out hung child commands", async () => {

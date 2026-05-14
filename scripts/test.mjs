@@ -18,6 +18,22 @@ export const MAX_TEST_COMMAND_TIMEOUT_MS = 3_600_000;
 const BYTES_PER_MIB = 1024 * 1024;
 const TEST_COMMAND_KILL_GRACE_MS = 5_000;
 const MAX_TEST_COMMAND_DISPLAY_CHARS = 512;
+const DEFAULT_TEST_COMMAND_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const TEST_COMMAND_ENV_KEYS = [
+  "BUN_INSTALL",
+  "CI",
+  "GITHUB_ACTIONS",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LOGNAME",
+  "RUNNER_TEMP",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "USER",
+];
 export const DEFAULT_SKIP_NAMES = new Set([
   ".git",
   ".playwright-mcp",
@@ -91,6 +107,32 @@ function readOwnEnvValue(env, name) {
 
   const value = env[name];
   return typeof value === "string" ? value : undefined;
+}
+
+function isSafeTestCommandEnvValue(value) {
+  return value.length > 0 && !value.includes("\0");
+}
+
+export function buildTestCommandEnv(env = process.env) {
+  if (env === null || typeof env !== "object") {
+    throw new Error("env must be an object");
+  }
+
+  const childEnv = Object.create(null);
+  const pathValue = readOwnEnvValue(env, "PATH");
+  childEnv.PATH =
+    pathValue !== undefined && isSafeTestCommandEnvValue(pathValue)
+      ? pathValue
+      : DEFAULT_TEST_COMMAND_PATH;
+
+  for (const key of TEST_COMMAND_ENV_KEYS) {
+    const value = readOwnEnvValue(env, key);
+    if (value !== undefined && isSafeTestCommandEnvValue(value)) {
+      childEnv[key] = value;
+    }
+  }
+
+  return childEnv;
 }
 
 export function resolveMinimumTestFreeSpaceMiB(env = process.env) {
@@ -311,6 +353,7 @@ export function runTestCommand(binary, args, options = {}) {
     let killTimer;
     const child = spawn(binary, args, {
       cwd: options.cwd ?? process.cwd(),
+      env: buildTestCommandEnv(options.env ?? process.env),
       stdio: "inherit",
     });
 
@@ -397,7 +440,7 @@ export async function runTestCli(options = {}) {
   let code = await runCommand(
     nodeBinary,
     ["--test", "--test-concurrency=1", ...discovered.testFiles],
-    { cwd: root, timeoutMs: commandTimeoutMs, io },
+    { cwd: root, env, timeoutMs: commandTimeoutMs, io },
   );
   if (code !== 0) {
     return code;
@@ -410,7 +453,7 @@ export async function runTestCli(options = {}) {
   code = await runCommand(
     bunBinary,
     ["test", "--max-concurrency=1", "--timeout=120000", ...discovered.scriptTestFiles],
-    { cwd: root, timeoutMs: commandTimeoutMs, io },
+    { cwd: root, env, timeoutMs: commandTimeoutMs, io },
   );
 
   return code;
