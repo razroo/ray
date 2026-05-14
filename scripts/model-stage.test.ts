@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { promises as fs } from "node:fs";
 import {
   chmod,
   lstat,
@@ -1538,6 +1539,64 @@ test("runModelStageCli reports unreadable ray env files", async (t) => {
   assert.equal(exitCode, 1);
   assert.equal(stdout, "");
   assert.match(stderr, /Env file is not readable: .*Run this helper with privileges/);
+});
+
+test("runModelStageCli rejects ray env files that exceed the byte cap after stat", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-env-post-read-limit-"));
+  const originalOpen = fs.open;
+  t.after(async () => {
+    Object.defineProperty(fs, "open", {
+      configurable: true,
+      value: originalOpen,
+    });
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const envFile = path.join(tempDir, "ray.env");
+  await writeFile(envFile, "RAY_MODEL_ID=env-1b\n", "utf8");
+
+  Object.defineProperty(fs, "open", {
+    configurable: true,
+    value: async (...args: Parameters<typeof fs.open>) => {
+      const handle = await originalOpen(...args);
+      if (String(args[0]) !== envFile) {
+        return handle;
+      }
+
+      return {
+        stat: async () => ({
+          isFile: () => true,
+          size: 20,
+        }),
+        readFile: async () => `RAY_MODEL_ID=${"x".repeat(64 * 1024)}\n`,
+        close: async () => {
+          await handle.close();
+        },
+      } as Awaited<ReturnType<typeof fs.open>>;
+    },
+  });
+
+  let stdout = "";
+  let stderr = "";
+  const exitCode = await runModelStageCli(
+    [
+      "--cwd",
+      repoRoot,
+      "--config",
+      "./examples/config/ray.1b.generic.public.json",
+      "--env-file",
+      envFile,
+    ],
+    {
+      stdout: { write: (chunk: string) => (stdout += chunk) },
+      stderr: { write: (chunk: string) => (stderr += chunk) },
+    },
+    {},
+  );
+
+  assert.equal(exitCode, 1);
+  assert.equal(stdout, "");
+  assert.match(stderr, /Env file must be at most 65536 bytes: .*ray\.env/);
 });
 
 test("runModelStageCli can print commands only", async () => {

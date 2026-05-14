@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { constants, createReadStream } from "node:fs";
+import { constants, createReadStream, promises as fs } from "node:fs";
 import {
   access,
   chmod,
@@ -563,10 +563,10 @@ function atomicStageTempTemplate(targetPath: string): string {
 }
 
 async function readEnvironmentFileBounded(envFile: string): Promise<string> {
-  let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
+  let fileHandle: Awaited<ReturnType<typeof fs.open>> | undefined;
 
   try {
-    fileHandle = await open(envFile, "r");
+    fileHandle = await fs.open(envFile, "r");
     const stats = await fileHandle.stat();
 
     if (!stats.isFile()) {
@@ -577,7 +577,12 @@ async function readEnvironmentFileBounded(envFile: string): Promise<string> {
       throw new Error(`Env file must be at most ${MAX_ENV_FILE_BYTES} bytes: ${envFile}`);
     }
 
-    return await fileHandle.readFile("utf8");
+    const contents = await fileHandle.readFile("utf8");
+    if (Buffer.byteLength(contents, "utf8") > MAX_ENV_FILE_BYTES) {
+      throw new Error(`Env file must be at most ${MAX_ENV_FILE_BYTES} bytes: ${envFile}`);
+    }
+
+    return contents;
   } finally {
     await fileHandle?.close().catch(() => undefined);
   }
