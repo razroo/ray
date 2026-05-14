@@ -1,4 +1,15 @@
-import { access, mkdir, mkdtemp, open, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
@@ -46,6 +57,8 @@ const MAX_BENCHMARK_SUCCESS_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_BENCHMARK_OUTPUT_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_BENCHMARK_HISTORY_FILE_BYTES = 8 * 1024 * 1024;
 const BENCHMARK_HISTORY_RETAIN_BYTES = 6 * 1024 * 1024;
+const BENCHMARK_ARTIFACT_FILE_MODE = 0o644;
+const BENCHMARK_ARTIFACT_PRIVATE_FILE_MODE = 0o600;
 const MAX_BENCHMARK_CHILD_OUTPUT_BYTES = 32 * 1024;
 const BENCHMARK_REQUEST_TIMEOUT_MS = 180_000;
 const MAX_BENCHMARK_RESPONSE_TOKENS = 1_000_000;
@@ -2815,21 +2828,84 @@ export async function writeStructuredOutput(
     );
   }
 
-  const outputDirectory = path.dirname(resolvedPath);
-  const tempPath = path.join(
-    outputDirectory,
-    `.tmp-${path.basename(resolvedPath)}-${process.pid}-${randomUUID()}`,
-  );
+  await mkdir(path.dirname(resolvedPath), { recursive: true });
+  await writeTextFileAtomic(resolvedPath, output);
+  console.log(`Wrote structured output to ${resolvedPath}`);
+}
 
-  await mkdir(outputDirectory, { recursive: true });
+async function resolveBenchmarkArtifactMode(filePath: string): Promise<number | undefined> {
+  let stats: Awaited<ReturnType<typeof stat>>;
+
   try {
-    await writeFile(tempPath, output, { flag: "wx" });
-    await rename(tempPath, resolvedPath);
+    stats = await lstat(filePath);
   } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+
+    throw error;
+  }
+
+  if (!stats.isFile()) {
+    return undefined;
+  }
+
+  return BENCHMARK_ARTIFACT_PRIVATE_FILE_MODE | (stats.mode & 0o044);
+}
+
+async function writeTextFileAtomic(filePath: string, contents: string): Promise<void> {
+  const directory = path.dirname(filePath);
+  const mode = (await resolveBenchmarkArtifactMode(filePath)) ?? BENCHMARK_ARTIFACT_FILE_MODE;
+  const tempPath = path.join(
+    directory,
+    `.tmp-${path.basename(filePath)}-${process.pid}-${randomUUID()}`,
+  );
+  let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
+
+  try {
+    fileHandle = await open(tempPath, "wx", mode);
+    await fileHandle.writeFile(contents, "utf8");
+    await fileHandle.sync();
+    await fileHandle.close();
+    fileHandle = undefined;
+    await rename(tempPath, filePath);
+    await syncDirectoryBestEffort(directory);
+  } catch (error) {
+    await fileHandle?.close().catch(() => undefined);
     await rm(tempPath, { force: true }).catch(() => undefined);
     throw error;
   }
-  console.log(`Wrote structured output to ${resolvedPath}`);
+}
+
+async function appendTextFileSynced(filePath: string, contents: string): Promise<void> {
+  const existingMode = await resolveBenchmarkArtifactMode(filePath);
+  const fileHandle = await open(filePath, "a", existingMode ?? BENCHMARK_ARTIFACT_FILE_MODE);
+
+  try {
+    await fileHandle.writeFile(contents, "utf8");
+    await fileHandle.sync();
+  } finally {
+    await fileHandle.close().catch(() => undefined);
+  }
+
+  if (existingMode !== undefined) {
+    await chmod(filePath, existingMode);
+  }
+
+  await syncDirectoryBestEffort(path.dirname(filePath));
+}
+
+async function syncDirectoryBestEffort(directory: string): Promise<void> {
+  let directoryHandle: Awaited<ReturnType<typeof open>> | undefined;
+
+  try {
+    directoryHandle = await open(directory, "r");
+    await directoryHandle.sync();
+  } catch {
+    // Directory fsync is not uniformly supported; synced files still protect readers.
+  } finally {
+    await directoryHandle?.close().catch(() => undefined);
+  }
 }
 
 async function readFileTail(filePath: string, retainBytes: number): Promise<string> {
@@ -2881,7 +2957,7 @@ async function pruneHistoryFile(historyPath: string, incomingBytes: number): Pro
   const tail = retainBytes > 0 ? await readFileTail(historyPath, retainBytes) : "";
   const retained = stats.size > retainBytes ? trimPartialJsonlHead(tail) : tail;
 
-  await writeFile(historyPath, retained);
+  await writeTextFileAtomic(historyPath, retained);
 }
 
 export async function appendHistoryOutput(
@@ -2906,9 +2982,7 @@ export async function appendHistoryOutput(
 
   await mkdir(resolvedDir, { recursive: true });
   await pruneHistoryFile(historyPath, lineBytes);
-  await writeFile(historyPath, line, {
-    flag: "a",
-  });
+  await appendTextFileSynced(historyPath, line);
   console.log(`Appended benchmark history to ${historyPath}`);
 }
 

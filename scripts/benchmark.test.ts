@@ -1053,6 +1053,8 @@ test("writeStructuredOutput keeps existing reports when oversized output is reje
   });
 
   const outputPath = path.join(tempDir, "latest.json");
+  await writeFile(outputPath, "stale report\n");
+  await chmod(outputPath, 0o666);
   await writeStructuredOutput(outputPath, {
     kind: "benchmark-summary",
     version: 1,
@@ -1072,6 +1074,7 @@ test("writeStructuredOutput keeps existing reports when oversized output is reje
     },
   });
   const previousContents = await readFile(outputPath, "utf8");
+  const outputMode = (await stat(outputPath)).mode & 0o777;
 
   await assert.rejects(
     () =>
@@ -1097,6 +1100,7 @@ test("writeStructuredOutput keeps existing reports when oversized output is reje
   );
 
   assert.equal(await readFile(outputPath, "utf8"), previousContents);
+  assert.equal(outputMode & 0o022, 0);
   assert.equal(
     (await readdir(tempDir)).some((entry) => entry.startsWith(".tmp-")),
     false,
@@ -1113,6 +1117,7 @@ test("appendHistoryOutput keeps benchmark history bounded", async (t) => {
   const historyPath = path.join(historyDir, "benchmark-summary.jsonl");
   await mkdir(historyDir, { recursive: true });
   await writeFile(historyPath, `${"x".repeat(8 * 1024 * 1024 + 128)}\n`);
+  await chmod(historyPath, 0o666);
 
   await appendHistoryOutput(historyDir, {
     kind: "benchmark-summary",
@@ -1137,6 +1142,7 @@ test("appendHistoryOutput keeps benchmark history bounded", async (t) => {
   const contents = await readFile(historyPath, "utf8");
 
   assert.ok(historyStats.size <= 8 * 1024 * 1024);
+  assert.equal(historyStats.mode & 0o022, 0);
   assert.match(contents, /"kind":"benchmark-summary"/);
   assert.equal(contents.endsWith("\n"), true);
 });
