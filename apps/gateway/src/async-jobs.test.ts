@@ -1402,6 +1402,30 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
       }),
     );
     await writeFile(
+      join(jobsDir, "job_callback_last_error_too_long.json"),
+      JSON.stringify({
+        id: "job_callback_last_error_too_long",
+        status: "succeeded",
+        request: {
+          input: "callback with oversized persisted error",
+        },
+        result: {
+          output: "done",
+        },
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        attempts: 1,
+        maxAttempts: 2,
+        callback: {
+          url: "https://93.184.216.34/ray-callback",
+          status: "failed",
+          attempts: 1,
+          lastError: "x".repeat(8_193),
+        },
+      }),
+    );
+    await writeFile(
       join(jobsDir, "job_bad_request.json"),
       JSON.stringify({
         id: "job_bad_request",
@@ -1438,6 +1462,7 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.equal(await queue.get("job_callback_fragment"), undefined);
     assert.equal(await queue.get("job_callback_control"), undefined);
     assert.equal(await queue.get("job_callback_attempts_too_large"), undefined);
+    assert.equal(await queue.get("job_callback_last_error_too_long"), undefined);
     assert.equal(await queue.get("job_bad_request"), undefined);
 
     const completedJob = await waitFor(
@@ -1458,6 +1483,7 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.equal(entries.includes("job_callback_fragment.json"), false);
     assert.equal(entries.includes("job_callback_control.json"), false);
     assert.equal(entries.includes("job_callback_attempts_too_large.json"), false);
+    assert.equal(entries.includes("job_callback_last_error_too_long.json"), false);
     assert.equal(entries.includes("job_bad_request.json"), false);
     assert.equal(entries.includes("job_good.json"), true);
   } finally {

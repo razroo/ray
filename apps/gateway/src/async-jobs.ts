@@ -500,6 +500,12 @@ function assertPersistedCallbackState(value: unknown): void {
   if (value.lastError !== undefined && typeof value.lastError !== "string") {
     throw new PersistedJobValidationError("callback.lastError must be a string when present");
   }
+
+  if (typeof value.lastError === "string" && value.lastError.length > MAX_JOB_ERROR_MESSAGE_CHARS) {
+    throw new PersistedJobValidationError(
+      `callback.lastError must be at most ${MAX_JOB_ERROR_MESSAGE_CHARS} characters`,
+    );
+  }
 }
 
 function validatePersistedJobRecord(value: unknown, expectedJobId?: string): InferenceJobRecord {
