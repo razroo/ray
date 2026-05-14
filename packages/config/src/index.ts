@@ -2146,6 +2146,17 @@ function assertTemplateVariables(value: Record<string, unknown> | undefined, lab
   }
 }
 
+const warmupRequestKeys = new Set([
+  "input",
+  "system",
+  "maxTokens",
+  "seed",
+  "stop",
+  "responseFormat",
+  "templateId",
+  "templateVariables",
+]);
+
 function assertWarmupRequest(
   request: {
     input?: string;
@@ -2170,6 +2181,14 @@ function assertWarmupRequest(
 
   for (const [key] of Object.entries(request)) {
     assertSafeConfigRecordKey(key, label);
+
+    if (!warmupRequestKeys.has(key)) {
+      throw new RayError(`${label} must not contain unsupported key "${key}"`, {
+        code: "config_validation_error",
+        status: 500,
+        details: { key },
+      });
+    }
   }
 
   if (isNonEmptyString(request.templateId)) {

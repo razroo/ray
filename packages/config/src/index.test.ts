@@ -2151,6 +2151,33 @@ test("loadRayConfig rejects oversized structured config collections", async (t) 
     /override key "constructor" is not allowed at model\.adapter\.warmupRequests\.0\.constructor/,
   );
 
+  const unsupportedWarmupConfigPath = join(tempDir, "ray.warmup-unsupported.invalid.json");
+  await writeFile(
+    unsupportedWarmupConfigPath,
+    JSON.stringify({
+      profile: "vps",
+      model: {
+        adapter: {
+          warmupRequests: [
+            {
+              input: "ping",
+              extra: "not-supported",
+            },
+          ],
+        },
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: unsupportedWarmupConfigPath,
+      env: {},
+    }),
+    /model\.adapter\.warmupRequests\[0\] must not contain unsupported key "extra"/,
+  );
+
   for (const testCase of [
     {
       name: "ray.warmup-response-format-null.invalid.json",
