@@ -16,8 +16,18 @@ export const MAX_PACK_TARBALL_ENTRIES = 512;
 export const MAX_PACK_OUTPUT_FILES = 32;
 export const MAX_PACK_PACKAGE_NAME_BYTES = 256;
 export const MAX_PACK_PATH_BYTES = 4_096;
+const MAX_PACK_CHECK_ARGV = 8;
+const MAX_PACK_CHECK_ARG_BYTES = 4_096;
 const DEFAULT_PACK_CHILD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const PACK_CHILD_ENV_KEYS = ["LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TMP", "TEMP"];
+const HELP = `Usage: bun scripts/release/pack-check.mjs [--help]
+
+Build npm pack artifacts for @razroo/ray-core and @razroo/ray-sdk, then verify
+that the tarballs contain the required runtime files and safe package metadata.
+
+Options:
+  -h, --help  Show this help.
+`;
 const packedManifestDependencySections = [
   "dependencies",
   "devDependencies",
@@ -59,6 +69,93 @@ const allowedTarEntryTypes = new Set(["", "\0", "0", "5"]);
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function assertPackCheckCliIo(io) {
+  if (!isRecord(io)) {
+    throw new Error("pack check io must be an object");
+  }
+
+  if (!isRecord(io.stdout) || typeof io.stdout.write !== "function") {
+    throw new Error("pack check io.stdout.write must be a function");
+  }
+
+  if (!isRecord(io.stderr) || typeof io.stderr.write !== "function") {
+    throw new Error("pack check io.stderr.write must be a function");
+  }
+}
+
+function resolveRunPackCheckOptions(options) {
+  if (!isRecord(options)) {
+    throw new Error("pack check options must be an object");
+  }
+
+  const io = Object.hasOwn(options, "io") ? options.io : process;
+  assertPackCheckCliIo(io);
+  return { io };
+}
+
+function assertRunPackCheckCliOptions(options) {
+  if (!isRecord(options)) {
+    throw new Error("pack check cli options must be an object");
+  }
+}
+
+function assertPackCheckArgv(argv) {
+  if (!Array.isArray(argv)) {
+    throw new Error("pack check argv must be an array");
+  }
+
+  if (argv.length > MAX_PACK_CHECK_ARGV) {
+    throw new Error(`pack check argv must contain at most ${MAX_PACK_CHECK_ARGV} entries`);
+  }
+
+  for (const [index, arg] of argv.entries()) {
+    if (typeof arg !== "string") {
+      throw new Error(`pack check argv[${index}] must be a string`);
+    }
+
+    if (/[\0\r\n]/.test(arg)) {
+      throw new Error(`pack check argv[${index}] must not contain control characters`);
+    }
+
+    if (Buffer.byteLength(arg, "utf8") > MAX_PACK_CHECK_ARG_BYTES) {
+      throw new Error(
+        `pack check argv[${index}] must be at most ${MAX_PACK_CHECK_ARG_BYTES} bytes`,
+      );
+    }
+  }
+}
+
+export function parseArgs(argv) {
+  assertPackCheckArgv(argv);
+
+  let help = false;
+  let optionsEnded = false;
+
+  for (const arg of argv) {
+    if (optionsEnded) {
+      throw new Error(`Unexpected positional argument: ${arg}`);
+    }
+
+    if (arg === "--") {
+      optionsEnded = true;
+      continue;
+    }
+
+    if (arg === "--help" || arg === "-h") {
+      help = true;
+      continue;
+    }
+
+    if (arg.startsWith("-")) {
+      throw new Error(`Unknown option: ${arg}`);
+    }
+
+    throw new Error(`Unexpected positional argument: ${arg}`);
+  }
+
+  return { help };
 }
 
 function readOwnEnvString(env, key) {
@@ -596,7 +693,9 @@ export function resolvePackedTarballs(packedFiles, packageConfigs = packages) {
   return resolved;
 }
 
-export async function runPackCheck() {
+export async function runPackCheck(options = {}) {
+  const { io } = resolveRunPackCheckOptions(options);
+
   await fs.rm(destination, { recursive: true, force: true });
   await fs.mkdir(destination, { recursive: true });
 
@@ -626,9 +725,28 @@ export async function runPackCheck() {
     }
   }
 
-  console.log(`Packed npm artifacts: ${packedFiles.join(", ")}`);
+  io.stdout.write(`Packed npm artifacts: ${packedFiles.join(", ")}\n`);
+}
+
+export async function runPackCheckCli(argv = process.argv.slice(2), io = process, options = {}) {
+  assertPackCheckCliIo(io);
+  assertRunPackCheckCliOptions(options);
+
+  try {
+    const args = parseArgs(argv);
+    if (args.help) {
+      io.stdout.write(HELP);
+      return 0;
+    }
+
+    await runPackCheck({ ...options, io });
+    return 0;
+  } catch (error) {
+    io.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  await runPackCheck();
+  process.exitCode = await runPackCheckCli();
 }

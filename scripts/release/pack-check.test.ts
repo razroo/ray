@@ -11,9 +11,12 @@ import {
   buildPackCheckEnv,
   listTarballEntries,
   listPackDestinationFiles,
+  parseArgs,
   readTarballJsonEntry,
   resolvePackedTarballs,
   runPack,
+  runPackCheck,
+  runPackCheckCli,
 } from "./pack-check.mjs";
 
 function writeOctal(buffer: Buffer, offset: number, length: number, value: number): void {
@@ -64,6 +67,64 @@ function createTar(
   blocks.push(Buffer.alloc(1024));
   return Buffer.concat(blocks);
 }
+
+function createTestIo() {
+  let stdout = "";
+  let stderr = "";
+
+  return {
+    io: {
+      stdout: {
+        write(chunk: string | Uint8Array) {
+          stdout += String(chunk);
+          return true;
+        },
+      },
+      stderr: {
+        write(chunk: string | Uint8Array) {
+          stderr += String(chunk);
+          return true;
+        },
+      },
+    },
+    get stdout() {
+      return stdout;
+    },
+    get stderr() {
+      return stderr;
+    },
+  };
+}
+
+test("parseArgs accepts strict pack check options", () => {
+  assert.deepEqual(parseArgs([]), { help: false });
+  assert.deepEqual(parseArgs(["--"]), { help: false });
+  assert.deepEqual(parseArgs(["--help"]), { help: true });
+  assert.deepEqual(parseArgs(["-h"]), { help: true });
+});
+
+test("parseArgs rejects malformed pack check argv", () => {
+  assert.throws(() => parseArgs(null as unknown as string[]), /pack check argv must be an array/);
+  assert.throws(
+    () => parseArgs(["--help", 42] as unknown as string[]),
+    /pack check argv\[1\] must be a string/,
+  );
+  assert.throws(
+    () => parseArgs(Array.from({ length: 9 }, () => "--help")),
+    /pack check argv must contain at most 8 entries/,
+  );
+  assert.throws(
+    () => parseArgs(["--help\n"]),
+    /pack check argv\[0\] must not contain control characters/,
+  );
+  assert.throws(
+    () => parseArgs(["x".repeat(4_097)]),
+    /pack check argv\[0\] must be at most 4096 bytes/,
+  );
+  assert.throws(() => parseArgs(["--unknown"]), /Unknown option: --unknown/);
+  assert.throws(() => parseArgs(["dist"]), /Unexpected positional argument: dist/);
+  assert.throws(() => parseArgs(["--", "dist"]), /Unexpected positional argument: dist/);
+});
 
 test("buildPackCheckEnv keeps pack child environments minimal", () => {
   const source = Object.create({
@@ -120,6 +181,63 @@ test("runPack rejects malformed direct options before spawning", async () => {
   await assert.rejects(
     () => runPack({ name: "@razroo/ray-core", cwd: "/tmp/ray" }, { timeoutMs: Infinity }),
     /timeoutMs must be a positive safe integer less than or equal to 120000/,
+  );
+});
+
+test("runPackCheck rejects malformed direct options before touching pack output", async () => {
+  await assert.rejects(() => runPackCheck(null as never), /pack check options must be an object/);
+  await assert.rejects(
+    () => runPackCheck({ io: null } as never),
+    /pack check io must be an object/,
+  );
+  await assert.rejects(
+    () => runPackCheck({ io: { stdout: null, stderr: { write() {} } } } as never),
+    /pack check io.stdout.write must be a function/,
+  );
+  await assert.rejects(
+    () => runPackCheck({ io: { stdout: { write() {} }, stderr: null } } as never),
+    /pack check io.stderr.write must be a function/,
+  );
+});
+
+test("runPackCheckCli prints help to injected stdout", async () => {
+  const output = createTestIo();
+
+  const status = await runPackCheckCli(["--help"], output.io);
+
+  assert.equal(status, 0);
+  assert.match(output.stdout, /Usage: bun scripts\/release\/pack-check\.mjs \[--help\]/);
+  assert.equal(output.stderr, "");
+});
+
+test("runPackCheckCli reports parser failures to injected stderr", async () => {
+  const output = createTestIo();
+
+  const status = await runPackCheckCli(["--unknown"], output.io);
+
+  assert.equal(status, 1);
+  assert.equal(output.stdout, "");
+  assert.match(output.stderr, /Unknown option: --unknown/);
+});
+
+test("runPackCheckCli rejects malformed direct io before parsing", async () => {
+  await assert.rejects(() => runPackCheckCli([], null as never), /pack check io must be an object/);
+  await assert.rejects(
+    () => runPackCheckCli([], { stdout: null, stderr: { write() {} } } as never),
+    /pack check io.stdout.write must be a function/,
+  );
+  await assert.rejects(
+    () => runPackCheckCli([], { stdout: { write() {} }, stderr: null } as never),
+    /pack check io.stderr.write must be a function/,
+  );
+});
+
+test("runPackCheckCli rejects malformed direct options before parsing", async () => {
+  const output = createTestIo();
+
+  await assert.rejects(
+    () => runPackCheckCli(["--help"], output.io, null as never),
+    /pack check cli options must be an object/,
   );
 });
 
