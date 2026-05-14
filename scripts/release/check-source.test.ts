@@ -377,6 +377,10 @@ test("package-local release source checks use the bounded root verifier", async 
   ];
 
   for (const check of packageChecks) {
+    const scriptSource = await readFile(check.scriptPath, "utf8");
+    assert.doesNotMatch(scriptSource, /process\.exit\(/);
+    assert.doesNotMatch(scriptSource, /console\./);
+
     const pkg = JSON.parse(await readFile(check.packagePath, "utf8")) as { version: string };
     const { stdout } = await execFileAsync(process.execPath, [check.scriptPath, pkg.version], {
       cwd: repoRoot,
@@ -385,5 +389,21 @@ test("package-local release source checks use the bounded root verifier", async 
     });
 
     assert.equal(stdout.trim(), `${check.name}: ${pkg.version}`);
+
+    const failure = await execFileAsync(process.execPath, [check.scriptPath], {
+      cwd: repoRoot,
+      timeout: 5_000,
+      maxBuffer: 64 * 1024,
+    }).then(
+      () => undefined,
+      (error: unknown) => error as { code: number; stdout: string; stderr: string },
+    );
+
+    assert.equal(failure?.code, 1);
+    assert.equal(failure?.stdout, "");
+    assert.match(
+      failure?.stderr ?? "",
+      /Usage: bun \.\/scripts\/release\/check-source\.mjs <version>/,
+    );
   }
 });
