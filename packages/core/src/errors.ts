@@ -7,6 +7,14 @@ const MAX_ERROR_DETAIL_OBJECT_KEYS = 64;
 const MAX_ERROR_DETAIL_ARRAY_ITEMS = 64;
 const MAX_ERROR_DETAIL_KEY_CHARS = 128;
 const MAX_ERROR_DETAIL_STRING_CHARS = 8_192;
+const unsafeRayErrorOptionKeys = new Set(["__proto__", "constructor", "prototype"]);
+const rayErrorOptionKeys = new Set(["code", "status", "details"]);
+
+interface RayErrorOptions {
+  code?: string;
+  status?: number;
+  details?: unknown;
+}
 
 function assertErrorMessage(value: string): void {
   if (typeof value !== "string" || value.length === 0) {
@@ -34,6 +42,30 @@ function assertErrorCode(value: string): void {
 function assertErrorStatus(value: number): void {
   if (!Number.isSafeInteger(value) || value < 400 || value > 599) {
     throw new RangeError("RayError status must be an HTTP error status from 400 to 599");
+  }
+}
+
+function assertRayErrorOptions(value: unknown): asserts value is RayErrorOptions | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("RayError options must be an object when provided");
+  }
+
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") {
+      throw new TypeError("RayError options cannot include symbol keys");
+    }
+
+    if (unsafeRayErrorOptionKeys.has(key)) {
+      throw new TypeError(`RayError options must not contain unsafe key "${key}"`);
+    }
+
+    if (!rayErrorOptionKeys.has(key)) {
+      throw new TypeError(`RayError options contains unsupported key "${key}"`);
+    }
   }
 }
 
@@ -149,16 +181,20 @@ function snapshotErrorDetail(value: unknown, seen: WeakSet<object>, depth = 0): 
 
     for (const key of keys.slice(0, MAX_ERROR_DETAIL_OBJECT_KEYS)) {
       const safeKey = truncateDetailKey(key);
+      let snapshot: unknown;
 
       try {
-        output[safeKey] = snapshotErrorDetail(
-          (value as Record<string, unknown>)[key],
-          seen,
-          depth + 1,
-        );
+        snapshot = snapshotErrorDetail((value as Record<string, unknown>)[key], seen, depth + 1);
       } catch (error) {
-        output[safeKey] = `[Thrown: ${truncateDetailString(toErrorMessage(error))}]`;
+        snapshot = `[Thrown: ${truncateDetailString(toErrorMessage(error))}]`;
       }
+
+      Object.defineProperty(output, safeKey, {
+        value: snapshot,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     }
 
     if (keys.length > MAX_ERROR_DETAIL_OBJECT_KEYS) {
@@ -176,9 +212,11 @@ export class RayError extends Error {
   readonly status: number;
   readonly details?: unknown;
 
-  constructor(message: string, options?: { code?: string; status?: number; details?: unknown }) {
+  constructor(message: string, options?: RayErrorOptions) {
     assertErrorMessage(message);
+    assertRayErrorOptions(options);
     super(message);
+
     const code = options?.code ?? "ray_error";
     const status = options?.status ?? 500;
     assertErrorCode(code);

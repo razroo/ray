@@ -5,6 +5,18 @@ import { RayError } from "./errors.js";
 test("RayError rejects invalid direct constructor values", () => {
   assert.throws(() => new RayError(""), /message/);
   assert.throws(() => new RayError("x".repeat(8_193)), /message/);
+  assert.throws(
+    () => new RayError("bad options", null as never),
+    /RayError options must be an object/,
+  );
+  assert.throws(
+    () => new RayError("bad options", { extra: true } as never),
+    /RayError options contains unsupported key "extra"/,
+  );
+  assert.throws(
+    () => new RayError("bad options", JSON.parse('{"__proto__":true}')),
+    /RayError options must not contain unsafe key "__proto__"/,
+  );
   assert.throws(() => new RayError("bad code", { code: "BadCode" }), /code/);
   assert.throws(() => new RayError("bad status", { status: 200 }), /status/);
   assert.throws(() => new RayError("bad status", { status: Number.NaN }), /status/);
@@ -90,4 +102,17 @@ test("RayError converts nested Error details into bounded objects", () => {
   assert.equal(details.cause?.name, "Error");
   assert.equal(details.cause?.message, "backend failed");
   assert.equal(typeof details.cause?.stack, "string");
+});
+
+test("RayError stores unsafe detail keys as inert own properties", () => {
+  const error = new RayError("hostile detail keys", {
+    details: JSON.parse('{"__proto__":{"polluted":true},"constructor":"shadowed"}'),
+  });
+  const details = error.details as Record<string, unknown>;
+
+  assert.equal(Object.getPrototypeOf(details), Object.prototype);
+  assert.equal(Object.prototype.hasOwnProperty.call(details, "__proto__"), true);
+  assert.deepEqual(details.__proto__, { polluted: true });
+  assert.equal(details.constructor, "shadowed");
+  assert.equal(({} as { polluted?: boolean }).polluted, undefined);
 });
