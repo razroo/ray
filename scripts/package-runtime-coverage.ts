@@ -57,6 +57,9 @@ const forbiddenPackageManagerPattern =
 const forbiddenWorkflowPackageManagerPattern =
   /(?:^|[\s:>"'`&;|()])(?:(?:pnpm|yarn|npx)(?:\s|$)|npm\s+(?:ci|exec|install|run|test)\b)/;
 const documentedBunRunScriptPattern = /\bbun\s+run\s+([A-Za-z0-9][A-Za-z0-9:_-]*\*?)/g;
+const workflowNpmPublishPattern = /\bnpm\s+publish\b/;
+const workflowBunPackPattern = /\bbun\s+(?:pm\s+)?pack\b/;
+const workflowGitHubApiPattern = /\bgh\s+api\b/;
 
 export interface PackageRuntimeCoverageArgs {
   cwd: string;
@@ -1798,6 +1801,19 @@ async function validateWorkflow(
     ...validateNoRepoOwnedDeployWorkflow(workflowPath),
   ];
   const lines = contents.split(/\r?\n/);
+  const publishesToNpm = lines.some((line) => workflowNpmPublishPattern.test(line));
+  const hasJobTimeout = lines.some((line) => /^\s*timeout-minutes:\s*\d+\s*$/.test(line));
+
+  if (publishesToNpm && !hasJobTimeout) {
+    diagnostics.push({
+      level: "error",
+      code: "workflow_npm_release_job_timeout_missing",
+      workflowPath,
+      message:
+        "npm release workflows must set timeout-minutes so a stuck registry or quality wait cannot hold a release job indefinitely.",
+    });
+  }
+
   for (const [index, rawLine] of lines.entries()) {
     const line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#")) {
@@ -1823,6 +1839,39 @@ async function validateWorkflow(
         line: index + 1,
         message:
           "Workflow bun install commands must pass --frozen-lockfile so CI and deploy jobs use the checked-in Bun dependency graph.",
+      });
+    }
+
+    if (workflowGitHubApiPattern.test(line) && !line.includes("timeout ")) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_gh_api_timeout_missing",
+        workflowPath,
+        line: index + 1,
+        message:
+          "Workflow gh api calls must run under timeout so release quality polling cannot hang indefinitely.",
+      });
+    }
+
+    if (workflowBunPackPattern.test(line) && !line.includes("timeout ")) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_bun_pack_timeout_missing",
+        workflowPath,
+        line: index + 1,
+        message:
+          "Workflow bun pack commands must run under timeout so package staging cannot hang indefinitely.",
+      });
+    }
+
+    if (workflowNpmPublishPattern.test(line) && !line.includes("timeout ")) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_npm_publish_timeout_missing",
+        workflowPath,
+        line: index + 1,
+        message:
+          "Workflow npm publish commands must run under timeout so registry stalls cannot hold release jobs indefinitely.",
       });
     }
 

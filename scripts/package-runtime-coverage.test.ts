@@ -936,6 +936,8 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.equal(codes.filter((code) => code === "non_bun_package_manager_script").length, 4);
   assert.equal(codes.filter((code) => code === "non_bun_workflow_package_manager").length, 2);
   assert.ok(codes.includes("workflow_bun_install_frozen_lockfile_missing"));
+  assert.ok(codes.includes("workflow_npm_release_job_timeout_missing"));
+  assert.ok(codes.includes("workflow_npm_publish_timeout_missing"));
   assert.ok(codes.includes("unbounded_workflow_health_probe"));
   assert.ok(codes.includes("unbounded_workflow_curl_install"));
   assert.ok(codes.includes("workflow_curl_install_body_timeout_missing"));
@@ -983,6 +985,43 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.ok(codes.includes("runtime_doc_bun_script_missing"));
   assert.equal(codes.filter((code) => code === "non_bun_runtime_doc_command").length, 6);
   assert.ok(codes.includes("non_bun_lockfile_present"));
+});
+
+test("validatePackageRuntimeCoverage requires bounded npm release workflow commands", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-release-timeouts-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const workflowDir = path.join(tempDir, ".github", "workflows");
+  await mkdir(workflowDir, { recursive: true });
+  await writeFile(
+    path.join(workflowDir, "ray-core-release.yml"),
+    [
+      'name: "@razroo/ray-core Release to npm"',
+      "jobs:",
+      "  publish:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      '      - run: gh api "repos/example/ray/commits/$SHA/check-runs"',
+      '      - run: bun pm pack --destination "$RUNNER_TEMP/ray-packs"',
+      "      - run: npm publish ./pkg.tgz --access public --provenance",
+      "",
+    ].join("\n"),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [],
+  });
+  const codes = summary.results.flatMap((result) =>
+    result.diagnostics.map((diagnostic) => diagnostic.code),
+  );
+
+  assert.equal(summary.ok, false);
+  assert.ok(codes.includes("workflow_npm_release_job_timeout_missing"));
+  assert.ok(codes.includes("workflow_gh_api_timeout_missing"));
+  assert.ok(codes.includes("workflow_bun_pack_timeout_missing"));
+  assert.ok(codes.includes("workflow_npm_publish_timeout_missing"));
 });
 
 test("validatePackageRuntimeCoverage matches release gate smoke steps exactly", async (t) => {
