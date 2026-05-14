@@ -3416,6 +3416,85 @@ test("diagnoseConfig reports a valid generated Caddyfile in strict mode", () => 
   assert.match(diagnostic.message, /validates/);
 });
 
+test("diagnoseConfig warns when Caddy state storage is missing in strict mode", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      caddyStoragePath: "/var/lib/caddy",
+      caddyStorageStatus: "missing",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "caddy_storage_missing");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /ACME certificates/);
+});
+
+test("diagnoseConfig errors when strict Caddy state storage is below the deploy cushion", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      caddyStoragePath: "/var/lib/caddy",
+      caddyStorageRealPath: "/mnt/caddy",
+      caddyStorageStatus: "available",
+      caddyStorageAvailableMiB: 256,
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "caddy_storage_low");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /256 MiB/);
+  assert.match(diagnostic.message, /1,024 MiB/);
+  assert.match(diagnostic.message, /\/mnt\/caddy/);
+  assert.match(diagnostic.message, /RAY_DEPLOY_MIN_FREE_STORAGE_MIB/);
+});
+
+test("diagnoseConfig reports adequate Caddy state storage for strict deploys", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      caddyStoragePath: "/var/lib/caddy",
+      caddyStorageStatus: "available",
+      caddyStorageAvailableMiB: 2_048,
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "caddy_storage_ok");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+  assert.match(diagnostic.message, /2,048 MiB/);
+  assert.match(diagnostic.message, /ACME certificates/);
+});
+
+test("diagnoseConfig honors deploy storage reserve for Caddy state headroom", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(
+    config,
+    { RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "2048" },
+    undefined,
+    {
+      strictFilesystem: true,
+      preflight: {
+        caddyStoragePath: "/var/lib/caddy",
+        caddyStorageStatus: "available",
+        caddyStorageAvailableMiB: 1_536,
+      },
+    },
+  );
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "caddy_storage_low");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /1,536 MiB/);
+  assert.match(diagnostic.message, /2,048 MiB/);
+  assert.match(diagnostic.message, /RAY_DEPLOY_MIN_FREE_STORAGE_MIB/);
+});
+
 test("loadAndDiagnoseDeployment validates the generated Caddyfile in strict mode", async (t) => {
   const tempDir = await mkRayDeployTempDir("ray-deploy-caddyfile-ok-");
   t.after(async () => {

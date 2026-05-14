@@ -1936,6 +1936,7 @@ function validateDeployStoragePreflightScript(
     contents.includes('"/etc/ray"') &&
     contents.includes('"/etc/systemd/system"') &&
     contents.includes('"/etc/caddy"') &&
+    contents.includes('"/var/lib/caddy"') &&
     contents.includes('"/srv/ray"') &&
     contents.includes('"/srv/ray/.ray/bun-install-cache"') &&
     contents.includes('"/var/lib/ray"') &&
@@ -1971,7 +1972,7 @@ function validateDeployStoragePreflightScript(
       scriptPath,
       line: workflowLineNumber(lines, "DEFAULT_STORAGE_PATHS"),
       message:
-        "Manual deploy storage preflight must check /, /var/cache/apt, /var/lib/apt, /etc/ray, /etc/systemd/system, /etc/caddy, /srv/ray/.ray/bun-install-cache, /var/lib/ray, /var/log, /tmp, and /var/tmp by default, load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from --ray-env-file, include custom env-file model, llama.cpp binary, async-queue, and artifact staging source storage paths, resolve relative staging sources from the current working directory, and report resolved symlink targets so operator-run package installs, config writes, journal/log output, artifact staging, and Bun installs use the same disk headroom guard as the manual deploy helpers.",
+        "Manual deploy storage preflight must check /, /var/cache/apt, /var/lib/apt, /etc/ray, /etc/systemd/system, /etc/caddy, /var/lib/caddy, /srv/ray/.ray/bun-install-cache, /var/lib/ray, /var/log, /tmp, and /var/tmp by default, load RAY_DEPLOY_MIN_FREE_STORAGE_MIB from --ray-env-file, include custom env-file model, llama.cpp binary, async-queue, and artifact staging source storage paths, resolve relative staging sources from the current working directory, and report resolved symlink targets so operator-run package installs, config writes, Caddy state, journal/log output, artifact staging, and Bun installs use the same disk headroom guard as the manual deploy helpers.",
     },
   ];
 }

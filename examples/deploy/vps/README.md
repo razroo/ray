@@ -149,11 +149,12 @@ The `umask 022` keeps the checkout, built files, and Bun-installed dependencies
 readable by the generated service user without a recursive permission walk over
 `node_modules`.
 The storage preflight checks the root filesystem, APT cache/state, `/etc/ray`,
-`/etc/systemd/system`, `/etc/caddy`, `/srv/ray`, `/var/lib/ray`, `/tmp`,
-`/var/log`, `/var/tmp`, and the repo-scoped Bun install cache at
-`/srv/ray/.ray/bun-install-cache` before package bootstrap, the Bun install
-expands dependencies, deploy writes config, units, and the Caddyfile, or systemd
-journal output accumulates; set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` in the process env or pass
+`/etc/systemd/system`, `/etc/caddy`, Caddy state under `/var/lib/caddy`,
+`/srv/ray`, `/var/lib/ray`, `/tmp`, `/var/log`, `/var/tmp`, and the repo-scoped
+Bun install cache at `/srv/ray/.ray/bun-install-cache` before package bootstrap,
+the Bun install expands dependencies, deploy writes config, units, the
+Caddyfile, and Caddy certificate state, or systemd journal output accumulates;
+set `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` in the process env or pass
 `--ray-env-file /etc/ray/ray.env` to raise or lower the default 1024 MiB
 threshold without shell-sourcing the rest of the env file. When that env file
 sets a custom `RAY_MODEL_PATH`, `RAY_LLAMA_CPP_MODEL_PATH`,
@@ -439,7 +440,7 @@ timeout 1800s bun run benchmark:assert:cx23:1b
 - Keep `/etc/ray/ray.env` private, for example with `sudo chmod 600 /etc/ray/ray.env`; doctor warns when the env file is group/world-readable.
 - Create the generated service user before manual render/restart steps, or set `RAY_DEPLOY_SERVICE_USER` in the deploy env file when not using the default `ray` account; named users are created by the workflow bootstrap when missing, while numeric UIDs must already resolve on the VPS. Use a dedicated non-root account because doctor warns when generated Ray services are configured to run as root.
 - Install Bun 1.3+ at `/usr/local/bin/bun`, set `RAY_GATEWAY_RUNTIME_BINARY`, or pass the same `--gateway-runtime-binary` used at render time; keep that runtime outside `/home`, `/root`, `/run/user`, `/tmp`, and `/var/tmp`. Doctor verifies the generated service user can execute the rendered gateway runtime and, for identifiable Bun/Node binaries, that the service user can read a version satisfying Ray's engine requirements before systemd uses it. Node.js remains a compatibility fallback, and doctor warns when a generated VPS service is pointed at Node instead of Bun.
-- Install Caddy on `PATH`, set `RAY_DEPLOY_CADDY_BINARY`, or pass `--caddy-binary`; doctor runs that binary for `version` and `validate --config` before you install or reload the generated reverse proxy config.
+- Install Caddy on `PATH`, set `RAY_DEPLOY_CADDY_BINARY`, or pass `--caddy-binary`; doctor runs that binary for `version` and `validate --config` before you install or reload the generated reverse proxy config, and checks `/var/lib/caddy` storage headroom when that packaged Caddy state directory exists.
 - Keep `/etc/ray/ray.json` readable by the generated service user, for example with `root:<service-user-primary-group>` ownership and mode `0640`; doctor verifies this before systemd uses it.
 - Keep the Ray checkout at the generated `WorkingDirectory` such as `/srv/ray`, not under `/home`, `/root`, or `/run/user`; doctor verifies the directory exists, is not hidden by `ProtectHome=true`, has read/execute mode bits for the generated service user, and retains the `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` storage cushion for the synced checkout and Bun production install before systemd uses it.
 - Keep `/var/log` with at least the `RAY_DEPLOY_MIN_FREE_STORAGE_MIB` storage cushion before restarting Ray services; doctor checks system log storage so systemd journal output cannot quietly consume the last disk headroom on a small VPS.

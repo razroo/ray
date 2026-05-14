@@ -92,6 +92,7 @@ type ConfigFileStatus = BinaryPreflightStatus;
 type WorkingDirectoryStatus = "found" | "missing" | "not_directory" | "unreadable";
 type WorkingDirectoryStorageStatus = "available" | "unreadable";
 type DirectoryStorageStatus = "available" | "missing" | "not_directory" | "unreadable";
+type CaddyStorageStatus = DirectoryStorageStatus;
 type SystemLogStorageStatus = DirectoryStorageStatus;
 type EnvFileStatus = "found" | "missing" | "unreadable";
 type ServiceUserStatus = "found" | "missing" | "unreadable";
@@ -141,6 +142,11 @@ export interface DeploymentPreflight {
   caddyError?: string;
   caddyConfigStatus?: CaddyConfigStatus;
   caddyConfigError?: string;
+  caddyStoragePath?: string;
+  caddyStorageRealPath?: string;
+  caddyStorageStatus?: CaddyStorageStatus;
+  caddyStorageAvailableMiB?: number;
+  caddyStorageError?: string;
   gatewayEntrypointRealPath?: string;
   gatewayEntrypointPath?: string;
   gatewayEntrypointStatus?: GatewayEntrypointStatus;
@@ -267,6 +273,7 @@ const LLAMA_CPP_SYSTEMD_SERVICE = "ray-llama-cpp.service";
 const RAY_STATE_DIRECTORY_NAME = "ray";
 const RAY_STATE_DIRECTORY_PATH = "/var/lib/ray";
 const RAY_STATE_DIRECTORY_PARENT_PATH = path.dirname(RAY_STATE_DIRECTORY_PATH);
+const CADDY_STORAGE_PATH = "/var/lib/caddy";
 const SYSTEM_LOG_STORAGE_PATH = "/var/log";
 const TEMPORARY_STORAGE_PATHS = ["/tmp", "/var/tmp"] as const;
 const GATEWAY_ENTRYPOINT_RELATIVE_PATH = "apps/gateway/dist/index.js";
@@ -2905,6 +2912,52 @@ export function diagnoseConfig(
     }
   }
 
+  if (strictFilesystem && preflight?.caddyStorageStatus !== undefined) {
+    const caddyStoragePath = preflight.caddyStoragePath ?? CADDY_STORAGE_PATH;
+    const caddyStorageDiagnosticPath = formatPathWithRealTarget(
+      caddyStoragePath,
+      preflight.caddyStorageRealPath,
+    );
+
+    if (preflight.caddyStorageStatus === "missing") {
+      diagnostics.push({
+        level: "warn",
+        code: "caddy_storage_missing",
+        message: `Caddy state storage was not found at ${caddyStoragePath}. The packaged Caddy service normally owns ${CADDY_STORAGE_PATH} for ACME certificates, OCSP data, and runtime state; verify the Caddy service user has persistent storage before exposing Ray publicly.`,
+      });
+    } else if (preflight.caddyStorageStatus === "not_directory") {
+      diagnostics.push({
+        level: "error",
+        code: "caddy_storage_not_directory",
+        message: `Caddy state storage path ${caddyStoragePath} is not a directory. Use a persistent directory for ACME certificates and runtime state before reloading Caddy.`,
+      });
+    } else if (preflight.caddyStorageStatus === "unreadable") {
+      diagnostics.push({
+        level: "error",
+        code: "caddy_storage_unreadable",
+        message: `Doctor could not inspect free space for Caddy state storage at ${caddyStorageDiagnosticPath}${preflight.caddyStorageError ? ` (${preflight.caddyStorageError})` : ""}. Verify Caddy has persistent storage headroom for ACME certificates and runtime state before exposing Ray publicly.`,
+      });
+    } else if (preflight.caddyStorageAvailableMiB === undefined) {
+      diagnostics.push({
+        level: "error",
+        code: "caddy_storage_unreadable",
+        message: `Doctor could not resolve free space for Caddy state storage at ${caddyStorageDiagnosticPath}. Verify Caddy has persistent storage headroom for ACME certificates and runtime state before exposing Ray publicly.`,
+      });
+    } else if (preflight.caddyStorageAvailableMiB < deployStorageCushionMiB) {
+      diagnostics.push({
+        level: "error",
+        code: "caddy_storage_low",
+        message: `Caddy state storage has ${formatMiB(preflight.caddyStorageAvailableMiB)} free at ${caddyStorageDiagnosticPath}, below the ${formatMiB(deployStorageCushionMiB)} deployment cushion for ACME certificates, OCSP data, and runtime state. Free disk space or move Caddy state storage before exposing Ray publicly; this cushion follows RAY_DEPLOY_MIN_FREE_STORAGE_MIB.`,
+      });
+    } else {
+      diagnostics.push({
+        level: "info",
+        code: "caddy_storage_ok",
+        message: `Caddy state storage has ${formatMiB(preflight.caddyStorageAvailableMiB)} free at ${caddyStorageDiagnosticPath}, satisfying the ${formatMiB(deployStorageCushionMiB)} deployment cushion for ACME certificates, OCSP data, and runtime state.`,
+      });
+    }
+  }
+
   if (strictFilesystem && preflight?.workingDirectoryStatus !== undefined) {
     const workingDirectoryPath =
       preflight.workingDirectoryPath ?? "the configured WorkingDirectory";
@@ -5077,6 +5130,25 @@ async function collectCaddyConfigPreflight(
   }
 }
 
+async function collectCaddyStoragePreflight(
+  strictFilesystem: boolean,
+  caddyStatus: CaddyRuntimeStatus | undefined,
+): Promise<Partial<DeploymentPreflight>> {
+  if (!strictFilesystem || caddyStatus !== "available") {
+    return {};
+  }
+
+  const check = await collectDirectoryStorageCheck(CADDY_STORAGE_PATH);
+
+  return {
+    caddyStoragePath: check.path,
+    ...(check.realPath ? { caddyStorageRealPath: check.realPath } : {}),
+    caddyStorageStatus: check.status,
+    ...(check.availableMiB !== undefined ? { caddyStorageAvailableMiB: check.availableMiB } : {}),
+    ...(check.error ? { caddyStorageError: check.error } : {}),
+  };
+}
+
 async function collectWorkingDirectoryPreflight(
   cwd: string,
   strictFilesystem: boolean,
@@ -5809,6 +5881,10 @@ async function collectDeploymentPreflight(
     caddyPreflight.caddyStatus,
     caddyBinary,
   );
+  const caddyStoragePreflight = await collectCaddyStoragePreflight(
+    options.strictFilesystem === true,
+    caddyPreflight.caddyStatus,
+  );
   const envFilePreflight = await collectEnvFilePreflight(options.envFile);
   const serviceUserPreflight = await collectServiceUserPreflight(
     options.user,
@@ -5883,6 +5959,7 @@ async function collectDeploymentPreflight(
       ...systemdPreflight,
       ...caddyPreflight,
       ...caddyConfigPreflight,
+      ...caddyStoragePreflight,
       ...envFilePreflight,
       ...serviceUserPreflight,
       ...configFilePreflight,
@@ -5942,6 +6019,7 @@ async function collectDeploymentPreflight(
     ...systemdPreflight,
     ...caddyPreflight,
     ...caddyConfigPreflight,
+    ...caddyStoragePreflight,
     ...envFilePreflight,
     ...serviceUserPreflight,
     ...configFilePreflight,
