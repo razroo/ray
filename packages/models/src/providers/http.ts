@@ -54,6 +54,7 @@ const MAX_ADAPTER_WARMUP_STOP_SEQUENCE_CHARS = 256;
 const MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLES = 32;
 const MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLE_KEY_CHARS = 128;
 const MAX_ADAPTER_WARMUP_TEMPLATE_VARIABLE_VALUE_CHARS = 16_384;
+const MAX_OPENAI_COMPATIBLE_TOKEN_USAGE = 1_000_000_000;
 const MAX_ASSISTANT_CONTENT_PARTS = 512;
 const MIN_ASSISTANT_TEXT_CHARS = 8_192;
 const MAX_ASSISTANT_TEXT_CHARS = 262_144;
@@ -85,8 +86,11 @@ export function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
 }
 
-function isNonNegativeSafeInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+function isNonNegativeSafeInteger(
+  value: unknown,
+  maximum = MAX_OPENAI_COMPATIBLE_TOKEN_USAGE,
+): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= maximum;
 }
 
 export function normalizeOpenAICompatibleTokenUsage(
@@ -111,12 +115,16 @@ export function normalizeOpenAICompatibleTokenUsage(
   const normalizedPrompt = prompt ?? 0;
   const normalizedCompletion = completion ?? 0;
   const computedTotal = normalizedPrompt + normalizedCompletion;
+  if (computedTotal > MAX_OPENAI_COMPATIBLE_TOKEN_USAGE) {
+    return undefined;
+  }
+  const normalizedTotal = total !== undefined && total >= computedTotal ? total : computedTotal;
 
   return {
     tokens: {
       prompt: normalizedPrompt,
       completion: normalizedCompletion,
-      total: total !== undefined && total >= computedTotal ? total : computedTotal,
+      total: normalizedTotal,
     },
   };
 }
