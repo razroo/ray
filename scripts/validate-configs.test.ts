@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   collectConfigPaths,
+  diagnosePublicConfigPolicy,
   formatTextSummary,
   parseArgs,
   validateConfigFiles,
@@ -346,6 +347,24 @@ test("validateConfigFiles rejects public backend secret headers and extra launch
   assert.ok(codes.includes("public_config_model_adapter_headers_absent"));
   assert.ok(codes.includes("public_config_model_adapter_slot_id_absent"));
   assert.ok(codes.includes("public_config_model_launch_extra_args_absent"));
+});
+
+test("diagnosePublicConfigPolicy bounds public config policy reads", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-config-public-policy-bound-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const configPath = path.join(tempDir, "ray.oversized.public.json");
+  await writeFile(configPath, `${" ".repeat(256 * 1024 + 1)}{}`, "utf8");
+
+  const diagnostics = await diagnosePublicConfigPolicy(configPath);
+
+  assert.deepEqual(
+    diagnostics.map((diagnostic) => diagnostic.code),
+    ["public_config_policy_unreadable"],
+  );
+  assert.match(diagnostics[0]?.message, /Config policy file must be at most 262144 bytes/);
 });
 
 test("validateConfigFiles accepts every checked-in example config", async () => {

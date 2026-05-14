@@ -1,4 +1,4 @@
-import { opendir, readFile } from "node:fs/promises";
+import { open, opendir } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -12,6 +12,7 @@ const MAX_CONFIG_FILES = 128;
 const MAX_CLI_ARGS = 16;
 const MAX_CLI_ARG_BYTES = 4_096;
 const MAX_CONFIG_VALIDATION_PATH_BYTES = 4_096;
+const MAX_CONFIG_POLICY_FILE_BYTES = 256 * 1024;
 const MAX_PUBLIC_MODEL_CONTEXT_WINDOW = 8_192;
 const MAX_PUBLIC_MODEL_OUTPUT_TOKENS = 256;
 const MAX_PUBLIC_MODEL_OPERATIONAL_TOKENS_PER_SECOND = 18;
@@ -308,6 +309,32 @@ function isRecord(value: unknown): value is ConfigRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+async function readConfigPolicyFileBounded(configPath: string): Promise<string> {
+  let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
+
+  try {
+    fileHandle = await open(configPath, "r");
+    const stats = await fileHandle.stat();
+
+    if (!stats.isFile()) {
+      throw new Error(`Config policy path must be a file: ${configPath}`);
+    }
+
+    if (stats.size > MAX_CONFIG_POLICY_FILE_BYTES) {
+      throw new Error(`Config policy file must be at most ${MAX_CONFIG_POLICY_FILE_BYTES} bytes`);
+    }
+
+    const contents = await fileHandle.readFile("utf8");
+    if (Buffer.byteLength(contents, "utf8") > MAX_CONFIG_POLICY_FILE_BYTES) {
+      throw new Error(`Config policy file must be at most ${MAX_CONFIG_POLICY_FILE_BYTES} bytes`);
+    }
+
+    return contents;
+  } finally {
+    await fileHandle?.close().catch(() => undefined);
+  }
+}
+
 function getConfigValue(config: ConfigRecord, keys: string[]): unknown {
   let current: unknown = config;
 
@@ -479,13 +506,15 @@ function expectPublicConfigPositiveNumberAtMost(
   );
 }
 
-async function diagnosePublicConfigPolicy(configPath: string): Promise<DeploymentDiagnostic[]> {
+export async function diagnosePublicConfigPolicy(
+  configPath: string,
+): Promise<DeploymentDiagnostic[]> {
   const diagnostics: DeploymentDiagnostic[] = [];
   const publicFile = path.basename(configPath).endsWith(".public.json");
   let parsed: unknown;
 
   try {
-    parsed = JSON.parse(await readFile(configPath, "utf8"));
+    parsed = JSON.parse(await readConfigPolicyFileBounded(configPath));
   } catch (error) {
     if (publicFile) {
       pushPublicConfigPolicyError(
