@@ -967,6 +967,42 @@ test("diagnoseConfig warns when request body buffering is high for gateway memor
   assert.match(diagnostic.message, /generated gateway MemoryMax of 896 MiB/);
 });
 
+test("diagnoseConfig flags generated gateway memory limits that exceed detected host budget", () => {
+  const config = createDefaultConfig("vps");
+
+  assert.ok(
+    !diagnoseConfig(config, process.env, undefined, {
+      preflight: {
+        hostMemoryMiB: 4_096,
+      },
+    }).some((entry) => entry.code === "gateway_memory_max_exceeds_host_budget"),
+  );
+
+  const renderDiagnostic = diagnoseConfig(config, process.env, undefined, {
+    preflight: {
+      hostMemoryMiB: 1_024,
+    },
+  }).find((entry) => entry.code === "gateway_memory_max_exceeds_host_budget");
+
+  assert.ok(renderDiagnostic);
+  assert.equal(renderDiagnostic.level, "warn");
+
+  const doctorDiagnostic = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      hostMemoryMiB: 1_024,
+    },
+  }).find((entry) => entry.code === "gateway_memory_max_exceeds_host_budget");
+
+  assert.ok(doctorDiagnostic);
+  assert.equal(doctorDiagnostic.level, "error");
+  assert.match(doctorDiagnostic.message, /generated gateway MemoryMax of 1,152 MiB/);
+  assert.match(doctorDiagnostic.message, /768 MiB system reserve/);
+  assert.match(doctorDiagnostic.message, /1,024 MiB host memory/);
+  assert.match(doctorDiagnostic.message, /256 MiB remains after reserve/);
+  assert.match(doctorDiagnostic.message, /RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB/);
+});
+
 test("diagnoseConfig warns when scheduler concurrency exceeds host CPUs", () => {
   const config = mergeConfig(createDefaultConfig("vps"), {
     scheduler: {

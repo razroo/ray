@@ -235,6 +235,14 @@ export interface LlamaCppSystemdMemoryFloor {
   ok: boolean;
 }
 
+interface GatewaySystemdMemoryFit {
+  hostMemoryMiB: number;
+  reserveMiB: number;
+  gatewayMemoryMaxMiB: number;
+  availableAfterReserveMiB: number;
+  ok: boolean;
+}
+
 export interface DiagnoseConfigOptions {
   preflight?: DeploymentPreflight;
   strictFilesystem?: boolean;
@@ -1732,6 +1740,24 @@ function getPresetMemoryBudgetMiB(preset: LlamaCppLaunchProfile["preset"]): numb
 
 function resolveSystemReserveMiB(memoryBudgetMiB: number): number {
   return Math.max(MIN_SYSTEM_RESERVE_MIB, Math.ceil(memoryBudgetMiB * SYSTEM_RESERVE_RATIO));
+}
+
+function evaluateGatewaySystemdMemoryFit(
+  config: RayConfig,
+  hostMemoryMiB: number,
+): GatewaySystemdMemoryFit {
+  const normalizedHostMemoryMiB = Math.max(1, Math.floor(hostMemoryMiB));
+  const reserveMiB = resolveSystemReserveMiB(normalizedHostMemoryMiB);
+  const gatewayControls = resolveGatewayMemoryControls(config);
+  const availableAfterReserveMiB = Math.max(0, normalizedHostMemoryMiB - reserveMiB);
+
+  return {
+    hostMemoryMiB: normalizedHostMemoryMiB,
+    reserveMiB,
+    gatewayMemoryMaxMiB: gatewayControls.memoryMaxMiB,
+    availableAfterReserveMiB,
+    ok: gatewayControls.memoryMaxMiB <= availableAfterReserveMiB,
+  };
 }
 
 export function evaluateLlamaCppSystemdMemoryFloor(
@@ -3525,6 +3551,26 @@ export function diagnoseConfig(
         level: "warn",
         code: "request_body_buffer_high_for_gateway_memory",
         message: `server.requestBodyLimitBytes allows about ${formatMiB(requestBodyBufferMiB)} of request-body buffering at scheduler.maxQueue (${config.scheduler.maxQueue}) plus scheduler.concurrency (${config.scheduler.concurrency}), above the ${formatMiB(requestBodyBufferWarnThresholdMiB)} small-VPS warning threshold for the generated gateway MemoryMax of ${formatMiB(gatewayMemoryMaxMiB)}. Lower RAY_REQUEST_BODY_LIMIT_BYTES so slow or oversized uploads cannot crowd out request handling, cache, and graceful degradation headroom.`,
+      });
+    }
+  }
+
+  if (preflight?.hostMemoryMiB !== undefined && preflight.hostMemoryMiB > 0) {
+    const gatewayMemoryFit = evaluateGatewaySystemdMemoryFit(config, preflight.hostMemoryMiB);
+
+    if (!gatewayMemoryFit.ok) {
+      diagnostics.push({
+        level: strictFilesystem ? "error" : "warn",
+        code: "gateway_memory_max_exceeds_host_budget",
+        message: `The generated gateway MemoryMax of ${formatMiB(
+          gatewayMemoryFit.gatewayMemoryMaxMiB,
+        )} plus the ${formatMiB(
+          gatewayMemoryFit.reserveMiB,
+        )} system reserve cannot fit within the detected ${formatMiB(
+          gatewayMemoryFit.hostMemoryMiB,
+        )} host memory; only ${formatMiB(
+          gatewayMemoryFit.availableAfterReserveMiB,
+        )} remains after reserve. Lower RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB or use a larger VPS before restarting ray-gateway.service.`,
       });
     }
   }
