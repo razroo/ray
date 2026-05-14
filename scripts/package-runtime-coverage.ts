@@ -115,6 +115,11 @@ export interface PackageRuntimeCoverageSummary {
   results: PackageRuntimeCoverageResult[];
 }
 
+interface PackageRuntimeCoverageOptions {
+  cwd: string;
+  packageJsonPaths: string[];
+}
+
 const HELP = `Validate Bun-first package, workflow, and runtime-doc coverage.
 
 Usage:
@@ -125,6 +130,10 @@ Options:
   --json        Print machine-readable summary JSON.
   -h, --help    Show this help.
 `;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 
 function assertArgv(argv: unknown): asserts argv is string[] {
   if (!Array.isArray(argv)) {
@@ -147,6 +156,34 @@ function assertArgv(argv: unknown): asserts argv is string[] {
     if (Buffer.byteLength(value, "utf8") > MAX_CLI_ARG_BYTES) {
       throw new Error(`argv[${index}] must be at most ${MAX_CLI_ARG_BYTES} bytes`);
     }
+  }
+}
+
+function assertPackageRuntimeCoverageOptions(
+  options: unknown,
+): asserts options is PackageRuntimeCoverageOptions {
+  if (!isRecord(options)) {
+    throw new Error("package runtime coverage options must be an object");
+  }
+
+  if (!Array.isArray(options.packageJsonPaths)) {
+    throw new Error("packageJsonPaths must be an array");
+  }
+}
+
+function assertPackageRuntimeCoverageCliIo(
+  io: unknown,
+): asserts io is Pick<NodeJS.Process, "stdout" | "stderr"> {
+  if (!isRecord(io)) {
+    throw new Error("package runtime coverage io must be an object");
+  }
+
+  if (!isRecord(io.stdout) || typeof io.stdout.write !== "function") {
+    throw new Error("package runtime coverage io.stdout.write must be a function");
+  }
+
+  if (!isRecord(io.stderr) || typeof io.stderr.write !== "function") {
+    throw new Error("package runtime coverage io.stderr.write must be a function");
   }
 }
 
@@ -2673,10 +2710,10 @@ async function validateRuntimeDoc(
   };
 }
 
-export async function validatePackageRuntimeCoverage(options: {
-  cwd: string;
-  packageJsonPaths: string[];
-}): Promise<PackageRuntimeCoverageSummary> {
+export async function validatePackageRuntimeCoverage(
+  options: PackageRuntimeCoverageOptions,
+): Promise<PackageRuntimeCoverageSummary> {
+  assertPackageRuntimeCoverageOptions(options);
   assertRuntimeCoveragePathValue(options.cwd, "cwd");
   const cwd = path.resolve(options.cwd);
   if (options.packageJsonPaths.length > MAX_PACKAGE_JSON_FILES) {
@@ -2933,6 +2970,8 @@ export async function runPackageRuntimeCoverageCli(
   argv = process.argv.slice(2),
   io: Pick<NodeJS.Process, "stdout" | "stderr"> = process,
 ): Promise<number> {
+  assertPackageRuntimeCoverageCliIo(io);
+
   try {
     const args = parseArgs(argv);
 

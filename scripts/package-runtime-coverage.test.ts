@@ -193,6 +193,22 @@ test("validatePackageRuntimeCoverage rejects excessive package inputs before sca
   );
 });
 
+test("validatePackageRuntimeCoverage rejects malformed direct options before scanning", async () => {
+  await assert.rejects(
+    () => validatePackageRuntimeCoverage(null as unknown as never),
+    /package runtime coverage options must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      validatePackageRuntimeCoverage({
+        cwd: repoRoot,
+        packageJsonPaths: null,
+      } as unknown as never),
+    /packageJsonPaths must be an array/,
+  );
+});
+
 test("validatePackageRuntimeCoverage rejects malformed direct paths before scanning", async () => {
   await assert.rejects(
     () =>
@@ -1622,6 +1638,39 @@ test("formatTextSummary prints operator-readable runtime coverage results", asyn
   assert.match(text, /package\.json/);
   assert.match(text, /packageManager=bun@/);
   assert.match(text, /Summary: packages=1/);
+});
+
+test("runPackageRuntimeCoverageCli rejects malformed direct io before parsing", async () => {
+  await assert.rejects(
+    () => runPackageRuntimeCoverageCli([], null as unknown as never),
+    /package runtime coverage io must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      runPackageRuntimeCoverageCli(["--help"], {
+        stdout: {},
+        stderr: {
+          write() {
+            return true;
+          },
+        },
+      } as unknown as never),
+    /package runtime coverage io\.stdout\.write must be a function/,
+  );
+
+  await assert.rejects(
+    () =>
+      runPackageRuntimeCoverageCli(["--unknown"], {
+        stdout: {
+          write() {
+            return true;
+          },
+        },
+        stderr: {},
+      } as unknown as never),
+    /package runtime coverage io\.stderr\.write must be a function/,
+  );
 });
 
 test("runPackageRuntimeCoverageCli prints JSON coverage", async () => {
