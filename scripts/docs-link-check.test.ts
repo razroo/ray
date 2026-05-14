@@ -87,6 +87,22 @@ test("validateDocsLinks rejects excessive direct Markdown inputs before reading"
   );
 });
 
+test("validateDocsLinks rejects malformed direct options before reading", async () => {
+  await assert.rejects(
+    () => validateDocsLinks(null as never),
+    /docs link check options must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      validateDocsLinks({
+        cwd: repoRoot,
+        markdownPaths: null,
+      } as never),
+    /markdownPaths must be an array when provided/,
+  );
+});
+
 test("validateDocsLinks rejects malformed direct Markdown paths before reading", async () => {
   await assert.rejects(
     () =>
@@ -211,6 +227,39 @@ test("formatTextSummary prints operator-readable link results", async () => {
   assert.match(text, /Checked 1 Markdown file/);
   assert.match(text, /README\.md/);
   assert.match(text, /Summary: docs=1/);
+});
+
+test("runDocsLinkCheckCli rejects malformed direct io before parsing", async () => {
+  await assert.rejects(
+    () => runDocsLinkCheckCli([], null as never),
+    /docs link check io must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      runDocsLinkCheckCli(["--help"], {
+        stdout: {},
+        stderr: {
+          write() {
+            return true;
+          },
+        },
+      } as never),
+    /docs link check io\.stdout\.write must be a function/,
+  );
+
+  await assert.rejects(
+    () =>
+      runDocsLinkCheckCli(["--unknown"], {
+        stdout: {
+          write() {
+            return true;
+          },
+        },
+        stderr: {},
+      } as never),
+    /docs link check io\.stderr\.write must be a function/,
+  );
 });
 
 test("runDocsLinkCheckCli prints JSON coverage", async () => {

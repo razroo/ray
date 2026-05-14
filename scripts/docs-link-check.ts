@@ -27,6 +27,11 @@ export interface DocsLinkCheckArgs {
   help: boolean;
 }
 
+interface DocsLinkCheckOptions {
+  cwd: string;
+  markdownPaths?: string[];
+}
+
 export interface DocsLinkDiagnostic {
   level: "error";
   code:
@@ -66,6 +71,10 @@ Options:
   --json        Print machine-readable summary JSON.
   -h, --help    Show this help.
 `;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 
 function assertArgv(argv: unknown): asserts argv is string[] {
   if (!Array.isArray(argv)) {
@@ -114,6 +123,32 @@ function assertDocsPathValue(value: unknown, label: string): asserts value is st
 
   if (Buffer.byteLength(value, "utf8") > MAX_DISCOVERY_PATH_BYTES) {
     throw new Error(`${label} must be at most ${MAX_DISCOVERY_PATH_BYTES} bytes`);
+  }
+}
+
+function assertDocsLinkCheckOptions(options: unknown): asserts options is DocsLinkCheckOptions {
+  if (!isRecord(options)) {
+    throw new Error("docs link check options must be an object");
+  }
+
+  if (options.markdownPaths !== undefined && !Array.isArray(options.markdownPaths)) {
+    throw new Error("markdownPaths must be an array when provided");
+  }
+}
+
+function assertDocsLinkCheckCliIo(
+  io: unknown,
+): asserts io is Pick<NodeJS.Process, "stdout" | "stderr"> {
+  if (!isRecord(io)) {
+    throw new Error("docs link check io must be an object");
+  }
+
+  if (!isRecord(io.stdout) || typeof io.stdout.write !== "function") {
+    throw new Error("docs link check io.stdout.write must be a function");
+  }
+
+  if (!isRecord(io.stderr) || typeof io.stderr.write !== "function") {
+    throw new Error("docs link check io.stderr.write must be a function");
   }
 }
 
@@ -545,10 +580,10 @@ async function validateMarkdownFileLinks(
   };
 }
 
-export async function validateDocsLinks(options: {
-  cwd: string;
-  markdownPaths?: string[];
-}): Promise<DocsLinkCheckSummary> {
+export async function validateDocsLinks(
+  options: DocsLinkCheckOptions,
+): Promise<DocsLinkCheckSummary> {
+  assertDocsLinkCheckOptions(options);
   assertDocsPathValue(options.cwd, "cwd");
   const cwd = path.resolve(options.cwd);
   if (options.markdownPaths && options.markdownPaths.length > MAX_MARKDOWN_FILES) {
@@ -615,6 +650,8 @@ export async function runDocsLinkCheckCli(
   argv = process.argv.slice(2),
   io: Pick<NodeJS.Process, "stdout" | "stderr"> = process,
 ): Promise<number> {
+  assertDocsLinkCheckCliIo(io);
+
   try {
     const args = parseArgs(argv);
 
