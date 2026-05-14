@@ -64,6 +64,34 @@ test("smokeModelStages rejects excessive config inputs before rendering", async 
   );
 });
 
+test("smokeModelStages rejects malformed direct options before rendering", async () => {
+  await assert.rejects(
+    () => smokeModelStages(null as never),
+    /model stage smoke options must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      smokeModelStages({
+        cwd: process.cwd(),
+        configPaths: null,
+        serviceUser: "ray",
+      } as never),
+    /configPaths must be an array/,
+  );
+
+  await assert.rejects(
+    () =>
+      smokeModelStages({
+        cwd: process.cwd(),
+        configPaths: [],
+        serviceUser: "ray",
+        env: null,
+      } as never),
+    /env must be an object when provided/,
+  );
+});
+
 test("smokeModelStages rejects malformed direct path inputs before rendering", async () => {
   await assert.rejects(
     () =>
@@ -171,6 +199,39 @@ test("smokeModelStages renders every checked-in public staging plan", async () =
   assert.match(text, /memory=4096MiB safe=\d+MiB nonModel=\d+MiB/);
   assert.match(text, /memory=8192MiB safe=\d+MiB nonModel=\d+MiB/);
   assert.match(text, /Summary: staged=\d+ errors=0/);
+});
+
+test("runModelStageSmokeCli rejects malformed direct io before parsing", async () => {
+  await assert.rejects(
+    () => runModelStageSmokeCli([], null as never),
+    /model stage smoke io must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      runModelStageSmokeCli(["--help"], {
+        stdout: {},
+        stderr: {
+          write() {
+            return true;
+          },
+        },
+      } as never),
+    /model stage smoke io\.stdout\.write must be a function/,
+  );
+
+  await assert.rejects(
+    () =>
+      runModelStageSmokeCli(["--unknown"], {
+        stdout: {
+          write() {
+            return true;
+          },
+        },
+        stderr: {},
+      } as never),
+    /model stage smoke io\.stderr\.write must be a function/,
+  );
 });
 
 test("runModelStageSmokeCli prints JSON summary", async () => {

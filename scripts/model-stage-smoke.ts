@@ -20,6 +20,14 @@ export interface ModelStageSmokeArgs {
   help: boolean;
 }
 
+interface ModelStageSmokeOptions {
+  cwd: string;
+  configPaths: string[];
+  serviceUser: string;
+  serviceGroup?: string;
+  env?: NodeJS.ProcessEnv;
+}
+
 export interface ModelStageSmokeResult {
   configPath: string;
   profile?: string;
@@ -55,6 +63,10 @@ Options:
   --json                Print machine-readable summary JSON.
   -h, --help            Show this help.
 `;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 
 function assertArgv(argv: unknown): asserts argv is string[] {
   if (!Array.isArray(argv)) {
@@ -119,6 +131,43 @@ function assertModelStageSmokePathValue(value: unknown, label: string): asserts 
 function isPathInside(parentPath: string, candidatePath: string): boolean {
   const relative = path.relative(parentPath, candidatePath);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function assertOptionalModelStageSmokeEnv(
+  value: unknown,
+  label: string,
+): asserts value is NodeJS.ProcessEnv | undefined {
+  if (value !== undefined && !isRecord(value)) {
+    throw new Error(`${label} must be an object when provided`);
+  }
+}
+
+function assertModelStageSmokeOptions(options: unknown): asserts options is ModelStageSmokeOptions {
+  if (!isRecord(options)) {
+    throw new Error("model stage smoke options must be an object");
+  }
+
+  if (!Array.isArray(options.configPaths)) {
+    throw new Error("configPaths must be an array");
+  }
+
+  assertOptionalModelStageSmokeEnv(options.env, "env");
+}
+
+function assertModelStageSmokeCliIo(
+  io: unknown,
+): asserts io is Pick<NodeJS.Process, "stdout" | "stderr"> {
+  if (!isRecord(io)) {
+    throw new Error("model stage smoke io must be an object");
+  }
+
+  if (!isRecord(io.stdout) || typeof io.stdout.write !== "function") {
+    throw new Error("model stage smoke io.stdout.write must be a function");
+  }
+
+  if (!isRecord(io.stderr) || typeof io.stderr.write !== "function") {
+    throw new Error("model stage smoke io.stderr.write must be a function");
+  }
 }
 
 export function parseArgs(argv: string[]): ModelStageSmokeArgs {
@@ -204,13 +253,10 @@ function toSuccessResult(configPath: string, plan: ModelStagePlan): ModelStageSm
   };
 }
 
-export async function smokeModelStages(options: {
-  cwd: string;
-  configPaths: string[];
-  serviceUser: string;
-  serviceGroup?: string;
-  env?: NodeJS.ProcessEnv;
-}): Promise<ModelStageSmokeSummary> {
+export async function smokeModelStages(
+  options: ModelStageSmokeOptions,
+): Promise<ModelStageSmokeSummary> {
+  assertModelStageSmokeOptions(options);
   if (options.configPaths.length > MAX_MODEL_STAGE_SMOKE_CONFIGS) {
     throw new Error(
       `Model stage smoke can inspect at most ${MAX_MODEL_STAGE_SMOKE_CONFIGS} config files`,
@@ -314,6 +360,8 @@ export async function runModelStageSmokeCli(
   argv = process.argv.slice(2),
   io: Pick<NodeJS.Process, "stdout" | "stderr"> = process,
 ): Promise<number> {
+  assertModelStageSmokeCliIo(io);
+
   try {
     const args = parseArgs(argv);
 
