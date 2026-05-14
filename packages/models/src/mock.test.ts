@@ -47,6 +47,22 @@ test("mock provider rejects invalid direct config", () => {
   assert.throws(() => new MockProvider({ ...createModel(adapter), id: "" }, adapter), /model\.id/);
   assert.throws(
     () =>
+      new MockProvider(createModel(adapter), {
+        ...adapter,
+        extra: "not-supported",
+      } as MockProviderConfig),
+    /model\.adapter must not contain unsupported key "extra"/,
+  );
+  assert.throws(
+    () =>
+      new MockProvider(
+        createModel(adapter),
+        JSON.parse('{"kind":"mock","latencyMs":1,"__proto__":"polluted"}') as MockProviderConfig,
+      ),
+    /model\.adapter must not contain unsafe key "__proto__"/,
+  );
+  assert.throws(
+    () =>
       new MockProvider(createModel({ ...adapter, latencyMs: 0 }), {
         ...adapter,
         latencyMs: 0,

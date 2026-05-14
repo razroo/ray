@@ -11,6 +11,8 @@ import {
 const MAX_MOCK_MODEL_ID_CHARS = 256;
 const MAX_MOCK_LATENCY_MS = 120_000;
 const MAX_MOCK_SEED_CHARS = 512;
+const unsafeMockRecordKeys = new Set(["__proto__", "constructor", "prototype"]);
+const mockAdapterKeys = new Set(["kind", "latencyMs", "seed"]);
 
 interface SnapshotMockProviderConfig {
   latencyMs: number;
@@ -55,7 +57,32 @@ function assertPositiveSafeIntegerAtMost(value: number, label: string, maximum: 
   }
 }
 
+function objectEntries(value: object, label: string): Array<[string, unknown]> {
+  try {
+    return Object.entries(value);
+  } catch {
+    throw new TypeError(`${label} must not contain unreadable properties`);
+  }
+}
+
+function assertMockAdapterKeys(adapter: MockProviderConfig): void {
+  if (adapter === null || typeof adapter !== "object" || Array.isArray(adapter)) {
+    throw new TypeError("model.adapter must be an object");
+  }
+
+  for (const [key] of objectEntries(adapter, "model.adapter")) {
+    if (unsafeMockRecordKeys.has(key)) {
+      throw new TypeError(`model.adapter must not contain unsafe key "${key}"`);
+    }
+
+    if (!mockAdapterKeys.has(key)) {
+      throw new TypeError(`model.adapter must not contain unsupported key "${key}"`);
+    }
+  }
+}
+
 function snapshotMockAdapter(adapter: MockProviderConfig): SnapshotMockProviderConfig {
+  assertMockAdapterKeys(adapter);
   assertPositiveSafeIntegerAtMost(
     adapter.latencyMs,
     "model.adapter.latencyMs",
