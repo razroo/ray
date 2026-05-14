@@ -514,8 +514,15 @@ function formatEnvironmentFileReadError(envFile: string, error: unknown): Error 
 }
 
 async function loadEnvironment(options: CliOptions): Promise<NodeJS.ProcessEnv> {
+  const env = Object.create(null) as NodeJS.ProcessEnv;
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value === "string") {
+      env[key] = value;
+    }
+  }
+
   if (!options.envFile) {
-    return process.env;
+    return env;
   }
 
   let contents: string;
@@ -525,10 +532,7 @@ async function loadEnvironment(options: CliOptions): Promise<NodeJS.ProcessEnv> 
     throw formatEnvironmentFileReadError(options.envFile, error);
   }
 
-  return {
-    ...process.env,
-    ...parseEnvironmentFile(contents),
-  };
+  return Object.assign(env, parseEnvironmentFile(contents));
 }
 
 async function writeDeploymentBundleFiles(

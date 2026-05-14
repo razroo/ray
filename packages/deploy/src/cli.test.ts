@@ -1480,6 +1480,52 @@ test("runCli validate applies env-file memory budget", async (t) => {
   assert.equal(parsed.preflight.memoryBudgetSource, "override");
 });
 
+test("runCli validate ignores inherited deploy env defaults", async (t) => {
+  const output: string[] = [];
+  const originalLog = console.log;
+  const originalEnvPrototype = Object.getPrototypeOf(process.env);
+  const originalApiKeys = process.env.RAY_API_KEYS;
+  const originalMemoryBudgetMiB = process.env.RAY_DEPLOY_MEMORY_MIB;
+
+  const inheritedEnv = Object.create(originalEnvPrototype) as NodeJS.ProcessEnv;
+  inheritedEnv.RAY_DEPLOY_MEMORY_MIB = "12288";
+
+  t.after(() => {
+    Object.setPrototypeOf(process.env, originalEnvPrototype);
+    if (originalMemoryBudgetMiB === undefined) {
+      delete process.env.RAY_DEPLOY_MEMORY_MIB;
+    } else {
+      process.env.RAY_DEPLOY_MEMORY_MIB = originalMemoryBudgetMiB;
+    }
+    if (originalApiKeys === undefined) {
+      delete process.env.RAY_API_KEYS;
+    } else {
+      process.env.RAY_API_KEYS = originalApiKeys;
+    }
+    console.log = originalLog;
+  });
+
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  delete process.env.RAY_DEPLOY_MEMORY_MIB;
+  process.env.RAY_API_KEYS = "test-key";
+  Object.setPrototypeOf(process.env, inheritedEnv);
+
+  const exitCode = await runCli([
+    "validate",
+    "--cwd",
+    ".",
+    "--config",
+    "./examples/config/ray.1b.8gb.generic.public.json",
+  ]);
+
+  const parsed = JSON.parse(output.join("\n"));
+  assert.equal(exitCode, 0);
+  assert.notEqual(parsed.preflight.memoryBudgetMiB, 12_288);
+  assert.notEqual(parsed.preflight.memoryBudgetSource, "override");
+});
+
 test("runCli explicit memory flag overrides env-file memory budget", async (t) => {
   const tempDir = await mkRayDeployTempDir("ray-deploy-memory-flag-");
   t.after(async () => {
