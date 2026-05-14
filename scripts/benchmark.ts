@@ -26,6 +26,7 @@ const DEFAULT_AUTOTUNE_SCHEDULER_CANDIDATES = 64;
 const MAX_AUTOTUNE_SCHEDULER_CANDIDATES = 256;
 const MAX_BENCHMARK_LABEL_CHARS = 256;
 const MAX_BENCHMARK_API_KEY_CHARS = 4_096;
+const MAX_BENCHMARK_API_KEY_ENV_CHARS = 64 * 1024;
 const MAX_BENCHMARK_TEXT_CHARS = 65_536;
 const MAX_BENCHMARK_METADATA_KEYS = 32;
 const MAX_BENCHMARK_METADATA_KEY_CHARS = 128;
@@ -459,6 +460,14 @@ function assertNonEmptyStringAtMost(value: string, label: string, maximum: numbe
   }
 }
 
+function assertBenchmarkApiKey(value: string, label: string): void {
+  assertNonEmptyStringAtMost(value, label, MAX_BENCHMARK_API_KEY_CHARS);
+
+  if (/[\0\s]/u.test(value)) {
+    throw new Error(`${label} must be a bearer-token-safe string without whitespace`);
+  }
+}
+
 function assertPathFlagValue(value: string, label: string): void {
   assertBenchmarkPathValue(value, label);
 }
@@ -590,7 +599,7 @@ export function parseArgs(argv: string[]): BenchmarkArgs {
 
     if (current === "--api-key") {
       const value = readFlagValue(argv, index, current);
-      assertNonEmptyStringAtMost(value, "--api-key", MAX_BENCHMARK_API_KEY_CHARS);
+      assertBenchmarkApiKey(value, "--api-key");
       result.apiKey = value;
       index += 1;
       continue;
@@ -1501,13 +1510,53 @@ function scoreQualityFailures(failures: string[]): number {
   return Math.max(0, score);
 }
 
-function resolveBenchmarkApiKey(args: BenchmarkArgs, config?: RayConfig): string | undefined {
+function resolveFirstBenchmarkApiKeyEnvValue(raw: string, label: string): string | undefined {
+  if (raw.length > MAX_BENCHMARK_API_KEY_ENV_CHARS) {
+    throw new Error(`${label} must be at most ${MAX_BENCHMARK_API_KEY_ENV_CHARS} characters`);
+  }
+
+  let start = 0;
+
+  while (start <= raw.length) {
+    const commaIndex = raw.indexOf(",", start);
+    const newlineIndex = raw.indexOf("\n", start);
+    const end =
+      commaIndex === -1
+        ? newlineIndex === -1
+          ? raw.length
+          : newlineIndex
+        : newlineIndex === -1
+          ? commaIndex
+          : Math.min(commaIndex, newlineIndex);
+    const value = raw.slice(start, end).trim();
+
+    if (value.length > 0) {
+      assertBenchmarkApiKey(value, `${label} entries`);
+      return value;
+    }
+
+    if (end === raw.length) {
+      break;
+    }
+
+    start = end + 1;
+  }
+
+  return undefined;
+}
+
+export function resolveBenchmarkApiKey(
+  args: BenchmarkArgs,
+  config?: RayConfig,
+): string | undefined {
   if (args.apiKey) {
+    assertBenchmarkApiKey(args.apiKey, "--api-key");
     return args.apiKey;
   }
 
   const directEnvKey = process.env[BENCHMARK_API_KEY_ENV];
   if (directEnvKey) {
+    assertBenchmarkApiKey(directEnvKey, BENCHMARK_API_KEY_ENV);
     return directEnvKey;
   }
 
@@ -1520,10 +1569,7 @@ function resolveBenchmarkApiKey(args: BenchmarkArgs, config?: RayConfig): string
     return undefined;
   }
 
-  return raw
-    .split(/[\n,]/)
-    .map((value) => value.trim())
-    .find((value) => value.length > 0);
+  return resolveFirstBenchmarkApiKeyEnvValue(raw, config.auth.apiKeyEnv);
 }
 
 function resolveAutotuneScope(args: BenchmarkArgs, config: RayConfig): "gateway" | "full" {

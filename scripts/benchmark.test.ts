@@ -15,6 +15,7 @@ import {
   loadBaseline,
   loadWorkload,
   parseArgs,
+  resolveBenchmarkApiKey,
   runBenchmark,
   waitForBenchmarkChildHealth,
   writeStructuredOutput,
@@ -145,6 +146,65 @@ test("parseArgs rejects malformed direct argv values", () => {
     () => parseArgs(["--label", "x".repeat(4_097)]),
     /argv\[1\] must be at most 4096 bytes/,
   );
+  assert.throws(
+    () => parseArgs(["--api-key", "not a bearer token"]),
+    /--api-key must be a bearer-token-safe string without whitespace/,
+  );
+});
+
+test("resolveBenchmarkApiKey bounds API key environment values", () => {
+  const args = parseArgs([]);
+  const config = createDefaultConfig("tiny");
+  config.auth.enabled = true;
+  config.auth.apiKeyEnv = "RAY_API_KEYS";
+
+  const previousBenchmarkKey = process.env.RAY_BENCHMARK_API_KEY;
+  const previousConfigKeys = process.env.RAY_API_KEYS;
+
+  try {
+    process.env.RAY_BENCHMARK_API_KEY = "direct-benchmark-key";
+    assert.equal(resolveBenchmarkApiKey(args, config), "direct-benchmark-key");
+
+    process.env.RAY_BENCHMARK_API_KEY = "x".repeat(4_097);
+    assert.throws(
+      () => resolveBenchmarkApiKey(args, config),
+      /RAY_BENCHMARK_API_KEY must be at most 4096 characters/,
+    );
+
+    process.env.RAY_BENCHMARK_API_KEY = "bad key";
+    assert.throws(
+      () => resolveBenchmarkApiKey(args, config),
+      /RAY_BENCHMARK_API_KEY must be a bearer-token-safe string without whitespace/,
+    );
+
+    delete process.env.RAY_BENCHMARK_API_KEY;
+    process.env.RAY_API_KEYS = "\n, first-key ,second-key";
+    assert.equal(resolveBenchmarkApiKey(args, config), "first-key");
+
+    process.env.RAY_API_KEYS = "x".repeat(65_537);
+    assert.throws(
+      () => resolveBenchmarkApiKey(args, config),
+      /RAY_API_KEYS must be at most 65536 characters/,
+    );
+
+    process.env.RAY_API_KEYS = "\n, bad key";
+    assert.throws(
+      () => resolveBenchmarkApiKey(args, config),
+      /RAY_API_KEYS entries must be a bearer-token-safe string without whitespace/,
+    );
+  } finally {
+    if (previousBenchmarkKey === undefined) {
+      delete process.env.RAY_BENCHMARK_API_KEY;
+    } else {
+      process.env.RAY_BENCHMARK_API_KEY = previousBenchmarkKey;
+    }
+
+    if (previousConfigKeys === undefined) {
+      delete process.env.RAY_API_KEYS;
+    } else {
+      process.env.RAY_API_KEYS = previousConfigKeys;
+    }
+  }
 });
 
 test("parseArgs rejects ambiguous benchmark flags", () => {
