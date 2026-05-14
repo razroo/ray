@@ -203,6 +203,92 @@ test("runtime metrics rejects invalid direct metric values", () => {
   );
 });
 
+test("runtime metrics rejects invalid request metric options before mutation", () => {
+  const metrics = new RuntimeMetrics();
+
+  assert.throws(
+    () => metrics.recordRequest(Number.NaN, { cached: false, degraded: false }),
+    /request latencyMs/,
+  );
+  assert.throws(
+    () => metrics.recordRequest(1, null as never),
+    /request metric options must be an object/,
+  );
+  assert.throws(
+    () =>
+      metrics.recordRequest(1, {
+        cached: false,
+        degraded: false,
+        extra: "not-supported",
+      } as never),
+    /request metric options must not contain unsupported key "extra"/,
+  );
+  assert.throws(
+    () =>
+      metrics.recordRequest(
+        1,
+        JSON.parse('{"cached":false,"degraded":false,"__proto__":"polluted"}') as never,
+      ),
+    /request metric options must not contain unsafe key "__proto__"/,
+  );
+  assert.throws(
+    () =>
+      metrics.recordRequest(1, {
+        cached: "false",
+        degraded: false,
+      } as never),
+    /request metric options\.cached must be a boolean/,
+  );
+  assert.throws(
+    () =>
+      metrics.recordRequest(1, {
+        cached: false,
+        degraded: "false",
+      } as never),
+    /request metric options\.degraded must be a boolean/,
+  );
+
+  assert.equal(metrics.snapshot(false).counters["requests.total"], undefined);
+});
+
+test("runtime metrics rejects invalid provider result metric options before mutation", () => {
+  const metrics = new RuntimeMetrics();
+
+  assert.throws(
+    () => metrics.recordProviderResult(null as never),
+    /provider result metric options must be an object/,
+  );
+  assert.throws(
+    () =>
+      metrics.recordProviderResult({
+        extra: "not-supported",
+      } as never),
+    /provider result metric options must not contain unsupported key "extra"/,
+  );
+  assert.throws(
+    () => metrics.recordProviderResult(JSON.parse('{"__proto__":"polluted"}') as never),
+    /provider result metric options must not contain unsafe key "__proto__"/,
+  );
+  assert.throws(
+    () =>
+      metrics.recordProviderResult({
+        promptTokens: Infinity,
+      }),
+    /provider result promptTokens/,
+  );
+  assert.throws(
+    () =>
+      metrics.recordProviderResult({
+        slotSnapshots: "not-an-array",
+      } as never),
+    /provider result metric options\.slotSnapshots must be an array/,
+  );
+
+  const snapshot = metrics.snapshot(false);
+  assert.equal(snapshot.gauges["provider.slots.total"], undefined);
+  assert.equal(snapshot.counters["provider.slot.assignments"], undefined);
+});
+
 test("runtime metrics bounds direct metric series", () => {
   const metrics = new RuntimeMetrics();
 

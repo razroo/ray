@@ -26,6 +26,9 @@ const MAX_METRIC_NAME_CHARS = 128;
 const MAX_METRIC_ABSOLUTE_VALUE = 1_000_000_000_000_000;
 const logLevels = new Set<LogLevel>(["debug", "info", "warn", "error"]);
 const reservedLogFields = new Set(["ts", "service", "level", "message"]);
+const unsafeObjectKeys = new Set(["__proto__", "constructor", "prototype"]);
+const requestMetricOptionKeys = new Set(["cached", "degraded"]);
+const providerResultMetricOptionKeys = new Set(["diagnostics", "promptTokens", "slotSnapshots"]);
 
 export interface LogFields {
   [key: string]: unknown;
@@ -77,6 +80,89 @@ function assertFiniteMetricValue(value: number, label: string): void {
     throw new RangeError(
       `${label} must be a finite number with absolute value no greater than ${MAX_METRIC_ABSOLUTE_VALUE}`,
     );
+  }
+}
+
+function assertNonNegativeFiniteMetricValue(
+  value: unknown,
+  label: string,
+): asserts value is number {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    Math.abs(value) > MAX_METRIC_ABSOLUTE_VALUE
+  ) {
+    throw new RangeError(
+      `${label} must be a finite number with absolute value no greater than ${MAX_METRIC_ABSOLUTE_VALUE}`,
+    );
+  }
+
+  if (value < 0) {
+    throw new RangeError(`${label} must be a non-negative finite number`);
+  }
+}
+
+function metricOptionEntries(value: object, label: string): Array<[string, unknown]> {
+  try {
+    return Object.entries(value);
+  } catch {
+    throw new TypeError(`${label} must not contain unreadable properties`);
+  }
+}
+
+function assertMetricOptions(
+  value: unknown,
+  label: string,
+  allowedKeys: Set<string>,
+): Array<[string, unknown]> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+
+  const entries = metricOptionEntries(value, label);
+
+  for (const [key] of entries) {
+    if (unsafeObjectKeys.has(key)) {
+      throw new TypeError(`${label} must not contain unsafe key "${key}"`);
+    }
+
+    if (!allowedKeys.has(key)) {
+      throw new TypeError(`${label} must not contain unsupported key "${key}"`);
+    }
+  }
+
+  return entries;
+}
+
+function assertRequestMetricOptions(
+  value: unknown,
+): asserts value is { cached: boolean; degraded: boolean } {
+  assertMetricOptions(value, "request metric options", requestMetricOptionKeys);
+
+  const options = value as { cached?: unknown; degraded?: unknown };
+  if (typeof options.cached !== "boolean") {
+    throw new TypeError("request metric options.cached must be a boolean");
+  }
+
+  if (typeof options.degraded !== "boolean") {
+    throw new TypeError("request metric options.degraded must be a boolean");
+  }
+}
+
+function assertProviderResultMetricOptions(value: unknown): asserts value is {
+  diagnostics?: ProviderDiagnostics;
+  promptTokens?: number;
+  slotSnapshots?: SchedulerSlotSnapshot[];
+} {
+  assertMetricOptions(value, "provider result metric options", providerResultMetricOptionKeys);
+
+  const options = value as { promptTokens?: unknown; slotSnapshots?: unknown };
+  if (options.promptTokens !== undefined) {
+    assertNonNegativeFiniteMetricValue(options.promptTokens, "provider result promptTokens");
+  }
+
+  if (options.slotSnapshots !== undefined && !Array.isArray(options.slotSnapshots)) {
+    throw new TypeError("provider result metric options.slotSnapshots must be an array");
   }
 }
 
@@ -358,6 +444,9 @@ export class RuntimeMetrics {
   }
 
   recordRequest(latencyMs: number, options: { cached: boolean; degraded: boolean }): void {
+    assertNonNegativeFiniteMetricValue(latencyMs, "request latencyMs");
+    assertRequestMetricOptions(options);
+
     this.increment("requests.total");
     if (options.cached) {
       this.increment("cache.hits");
@@ -437,6 +526,8 @@ export class RuntimeMetrics {
     promptTokens?: number;
     slotSnapshots?: SchedulerSlotSnapshot[];
   }): void {
+    assertProviderResultMetricOptions(options);
+
     const diagnostics = options.diagnostics;
     const slotSnapshots = options.slotSnapshots ?? [];
 
