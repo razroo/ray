@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { promises as fsPromises } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -12,6 +12,7 @@ import {
   listTarballEntries,
   listPackDestinationFiles,
   readTarballJsonEntry,
+  resolvePackedTarballs,
 } from "./pack-check.mjs";
 
 function writeOctal(buffer: Buffer, offset: number, length: number, value: number): void {
@@ -143,6 +144,55 @@ test("listPackDestinationFiles streams bounded pack output directories", async (
   await assert.rejects(
     () => listPackDestinationFiles(tempDir, 2),
     /Pack output directory must contain at most 2 files/,
+  );
+
+  await mkdir(path.join(tempDir, "nested"));
+  await assert.rejects(
+    () => listPackDestinationFiles(tempDir),
+    /Pack output directory entries must be files: nested/,
+  );
+});
+
+test("resolvePackedTarballs requires exact package output coverage", () => {
+  const packageConfigs = [
+    { name: "@razroo/ray-core", expectedFragment: "ray-core" },
+    { name: "@razroo/ray-sdk", expectedFragment: "ray-sdk" },
+  ];
+
+  assert.deepEqual(
+    Array.from(
+      resolvePackedTarballs(
+        ["razroo-ray-sdk-0.2.0.tgz", "razroo-ray-core-0.2.0.tgz"],
+        packageConfigs,
+      ),
+    ),
+    [
+      ["@razroo/ray-core", "razroo-ray-core-0.2.0.tgz"],
+      ["@razroo/ray-sdk", "razroo-ray-sdk-0.2.0.tgz"],
+    ],
+  );
+
+  assert.throws(
+    () => resolvePackedTarballs(["razroo-ray-core-0.2.0.tgz"], packageConfigs),
+    /@razroo\/ray-sdk did not produce an npm tarball/,
+  );
+
+  assert.throws(
+    () =>
+      resolvePackedTarballs(
+        ["razroo-ray-core-0.2.0.tgz", "extra-ray-core-0.2.0.tgz", "razroo-ray-sdk-0.2.0.tgz"],
+        packageConfigs,
+      ),
+    /@razroo\/ray-core produced multiple npm tarballs/,
+  );
+
+  assert.throws(
+    () =>
+      resolvePackedTarballs(
+        ["razroo-ray-core-0.2.0.tgz", "razroo-ray-sdk-0.2.0.tgz", "unexpected.tgz"],
+        packageConfigs,
+      ),
+    /Pack output directory contains unexpected files: unexpected\.tgz/,
   );
 });
 

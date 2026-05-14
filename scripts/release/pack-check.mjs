@@ -489,6 +489,10 @@ export async function listPackDestinationFiles(directory, maxFiles = MAX_PACK_OU
     directoryHandle = await fs.opendir(directory);
 
     for await (const entry of directoryHandle) {
+      if (!entry.isFile()) {
+        throw new Error(`Pack output directory entries must be files: ${entry.name}`);
+      }
+
       files.push(entry.name);
 
       if (files.length > maxFiles) {
@@ -508,6 +512,44 @@ export async function listPackDestinationFiles(directory, maxFiles = MAX_PACK_OU
   return files.sort((left, right) => left.localeCompare(right));
 }
 
+export function resolvePackedTarballs(packedFiles, packageConfigs = packages) {
+  const resolved = new Map();
+  const usedFiles = new Set();
+
+  for (const packageConfig of packageConfigs) {
+    const matches = packedFiles.filter(
+      (file) => file.includes(packageConfig.expectedFragment) && file.endsWith(".tgz"),
+    );
+
+    if (matches.length === 0) {
+      throw new Error(`${packageConfig.name} did not produce an npm tarball`);
+    }
+
+    if (matches.length > 1) {
+      throw new Error(
+        `${packageConfig.name} produced multiple npm tarballs: ${matches.join(", ")}`,
+      );
+    }
+
+    const packedFile = matches[0];
+    if (usedFiles.has(packedFile)) {
+      throw new Error(`${packedFile} matched more than one package output`);
+    }
+
+    resolved.set(packageConfig.name, packedFile);
+    usedFiles.add(packedFile);
+  }
+
+  const unexpectedFiles = packedFiles.filter((file) => !usedFiles.has(file));
+  if (unexpectedFiles.length > 0) {
+    throw new Error(
+      `Pack output directory contains unexpected files: ${unexpectedFiles.join(", ")}`,
+    );
+  }
+
+  return resolved;
+}
+
 export async function runPackCheck() {
   await fs.rm(destination, { recursive: true, force: true });
   await fs.mkdir(destination, { recursive: true });
@@ -517,16 +559,10 @@ export async function runPackCheck() {
   }
 
   const packedFiles = await listPackDestinationFiles(destination);
+  const packedTarballs = resolvePackedTarballs(packedFiles);
 
   for (const packageConfig of packages) {
-    const packedFile = packedFiles.find(
-      (file) => file.includes(packageConfig.expectedFragment) && file.endsWith(".tgz"),
-    );
-
-    if (!packedFile) {
-      throw new Error(`${packageConfig.name} did not produce an npm tarball`);
-    }
-
+    const packedFile = packedTarballs.get(packageConfig.name);
     const tarballPath = path.join(destination, packedFile);
     const entries = await listTarballEntries(tarballPath);
     assertRequiredTarballEntries(packageConfig.name, entries, packageConfig.requiredEntries);
