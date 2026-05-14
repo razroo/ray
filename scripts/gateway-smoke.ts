@@ -186,6 +186,11 @@ function assertGatewaySmokePathValue(value: unknown, label: string): asserts val
   }
 }
 
+function isPathInside(parentPath: string, candidatePath: string): boolean {
+  const relative = path.relative(parentPath, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 function assertGatewaySmokeHostValue(value: unknown, label: string): asserts value is string {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error(`${label} must be a non-empty loopback host`);
@@ -1147,6 +1152,10 @@ export async function smokeGateway(options: {
   assertGatewaySmokePathValue(options.configPath, "configPath");
   assertGatewaySmokeHostValue(options.host, "host");
   const cwd = path.resolve(options.cwd);
+  const configPath = path.resolve(cwd, options.configPath);
+  if (!isPathInside(cwd, configPath)) {
+    throw new Error("configPath must stay inside cwd");
+  }
   const host = options.host;
   const portOverride = normalizeOptionalPositiveInteger(
     options.port,
@@ -1161,7 +1170,7 @@ export async function smokeGateway(options: {
   let gateway: Awaited<ReturnType<typeof startGateway>> | undefined;
   const loaded = await loadRayConfig({
     cwd,
-    configPath: options.configPath,
+    configPath,
     env: configEnv,
   });
   const port = portOverride ?? (await reserveTcpPort(host));
@@ -1234,7 +1243,7 @@ export async function smokeGateway(options: {
       return {
         ok: true,
         mode: "public-async-queue",
-        configPath: loaded.configPath ?? path.resolve(cwd, options.configPath),
+        configPath: loaded.configPath ?? configPath,
         profile: config.profile,
         modelId: config.model.id,
         host,
@@ -1263,7 +1272,7 @@ export async function smokeGateway(options: {
       return {
         ok: true,
         mode: "public-safety",
-        configPath: loaded.configPath ?? path.resolve(cwd, options.configPath),
+        configPath: loaded.configPath ?? configPath,
         profile: config.profile,
         modelId: config.model.id,
         host,
@@ -1299,7 +1308,7 @@ export async function smokeGateway(options: {
       return {
         ok: true,
         mode: "async-queue",
-        configPath: loaded.configPath ?? path.resolve(cwd, options.configPath),
+        configPath: loaded.configPath ?? configPath,
         profile: config.profile,
         modelId: config.model.id,
         host,
@@ -1343,7 +1352,7 @@ export async function smokeGateway(options: {
     return {
       ok: true,
       mode: "basic",
-      configPath: loaded.configPath ?? path.resolve(cwd, options.configPath),
+      configPath: loaded.configPath ?? configPath,
       profile: config.profile,
       modelId: config.model.id,
       host,

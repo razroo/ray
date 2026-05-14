@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import path from "node:path";
 import test from "node:test";
 import {
   fetchText,
@@ -207,6 +208,16 @@ test("smokeGateway rejects malformed direct inputs before startup", async () => 
         host: "127.0.0.1",
       }),
     /configPath must be at most 4096 bytes/,
+  );
+
+  await assert.rejects(
+    () =>
+      smokeGateway({
+        cwd: repoRoot,
+        configPath: path.join(path.dirname(repoRoot), "outside.json"),
+        host: "127.0.0.1",
+      }),
+    /configPath must stay inside cwd/,
   );
 
   await assert.rejects(
