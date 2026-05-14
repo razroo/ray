@@ -42,6 +42,18 @@ test("parseArgs rejects malformed deploy script coverage argv", () => {
     /argv\[1\] must be a string/,
   );
   assert.throws(() => parseArgs(["--cwd"]), /--cwd requires a value/);
+  assert.throws(
+    () => parseArgs(["--cwd", " /srv/ray"]),
+    /--cwd must be a path without surrounding whitespace/,
+  );
+  assert.throws(
+    () => parseArgs(["--config-dir", "examples/config\n"]),
+    /--config-dir must not contain control characters/,
+  );
+  assert.throws(
+    () => parseArgs(["--package-json", " package.json"]),
+    /--package-json must be a path without surrounding whitespace/,
+  );
   assert.throws(() => parseArgs(["--unknown"]), /Unknown option: --unknown/);
   assert.throws(() => parseArgs(["examples/config"]), /Unexpected positional argument/);
 });
