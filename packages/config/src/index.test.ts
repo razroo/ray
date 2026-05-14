@@ -1320,6 +1320,47 @@ test("loadRayConfig rejects oversized scheduler admission budgets", async (t) =>
     /scheduler\.maxInflightTokens must be less than or equal to 65536/,
   );
 
+  const batchWindowConfigPath = join(tempDir, "ray.scheduler-batch-window.invalid.json");
+  await writeFile(
+    batchWindowConfigPath,
+    JSON.stringify({
+      profile: "tiny",
+      scheduler: {
+        batchWindowMs: 1_001,
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: batchWindowConfigPath,
+      env: {},
+    }),
+    /scheduler\.batchWindowMs must be less than or equal to 1000/,
+  );
+
+  const timeoutRaceConfigPath = join(tempDir, "ray.scheduler-batch-timeout.invalid.json");
+  await writeFile(
+    timeoutRaceConfigPath,
+    JSON.stringify({
+      profile: "tiny",
+      scheduler: {
+        requestTimeoutMs: 100,
+        batchWindowMs: 100,
+      },
+    }),
+  );
+
+  await assert.rejects(
+    loadRayConfig({
+      cwd: process.cwd(),
+      configPath: timeoutRaceConfigPath,
+      env: {},
+    }),
+    /scheduler\.batchWindowMs must be less than scheduler\.requestTimeoutMs/,
+  );
+
   const launchCapacityConfigPath = join(tempDir, "ray.scheduler-launch-capacity.invalid.json");
   await writeFile(
     launchCapacityConfigPath,

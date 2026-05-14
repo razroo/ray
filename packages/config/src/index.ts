@@ -48,6 +48,7 @@ const MAX_SCHEDULER_CONCURRENCY = 8;
 const MAX_SCHEDULER_QUEUE_DEPTH = 512;
 const MAX_SCHEDULER_QUEUED_TOKENS = 262_144;
 const MAX_SCHEDULER_INFLIGHT_TOKENS = 65_536;
+const MAX_SCHEDULER_BATCH_WINDOW_MS = 1_000;
 const MAX_ASYNC_DISPATCH_CONCURRENCY = 8;
 const MAX_ASYNC_QUEUE_JOBS = 2_000;
 const MAX_ASYNC_QUEUE_MIN_FREE_STORAGE_MIB = 1_048_576;
@@ -1704,6 +1705,21 @@ function assertNonNegativeInteger(value: number, label: string): void {
   }
 }
 
+function assertNonNegativeIntegerAtMost(value: number, label: string, maximum: number): void {
+  assertNonNegativeInteger(value, label);
+
+  if (value > maximum) {
+    throw new RayError(`${label} must be less than or equal to ${maximum}`, {
+      code: "config_validation_error",
+      status: 500,
+      details: {
+        value,
+        maximum,
+      },
+    });
+  }
+}
+
 function assertIntegerAtLeast(value: number, minimum: number, label: string): void {
   if (!Number.isInteger(value) || value < minimum) {
     throw new RayError(`${label} must be an integer greater than or equal to ${minimum}`, {
@@ -2373,9 +2389,23 @@ function validateConfig(config: RayConfig): RayConfig {
     "scheduler.requestTimeoutMs",
     MAX_REQUEST_TIMEOUT_MS,
   );
-  assertNonNegativeInteger(config.scheduler.batchWindowMs, "scheduler.batchWindowMs");
+  assertNonNegativeIntegerAtMost(
+    config.scheduler.batchWindowMs,
+    "scheduler.batchWindowMs",
+    MAX_SCHEDULER_BATCH_WINDOW_MS,
+  );
   assertPositiveInteger(config.scheduler.affinityLookahead, "scheduler.affinityLookahead");
   assertPositiveInteger(config.scheduler.shortJobMaxTokens, "scheduler.shortJobMaxTokens");
+  if (config.scheduler.batchWindowMs >= config.scheduler.requestTimeoutMs) {
+    throw new RayError("scheduler.batchWindowMs must be less than scheduler.requestTimeoutMs", {
+      code: "config_validation_error",
+      status: 500,
+      details: {
+        batchWindowMs: config.scheduler.batchWindowMs,
+        requestTimeoutMs: config.scheduler.requestTimeoutMs,
+      },
+    });
+  }
   if (config.scheduler.affinityLookahead > config.scheduler.maxQueue) {
     throw new RayError("scheduler.affinityLookahead must be less than or equal to maxQueue", {
       code: "config_validation_error",

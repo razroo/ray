@@ -64,6 +64,17 @@ test("scheduler rejects invalid resource limit config", () => {
     /scheduler\.batchWindowMs/,
   );
   assert.throws(
+    () => new RequestScheduler<string>(createSchedulerConfig({ batchWindowMs: 1_001 })),
+    /scheduler\.batchWindowMs/,
+  );
+  assert.throws(
+    () =>
+      new RequestScheduler<string>(
+        createSchedulerConfig({ requestTimeoutMs: 1_000, batchWindowMs: 1_000 }),
+      ),
+    /scheduler\.batchWindowMs must be less than scheduler\.requestTimeoutMs/,
+  );
+  assert.throws(
     () => new RequestScheduler<string>(createSchedulerConfig({ affinityLookahead: 9 })),
     /scheduler\.affinityLookahead/,
   );
@@ -282,40 +293,22 @@ test("scheduler honors batchWindowMs before starting work", async () => {
   assert.equal(result.value, "ok");
 });
 
-test("scheduler expires queued work before it starts after requestTimeoutMs", async () => {
-  let started = false;
-  const scheduler = new RequestScheduler<string>({
-    concurrency: 1,
-    maxQueue: 8,
-    maxQueuedTokens: 128,
-    maxInflightTokens: 64,
-    requestTimeoutMs: 20,
-    dedupeInflight: true,
-    batchWindowMs: 50,
-    affinityLookahead: 8,
-    shortJobMaxTokens: 96,
-  });
-
-  const pending = scheduler.schedule({
-    handler: async () => {
-      started = true;
-      return "late";
-    },
-  });
-
-  await assert.rejects(
-    pending,
-    (error: unknown) =>
-      error instanceof Error &&
-      "code" in error &&
-      (error as { code?: string }).code === "request_timeout",
+test("scheduler rejects batch windows that cannot drain before timeout", () => {
+  assert.throws(
+    () =>
+      new RequestScheduler<string>({
+        concurrency: 1,
+        maxQueue: 8,
+        maxQueuedTokens: 128,
+        maxInflightTokens: 64,
+        requestTimeoutMs: 20,
+        dedupeInflight: true,
+        batchWindowMs: 50,
+        affinityLookahead: 8,
+        shortJobMaxTokens: 96,
+      }),
+    /scheduler\.batchWindowMs must be less than scheduler\.requestTimeoutMs/,
   );
-
-  await new Promise((resolve) => setTimeout(resolve, 60));
-
-  assert.equal(started, false);
-  assert.equal(scheduler.snapshot().queueDepth, 0);
-  assert.equal(scheduler.snapshot().queuedTokens, 0);
 });
 
 test("scheduler rejects work that exceeds token budgets", async () => {

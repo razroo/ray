@@ -19,6 +19,7 @@ const MAX_SCHEDULER_QUEUE_DEPTH = 512;
 const MAX_SCHEDULER_QUEUED_TOKENS = 262_144;
 const MAX_SCHEDULER_INFLIGHT_TOKENS = 65_536;
 const MAX_REQUEST_TIMEOUT_MS = 120_000;
+const MAX_SCHEDULER_BATCH_WINDOW_MS = 1_000;
 
 function createRequestTimeoutError(): RayError {
   return new RayError("The inference request exceeded the scheduler timeout", {
@@ -44,6 +45,14 @@ function assertPositiveSafeIntegerAtMost(value: number, label: string, maximum: 
 function assertNonNegativeSafeInteger(value: number, label: string): void {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new RangeError(`${label} must be a non-negative safe integer`);
+  }
+}
+
+function assertNonNegativeSafeIntegerAtMost(value: number, label: string, maximum: number): void {
+  assertNonNegativeSafeInteger(value, label);
+
+  if (value > maximum) {
+    throw new RangeError(`${label} must be less than or equal to ${maximum}`);
   }
 }
 
@@ -157,10 +166,18 @@ function normalizeSchedulerConfig(config: SchedulerConfig): SchedulerConfig {
     "scheduler.requestTimeoutMs",
     MAX_REQUEST_TIMEOUT_MS,
   );
-  assertNonNegativeSafeInteger(config.batchWindowMs, "scheduler.batchWindowMs");
+  assertNonNegativeSafeIntegerAtMost(
+    config.batchWindowMs,
+    "scheduler.batchWindowMs",
+    MAX_SCHEDULER_BATCH_WINDOW_MS,
+  );
   assertPositiveSafeInteger(config.affinityLookahead, "scheduler.affinityLookahead");
   assertPositiveSafeInteger(config.shortJobMaxTokens, "scheduler.shortJobMaxTokens");
   assertBoolean(config.dedupeInflight, "scheduler.dedupeInflight");
+
+  if (config.batchWindowMs >= config.requestTimeoutMs) {
+    throw new RangeError("scheduler.batchWindowMs must be less than scheduler.requestTimeoutMs");
+  }
 
   if (config.affinityLookahead > config.maxQueue) {
     throw new RangeError("scheduler.affinityLookahead must be less than or equal to maxQueue");
