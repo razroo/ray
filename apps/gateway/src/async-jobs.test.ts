@@ -1962,6 +1962,24 @@ test("durable inference queue rejects malformed callbackUrl values", async () =>
     await assert.rejects(
       () =>
         queue.enqueue({
+          input: "Spaced callback",
+          callbackUrl: " https://93.184.216.34/ray-callback",
+        }),
+      /callbackUrl must not contain unencoded whitespace or control characters/,
+    );
+
+    await assert.rejects(
+      () =>
+        queue.enqueue({
+          input: "Controlled callback",
+          callbackUrl: "https://exa\tmple.com/ray-callback",
+        }),
+      /callbackUrl must not contain unencoded whitespace or control characters/,
+    );
+
+    await assert.rejects(
+      () =>
+        queue.enqueue({
           input: "Credentialed callback",
           callbackUrl: "https://user:secret@93.184.216.34/ray-callback",
         }),

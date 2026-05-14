@@ -1036,6 +1036,13 @@ async function normalizeCallbackUrl(
     });
   }
 
+  if (/[\0-\x20\x7f]/u.test(callbackUrl)) {
+    throw new RayError("callbackUrl must not contain unencoded whitespace or control characters", {
+      code: "invalid_request",
+      status: 400,
+    });
+  }
+
   let parsed: URL;
 
   try {
