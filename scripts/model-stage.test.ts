@@ -961,6 +961,54 @@ test("applyModelStagePlan honors deploy storage reserve before copying models", 
   await assert.rejects(stat(modelTarget), /ENOENT/);
 });
 
+test("applyModelStagePlan rejects combined target storage before copying same-directory artifacts", async (t) => {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) {
+    return;
+  }
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-combined-storage-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const binaryPath = path.join(tempDir, "sources", "llama-server");
+  const modelPath = path.join(tempDir, "sources", "model.gguf");
+  const targetDir = path.join(tempDir, "target", "artifacts");
+  const binaryTarget = path.join(targetDir, "llama-server");
+  const modelTarget = path.join(targetDir, "model.gguf");
+
+  await mkdir(path.join(tempDir, "sources"), { recursive: true });
+  await writeFile(binaryPath, compatibleLlamaServerScript, "utf8");
+  await writeFile(modelPath, "GGUF", "utf8");
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o644);
+
+  const plan = await createModelStagePlan({
+    cwd: tempDir,
+    configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
+    env: {
+      RAY_LLAMA_CPP_BINARY_PATH: binaryTarget,
+      RAY_MODEL_PATH: modelTarget,
+    },
+    serviceUser: String(uid),
+    serviceGroup: String(gid),
+    binarySourcePath: "./sources/llama-server",
+    sourcePath: "./sources/model.gguf",
+  });
+
+  await assert.rejects(
+    () =>
+      applyModelStagePlan(tempDir, plan, {
+        resolveAvailableStorageMiB: () => 257,
+      }),
+    /combined llama-server and GGUF sources are 2 MiB.*requiring 258 MiB free/s,
+  );
+  await assert.rejects(stat(binaryTarget), /ENOENT/);
+  await assert.rejects(stat(modelTarget), /ENOENT/);
+});
+
 test("applyModelStagePlan atomically replaces GGUF target symlinks", async (t) => {
   const uid = process.getuid?.();
   const gid = process.getgid?.();

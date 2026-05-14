@@ -1249,6 +1249,16 @@ export function evaluateModelStageStorageHeadroom(
   };
 }
 
+async function resolveStageAvailableStorageMiB(
+  sourcePath: string,
+  targetDirectory: string,
+  options: ModelStageApplyOptions,
+): Promise<number | undefined> {
+  return options.resolveAvailableStorageMiB !== undefined
+    ? await options.resolveAvailableStorageMiB(sourcePath, targetDirectory)
+    : resolveModelStageAvailableStorageMiB(await statfs(targetDirectory));
+}
+
 export function evaluateModelStageMemoryFit(
   sourceBytes: number,
   plan: Pick<
@@ -1303,10 +1313,7 @@ async function assertArtifactStageStorageHeadroom(
   options: ModelStageApplyOptions = {},
 ): Promise<void> {
   const sourceStats = await stat(sourcePath);
-  const availableMiB =
-    options.resolveAvailableStorageMiB !== undefined
-      ? await options.resolveAvailableStorageMiB(sourcePath, targetDirectory)
-      : resolveModelStageAvailableStorageMiB(await statfs(targetDirectory));
+  const availableMiB = await resolveStageAvailableStorageMiB(sourcePath, targetDirectory, options);
 
   if (availableMiB === undefined) {
     throw new Error(
@@ -1319,6 +1326,48 @@ async function assertArtifactStageStorageHeadroom(
   if (!headroom.ok) {
     throw new Error(
       `Not enough free space in ${targetDirectory}: ${label} source is ${headroom.sourceMiB} MiB and staging keeps a ${headroom.reserveMiB} MiB reserve, requiring ${headroom.requiredMiB} MiB free but only ${headroom.availableMiB} MiB is available.`,
+    );
+  }
+}
+
+async function assertCombinedStageStorageHeadroom(
+  artifacts: Array<{ sourcePath: string; label: string }>,
+  targetDirectory: string,
+  reserveMiB: number,
+  options: ModelStageApplyOptions = {},
+): Promise<void> {
+  if (artifacts.length === 0) {
+    return;
+  }
+
+  const sourceStats = await Promise.all(
+    artifacts.map(async (artifact) => ({
+      label: artifact.label,
+      stats: await stat(artifact.sourcePath),
+    })),
+  );
+  const availableMiB = await resolveStageAvailableStorageMiB(
+    artifacts[0]?.sourcePath ?? targetDirectory,
+    targetDirectory,
+    options,
+  );
+
+  if (availableMiB === undefined) {
+    throw new Error(
+      `Could not inspect free space for combined artifact target directory: ${targetDirectory}`,
+    );
+  }
+
+  const sourceMiB = sourceStats.reduce(
+    (total, entry) => total + Math.max(1, Math.ceil(entry.stats.size / BYTES_PER_MIB)),
+    0,
+  );
+  const requiredMiB = sourceMiB + reserveMiB;
+
+  if (availableMiB < requiredMiB) {
+    const labels = sourceStats.map((entry) => entry.label).join(" and ");
+    throw new Error(
+      `Not enough free space in ${targetDirectory}: combined ${labels} sources are ${sourceMiB} MiB and staging keeps a ${reserveMiB} MiB reserve, requiring ${requiredMiB} MiB free but only ${availableMiB} MiB is available.`,
     );
   }
 }
@@ -1437,27 +1486,47 @@ export async function applyModelStagePlan(
   const modelSourcePath = resolveSourceCheckPath(cwd, plan.sourcePath ?? "");
   const binaryTargetPath = resolveStageTargetPath(cwd, plan.binaryPath);
   const modelTargetPath = resolveStageTargetPath(cwd, plan.modelPath);
+  const binaryTargetDirectory = path.dirname(binaryTargetPath);
+  const modelTargetDirectory = path.dirname(modelTargetPath);
+  const shouldCopyBinary = path.resolve(binarySourcePath) !== path.resolve(binaryTargetPath);
+  const shouldCopyModel = path.resolve(modelSourcePath) !== path.resolve(modelTargetPath);
+  const targetsShareDirectory =
+    path.resolve(binaryTargetDirectory) === path.resolve(modelTargetDirectory);
   const { uid, gid } = await resolveServiceOwnerIds(plan);
 
-  await mkdir(path.dirname(modelTargetPath), { recursive: true, mode: 0o755 });
-  if (path.resolve(modelSourcePath) !== path.resolve(modelTargetPath)) {
-    await assertModelStageStorageHeadroom(
-      modelSourcePath,
-      path.dirname(modelTargetPath),
-      plan.modelStorageReserveMiB,
+  await mkdir(modelTargetDirectory, { recursive: true, mode: 0o755 });
+  await mkdir(binaryTargetDirectory, { recursive: true, mode: 0o755 });
+
+  if (shouldCopyBinary && shouldCopyModel && targetsShareDirectory) {
+    await assertCombinedStageStorageHeadroom(
+      [
+        { sourcePath: binarySourcePath, label: "llama-server" },
+        { sourcePath: modelSourcePath, label: "GGUF" },
+      ],
+      modelTargetDirectory,
+      Math.max(plan.binaryStorageReserveMiB, plan.modelStorageReserveMiB),
       options,
     );
+  } else {
+    if (shouldCopyModel) {
+      await assertModelStageStorageHeadroom(
+        modelSourcePath,
+        modelTargetDirectory,
+        plan.modelStorageReserveMiB,
+        options,
+      );
+    }
+
+    if (shouldCopyBinary) {
+      await assertBinaryStageStorageHeadroom(
+        binarySourcePath,
+        binaryTargetDirectory,
+        plan.binaryStorageReserveMiB,
+        options,
+      );
+    }
   }
 
-  await mkdir(path.dirname(binaryTargetPath), { recursive: true, mode: 0o755 });
-  if (path.resolve(binarySourcePath) !== path.resolve(binaryTargetPath)) {
-    await assertBinaryStageStorageHeadroom(
-      binarySourcePath,
-      path.dirname(binaryTargetPath),
-      plan.binaryStorageReserveMiB,
-      options,
-    );
-  }
   const copiedBinary = await copyFileAtomicUnlessSame(
     binarySourcePath,
     binaryTargetPath,
