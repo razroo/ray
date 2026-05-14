@@ -30,6 +30,11 @@ const RELEASE_GATE_DOCS = new Set([
   "docs/npm-publishing.md",
   "docs/release-checklist.md",
 ]);
+const RELEASE_HELPER_DOCS = new Set([
+  "README.md",
+  "docs/npm-publishing.md",
+  "docs/release-checklist.md",
+]);
 const RELEASE_GATE_SMOKE_SCRIPTS = [
   "smoke:tiny",
   "smoke:tiny:public",
@@ -73,6 +78,9 @@ const workflowLightweightReleaseTagCommentPattern = /^\s*#\s*git\s+tag\s+"\$TAG"
 const workflowManualReleaseCommandCommentPattern =
   /^\s*#\s*(?:git\s+(?:tag|push)\b|gh\s+release\s+create\b)/;
 const workflowReleaseGithubHelperCommentPattern = /^\s*#.*\bbun\s+run\s+release:github\b/;
+const releaseGithubShortcutPattern =
+  /\bshortcut\b.*\bbun\s+run\s+release:github\b|\bbun\s+run\s+release:github\b.*\bshortcut\b/i;
+const releaseManualGithubCreatePrimaryPattern = /\bthen\b.*\bgh\s+release\s+create\b/i;
 const releaseTagVariablePattern = /\$(?:\{TAG(?:_(?:CORE|SDK))?\}|TAG(?:_(?:CORE|SDK))?)/;
 const releaseDocGitTagCommandPattern = /^git\s+tag\s+/;
 const releaseDocAnnotatedGitTagCommandPattern = /^git\s+tag\s+(?:-a|--annotate)\b/;
@@ -2522,6 +2530,7 @@ async function validateRuntimeDoc(
   docPath: string,
   options: {
     enforceExplicitRayServiceUnits: boolean;
+    enforceGuardedReleaseHelperDocs: boolean;
     enforceReleaseGateSmokeDocs: boolean;
     enforceVpsTimeouts: boolean;
     rootScripts: Record<string, string>;
@@ -2549,6 +2558,16 @@ async function validateRuntimeDoc(
         });
       }
     }
+  }
+
+  if (options.enforceGuardedReleaseHelperDocs && !contents.includes("bun run release:github")) {
+    diagnostics.push({
+      level: "error",
+      code: "runtime_doc_release_helper_missing",
+      docPath,
+      message:
+        "Release docs must mention `bun run release:github` so maintainers use the guarded tag and GitHub Release helper.",
+    });
   }
 
   for (const [index, rawLine] of lines.entries()) {
@@ -2596,6 +2615,31 @@ async function validateRuntimeDoc(
           message: `Runtime docs reference "bun run ${scriptName}", but root package.json does not define that script.`,
         });
       }
+    }
+
+    if (options.enforceGuardedReleaseHelperDocs && releaseGithubShortcutPattern.test(line)) {
+      diagnostics.push({
+        level: "error",
+        code: "runtime_doc_release_helper_shortcut",
+        docPath,
+        line: index + 1,
+        message:
+          "Release docs must present `bun run release:github` as the guarded release path, not as a shortcut around manual tag and GitHub Release commands.",
+      });
+    }
+
+    if (
+      options.enforceGuardedReleaseHelperDocs &&
+      releaseManualGithubCreatePrimaryPattern.test(line)
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "runtime_doc_release_manual_gh_primary",
+        docPath,
+        line: index + 1,
+        message:
+          "Release docs must not describe manual `gh release create` after tagging as the release path; use `bun run release:github` instead.",
+      });
     }
 
     if (
@@ -2910,6 +2954,7 @@ export async function validatePackageRuntimeCoverage(
       const docRelPath = displayPath(cwd, docPath);
       const { lineCount, diagnostics } = await validateRuntimeDoc(docPath, {
         enforceExplicitRayServiceUnits: VPS_TIMEOUT_DOCS.has(docRelPath),
+        enforceGuardedReleaseHelperDocs: RELEASE_HELPER_DOCS.has(docRelPath),
         enforceReleaseGateSmokeDocs: RELEASE_GATE_DOCS.has(docRelPath),
         enforceVpsTimeouts: VPS_TIMEOUT_DOCS.has(docRelPath),
         rootScripts,

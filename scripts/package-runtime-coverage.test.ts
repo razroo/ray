@@ -1261,6 +1261,66 @@ test("validatePackageRuntimeCoverage rejects unsafe release tag doc commands", a
         diagnostic.code === "runtime_doc_release_tag_push_not_atomic" && diagnostic.line === 7,
     ),
   );
+  assert.ok(
+    diagnostics.some((diagnostic) => diagnostic.code === "runtime_doc_release_helper_missing"),
+  );
+});
+
+test("validatePackageRuntimeCoverage keeps guarded release helper primary in runtime docs", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-release-helper-primary-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const rootPackageJson = path.join(tempDir, "package.json");
+  await writeFile(
+    rootPackageJson,
+    JSON.stringify(
+      {
+        name: "ray-test",
+        packageManager: "bun@1.3.9",
+        engines: {
+          bun: ">=1.3.0",
+        },
+        scripts: {
+          "release:github": "bash scripts/release/gh-release.sh",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    path.join(tempDir, "README.md"),
+    [
+      "# Ray test",
+      "",
+      "## Versioning and releases",
+      "",
+      "- **GitHub Releases** — tags `core-v...` and `sdk-v...`, then **`gh release create`** (shortcut: **`bun run release:github -- --yes`**).",
+      "",
+    ].join("\n"),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [rootPackageJson],
+  });
+  const diagnostics = summary.results.flatMap((result) => result.diagnostics);
+
+  assert.equal(summary.ok, false);
+  assert.ok(
+    diagnostics.some(
+      (diagnostic) =>
+        diagnostic.code === "runtime_doc_release_helper_shortcut" && diagnostic.line === 5,
+    ),
+  );
+  assert.ok(
+    diagnostics.some(
+      (diagnostic) =>
+        diagnostic.code === "runtime_doc_release_manual_gh_primary" && diagnostic.line === 5,
+    ),
+  );
 });
 
 test("validatePackageRuntimeCoverage requires bounded quality release gate workflow commands", async (t) => {
