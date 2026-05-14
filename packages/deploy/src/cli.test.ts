@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -1036,6 +1036,10 @@ test("runCli render writes deployment files when output-dir is provided", async 
   const outputDir = join(tempDir, "rendered");
   const envFile = join(tempDir, "ray.env");
   await writeFile(envFile, "RAY_API_KEYS=test-key\n", "utf8");
+  const staleServiceFile = join(outputDir, "ray-gateway.service");
+  await mkdir(outputDir, { recursive: true });
+  await writeFile(staleServiceFile, "stale generated unit\n", "utf8");
+  await chmod(staleServiceFile, 0o666);
 
   const output: string[] = [];
   const originalLog = console.log;
@@ -1095,6 +1099,16 @@ test("runCli render writes deployment files when output-dir is provided", async 
     memorySwapMaxMiB: 595,
     cpuWeight: 80,
   });
+  for (const renderedFile of [
+    "ray-gateway.service",
+    "ray-llama-cpp.service",
+    "Caddyfile",
+    "ray.env.example",
+    "summary.json",
+  ]) {
+    const mode = (await stat(join(outputDir, renderedFile))).mode & 0o777;
+    assert.equal(mode & 0o022, 0, `${renderedFile} must not be group/world writable`);
+  }
   assert.match(rendered, /ray-gateway\.service/);
   assert.doesNotMatch(rendered, /# Ray systemd service/);
 });

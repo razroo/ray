@@ -1,4 +1,4 @@
-import { mkdir, open, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -54,6 +54,8 @@ const RESERVED_DEPLOY_STAGING_PREFIX = ".ray-deploy-";
 const VPS_WORKFLOW_EXCLUDED_CONFIG_SEGMENTS = new Set([".git", ".github", ".ray", "node_modules"]);
 const SYSTEMD_PROTECTED_HOME_PATHS = ["/home", "/root", "/run/user"] as const;
 const SYSTEMD_PRIVATE_TMP_PATHS = ["/tmp", "/var/tmp"] as const;
+const RENDERED_DEPLOYMENT_FILE_MODE = 0o644;
+const ATOMIC_DEPLOY_WRITE_TEMP_PREFIX = ".ray-deploy-write-";
 
 const DEPLOY_CLI_HELP = `Ray deploy CLI
 
@@ -542,19 +544,55 @@ async function writeDeploymentBundleFiles(
     summary: path.join(outputDir, "summary.json"),
   };
 
-  await writeFile(files.service, bundle.service, "utf8");
-  await writeFile(files.caddyfile, bundle.caddyfile, "utf8");
-  await writeFile(files.envFileExample, bundle.envFileExample, "utf8");
-  await writeFile(files.summary, `${JSON.stringify(bundle.summary, null, 2)}\n`, "utf8");
+  await writeTextFileAtomic(files.service, bundle.service);
+  await writeTextFileAtomic(files.caddyfile, bundle.caddyfile);
+  await writeTextFileAtomic(files.envFileExample, bundle.envFileExample);
+  await writeTextFileAtomic(files.summary, `${JSON.stringify(bundle.summary, null, 2)}\n`);
 
   if (bundle.llamaCppService) {
     files.llamaCppService = path.join(outputDir, "ray-llama-cpp.service");
-    await writeFile(files.llamaCppService, bundle.llamaCppService, "utf8");
+    await writeTextFileAtomic(files.llamaCppService, bundle.llamaCppService);
   } else {
     await rm(path.join(outputDir, "ray-llama-cpp.service"), { force: true });
   }
 
   return files;
+}
+
+async function writeTextFileAtomic(filePath: string, contents: string): Promise<void> {
+  const directory = path.dirname(filePath);
+  const tempPath = path.join(
+    directory,
+    `${ATOMIC_DEPLOY_WRITE_TEMP_PREFIX}${path.basename(filePath)}-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`,
+  );
+  let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
+
+  try {
+    fileHandle = await open(tempPath, "wx", RENDERED_DEPLOYMENT_FILE_MODE);
+    await fileHandle.writeFile(contents, "utf8");
+    await fileHandle.sync();
+    await fileHandle.close();
+    fileHandle = undefined;
+    await rename(tempPath, filePath);
+    await syncDirectoryBestEffort(directory);
+  } catch (error) {
+    await fileHandle?.close().catch(() => undefined);
+    await rm(tempPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function syncDirectoryBestEffort(directory: string): Promise<void> {
+  let directoryHandle: Awaited<ReturnType<typeof open>> | undefined;
+
+  try {
+    directoryHandle = await open(directory, "r");
+    await directoryHandle.sync();
+  } catch {
+    // Directory fsync support varies by platform; the atomic rename still protects readers.
+  } finally {
+    await directoryHandle?.close().catch(() => undefined);
+  }
 }
 
 function assertRenderableDeploymentBundle(
