@@ -57,6 +57,8 @@ const forbiddenPackageManagerPattern =
 const forbiddenWorkflowPackageManagerPattern =
   /(?:^|[\s:>"'`&;|()])(?:(?:pnpm|yarn|npx)(?:\s|$)|npm\s+(?:ci|exec|install|run|test)\b)/;
 const documentedBunRunScriptPattern = /\bbun\s+run\s+([A-Za-z0-9][A-Za-z0-9:_-]*\*?)/g;
+const workflowBunInstallPattern = /\bbun\s+install\b/;
+const workflowReleaseGatePattern = /\bbun\s+run\s+release:gate\b/;
 const workflowNpmPublishPattern = /\bnpm\s+publish\b/;
 const workflowBunPackPattern = /\bbun\s+(?:pm\s+)?pack\b/;
 const workflowGitHubApiPattern = /\bgh\s+api\b/;
@@ -1802,6 +1804,7 @@ async function validateWorkflow(
   ];
   const lines = contents.split(/\r?\n/);
   const publishesToNpm = lines.some((line) => workflowNpmPublishPattern.test(line));
+  const runsReleaseGate = lines.some((line) => workflowReleaseGatePattern.test(line));
   const hasJobTimeout = lines.some((line) => /^\s*timeout-minutes:\s*\d+\s*$/.test(line));
 
   if (publishesToNpm && !hasJobTimeout) {
@@ -1811,6 +1814,16 @@ async function validateWorkflow(
       workflowPath,
       message:
         "npm release workflows must set timeout-minutes so a stuck registry or quality wait cannot hold a release job indefinitely.",
+    });
+  }
+
+  if (runsReleaseGate && !hasJobTimeout) {
+    diagnostics.push({
+      level: "error",
+      code: "workflow_release_gate_job_timeout_missing",
+      workflowPath,
+      message:
+        "Workflows that run release:gate must set timeout-minutes so a stuck test, smoke check, or package validation cannot hold CI indefinitely.",
     });
   }
 
@@ -1831,7 +1844,7 @@ async function validateWorkflow(
       });
     }
 
-    if (/\bbun\s+install\b/.test(line) && !line.includes("--frozen-lockfile")) {
+    if (workflowBunInstallPattern.test(line) && !line.includes("--frozen-lockfile")) {
       diagnostics.push({
         level: "error",
         code: "workflow_bun_install_frozen_lockfile_missing",
@@ -1839,6 +1852,28 @@ async function validateWorkflow(
         line: index + 1,
         message:
           "Workflow bun install commands must pass --frozen-lockfile so CI and deploy jobs use the checked-in Bun dependency graph.",
+      });
+    }
+
+    if (workflowBunInstallPattern.test(line) && !line.includes("timeout ")) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_bun_install_timeout_missing",
+        workflowPath,
+        line: index + 1,
+        message:
+          "Workflow bun install commands must run under timeout so dependency resolution or registry stalls cannot hold CI indefinitely.",
+      });
+    }
+
+    if (workflowReleaseGatePattern.test(line) && !line.includes("timeout ")) {
+      diagnostics.push({
+        level: "error",
+        code: "workflow_release_gate_timeout_missing",
+        workflowPath,
+        line: index + 1,
+        message:
+          "Workflow release:gate commands must run under timeout so a stuck check cannot hold CI indefinitely.",
       });
     }
 

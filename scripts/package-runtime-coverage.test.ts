@@ -936,6 +936,7 @@ test("validatePackageRuntimeCoverage catches non-Bun scripts and lockfiles", asy
   assert.equal(codes.filter((code) => code === "non_bun_package_manager_script").length, 4);
   assert.equal(codes.filter((code) => code === "non_bun_workflow_package_manager").length, 2);
   assert.ok(codes.includes("workflow_bun_install_frozen_lockfile_missing"));
+  assert.ok(codes.includes("workflow_bun_install_timeout_missing"));
   assert.ok(codes.includes("workflow_npm_release_job_timeout_missing"));
   assert.ok(codes.includes("workflow_npm_publish_timeout_missing"));
   assert.ok(codes.includes("unbounded_workflow_health_probe"));
@@ -1022,6 +1023,41 @@ test("validatePackageRuntimeCoverage requires bounded npm release workflow comma
   assert.ok(codes.includes("workflow_gh_api_timeout_missing"));
   assert.ok(codes.includes("workflow_bun_pack_timeout_missing"));
   assert.ok(codes.includes("workflow_npm_publish_timeout_missing"));
+});
+
+test("validatePackageRuntimeCoverage requires bounded quality release gate workflow commands", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-package-runtime-quality-timeouts-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const workflowDir = path.join(tempDir, ".github", "workflows");
+  await mkdir(workflowDir, { recursive: true });
+  await writeFile(
+    path.join(workflowDir, "quality.yml"),
+    [
+      "name: Quality checks",
+      "jobs:",
+      "  quality:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - run: bun install --frozen-lockfile",
+      "      - run: bun run release:gate",
+      "",
+    ].join("\n"),
+  );
+
+  const summary = await validatePackageRuntimeCoverage({
+    cwd: tempDir,
+    packageJsonPaths: [],
+  });
+  const codes = summary.results.flatMap((result) =>
+    result.diagnostics.map((diagnostic) => diagnostic.code),
+  );
+
+  assert.equal(summary.ok, false);
+  assert.ok(codes.includes("workflow_release_gate_job_timeout_missing"));
+  assert.ok(codes.includes("workflow_bun_install_timeout_missing"));
+  assert.ok(codes.includes("workflow_release_gate_timeout_missing"));
 });
 
 test("validatePackageRuntimeCoverage matches release gate smoke steps exactly", async (t) => {
