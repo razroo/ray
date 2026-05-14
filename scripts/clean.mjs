@@ -8,6 +8,8 @@ export const MAX_CLEAN_FILES = 32_768;
 export const MAX_CLEAN_DIRECTORY_ENTRIES = 4_096;
 export const MAX_CLEAN_REMOVALS = 2_048;
 export const MAX_CLEAN_PATH_BYTES = 4_096;
+export const MAX_CLEAN_RULES = 64;
+export const MAX_CLEAN_RULE_BYTES = 256;
 export const MAX_CLEAN_PACKAGE_JSON_BYTES = 512 * 1024;
 export const DEFAULT_REMOVABLE_NAMES = new Set(["dist"]);
 export const DEFAULT_REMOVABLE_SUFFIXES = [".tsbuildinfo"];
@@ -26,6 +28,65 @@ function assertPositiveInteger(value, label) {
   }
 }
 
+function assertCleanRuleValue(value, label) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} must not contain control characters`);
+  }
+
+  if (value.trim() !== value) {
+    throw new Error(`${label} must not contain surrounding whitespace`);
+  }
+
+  if (Buffer.byteLength(value, "utf8") > MAX_CLEAN_RULE_BYTES) {
+    throw new Error(`${label} must be at most ${MAX_CLEAN_RULE_BYTES} bytes`);
+  }
+}
+
+function assertCleanNameSet(value, label) {
+  if (!(value instanceof Set)) {
+    throw new Error(`${label} must be a Set`);
+  }
+
+  if (value.size > MAX_CLEAN_RULES) {
+    throw new Error(`${label} must contain at most ${MAX_CLEAN_RULES} entries`);
+  }
+
+  let index = 0;
+  for (const entry of value) {
+    const entryLabel = `${label}[${index}]`;
+    assertCleanRuleValue(entry, entryLabel);
+
+    if (entry === "." || entry === ".." || entry.includes("/") || entry.includes("\\")) {
+      throw new Error(`${entryLabel} must be a single path segment`);
+    }
+
+    index += 1;
+  }
+}
+
+function assertCleanSuffixes(value, label) {
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array`);
+  }
+
+  if (value.length > MAX_CLEAN_RULES) {
+    throw new Error(`${label} must contain at most ${MAX_CLEAN_RULES} entries`);
+  }
+
+  for (const [index, entry] of value.entries()) {
+    const entryLabel = `${label}[${index}]`;
+    assertCleanRuleValue(entry, entryLabel);
+
+    if (entry.includes("/") || entry.includes("\\")) {
+      throw new Error(`${entryLabel} must not contain path separators`);
+    }
+  }
+}
+
 function resolveCleanOptions(options) {
   return {
     removableNames: options.removableNames ?? DEFAULT_REMOVABLE_NAMES,
@@ -41,6 +102,9 @@ function resolveCleanOptions(options) {
 }
 
 function assertCleanOptions(options) {
+  assertCleanNameSet(options.removableNames, "removableNames");
+  assertCleanSuffixes(options.removableSuffixes, "removableSuffixes");
+  assertCleanNameSet(options.skipNames, "skipNames");
   assertPositiveInteger(options.maxDirectories, "maxDirectories");
   assertPositiveInteger(options.maxFiles, "maxFiles");
   assertPositiveInteger(options.maxDirectoryEntries, "maxDirectoryEntries");

@@ -79,6 +79,25 @@ test("cleanWorkspace rejects malformed direct roots before walking", async () =>
   );
 });
 
+test("cleanWorkspace rejects malformed clean rules before walking", async () => {
+  await assert.rejects(
+    () => cleanWorkspace(process.cwd(), { removableNames: new Set(["dist/build"]) }),
+    /removableNames\[0\] must be a single path segment/,
+  );
+  await assert.rejects(
+    () => cleanWorkspace(process.cwd(), { removableSuffixes: [".cache/file"] }),
+    /removableSuffixes\[0\] must not contain path separators/,
+  );
+  await assert.rejects(
+    () => cleanWorkspace(process.cwd(), { skipNames: new Set(["node_modules\n"]) }),
+    /skipNames\[0\] must not contain control characters/,
+  );
+  await assert.rejects(
+    () => cleanWorkspace(process.cwd(), { removableNames: ["dist"] }),
+    /removableNames must be a Set/,
+  );
+});
+
 test("cleanWorkspace streams directory entries without readdir", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-clean-stream-"));
   const originalReaddir = fs.readdir;
