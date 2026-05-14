@@ -9,6 +9,8 @@ const MAX_CACHE_TTL_MS = 86_400_000;
 const DEFAULT_CACHE_MAX_BYTES = 2 * 1024 * 1024;
 const MAX_CACHE_BYTES = 256 * 1024 * 1024;
 const MAX_CACHE_KEY_CHARS = 4_096;
+const unsafeCacheOptionKeys = new Set(["__proto__", "constructor", "prototype"]);
+const cacheOptionKeys = new Set(["maxEntries", "ttlMs", "maxBytes", "sizeOf"]);
 
 export interface TtlCacheOptions<T = unknown> {
   maxEntries: number;
@@ -39,6 +41,7 @@ export class TtlCache<T> {
   private droppedUnmeasurableEntries = 0;
 
   constructor(options: TtlCacheOptions<T>) {
+    assertCacheOptions(options);
     assertPositiveSafeIntegerAtMost(options.maxEntries, "maxEntries", MAX_CACHE_ENTRIES);
     assertPositiveSafeIntegerAtMost(options.ttlMs, "ttlMs", MAX_CACHE_TTL_MS);
 
@@ -196,6 +199,34 @@ export class TtlCache<T> {
     }
 
     return sizeBytes;
+  }
+}
+
+function objectEntries(value: object, label: string): Array<[string, unknown]> {
+  try {
+    return Object.entries(value);
+  } catch {
+    throw new TypeError(`${label} must not contain unreadable properties`);
+  }
+}
+
+function assertCacheOptions<T>(options: TtlCacheOptions<T>): void {
+  if (options === null || typeof options !== "object" || Array.isArray(options)) {
+    throw new TypeError("cache options must be an object");
+  }
+
+  for (const [key] of objectEntries(options, "cache options")) {
+    if (unsafeCacheOptionKeys.has(key)) {
+      throw new TypeError(`cache options must not contain unsafe key "${key}"`);
+    }
+
+    if (!cacheOptionKeys.has(key)) {
+      throw new TypeError(`cache options must not contain unsupported key "${key}"`);
+    }
+  }
+
+  if (options.sizeOf !== undefined && typeof options.sizeOf !== "function") {
+    throw new TypeError("sizeOf must be a function when provided");
   }
 }
 

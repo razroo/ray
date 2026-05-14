@@ -139,6 +139,29 @@ test("ttl cache does not retain unmeasurable entries with a byte budget", () => 
 });
 
 test("ttl cache rejects invalid capacity and ttl options", () => {
+  assert.throws(() => new TtlCache<string>(null as never), /cache options must be an object/);
+  assert.throws(
+    () =>
+      new TtlCache<string>({
+        maxEntries: 2,
+        ttlMs: 10_000,
+        extra: "not-supported",
+      } as never),
+    /cache options must not contain unsupported key "extra"/,
+  );
+  assert.throws(
+    () => new TtlCache<string>(JSON.parse('{"maxEntries":2,"ttlMs":10000,"__proto__":"polluted"}')),
+    /cache options must not contain unsafe key "__proto__"/,
+  );
+  assert.throws(
+    () =>
+      new TtlCache<string>({
+        maxEntries: 2,
+        ttlMs: 10_000,
+        sizeOf: "not-a-function" as never,
+      }),
+    /sizeOf must be a function/,
+  );
   assert.throws(() => new TtlCache<string>({ maxEntries: 0, ttlMs: 10_000 }), /maxEntries/);
   assert.throws(() => new TtlCache<string>({ maxEntries: 2.5, ttlMs: 10_000 }), /maxEntries/);
   assert.throws(() => new TtlCache<string>({ maxEntries: 4_097, ttlMs: 10_000 }), /maxEntries/);
