@@ -131,16 +131,11 @@ test("listTarballEntries rejects oversized pack artifacts before reading", async
 
 test("listTarballEntries rejects pack artifacts that exceed the byte cap after stat", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-pack-check-post-read-size-"));
-  const originalReadFile = fsPromises.readFile;
-  const originalStat = fsPromises.stat;
+  const originalOpen = fsPromises.open;
   t.after(async () => {
-    Object.defineProperty(fsPromises, "readFile", {
+    Object.defineProperty(fsPromises, "open", {
       configurable: true,
-      value: originalReadFile,
-    });
-    Object.defineProperty(fsPromises, "stat", {
-      configurable: true,
-      value: originalStat,
+      value: originalOpen,
     });
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -148,20 +143,25 @@ test("listTarballEntries rejects pack artifacts that exceed the byte cap after s
   const tarballPath = path.join(tempDir, "package.tgz");
   await writeFile(tarballPath, Buffer.alloc(1));
 
-  Object.defineProperty(fsPromises, "stat", {
+  Object.defineProperty(fsPromises, "open", {
     configurable: true,
-    value: async (...args: Parameters<typeof fsPromises.stat>) => {
-      const stats = await originalStat(...args);
+    value: async (...args: Parameters<typeof fsPromises.open>) => {
+      const handle = await originalOpen(...args);
+      if (String(args[0]) !== tarballPath) {
+        return handle;
+      }
+
       return {
-        ...stats,
-        isFile: () => true,
-        size: 1,
-      };
+        stat: async () => ({
+          isFile: () => true,
+          size: 1,
+        }),
+        readFile: async () => Buffer.alloc(65),
+        close: async () => {
+          await handle.close();
+        },
+      } as Awaited<ReturnType<typeof fsPromises.open>>;
     },
-  });
-  Object.defineProperty(fsPromises, "readFile", {
-    configurable: true,
-    value: async () => Buffer.alloc(65),
   });
 
   await assert.rejects(

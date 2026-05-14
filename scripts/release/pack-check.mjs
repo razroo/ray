@@ -254,16 +254,25 @@ async function inspectTarball(filePath, options = {}) {
   const maxTarballBytes = options.maxTarballBytes ?? MAX_PACK_TARBALL_BYTES;
   const maxUncompressedBytes = options.maxUncompressedBytes ?? MAX_PACK_UNCOMPRESSED_BYTES;
   const maxEntries = options.maxEntries ?? MAX_PACK_TARBALL_ENTRIES;
-  const stats = await fs.stat(filePath);
+  let fileHandle;
+  let compressed;
 
-  if (!stats.isFile()) {
-    throw new Error(`Pack artifact must be a file: ${filePath}`);
-  }
-  if (stats.size > maxTarballBytes) {
-    throw new Error(`Pack tarball must be at most ${maxTarballBytes} bytes: ${filePath}`);
+  try {
+    fileHandle = await fs.open(filePath, "r");
+    const stats = await fileHandle.stat();
+
+    if (!stats.isFile()) {
+      throw new Error(`Pack artifact must be a file: ${filePath}`);
+    }
+    if (stats.size > maxTarballBytes) {
+      throw new Error(`Pack tarball must be at most ${maxTarballBytes} bytes: ${filePath}`);
+    }
+
+    compressed = await fileHandle.readFile();
+  } finally {
+    await fileHandle?.close().catch(() => undefined);
   }
 
-  const compressed = await fs.readFile(filePath);
   if (compressed.byteLength > maxTarballBytes) {
     throw new Error(`Pack tarball must be at most ${maxTarballBytes} bytes: ${filePath}`);
   }
