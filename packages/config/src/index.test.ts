@@ -566,6 +566,18 @@ test("loadRayConfig applies portable 1b model environment overrides", async () =
     new Set(["alpha", "beta"]),
   );
   assert.throws(
+    () => resolveAuthApiKeys(loaded.config, null as never),
+    /auth environment must be an object/,
+  );
+  assert.throws(
+    () =>
+      resolveAuthApiKeys(
+        loaded.config,
+        Object.create({ RAY_PUBLIC_API_KEYS: "inherited-key" }) as NodeJS.ProcessEnv,
+      ),
+    /Auth is enabled but RAY_PUBLIC_API_KEYS is empty/,
+  );
+  assert.throws(
     () =>
       resolveAuthApiKeys(loaded.config, {
         RAY_PUBLIC_API_KEYS: `bad${String.fromCharCode(0x1f)}key`,

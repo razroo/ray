@@ -586,6 +586,12 @@ function firstNonEmptyEnvValue(...values: Array<string | undefined>): string | u
   return values.find((value): value is string => isNonEmptyString(value));
 }
 
+function assertProcessEnv(value: unknown, label: string): asserts value is NodeJS.ProcessEnv {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+}
+
 function readOwnEnvValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
   if (!Object.prototype.hasOwnProperty.call(env, name)) {
     return undefined;
@@ -3182,6 +3188,7 @@ export function resolveAuthApiKeys(config: RayConfig, env: NodeJS.ProcessEnv): S
     return new Set();
   }
 
+  assertProcessEnv(env, "auth environment");
   const envName = config.auth.apiKeyEnv;
 
   if (!isNonEmptyString(envName)) {
