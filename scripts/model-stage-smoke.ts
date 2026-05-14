@@ -116,6 +116,11 @@ function assertModelStageSmokePathValue(value: unknown, label: string): asserts 
   }
 }
 
+function isPathInside(parentPath: string, candidatePath: string): boolean {
+  const relative = path.relative(parentPath, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 export function parseArgs(argv: string[]): ModelStageSmokeArgs {
   assertArgv(argv);
 
@@ -213,6 +218,7 @@ export async function smokeModelStages(options: {
   }
 
   assertModelStageSmokePathValue(options.cwd, "cwd");
+  const cwd = path.resolve(options.cwd);
   const serviceUser = normalizeServicePrincipal(options.serviceUser, "serviceUser");
   const serviceGroup =
     options.serviceGroup !== undefined
@@ -221,14 +227,21 @@ export async function smokeModelStages(options: {
   for (const [index, configPath] of options.configPaths.entries()) {
     assertModelStageSmokePathValue(configPath, `configPaths[${index}]`);
   }
+  const configPaths = options.configPaths.map((configPath, index) => {
+    const resolvedPath = path.resolve(cwd, configPath);
+    if (!isPathInside(cwd, resolvedPath)) {
+      throw new Error(`configPaths[${index}] must stay inside cwd`);
+    }
+    return resolvedPath;
+  });
 
   const results: ModelStageSmokeResult[] = [];
   const env = options.env ?? (Object.create(null) as NodeJS.ProcessEnv);
 
-  for (const configPath of options.configPaths) {
+  for (const configPath of configPaths) {
     try {
       const plan = await createModelStagePlan({
-        cwd: options.cwd,
+        cwd,
         configPath,
         env,
         serviceUser,

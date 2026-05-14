@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 import { collectPublicConfigPaths } from "./deploy-smoke.ts";
 import {
@@ -90,6 +91,15 @@ test("smokeModelStages rejects malformed direct path inputs before rendering", a
         serviceUser: "ray",
       }),
     /configPaths\[0\] must be at most 4096 bytes/,
+  );
+  await assert.rejects(
+    () =>
+      smokeModelStages({
+        cwd: process.cwd(),
+        configPaths: [path.join(path.dirname(process.cwd()), "outside.public.json")],
+        serviceUser: "ray",
+      }),
+    /configPaths\[0\] must stay inside cwd/,
   );
 });
 
