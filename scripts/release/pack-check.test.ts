@@ -486,6 +486,7 @@ test("assertRequiredTarballEntries rejects missing publish-critical files", () =
         "package/dist/index.js",
         "package/dist/index.d.ts",
         "package/src/index.ts",
+        "package/README.md",
         "package/CHANGELOG.md",
       ],
       [
@@ -493,6 +494,7 @@ test("assertRequiredTarballEntries rejects missing publish-critical files", () =
         "package/dist/index.js",
         "package/dist/index.d.ts",
         "package/src/index.ts",
+        "package/README.md",
         "package/CHANGELOG.md",
       ],
     ),

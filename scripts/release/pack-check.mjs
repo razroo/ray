@@ -48,6 +48,7 @@ const packages = [
       "package/dist/index.js",
       "package/dist/index.d.ts",
       "package/src/index.ts",
+      "package/README.md",
       "package/CHANGELOG.md",
     ],
   },
