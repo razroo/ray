@@ -70,6 +70,17 @@ const MAX_ASYNC_QUEUE_STOP_TIMEOUT_MS = 121_000;
 const BYTES_PER_MIB = 1024 * 1024;
 const PERSISTED_JOB_FILE_LIMIT_MIB = Math.ceil(PERSISTED_JOB_FILE_LIMIT_BYTES / BYTES_PER_MIB);
 const DNS_HOST_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const unsafeAsyncQueueOptionKeys = new Set(["__proto__", "constructor", "prototype"]);
+const createDurableInferenceQueueOptionKeys = new Set([
+  "config",
+  "runtime",
+  "logger",
+  "fetchImpl",
+  "lookupImpl",
+  "statfsImpl",
+  "removeFileImpl",
+]);
+const stopDurableInferenceQueueOptionKeys = new Set(["timeoutMs"]);
 
 export type CallbackAddressLookup = (
   hostname: string,
@@ -98,6 +109,70 @@ export interface CreateDurableInferenceQueueOptions {
 
 export interface StopDurableInferenceQueueOptions {
   timeoutMs?: number;
+}
+
+function assertAsyncQueueOptionsObject(
+  value: unknown,
+  label: string,
+): asserts value is Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+}
+
+function assertAsyncQueueOptionKeys(
+  value: object,
+  label: string,
+  allowedKeys: ReadonlySet<string>,
+): void {
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") {
+      throw new TypeError(`${label} cannot include symbol option keys`);
+    }
+
+    if (unsafeAsyncQueueOptionKeys.has(key)) {
+      throw new TypeError(`${label} cannot include unsafe option "${key}"`);
+    }
+
+    if (!allowedKeys.has(key)) {
+      throw new TypeError(`${label} contains unsupported option "${key}"`);
+    }
+  }
+}
+
+function assertOptionalAsyncQueueFunction(value: unknown, label: string): void {
+  if (value !== undefined && typeof value !== "function") {
+    throw new TypeError(`${label} must be a function`);
+  }
+}
+
+function assertCreateDurableInferenceQueueOptions(
+  value: unknown,
+): asserts value is CreateDurableInferenceQueueOptions {
+  assertAsyncQueueOptionsObject(value, "durable inference queue options");
+  assertAsyncQueueOptionKeys(
+    value,
+    "durable inference queue options",
+    createDurableInferenceQueueOptionKeys,
+  );
+  assertAsyncQueueOptionsObject(value.config, "config");
+  assertAsyncQueueOptionsObject(value.runtime, "runtime");
+  assertAsyncQueueOptionsObject(value.logger, "logger");
+  assertOptionalAsyncQueueFunction(value.fetchImpl, "fetchImpl");
+  assertOptionalAsyncQueueFunction(value.lookupImpl, "lookupImpl");
+  assertOptionalAsyncQueueFunction(value.statfsImpl, "statfsImpl");
+  assertOptionalAsyncQueueFunction(value.removeFileImpl, "removeFileImpl");
+}
+
+function assertStopDurableInferenceQueueOptions(
+  value: unknown,
+): asserts value is StopDurableInferenceQueueOptions {
+  assertAsyncQueueOptionsObject(value, "durable inference queue stop options");
+  assertAsyncQueueOptionKeys(
+    value,
+    "durable inference queue stop options",
+    stopDurableInferenceQueueOptionKeys,
+  );
 }
 
 interface ActiveTaskContext {
@@ -1905,6 +1980,8 @@ export class DurableInferenceQueue {
   private pendingJobAdmissions = 0;
 
   constructor(options: CreateDurableInferenceQueueOptions) {
+    assertCreateDurableInferenceQueueOptions(options);
+
     this.options = {
       ...options,
       config: snapshotAsyncQueueConfig(options.config),
@@ -1929,6 +2006,8 @@ export class DurableInferenceQueue {
   }
 
   async stop(options: StopDurableInferenceQueueOptions = {}): Promise<void> {
+    assertStopDurableInferenceQueueOptions(options);
+
     const timeoutMs = resolveAsyncQueueStopTimeoutMs(
       options.timeoutMs,
       Math.max(

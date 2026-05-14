@@ -80,6 +80,49 @@ test("durable inference queue rejects invalid direct config", () => {
   const runtime = createRayRuntime(createDefaultConfig("tiny"));
   const logger = new Logger("test", "error");
   const config = createDefaultConfig("tiny").asyncQueue;
+  const unsafeOptions = { config, runtime, logger } as Record<string, unknown>;
+  Object.defineProperty(unsafeOptions, "__proto__", {
+    value: true,
+    enumerable: true,
+  });
+
+  assert.throws(
+    () => new DurableInferenceQueue(null as never),
+    /durable inference queue options must be an object/,
+  );
+  assert.throws(
+    () =>
+      new DurableInferenceQueue({
+        config,
+        runtime,
+        logger,
+        extra: true,
+      } as never),
+    /durable inference queue options contains unsupported option "extra"/,
+  );
+  assert.throws(
+    () => new DurableInferenceQueue(unsafeOptions as never),
+    /durable inference queue options cannot include unsafe option "__proto__"/,
+  );
+  assert.throws(
+    () =>
+      new DurableInferenceQueue({
+        config,
+        runtime: null,
+        logger,
+      } as never),
+    /runtime must be an object/,
+  );
+  assert.throws(
+    () =>
+      new DurableInferenceQueue({
+        config,
+        runtime,
+        logger,
+        fetchImpl: {} as never,
+      }),
+    /fetchImpl must be a function/,
+  );
 
   assert.throws(
     () =>
@@ -250,7 +293,24 @@ test("durable inference queue rejects malformed direct stop timeouts", async () 
     runtime: createRayRuntime(config),
     logger: new Logger("test", "error"),
   });
+  const unsafeStopOptions = {} as Record<string, unknown>;
+  Object.defineProperty(unsafeStopOptions, "__proto__", {
+    value: true,
+    enumerable: true,
+  });
 
+  await assert.rejects(
+    () => queue.stop(null as never),
+    /durable inference queue stop options must be an object/,
+  );
+  await assert.rejects(
+    () => queue.stop({ extra: true } as never),
+    /durable inference queue stop options contains unsupported option "extra"/,
+  );
+  await assert.rejects(
+    () => queue.stop(unsafeStopOptions as never),
+    /durable inference queue stop options cannot include unsafe option "__proto__"/,
+  );
   await assert.rejects(
     () => queue.stop({ timeoutMs: 0 }),
     /async queue stop timeoutMs must be a positive safe integer/,
