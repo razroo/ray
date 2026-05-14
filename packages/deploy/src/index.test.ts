@@ -3744,6 +3744,45 @@ test("loadAndDiagnoseDeployment reports an existing generated service user in st
   assert.equal(diagnostic.level, "info");
 });
 
+test("loadAndDiagnoseDeployment bounds retained service user groups in strict mode", async (t) => {
+  const tempDir = await mkRayDeployTempDir("ray-deploy-service-user-groups-");
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  const passwdPath = join(tempDir, "passwd");
+  const groupPath = join(tempDir, "group");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+  await writeFile(passwdPath, "ray:x:1000:1000:Ray:/nonexistent:/usr/sbin/nologin\n");
+  await writeFile(
+    groupPath,
+    [
+      "ray:x:1000:",
+      ...Array.from({ length: 1_500 }, (_value, index) => `ray${index}:x:${2000 + index}:ray`),
+    ].join("\n"),
+  );
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    user: "ray",
+    strictFilesystem: true,
+    hostFiles: {
+      passwd: passwdPath,
+      group: groupPath,
+    },
+  });
+
+  assert.equal(inspected.preflight.serviceUserStatus, "found");
+  assert.equal(inspected.preflight.serviceUserPrimaryGroup, "ray");
+  assert.equal(inspected.preflight.serviceUserGroupIds?.length, 1_024);
+  assert.deepEqual(inspected.preflight.serviceUserGroupIds?.slice(0, 3), [1000, 2000, 2001]);
+  assert.equal(inspected.preflight.serviceUserGroupIds?.at(-1), 3022);
+  assert.equal(inspected.preflight.serviceUserGroupIds?.includes(3023), false);
+});
+
 test("loadAndDiagnoseDeployment reports oversized host passwd as unreadable in strict mode", async (t) => {
   const tempDir = await mkRayDeployTempDir("ray-deploy-service-user-passwd-");
   t.after(async () => {

@@ -277,6 +277,7 @@ const HOST_SWAPPINESS_PATH = "/proc/sys/vm/swappiness";
 const MAX_HOST_IDENTITY_FILE_BYTES = 256 * 1024;
 const MAX_HOST_MEMINFO_FILE_BYTES = 64 * 1024;
 const MAX_HOST_SWAPPINESS_FILE_BYTES = 1_024;
+const MAX_SERVICE_USER_GROUP_IDS = 1_024;
 const MAX_SYSTEMD_DEPENDENCY_UNITS = 32;
 const MAX_SYSTEMD_DEPENDENCY_UNIT_CHARS = 256;
 const MAX_DEPLOY_PATH_BYTES = 4_096;
@@ -1335,6 +1336,10 @@ function parseSupplementaryGroupIds(
   const groupIds = new Set<number>([primaryGid]);
 
   for (const rawLine of groupFile.split("\n")) {
+    if (groupIds.size >= MAX_SERVICE_USER_GROUP_IDS) {
+      break;
+    }
+
     const line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#")) {
       continue;
@@ -1356,16 +1361,33 @@ function parseSupplementaryGroupIds(
       continue;
     }
 
-    const members = membersField
-      .split(",")
-      .map((member) => member.trim())
-      .filter((member) => member.length > 0);
-    if (members.includes(userName)) {
+    if (groupMemberFieldIncludesUser(membersField, userName)) {
       groupIds.add(gid);
     }
   }
 
   return [...groupIds];
+}
+
+function groupMemberFieldIncludesUser(membersField: string, userName: string): boolean {
+  let start = 0;
+
+  while (start <= membersField.length) {
+    const commaIndex = membersField.indexOf(",", start);
+    const end = commaIndex === -1 ? membersField.length : commaIndex;
+
+    if (membersField.slice(start, end).trim() === userName) {
+      return true;
+    }
+
+    if (commaIndex === -1) {
+      break;
+    }
+
+    start = commaIndex + 1;
+  }
+
+  return false;
 }
 
 function resolveGroupNameByGid(groupFile: string, targetGid: number): string | undefined {
