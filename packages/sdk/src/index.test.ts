@@ -442,6 +442,51 @@ test("RayClient caps error response bodies", async (t) => {
   );
 });
 
+test("RayClient redacts stack fields from JSON error responses", async (t) => {
+  const server = createServer((_request, response) => {
+    response.writeHead(500, { "content-type": "application/json; charset=utf-8" });
+    response.end(
+      JSON.stringify({
+        error: {
+          code: "gateway_error",
+          message: "gateway failed",
+          details: {
+            stack: "internal stack trace",
+            cause: {
+              message: "backend failed",
+              stack: "nested stack trace",
+            },
+          },
+        },
+      }),
+    );
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const client = new RayClient({
+    baseUrl: `http://127.0.0.1:${address.port}`,
+  });
+
+  await assert.rejects(
+    () => client.health(),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /gateway_error/);
+      assert.match(error.message, /backend failed/);
+      assert.doesNotMatch(error.message, /internal stack trace/);
+      assert.doesNotMatch(error.message, /nested stack trace/);
+      return true;
+    },
+  );
+});
+
 test("RayClient rejects oversized successful responses", async (t) => {
   const server = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "application/json" });

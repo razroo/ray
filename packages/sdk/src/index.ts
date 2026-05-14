@@ -361,6 +361,49 @@ function parseJsonResponse<T>(text: string, pathname: string): T {
   }
 }
 
+function redactJsonErrorStacks(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
+  if (value === null || value === undefined || typeof value !== "object") {
+    return value;
+  }
+
+  if (seen.has(value)) {
+    return "[Circular]";
+  }
+
+  seen.add(value);
+
+  try {
+    if (Array.isArray(value)) {
+      return value.map((entry) => redactJsonErrorStacks(entry, seen));
+    }
+
+    const output: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value)) {
+      if (key.toLowerCase() === "stack") {
+        continue;
+      }
+
+      output[key] = redactJsonErrorStacks(nested, seen);
+    }
+
+    return output;
+  } finally {
+    seen.delete(value);
+  }
+}
+
+function formatErrorResponseText(response: Response, body: LimitedResponseBody): string {
+  if (!body.text || !isJsonContentType(response.headers.get("content-type") ?? "")) {
+    return body.text;
+  }
+
+  try {
+    return JSON.stringify(redactJsonErrorStacks(JSON.parse(body.text))) ?? "null";
+  } catch {
+    return body.text;
+  }
+}
+
 export class RayClient {
   private readonly baseUrl: string;
   private readonly headers: Record<string, string>;
@@ -456,7 +499,12 @@ export class RayClient {
             ? ` (response body declared ${body.declaredContentLength} bytes, limit ${body.limitBytes} bytes)`
             : ` (response body truncated at ${body.limitBytes} bytes)`
           : "";
-        throw new Error(`Ray request failed with ${response.status}: ${body.text}${truncated}`);
+        throw new Error(
+          `Ray request failed with ${response.status}: ${formatErrorResponseText(
+            response,
+            body,
+          )}${truncated}`,
+        );
       }
 
       if (body.truncated) {
