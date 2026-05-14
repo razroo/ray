@@ -204,6 +204,41 @@ test("runTestCli rejects malformed runtime binary overrides before dispatch", as
   assert.match(stderr.join(""), /Bun test binary must not contain control characters/);
 });
 
+test("runTestCli ignores inherited environment overrides", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-test-runner-env-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  await mkdir(path.join(tempDir, "apps", "gateway", "dist"), { recursive: true });
+  await mkdir(path.join(tempDir, "scripts"), { recursive: true });
+  await writeFile(path.join(tempDir, "apps", "gateway", "dist", "index.test.js"), "");
+  await writeFile(path.join(tempDir, "scripts", "package-runtime-coverage.test.ts"), "");
+
+  const env = Object.create({
+    RAY_BUN_BINARY: "/bad/inherited/bun",
+    RAY_NODE_BINARY: "/bad/inherited/node",
+    RAY_TEST_COMMAND_TIMEOUT_MS: "123456",
+  }) as NodeJS.ProcessEnv;
+  const commands: Array<{ binary: string; timeoutMs?: number }> = [];
+  const code = await runTestCli({
+    root: tempDir,
+    env,
+    versions: {},
+    diskPreflight: async () => undefined,
+    runCommand: async (binary: string, _args: string[], options?: { timeoutMs?: number }) => {
+      commands.push({ binary, timeoutMs: options?.timeoutMs });
+      return 0;
+    },
+  });
+
+  assert.equal(code, 0);
+  assert.deepEqual(commands, [
+    { binary: "node", timeoutMs: 600_000 },
+    { binary: "bun", timeoutMs: 600_000 },
+  ]);
+});
+
 test("runTestCommand times out hung child commands", async () => {
   const stderr: string[] = [];
   const startedAt = Date.now();
@@ -348,6 +383,12 @@ test("resolveMinimumTestFreeSpaceMiB accepts bounded overrides", () => {
   assert.equal(resolveMinimumTestFreeSpaceMiB({}), 1024);
   assert.equal(resolveMinimumTestFreeSpaceMiB({ RAY_TEST_MIN_FREE_SPACE_MIB: "0" }), 0);
   assert.equal(resolveMinimumTestFreeSpaceMiB({ RAY_TEST_MIN_FREE_SPACE_MIB: "2048" }), 2048);
+  assert.equal(
+    resolveMinimumTestFreeSpaceMiB(
+      Object.create({ RAY_TEST_MIN_FREE_SPACE_MIB: "0" }) as NodeJS.ProcessEnv,
+    ),
+    1024,
+  );
   assert.throws(
     () => resolveMinimumTestFreeSpaceMiB({ RAY_TEST_MIN_FREE_SPACE_MIB: "1.5" }),
     /RAY_TEST_MIN_FREE_SPACE_MIB must be a non-negative integer/,
@@ -357,6 +398,12 @@ test("resolveMinimumTestFreeSpaceMiB accepts bounded overrides", () => {
 test("resolveTestCommandTimeoutMs accepts bounded overrides", () => {
   assert.equal(resolveTestCommandTimeoutMs({}), 600_000);
   assert.equal(resolveTestCommandTimeoutMs({ RAY_TEST_COMMAND_TIMEOUT_MS: "120000" }), 120_000);
+  assert.equal(
+    resolveTestCommandTimeoutMs(
+      Object.create({ RAY_TEST_COMMAND_TIMEOUT_MS: "120000" }) as NodeJS.ProcessEnv,
+    ),
+    600_000,
+  );
   assert.throws(
     () => resolveTestCommandTimeoutMs({ RAY_TEST_COMMAND_TIMEOUT_MS: "0" }),
     /RAY_TEST_COMMAND_TIMEOUT_MS must be a positive integer/,

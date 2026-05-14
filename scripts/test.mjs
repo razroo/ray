@@ -80,17 +80,32 @@ function parsePositiveIntegerAtMost(value, label, maximum) {
   return parsed;
 }
 
+function readOwnEnvValue(env, name) {
+  if (env === null || typeof env !== "object") {
+    return undefined;
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(env, name)) {
+    return undefined;
+  }
+
+  const value = env[name];
+  return typeof value === "string" ? value : undefined;
+}
+
 export function resolveMinimumTestFreeSpaceMiB(env = process.env) {
   return (
-    parseNonNegativeInteger(env.RAY_TEST_MIN_FREE_SPACE_MIB, "RAY_TEST_MIN_FREE_SPACE_MIB") ??
-    DEFAULT_MIN_TEST_FREE_SPACE_MIB
+    parseNonNegativeInteger(
+      readOwnEnvValue(env, "RAY_TEST_MIN_FREE_SPACE_MIB"),
+      "RAY_TEST_MIN_FREE_SPACE_MIB",
+    ) ?? DEFAULT_MIN_TEST_FREE_SPACE_MIB
   );
 }
 
 export function resolveTestCommandTimeoutMs(env = process.env) {
   return (
     parsePositiveIntegerAtMost(
-      env.RAY_TEST_COMMAND_TIMEOUT_MS,
+      readOwnEnvValue(env, "RAY_TEST_COMMAND_TIMEOUT_MS"),
       "RAY_TEST_COMMAND_TIMEOUT_MS",
       MAX_TEST_COMMAND_TIMEOUT_MS,
     ) ?? DEFAULT_TEST_COMMAND_TIMEOUT_MS
@@ -358,8 +373,9 @@ export async function runTestCli(options = {}) {
   const versions = options.versions ?? process.versions;
   const runCommand = options.runCommand ?? runTestCommand;
   const diskPreflight = options.diskPreflight ?? assertTestDiskHeadroom;
-  const bunBinary = env.RAY_BUN_BINARY ?? (versions.bun ? process.execPath : "bun");
-  const nodeBinary = env.RAY_NODE_BINARY ?? "node";
+  const bunBinary =
+    readOwnEnvValue(env, "RAY_BUN_BINARY") ?? (versions.bun ? process.execPath : "bun");
+  const nodeBinary = readOwnEnvValue(env, "RAY_NODE_BINARY") ?? "node";
   const commandTimeoutMs = options.commandTimeoutMs ?? resolveTestCommandTimeoutMs(env);
 
   try {
