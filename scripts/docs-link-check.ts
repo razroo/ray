@@ -31,6 +31,7 @@ export interface DocsLinkDiagnostic {
   level: "error";
   code:
     | "markdown_invalid"
+    | "local_markdown_anchor_missing"
     | "local_markdown_link_invalid"
     | "local_markdown_link_missing"
     | "local_markdown_link_outside_repo";
@@ -326,21 +327,34 @@ function normalizeRawLinkTarget(rawTarget: string): string | undefined {
 }
 
 function shouldSkipLinkTarget(target: string): boolean {
-  return (
-    target.startsWith("#") || target.startsWith("//") || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(target)
-  );
+  return target.startsWith("//") || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(target);
 }
 
 function resolveLocalLinkTarget(
   cwd: string,
   docPath: string,
   target: string,
-): { targetPath?: string; error?: string } {
-  const pathWithoutFragment = target.split("#", 1)[0] ?? "";
+): { targetPath?: string; fragment?: string; error?: string } {
+  const fragmentIndex = target.indexOf("#");
+  const pathWithoutFragment = fragmentIndex >= 0 ? target.slice(0, fragmentIndex) : target;
+  const rawFragment = fragmentIndex >= 0 ? target.slice(fragmentIndex + 1) : undefined;
   const pathWithoutQuery = pathWithoutFragment.split("?", 1)[0] ?? "";
+  let fragment: string | undefined;
+
+  if (rawFragment !== undefined && rawFragment.length > 0) {
+    try {
+      fragment = decodeURIComponent(rawFragment);
+    } catch {
+      return { error: "local Markdown link fragment is not valid percent-encoding" };
+    }
+
+    if (/[\0\r\n]/.test(fragment)) {
+      return { error: "local Markdown link fragment must not contain control characters" };
+    }
+  }
 
   if (pathWithoutQuery.length === 0) {
-    return {};
+    return { targetPath: docPath, fragment };
   }
 
   if (pathWithoutQuery.includes("\0")) {
@@ -358,7 +372,7 @@ function resolveLocalLinkTarget(
     ? path.resolve(cwd, `.${decodedTarget}`)
     : path.resolve(path.dirname(docPath), decodedTarget);
 
-  return { targetPath };
+  return { targetPath, fragment };
 }
 
 function isPathInside(parentPath: string, candidatePath: string): boolean {
@@ -375,9 +389,57 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
+function markdownHeadingToSlug(heading: string): string {
+  return heading
+    .trim()
+    .replace(/\s+#+\s*$/, "")
+    .replace(/`([^`]+)`/g, "$1")
+    .toLowerCase()
+    .replace(/[^a-z0-9 _-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-");
+}
+
+function extractMarkdownAnchors(contents: string): Set<string> {
+  const anchors = new Set<string>();
+  const seen = new Map<string, number>();
+
+  for (const line of contents.split(/\r?\n/)) {
+    const heading = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
+    if (!heading) {
+      continue;
+    }
+
+    const baseSlug = markdownHeadingToSlug(heading[2] ?? "");
+    if (baseSlug.length === 0) {
+      continue;
+    }
+
+    const seenCount = seen.get(baseSlug) ?? 0;
+    seen.set(baseSlug, seenCount + 1);
+    anchors.add(seenCount === 0 ? baseSlug : `${baseSlug}-${seenCount}`);
+  }
+
+  return anchors;
+}
+
+async function collectMarkdownAnchors(
+  targetPath: string,
+  cache: Map<string, Promise<Set<string>>>,
+): Promise<Set<string>> {
+  let anchors = cache.get(targetPath);
+  if (!anchors) {
+    anchors = readMarkdownFileBounded(targetPath).then(extractMarkdownAnchors);
+    cache.set(targetPath, anchors);
+  }
+
+  return await anchors;
+}
+
 async function validateMarkdownFileLinks(
   cwd: string,
   docPath: string,
+  anchorCache: Map<string, Promise<Set<string>>>,
 ): Promise<DocsLinkCheckResult> {
   const diagnostics: DocsLinkDiagnostic[] = [];
   let linkCount = 0;
@@ -441,6 +503,22 @@ async function validateMarkdownFileLinks(
             target,
             message: `Local Markdown link target does not exist: ${target}`,
           });
+          continue;
+        }
+
+        if (resolved.fragment && path.extname(resolved.targetPath) === ".md") {
+          const expectedAnchor = markdownHeadingToSlug(resolved.fragment);
+          const anchors = await collectMarkdownAnchors(resolved.targetPath, anchorCache);
+          if (!anchors.has(expectedAnchor)) {
+            diagnostics.push({
+              level: "error",
+              code: "local_markdown_anchor_missing",
+              docPath,
+              line: index + 1,
+              target,
+              message: `Local Markdown link anchor does not exist: ${target}`,
+            });
+          }
         }
       }
     }
@@ -481,8 +559,9 @@ export async function validateDocsLinks(options: {
     : await collectMarkdownPaths(cwd);
 
   const results: DocsLinkCheckResult[] = [];
+  const anchorCache = new Map<string, Promise<Set<string>>>();
   for (const docPath of markdownPaths) {
-    results.push(await validateMarkdownFileLinks(cwd, docPath));
+    results.push(await validateMarkdownFileLinks(cwd, docPath, anchorCache));
   }
 
   const linkCount = results.reduce((total, result) => total + result.linkCount, 0);

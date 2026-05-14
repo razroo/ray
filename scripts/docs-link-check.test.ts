@@ -115,10 +115,13 @@ test("validateDocsLinks reports missing and escaping local links", async (t) => 
     [
       "# Root",
       "[ok](docs/target.md)",
+      "[same-anchor](#root)",
+      "[target-anchor](docs/target.md#target)",
+      "[missing-anchor](docs/target.md#missing-section)",
       "[missing](docs/missing.md)",
       "[outside](../outside.md)",
       "[external](https://example.com/docs/missing.md)",
-      "[anchor](#local-anchor)",
+      "[anchor](#root)",
       "![ignored image](docs/missing-image.png)",
       "",
     ].join("\n"),
@@ -129,8 +132,23 @@ test("validateDocsLinks reports missing and escaping local links", async (t) => 
 
   assert.equal(summary.ok, false);
   assert.ok(diagnostics.some((entry) => entry.code === "local_markdown_link_missing"));
+  assert.ok(diagnostics.some((entry) => entry.code === "local_markdown_anchor_missing"));
   assert.ok(diagnostics.some((entry) => entry.code === "local_markdown_link_outside_repo"));
-  assert.equal(diagnostics.length, 2);
+  assert.equal(diagnostics.length, 3);
+});
+
+test("validateDocsLinks accepts encoded local Markdown anchors", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-doc-links-anchors-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  await writeFile(path.join(tempDir, "README.md"), "# Root Section\n[ok](#Root%20Section)\n");
+
+  const summary = await validateDocsLinks({ cwd: tempDir });
+
+  assert.equal(summary.ok, true);
+  assert.equal(summary.errorCount, 0);
 });
 
 test("validateDocsLinks rejects oversized Markdown inputs", async (t) => {
