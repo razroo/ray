@@ -1280,6 +1280,8 @@ function authorizeProtectedRoute(
   options: CreateGatewayHandlerOptions,
   runtime: RayRuntime,
   isValidApiKey: (bearerToken: string | undefined) => boolean,
+  logger: Logger,
+  path: string,
 ): string | undefined {
   const bearerToken = parseBearerToken(request.headers.authorization);
 
@@ -1288,15 +1290,24 @@ function authorizeProtectedRoute(
   }
 
   if (!isValidApiKey(bearerToken)) {
+    const error = new RayError("A valid Bearer API key is required for this request", {
+      code: "unauthorized",
+      status: 401,
+    });
     runtime.metrics.recordAuthReject();
+    logger.warn("request rejected", {
+      method: request.method,
+      path,
+      error: serializeRequestError(error),
+    });
     const closeRequest = closeRequestAfterResponse(request, response);
     writeJson(
       response,
       401,
       {
         error: {
-          code: "unauthorized",
-          message: "A valid Bearer API key is required for this request",
+          code: error.code,
+          message: error.message,
         },
       },
       {
@@ -1317,6 +1328,8 @@ function enforceRateLimit(
   runtime: RayRuntime,
   rateLimiter: FixedWindowRateLimiter | undefined,
   bearerToken: string | undefined,
+  logger: Logger,
+  path: string,
 ): Record<string, string> | undefined {
   if (!options.config.rateLimit.enabled || !rateLimiter) {
     return undefined;
@@ -1333,15 +1346,24 @@ function enforceRateLimit(
   const rateLimitHeaders = buildRateLimitHeaders(decision);
 
   if (!decision.allowed) {
+    const error = new RayError("The inference rate limit has been exceeded", {
+      code: "rate_limited",
+      status: 429,
+    });
     runtime.metrics.recordRateLimitReject();
+    logger.warn("request rejected", {
+      method: request.method,
+      path,
+      error: serializeRequestError(error),
+    });
     const closeRequest = closeRequestAfterResponse(request, response);
     writeJson(
       response,
       429,
       {
         error: {
-          code: "rate_limited",
-          message: "The inference rate limit has been exceeded",
+          code: error.code,
+          message: error.message,
         },
       },
       {
@@ -1496,6 +1518,8 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
           handlerOptions,
           runtime,
           isValidApiKey,
+          logger,
+          url.pathname,
         );
         if (config.auth.enabled && bearerToken === undefined) {
           return;
@@ -1526,6 +1550,8 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
           handlerOptions,
           runtime,
           isValidApiKey,
+          logger,
+          url.pathname,
         );
         if (config.auth.enabled && bearerToken === undefined) {
           return;
@@ -1557,6 +1583,8 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
           handlerOptions,
           runtime,
           isValidApiKey,
+          logger,
+          url.pathname,
         );
         if (config.auth.enabled && bearerToken === undefined) {
           return;
@@ -1573,6 +1601,8 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
           handlerOptions,
           runtime,
           isValidApiKey,
+          logger,
+          url.pathname,
         );
         if (config.auth.enabled && bearerToken === undefined) {
           return;
@@ -1585,6 +1615,8 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
           runtime,
           rateLimiter,
           bearerToken,
+          logger,
+          url.pathname,
         );
         if (config.rateLimit.enabled && rateLimitHeaders === undefined) {
           return;
@@ -1610,6 +1642,8 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
           handlerOptions,
           runtime,
           isValidApiKey,
+          logger,
+          url.pathname,
         );
         if (config.auth.enabled && bearerToken === undefined) {
           return;
@@ -1622,6 +1656,8 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
           runtime,
           rateLimiter,
           bearerToken,
+          logger,
+          url.pathname,
         );
         if (config.rateLimit.enabled && rateLimitHeaders === undefined) {
           return;
@@ -1661,6 +1697,8 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
           handlerOptions,
           runtime,
           isValidApiKey,
+          logger,
+          url.pathname,
         );
         if (config.auth.enabled && bearerToken === undefined) {
           return;
@@ -1683,6 +1721,8 @@ export function createGatewayRequestHandler(options: CreateGatewayHandlerOptions
           runtime,
           rateLimiter,
           bearerToken,
+          logger,
+          url.pathname,
         );
         if (config.rateLimit.enabled && rateLimitHeaders === undefined) {
           return;

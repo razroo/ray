@@ -1302,11 +1302,24 @@ test("gateway rejects inference requests without a valid API key when auth is en
       enabled: true,
     },
   });
+  const warnings: Array<{ message: string; fields: LogFields | undefined }> = [];
+  const errors: Array<{ message: string; fields: LogFields | undefined }> = [];
+  const logger = {
+    debug() {},
+    info() {},
+    warn(message: string, fields?: LogFields) {
+      warnings.push({ message, fields });
+    },
+    error(message: string, fields?: LogFields) {
+      errors.push({ message, fields });
+    },
+  } as unknown as Logger;
   const gateway = createGatewayServer({
     config,
     env: {
       RAY_API_KEYS: "secret-token",
     },
+    logger,
   });
 
   await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
@@ -1320,6 +1333,7 @@ test("gateway rejects inference requests without a valid API key when auth is en
   const response = await fetch(`http://127.0.0.1:${address.port}/v1/infer`, {
     method: "POST",
     headers: {
+      authorization: "Bearer wrong-secret",
       "content-type": "application/json",
     },
     body: JSON.stringify({
@@ -1330,6 +1344,16 @@ test("gateway rejects inference requests without a valid API key when auth is en
   assert.equal(response.status, 401);
   const body = (await response.json()) as { error: { code: string } };
   assert.equal(body.error.code, "unauthorized");
+  assert.equal(errors.length, 0);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0]?.message, "request rejected");
+  assert.equal(warnings[0]?.fields?.method, "POST");
+  assert.equal(warnings[0]?.fields?.path, "/v1/infer");
+  const loggedError = warnings[0]?.fields?.error as { code?: string; stack?: string };
+  assert.equal(loggedError.code, "unauthorized");
+  assert.equal(loggedError.stack, undefined);
+  assert.equal(JSON.stringify(warnings[0]?.fields).includes("wrong-secret"), false);
+  assert.equal(JSON.stringify(warnings[0]?.fields).includes("secret-token"), false);
 });
 
 test("gateway closes unfinished upload sockets after auth rejection", async (t) => {
@@ -2813,11 +2837,24 @@ test("gateway rate limits repeated inference requests", async (t) => {
       trustProxyHeaders: false,
     },
   });
+  const warnings: Array<{ message: string; fields: LogFields | undefined }> = [];
+  const errors: Array<{ message: string; fields: LogFields | undefined }> = [];
+  const logger = {
+    debug() {},
+    info() {},
+    warn(message: string, fields?: LogFields) {
+      warnings.push({ message, fields });
+    },
+    error(message: string, fields?: LogFields) {
+      errors.push({ message, fields });
+    },
+  } as unknown as Logger;
   const gateway = createGatewayServer({
     config,
     env: {
       RAY_API_KEYS: "secret-token",
     },
+    logger,
   });
 
   await new Promise<void>((resolve) => gateway.server.listen(0, "127.0.0.1", resolve));
@@ -2855,6 +2892,15 @@ test("gateway rate limits repeated inference requests", async (t) => {
   assert.equal(second.headers.get("x-ratelimit-limit"), "1");
   const body = (await second.json()) as { error: { code: string } };
   assert.equal(body.error.code, "rate_limited");
+  assert.equal(errors.length, 0);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0]?.message, "request rejected");
+  assert.equal(warnings[0]?.fields?.method, "POST");
+  assert.equal(warnings[0]?.fields?.path, "/v1/infer");
+  const loggedError = warnings[0]?.fields?.error as { code?: string; stack?: string };
+  assert.equal(loggedError.code, "rate_limited");
+  assert.equal(loggedError.stack, undefined);
+  assert.equal(JSON.stringify(warnings[0]?.fields).includes("secret-token"), false);
 });
 
 test("gateway closes unfinished upload sockets after rate-limit rejection", async (t) => {
