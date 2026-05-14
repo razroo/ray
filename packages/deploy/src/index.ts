@@ -357,6 +357,71 @@ const LLAMA_CPP_MAX_SWAP_MAX_MIB = MIN_SMALL_VPS_SWAP_MIB;
 const GATEWAY_CPU_WEIGHT = 200;
 const LLAMA_CPP_CPU_WEIGHT = 80;
 
+const unsafeOptionKeys = new Set(["__proto__", "constructor", "prototype"]);
+const systemdServiceOptionKeys = new Set([
+  "workingDirectory",
+  "configPath",
+  "user",
+  "envFile",
+  "stateDirectory",
+  "after",
+  "wants",
+  "runtimeBinary",
+  "nodeBinary",
+  "memoryHighMiB",
+  "memoryMaxMiB",
+  "memorySwapMaxMiB",
+  "cpuWeight",
+]);
+const reverseProxyOptionKeys = new Set([
+  "domain",
+  "upstreamHost",
+  "upstreamPort",
+  "requestBodyLimitBytes",
+  "upstreamTimeoutMs",
+]);
+const llamaCppServiceOptionKeys = new Set([
+  "user",
+  "envFile",
+  "launchProfile",
+  "memoryHighMiB",
+  "memoryMaxMiB",
+  "memorySwapMaxMiB",
+  "cpuWeight",
+]);
+const diagnoseConfigOptionKeys = new Set(["preflight", "strictFilesystem", "allowMissingAuthKeys"]);
+const loadAndDiagnoseDeploymentOptionKeys = new Set([
+  "cwd",
+  "configPath",
+  "env",
+  "envFile",
+  "memoryBudgetMiB",
+  "runtimeBinary",
+  "user",
+  "domain",
+  "strictFilesystem",
+  "nodeBinary",
+  "allowMissingAuthKeys",
+  "hostFiles",
+  "inspectHostStorage",
+  "caddyBinary",
+]);
+const renderDeploymentBundleOptionKeys = new Set([
+  "cwd",
+  "configPath",
+  "user",
+  "domain",
+  "envFile",
+  "systemdEnvFile",
+  "env",
+  "memoryBudgetMiB",
+  "runtimeBinary",
+  "nodeBinary",
+  "strictFilesystem",
+  "inspectHostStorage",
+  "caddyBinary",
+]);
+
 interface StorageStats {
   bavail: number | bigint;
   bsize: number | bigint;
@@ -812,6 +877,89 @@ function assertOptionsObject(
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object`);
   }
+}
+
+function assertSupportedOptionKeys(
+  value: object,
+  label: string,
+  allowedKeys: ReadonlySet<string>,
+): void {
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") {
+      throw new Error(`${label} cannot include symbol option keys`);
+    }
+
+    if (unsafeOptionKeys.has(key)) {
+      throw new Error(`${label} cannot include unsafe option "${key}"`);
+    }
+
+    if (!allowedKeys.has(key)) {
+      throw new Error(`${label} contains unsupported option "${key}"`);
+    }
+  }
+}
+
+function assertOptionalOptionsObject(value: unknown, label: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  assertOptionsObject(value, label);
+}
+
+function assertOptionalBoolean(
+  value: unknown,
+  label: string,
+): asserts value is boolean | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  assertBoolean(value, label);
+}
+
+function assertOptionalMemoryBudgetMiB(value: unknown): asserts value is number | undefined {
+  if (value === undefined) {
+    return;
+  }
+
+  assertPositiveIntegerAtMost(value, "memoryBudgetMiB", MAX_SYSTEMD_MEMORY_MIB);
+}
+
+function assertDiagnoseConfigOptions(value: unknown): asserts value is DiagnoseConfigOptions {
+  assertOptionsObject(value, "diagnose options");
+  assertSupportedOptionKeys(value, "diagnose options", diagnoseConfigOptionKeys);
+  assertOptionalOptionsObject(value.preflight, "diagnose options.preflight");
+  assertOptionalBoolean(value.strictFilesystem, "strictFilesystem");
+  assertOptionalBoolean(value.allowMissingAuthKeys, "allowMissingAuthKeys");
+}
+
+function assertLoadAndDiagnoseDeploymentOptions(
+  value: unknown,
+): asserts value is Record<string, unknown> {
+  assertOptionsObject(value, "deployment inspection options");
+  assertSupportedOptionKeys(
+    value,
+    "deployment inspection options",
+    loadAndDiagnoseDeploymentOptionKeys,
+  );
+  assertOptionalOptionsObject(value.env, "env");
+  assertOptionalOptionsObject(value.hostFiles, "hostFiles");
+  assertOptionalMemoryBudgetMiB(value.memoryBudgetMiB);
+  assertOptionalBoolean(value.strictFilesystem, "strictFilesystem");
+  assertOptionalBoolean(value.allowMissingAuthKeys, "allowMissingAuthKeys");
+  assertOptionalBoolean(value.inspectHostStorage, "inspectHostStorage");
+}
+
+function assertRenderDeploymentBundleOptions(
+  value: unknown,
+): asserts value is Record<string, unknown> {
+  assertOptionsObject(value, "deployment bundle options");
+  assertSupportedOptionKeys(value, "deployment bundle options", renderDeploymentBundleOptionKeys);
+  assertOptionalOptionsObject(value.env, "env");
+  assertOptionalMemoryBudgetMiB(value.memoryBudgetMiB);
+  assertOptionalBoolean(value.strictFilesystem, "strictFilesystem");
+  assertOptionalBoolean(value.inspectHostStorage, "inspectHostStorage");
 }
 
 function assertNonEmptyString(value: unknown, label: string): asserts value is string {
@@ -2177,6 +2325,7 @@ function detectUnsupportedLlamaCppLaunchFlags(
 
 export function renderSystemdService(options: SystemdServiceOptions): string {
   assertOptionsObject(options, "Systemd service options");
+  assertSupportedOptionKeys(options, "Systemd service options", systemdServiceOptionKeys);
 
   const after = options.after;
   const wants = options.wants;
@@ -2282,6 +2431,7 @@ WantedBy=multi-user.target
 
 export function renderCaddyfile(options: ReverseProxyOptions): string {
   assertOptionsObject(options, "Caddyfile options");
+  assertSupportedOptionKeys(options, "Caddyfile options", reverseProxyOptionKeys);
 
   const domain = normalizeCaddySiteAddress(options.domain);
   const upstreamHost = formatCaddyUpstreamHost(options.upstreamHost ?? DEFAULT_CADDY_UPSTREAM_HOST);
@@ -2326,6 +2476,7 @@ export function renderCaddyfile(options: ReverseProxyOptions): string {
 
 export function renderLlamaCppService(options: LlamaCppServiceOptions): string {
   assertOptionsObject(options, "llama.cpp service options");
+  assertSupportedOptionKeys(options, "llama.cpp service options", llamaCppServiceOptionKeys);
   assertLlamaCppLaunchProfileForService(options.launchProfile);
 
   if (options.envFile !== undefined) {
@@ -2650,6 +2801,8 @@ export function diagnoseConfig(
   envFile?: string,
   options: DiagnoseConfigOptions = {},
 ): DeploymentDiagnostic[] {
+  assertDiagnoseConfigOptions(options);
+
   const diagnostics: DeploymentDiagnostic[] = [];
   const strictFilesystem = options.strictFilesystem === true;
   const preflight = options.preflight;
@@ -4493,6 +4646,7 @@ export async function loadAndDiagnoseDeployment(options: {
   diagnostics: DeploymentDiagnostic[];
   preflight: DeploymentPreflight;
 }> {
+  assertLoadAndDiagnoseDeploymentOptions(options);
   assertDeploymentPathValue(options.cwd, "cwd");
   assertDeploymentPathValue(options.configPath, "configPath");
   assertOptionalDeploymentPathValue(options.envFile, "envFile");
@@ -4561,6 +4715,7 @@ export async function renderDeploymentBundle(options: {
   llamaCppService?: string;
   summary: DeploymentBundleSummary;
 }> {
+  assertRenderDeploymentBundleOptions(options);
   assertDeploymentPathValue(options.cwd, "cwd");
   assertDeploymentPathValue(options.configPath, "configPath");
   assertOptionalDeploymentPathValue(options.envFile, "envFile");

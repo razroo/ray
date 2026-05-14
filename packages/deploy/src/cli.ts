@@ -809,13 +809,33 @@ export async function runCli(argv: string[]): Promise<number> {
   };
 
   if (deploymentOptions.command === "render") {
-    const bundle = await renderDeploymentBundle({
-      ...deploymentOptions,
+    const bundleOptions: Parameters<typeof renderDeploymentBundle>[0] = {
+      cwd: deploymentOptions.cwd,
+      configPath: deploymentOptions.configPath,
+      user: deploymentOptions.user,
+      domain: deploymentOptions.domain,
       env,
+      ...(deploymentOptions.envFile !== undefined ? { envFile: deploymentOptions.envFile } : {}),
+      ...(deploymentOptions.systemdEnvFile !== undefined
+        ? { systemdEnvFile: deploymentOptions.systemdEnvFile }
+        : {}),
+      ...(deploymentOptions.memoryBudgetMiB !== undefined
+        ? { memoryBudgetMiB: deploymentOptions.memoryBudgetMiB }
+        : {}),
+      ...(deploymentOptions.runtimeBinary !== undefined
+        ? { runtimeBinary: deploymentOptions.runtimeBinary }
+        : {}),
+      ...(deploymentOptions.nodeBinary !== undefined
+        ? { nodeBinary: deploymentOptions.nodeBinary }
+        : {}),
+      ...(deploymentOptions.caddyBinary !== undefined
+        ? { caddyBinary: deploymentOptions.caddyBinary }
+        : {}),
       ...(deploymentOptions.strictFilesystem !== undefined
         ? { strictFilesystem: deploymentOptions.strictFilesystem }
         : {}),
-    });
+    };
+    const bundle = await renderDeploymentBundle(bundleOptions);
     assertRenderableDeploymentBundle(bundle);
 
     if (deploymentOptions.outputDir) {
@@ -843,12 +863,29 @@ export async function runCli(argv: string[]): Promise<number> {
     console.log(JSON.stringify(bundle.summary, null, 2));
     return 0;
   } else {
-    const inspected = await loadAndDiagnoseDeployment({
-      ...deploymentOptions,
+    const inspectionOptions: Parameters<typeof loadAndDiagnoseDeployment>[0] = {
+      cwd: deploymentOptions.cwd,
+      configPath: deploymentOptions.configPath,
       env,
+      ...(deploymentOptions.envFile !== undefined ? { envFile: deploymentOptions.envFile } : {}),
+      ...(deploymentOptions.memoryBudgetMiB !== undefined
+        ? { memoryBudgetMiB: deploymentOptions.memoryBudgetMiB }
+        : {}),
+      ...(deploymentOptions.runtimeBinary !== undefined
+        ? { runtimeBinary: deploymentOptions.runtimeBinary }
+        : {}),
+      ...(deploymentOptions.nodeBinary !== undefined
+        ? { nodeBinary: deploymentOptions.nodeBinary }
+        : {}),
+      ...(deploymentOptions.caddyBinary !== undefined
+        ? { caddyBinary: deploymentOptions.caddyBinary }
+        : {}),
+      user: deploymentOptions.user,
+      domain: deploymentOptions.domain,
       strictFilesystem:
         deploymentOptions.command === "doctor" || deploymentOptions.strictFilesystem === true,
-    });
+    };
+    const inspected = await loadAndDiagnoseDeployment(inspectionOptions);
     const hasErrors = inspected.diagnostics.some((diagnostic) => diagnostic.level === "error");
 
     console.log(

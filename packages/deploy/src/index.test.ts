@@ -181,6 +181,25 @@ test("renderSystemdService rejects unsafe systemd execution directives", () => {
     () =>
       renderSystemdService({
         ...baseOptions,
+        extra: true,
+      } as never),
+    /Systemd service options contains unsupported option "extra"/,
+  );
+
+  assert.throws(
+    () =>
+      renderSystemdService(
+        JSON.parse(
+          '{"workingDirectory":"/srv/ray","configPath":"/etc/ray/ray.json","user":"ray","__proto__":true}',
+        ),
+      ),
+    /Systemd service options cannot include unsafe option "__proto__"/,
+  );
+
+  assert.throws(
+    () =>
+      renderSystemdService({
+        ...baseOptions,
         after: "ray-llama-cpp.service" as never,
       }),
     /after must be an array of strings/,
@@ -467,6 +486,18 @@ test("renderCaddyfile rejects unsafe site addresses and numeric limits", () => {
   assert.throws(
     () =>
       renderCaddyfile({
+        domain: "ray.example.com",
+        upstreamPort: 3000,
+        requestBodyLimitBytes: 64_000,
+        upstreamTimeoutMs: 25_000,
+        extra: true,
+      } as never),
+    /Caddyfile options contains unsupported option "extra"/,
+  );
+
+  assert.throws(
+    () =>
+      renderCaddyfile({
         domain: 42 as never,
         upstreamPort: 3000,
         requestBodyLimitBytes: 64_000,
@@ -596,6 +627,35 @@ test("renderCaddyfile rejects unsafe site addresses and numeric limits", () => {
         upstreamTimeoutMs: 0,
       }),
     /upstreamTimeoutMs/,
+  );
+});
+
+test("diagnoseConfig rejects invalid direct options", () => {
+  const config = createDefaultConfig("vps");
+
+  assert.throws(
+    () => diagnoseConfig(config, process.env, undefined, null as never),
+    /diagnose options must be an object/,
+  );
+
+  assert.throws(
+    () => diagnoseConfig(config, process.env, undefined, { extra: true } as never),
+    /diagnose options contains unsupported option "extra"/,
+  );
+
+  assert.throws(
+    () => diagnoseConfig(config, process.env, undefined, JSON.parse('{"__proto__":true}')),
+    /diagnose options cannot include unsafe option "__proto__"/,
+  );
+
+  assert.throws(
+    () => diagnoseConfig(config, process.env, undefined, { strictFilesystem: "true" } as never),
+    /strictFilesystem must be a boolean/,
+  );
+
+  assert.throws(
+    () => diagnoseConfig(config, process.env, undefined, { preflight: null } as never),
+    /diagnose options\.preflight must be an object/,
   );
 });
 
@@ -1278,6 +1338,45 @@ test("renderEnvironmentFileExample documents async queue retention overrides", (
 
 test("renderDeploymentBundle rejects malformed direct paths before loading config", async () => {
   await assert.rejects(
+    () => renderDeploymentBundle(null as never),
+    /deployment bundle options must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      renderDeploymentBundle({
+        cwd: process.cwd(),
+        configPath: "./examples/config/ray.1b.generic.public.json",
+        user: "ray",
+        domain: "ray.example.com",
+        extra: true,
+      } as never),
+    /deployment bundle options contains unsupported option "extra"/,
+  );
+
+  await assert.rejects(
+    () =>
+      renderDeploymentBundle(
+        JSON.parse(
+          `{"cwd":${JSON.stringify(process.cwd())},"configPath":"./examples/config/ray.1b.generic.public.json","user":"ray","domain":"ray.example.com","__proto__":true}`,
+        ),
+      ),
+    /deployment bundle options cannot include unsafe option "__proto__"/,
+  );
+
+  await assert.rejects(
+    () =>
+      renderDeploymentBundle({
+        cwd: process.cwd(),
+        configPath: "./examples/config/ray.1b.generic.public.json",
+        user: "ray",
+        domain: "ray.example.com",
+        memoryBudgetMiB: 0,
+      }),
+    /memoryBudgetMiB must be a positive integer/,
+  );
+
+  await assert.rejects(
     () =>
       renderDeploymentBundle({
         cwd: " /srv/ray",
@@ -1432,6 +1531,51 @@ test("loadAndDiagnoseDeployment uses the config memory class without deploy over
 });
 
 test("loadAndDiagnoseDeployment rejects malformed direct paths before loading config", async () => {
+  await assert.rejects(
+    () => loadAndDiagnoseDeployment(null as never),
+    /deployment inspection options must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      loadAndDiagnoseDeployment({
+        cwd: process.cwd(),
+        configPath: "./examples/config/ray.sub1b.public.json",
+        extra: true,
+      } as never),
+    /deployment inspection options contains unsupported option "extra"/,
+  );
+
+  await assert.rejects(
+    () =>
+      loadAndDiagnoseDeployment(
+        JSON.parse(
+          `{"cwd":${JSON.stringify(process.cwd())},"configPath":"./examples/config/ray.sub1b.public.json","__proto__":true}`,
+        ),
+      ),
+    /deployment inspection options cannot include unsafe option "__proto__"/,
+  );
+
+  await assert.rejects(
+    () =>
+      loadAndDiagnoseDeployment({
+        cwd: process.cwd(),
+        configPath: "./examples/config/ray.sub1b.public.json",
+        strictFilesystem: "true",
+      } as never),
+    /strictFilesystem must be a boolean/,
+  );
+
+  await assert.rejects(
+    () =>
+      loadAndDiagnoseDeployment({
+        cwd: process.cwd(),
+        configPath: "./examples/config/ray.sub1b.public.json",
+        env: null,
+      } as never),
+    /env must be an object/,
+  );
+
   await assert.rejects(
     () =>
       loadAndDiagnoseDeployment({
@@ -1721,6 +1865,16 @@ test("renderLlamaCppService rejects malformed service options and launch profile
   assert.throws(
     () => renderLlamaCppService(null as never),
     /llama\.cpp service options must be an object/,
+  );
+
+  assert.throws(
+    () =>
+      renderLlamaCppService({
+        user: "ray",
+        launchProfile,
+        extra: true,
+      } as never),
+    /llama\.cpp service options contains unsupported option "extra"/,
   );
 
   assert.throws(
