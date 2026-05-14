@@ -238,6 +238,7 @@ const MAX_PROVIDER_RESULT_USAGE_COUNT = 1_000_000_000;
 const MAX_PROVIDER_MODEL_ID_CHARS = 512;
 const MAX_PROVIDER_HEALTH_CHECKED_AT_CHARS = 128;
 const MAX_PROVIDER_HEALTH_STRING_CHARS = 512;
+const MAX_PROVIDER_HEALTH_LATENCY_MS = 120_000;
 const MAX_PROVIDER_HEALTH_DETAIL_DEPTH = 6;
 const MAX_PROVIDER_HEALTH_DETAIL_OBJECT_KEYS = 64;
 const MAX_PROVIDER_HEALTH_DETAIL_ARRAY_ITEMS = 64;
@@ -3539,22 +3540,38 @@ function normalizeProviderHealthLatency(value: unknown): number | undefined {
     return undefined;
   }
 
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    throw createProviderHealthError("latencyMs must be a non-negative finite number", {
-      field: "latencyMs",
-    });
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > MAX_PROVIDER_HEALTH_LATENCY_MS
+  ) {
+    throw createProviderHealthError(
+      `latencyMs must be a non-negative finite number no greater than ${MAX_PROVIDER_HEALTH_LATENCY_MS}`,
+      {
+        field: "latencyMs",
+        maxValue: MAX_PROVIDER_HEALTH_LATENCY_MS,
+      },
+    );
   }
 
   return value;
 }
 
-function normalizeProviderHealthInteger(value: unknown, field: string): number | undefined {
+function normalizeProviderHealthInteger(
+  value: unknown,
+  field: string,
+  maximum = MAX_PROVIDER_DIAGNOSTIC_NUMBER,
+): number | undefined {
   if (value === undefined) {
     return undefined;
   }
 
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw createProviderHealthError(`${field} must be a non-negative safe integer`, { field });
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > maximum) {
+    throw createProviderHealthError(
+      `${field} must be a non-negative safe integer no greater than ${maximum}`,
+      { field, maxValue: maximum },
+    );
   }
 
   return value;
@@ -3735,6 +3752,7 @@ function normalizeProviderCapabilityErrors(value: unknown): Record<string, strin
 
 function normalizeProviderDetectedCapabilities(
   value: unknown,
+  config: RayConfig,
 ): ProviderDetectedCapabilities | undefined {
   if (value === undefined) {
     return undefined;
@@ -3777,6 +3795,7 @@ function normalizeProviderDetectedCapabilities(
   const contextWindow = normalizeProviderHealthInteger(
     capabilities.contextWindow,
     "detectedCapabilities.contextWindow",
+    config.model.contextWindow,
   );
   const totalSlots = normalizeProviderHealthInteger(
     capabilities.totalSlots,
@@ -3806,7 +3825,10 @@ function normalizeProviderDetectedCapabilities(
   };
 }
 
-function normalizeProviderHealthSnapshot(value: unknown): ProviderHealthSnapshot {
+function normalizeProviderHealthSnapshot(
+  value: unknown,
+  config: RayConfig,
+): ProviderHealthSnapshot {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw createProviderHealthError("provider health() must return an object");
   }
@@ -3815,7 +3837,10 @@ function normalizeProviderHealthSnapshot(value: unknown): ProviderHealthSnapshot
   assertProviderHealthString(snapshot.checkedAt, "checkedAt", MAX_PROVIDER_HEALTH_CHECKED_AT_CHARS);
 
   const latencyMs = normalizeProviderHealthLatency(snapshot.latencyMs);
-  const detectedCapabilities = normalizeProviderDetectedCapabilities(snapshot.detectedCapabilities);
+  const detectedCapabilities = normalizeProviderDetectedCapabilities(
+    snapshot.detectedCapabilities,
+    config,
+  );
   const details = snapshotProviderHealthDetails(snapshot.details);
 
   return {
@@ -4427,7 +4452,7 @@ export class RayRuntime {
       const rawSnapshot = await this.provider.health?.();
 
       if (rawSnapshot) {
-        const snapshot = normalizeProviderHealthSnapshot(rawSnapshot);
+        const snapshot = normalizeProviderHealthSnapshot(rawSnapshot, this.config);
         this.providerHealthCache = {
           checkedAtMs: Date.now(),
           snapshot,

@@ -1727,6 +1727,8 @@ test("runtime bounds provider health snapshots before caching", async () => {
     String(health.provider.detectedCapabilities?.backendModel),
     /\[truncated 188 chars\]$/,
   );
+  assert.equal(health.provider.detectedCapabilities?.contextWindow, 4096);
+  assert.equal(health.provider.detectedCapabilities?.totalSlots, 2);
   assert.match(
     String(health.provider.detectedCapabilities?.errors?.props),
     /\[truncated 808 chars\]$/,
@@ -1778,6 +1780,80 @@ test("runtime treats malformed provider health as unavailable", async () => {
   assert.match(
     String(health.provider.details?.message),
     /Invalid provider health: latencyMs must be a non-negative finite number/,
+  );
+});
+
+test("runtime treats oversized provider health latency as unavailable", async () => {
+  const provider: ModelProvider = {
+    kind: "openai-compatible",
+    modelId: "test-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async health() {
+      return {
+        status: "ready",
+        checkedAt: new Date().toISOString(),
+        latencyMs: 120_001,
+      };
+    },
+    async infer() {
+      return {
+        output: "unused",
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(createDefaultConfig("vps"), { provider });
+  const health = await runtime.health();
+
+  assert.equal(health.status, "unavailable");
+  assert.equal(health.provider.status, "unavailable");
+  assert.match(
+    String(health.provider.details?.message),
+    /Invalid provider health: latencyMs must be a non-negative finite number no greater than 120000/,
+  );
+});
+
+test("runtime treats oversized provider health capabilities as unavailable", async () => {
+  const config = createDefaultConfig("tiny");
+  const provider: ModelProvider = {
+    kind: "llama.cpp",
+    modelId: "test-model",
+    capabilities: {
+      streaming: false,
+      quantized: true,
+      localBackend: true,
+    },
+    async health() {
+      return {
+        status: "ready",
+        checkedAt: new Date().toISOString(),
+        detectedCapabilities: {
+          applyTemplate: "available",
+          chatTemplate: "unknown",
+          jsonMode: "available",
+          contextWindow: config.model.contextWindow + 1,
+        },
+      };
+    },
+    async infer() {
+      return {
+        output: "unused",
+      };
+    },
+  };
+
+  const runtime = createRayRuntime(config, { provider });
+  const health = await runtime.health();
+
+  assert.equal(health.status, "unavailable");
+  assert.equal(health.provider.status, "unavailable");
+  assert.match(
+    String(health.provider.details?.message),
+    /Invalid provider health: detectedCapabilities\.contextWindow must be a non-negative safe integer no greater than 4096/,
   );
 });
 
