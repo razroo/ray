@@ -724,6 +724,20 @@ function isLocalCaddySiteAddress(value: string): boolean {
   );
 }
 
+function isPlainHttpCaddySiteAddress(value: string): boolean {
+  const siteAddress = value.trim().toLowerCase();
+
+  if (!/^[a-z][a-z0-9+.-]*:\/\//.test(siteAddress)) {
+    return false;
+  }
+
+  try {
+    return new URL(siteAddress).protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 function inferRayStateDirectory(config: RayConfig): string | undefined {
   if (!config.asyncQueue.enabled) {
     return undefined;
@@ -2777,15 +2791,20 @@ export function diagnoseConfig(
     });
   }
 
-  if (
-    preflight?.caddySiteAddress !== undefined &&
-    isLocalCaddySiteAddress(preflight.caddySiteAddress)
-  ) {
-    diagnostics.push({
-      level: "warn",
-      code: "caddy_site_address_local",
-      message: `Generated Caddyfile site address "${preflight.caddySiteAddress}" is local, private, or placeholder-only. Set --domain or RAY_DEPLOY_DOMAIN to the real public DNS name before installing Caddy on a VPS.`,
-    });
+  if (preflight?.caddySiteAddress !== undefined) {
+    if (isLocalCaddySiteAddress(preflight.caddySiteAddress)) {
+      diagnostics.push({
+        level: "warn",
+        code: "caddy_site_address_local",
+        message: `Generated Caddyfile site address "${preflight.caddySiteAddress}" is local, private, or placeholder-only. Set --domain or RAY_DEPLOY_DOMAIN to the real public DNS name before installing Caddy on a VPS.`,
+      });
+    } else if (isPlainHttpCaddySiteAddress(preflight.caddySiteAddress)) {
+      diagnostics.push({
+        level: "warn",
+        code: "caddy_site_address_http_only",
+        message: `Generated Caddyfile site address "${preflight.caddySiteAddress}" uses http://, so Caddy will serve the public Ray endpoint without automatic HTTPS. Use a bare DNS name such as ray.example.com or an explicit https:// address unless this VPS is intentionally HTTP-only behind another TLS terminator.`,
+      });
+    }
   }
 
   if (preflight?.serviceUser !== undefined && isRootServiceUser(preflight)) {

@@ -3155,6 +3155,75 @@ test("diagnoseConfig warns when the generated Caddy site address is local", () =
   );
 });
 
+test("diagnoseConfig warns when a public Caddy site address is HTTP-only", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    preflight: {
+      caddySiteAddress: "http://ray.example.com",
+    },
+  });
+
+  const diagnostic = diagnostics.find((entry) => entry.code === "caddy_site_address_http_only");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /without automatic HTTPS/);
+  assert.match(diagnostic.message, /ray\.example\.com/);
+  assert.match(diagnostic.message, /TLS terminator/);
+
+  const localDiagnostics = diagnoseConfig(config, process.env, undefined, {
+    preflight: {
+      caddySiteAddress: "http://localhost:8080",
+    },
+  });
+  assert.ok(
+    localDiagnostics.some((entry) => entry.code === "caddy_site_address_local"),
+    "local HTTP-only addresses should still get the local-site-address warning",
+  );
+  assert.ok(
+    !localDiagnostics.some((entry) => entry.code === "caddy_site_address_http_only"),
+    "local placeholder addresses should not also get the public HTTP-only warning",
+  );
+
+  for (const caddySiteAddress of ["ray.example.com", "https://ray.example.com"]) {
+    const secureDiagnostics = diagnoseConfig(config, process.env, undefined, {
+      preflight: {
+        caddySiteAddress,
+      },
+    });
+
+    assert.ok(
+      !secureDiagnostics.some((entry) => entry.code === "caddy_site_address_http_only"),
+      `${caddySiteAddress} should not be treated as HTTP-only`,
+    );
+  }
+});
+
+test("renderDeploymentBundle warns when the public Caddy site address is HTTP-only", async (t) => {
+  const tempDir = await mkRayDeployTempDir("ray-deploy-http-caddy-site-");
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, `${JSON.stringify(config)}\n`, "utf8");
+
+  const bundle = await renderDeploymentBundle({
+    cwd: tempDir,
+    configPath,
+    user: "ray",
+    domain: "http://ray.example.com",
+  });
+
+  const diagnostic = bundle.summary.diagnostics.find(
+    (entry) => entry.code === "caddy_site_address_http_only",
+  );
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "warn");
+  assert.match(diagnostic.message, /automatic HTTPS/);
+  assert.equal(bundle.summary.preflight.caddySiteAddress, "http://ray.example.com");
+});
+
 test("loadAndDiagnoseDeployment warns when EnvironmentFile permissions are open in strict mode", async (t) => {
   const tempDir = await mkRayDeployTempDir("ray-deploy-env-file-mode-");
   t.after(async () => {
