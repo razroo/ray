@@ -6,9 +6,15 @@ import { pathToFileURL } from "node:url";
 
 export const VERIFY_NPM_TIMEOUT_MS = 15_000;
 export const MAX_NPM_METADATA_BYTES = 1024 * 1024;
+const MAX_VERIFY_NPM_ARGV = 8;
+const MAX_VERIFY_NPM_ARG_BYTES = 4_096;
 export const packages = ["@razroo/ray-core", "@razroo/ray-sdk"];
 const semverPattern =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+function usage() {
+  return "Usage: bun scripts/release/verify-npm.mjs <version>";
+}
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -16,10 +22,66 @@ function isRecord(value) {
 
 function assertReleaseVersion(version) {
   if (typeof version !== "string" || version.trim().length === 0) {
-    throw new Error("Usage: bun scripts/release/verify-npm.mjs <version>");
+    throw new Error(usage());
   }
   if (version !== version.trim() || !semverPattern.test(version)) {
     throw new Error(`npm verification version must be a valid SemVer string: ${version}`);
+  }
+}
+
+function assertVerifyNpmArgv(argv) {
+  if (!Array.isArray(argv)) {
+    throw new Error("npm verification argv must be an array");
+  }
+
+  if (argv.length > MAX_VERIFY_NPM_ARGV) {
+    throw new Error(`npm verification argv must contain at most ${MAX_VERIFY_NPM_ARGV} entries`);
+  }
+
+  for (const [index, arg] of argv.entries()) {
+    if (typeof arg !== "string") {
+      throw new Error(`npm verification argv[${index}] must be a string`);
+    }
+
+    if (/[\0\r\n]/.test(arg)) {
+      throw new Error(`npm verification argv[${index}] must not contain control characters`);
+    }
+
+    if (Buffer.byteLength(arg, "utf8") > MAX_VERIFY_NPM_ARG_BYTES) {
+      throw new Error(
+        `npm verification argv[${index}] must be at most ${MAX_VERIFY_NPM_ARG_BYTES} bytes`,
+      );
+    }
+  }
+}
+
+function assertVerifyNpmCliIo(io) {
+  if (!isRecord(io)) {
+    throw new Error("npm verification io must be an object");
+  }
+
+  if (!isRecord(io.stdout) || typeof io.stdout.write !== "function") {
+    throw new Error("npm verification io.stdout.write must be a function");
+  }
+
+  if (!isRecord(io.stderr) || typeof io.stderr.write !== "function") {
+    throw new Error("npm verification io.stderr.write must be a function");
+  }
+}
+
+function resolveRunVerifyNpmOptions(options) {
+  if (!isRecord(options)) {
+    throw new Error("npm verification options must be an object");
+  }
+
+  const io = Object.hasOwn(options, "io") ? options.io : process;
+  assertVerifyNpmCliIo(io);
+  return { io };
+}
+
+function assertRunVerifyNpmCliOptions(options) {
+  if (!isRecord(options)) {
+    throw new Error("npm verification cli options must be an object");
   }
 }
 
@@ -140,6 +202,20 @@ async function readResponseTextWithinLimit(response, limitBytes, label) {
   ).toString("utf8");
 }
 
+export function parseArgs(argv) {
+  assertVerifyNpmArgv(argv);
+  const args = argv.filter((arg) => arg !== "--");
+
+  if (args.length !== 1) {
+    throw new Error(usage());
+  }
+
+  const version = args[0];
+  assertReleaseVersion(version);
+
+  return { version };
+}
+
 export async function fetchNpmMetadata(pkg, options = {}) {
   assertReleasePackageName(pkg);
   const { fetchImpl, maxBytes, timeoutMs } = resolveFetchNpmOptions(options);
@@ -244,17 +320,28 @@ export async function verifyPackageVersion(pkg, version, options = {}) {
 
 export async function runVerifyNpm(version, options = {}) {
   assertReleaseVersion(version);
+  const { io } = resolveRunVerifyNpmOptions(options);
+
   for (const pkg of packages) {
     const published = await verifyPackageVersion(pkg, version, options);
-    console.log(`${pkg}: ${published}`);
+    io.stdout.write(`${pkg}: ${published}\n`);
+  }
+}
+
+export async function runVerifyNpmCli(argv = process.argv.slice(2), io = process, options = {}) {
+  assertVerifyNpmCliIo(io);
+  assertRunVerifyNpmCliOptions(options);
+
+  try {
+    const args = parseArgs(argv);
+    await runVerifyNpm(args.version, { ...options, io });
+    return 0;
+  } catch (error) {
+    io.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
   }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const version = process.argv[2];
-
-  runVerifyNpm(version).catch((err) => {
-    console.error(String(err));
-    process.exit(1);
-  });
+  process.exitCode = await runVerifyNpmCli();
 }
