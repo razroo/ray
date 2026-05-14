@@ -283,15 +283,25 @@ export async function collectConfigPaths(cwd: string, configDir: string): Promis
   return configPaths;
 }
 
-function withSmokeAuthEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const apiKeys =
-    typeof env.RAY_API_KEYS === "string" && env.RAY_API_KEYS.trim().length > 0
-      ? env.RAY_API_KEYS
-      : DEFAULT_SMOKE_API_KEY;
+function readOwnEnvValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  if (!Object.prototype.hasOwnProperty.call(env, name)) {
+    return undefined;
+  }
 
-  return {
-    RAY_API_KEYS: apiKeys,
-  };
+  const value = env[name];
+  return typeof value === "string" ? value : undefined;
+}
+
+function withSmokeAuthEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const rawApiKeys = readOwnEnvValue(env, "RAY_API_KEYS");
+  const apiKeys =
+    typeof rawApiKeys === "string" && rawApiKeys.trim().length > 0
+      ? rawApiKeys
+      : DEFAULT_SMOKE_API_KEY;
+  const smokeEnv = Object.create(null) as NodeJS.ProcessEnv;
+
+  smokeEnv.RAY_API_KEYS = apiKeys;
+  return smokeEnv;
 }
 
 function isRecord(value: unknown): value is ConfigRecord {

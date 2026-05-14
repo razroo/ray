@@ -140,6 +140,21 @@ test("validateConfigFiles rejects malformed direct paths before rendering", asyn
   );
 });
 
+test("validateConfigFiles ignores inherited smoke auth environment overrides", async () => {
+  const cwd = process.cwd();
+  const summary = await validateConfigFiles({
+    cwd,
+    configPaths: [path.join(cwd, "examples/config/ray.sub1b.public.json")],
+    env: Object.create({ RAY_API_KEYS: "bad key" }) as NodeJS.ProcessEnv,
+  });
+  const diagnosticCodes = summary.results.flatMap((result) =>
+    result.diagnostics.map((diagnostic) => diagnostic.code),
+  );
+
+  assert.equal(summary.ok, true);
+  assert.equal(diagnosticCodes.includes("auth_keys_missing"), false);
+});
+
 test("validateConfigFiles requires explicit public runtime guardrails", async (t) => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "ray-config-public-policy-"));
   t.after(async () => {
