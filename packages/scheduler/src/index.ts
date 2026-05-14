@@ -14,6 +14,11 @@ const DOMINANT_AFFINITY_BONUS = 40;
 const WAIT_SCORE_DIVISOR = 25;
 const MAX_SCHEDULE_KEY_CHARS = 512;
 const MAX_SCHEDULE_AFFINITY_KEY_CHARS = 512;
+const MAX_SCHEDULER_CONCURRENCY = 8;
+const MAX_SCHEDULER_QUEUE_DEPTH = 512;
+const MAX_SCHEDULER_QUEUED_TOKENS = 262_144;
+const MAX_SCHEDULER_INFLIGHT_TOKENS = 65_536;
+const MAX_REQUEST_TIMEOUT_MS = 120_000;
 
 function createRequestTimeoutError(): RayError {
   return new RayError("The inference request exceeded the scheduler timeout", {
@@ -25,6 +30,14 @@ function createRequestTimeoutError(): RayError {
 function assertPositiveSafeInteger(value: number, label: string): void {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new RangeError(`${label} must be a positive safe integer`);
+  }
+}
+
+function assertPositiveSafeIntegerAtMost(value: number, label: string, maximum: number): void {
+  assertPositiveSafeInteger(value, label);
+
+  if (value > maximum) {
+    throw new RangeError(`${label} must be less than or equal to ${maximum}`);
   }
 }
 
@@ -123,11 +136,27 @@ function assertScheduleHandler<T>(
 }
 
 function normalizeSchedulerConfig(config: SchedulerConfig): SchedulerConfig {
-  assertPositiveSafeInteger(config.concurrency, "scheduler.concurrency");
-  assertPositiveSafeInteger(config.maxQueue, "scheduler.maxQueue");
-  assertPositiveSafeInteger(config.maxQueuedTokens, "scheduler.maxQueuedTokens");
-  assertPositiveSafeInteger(config.maxInflightTokens, "scheduler.maxInflightTokens");
-  assertPositiveSafeInteger(config.requestTimeoutMs, "scheduler.requestTimeoutMs");
+  assertPositiveSafeIntegerAtMost(
+    config.concurrency,
+    "scheduler.concurrency",
+    MAX_SCHEDULER_CONCURRENCY,
+  );
+  assertPositiveSafeIntegerAtMost(config.maxQueue, "scheduler.maxQueue", MAX_SCHEDULER_QUEUE_DEPTH);
+  assertPositiveSafeIntegerAtMost(
+    config.maxQueuedTokens,
+    "scheduler.maxQueuedTokens",
+    MAX_SCHEDULER_QUEUED_TOKENS,
+  );
+  assertPositiveSafeIntegerAtMost(
+    config.maxInflightTokens,
+    "scheduler.maxInflightTokens",
+    MAX_SCHEDULER_INFLIGHT_TOKENS,
+  );
+  assertPositiveSafeIntegerAtMost(
+    config.requestTimeoutMs,
+    "scheduler.requestTimeoutMs",
+    MAX_REQUEST_TIMEOUT_MS,
+  );
   assertNonNegativeSafeInteger(config.batchWindowMs, "scheduler.batchWindowMs");
   assertPositiveSafeInteger(config.affinityLookahead, "scheduler.affinityLookahead");
   assertPositiveSafeInteger(config.shortJobMaxTokens, "scheduler.shortJobMaxTokens");

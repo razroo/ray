@@ -24,7 +24,15 @@ test("scheduler rejects invalid resource limit config", () => {
     /scheduler\.concurrency/,
   );
   assert.throws(
+    () => new RequestScheduler<string>(createSchedulerConfig({ concurrency: 9 })),
+    /scheduler\.concurrency/,
+  );
+  assert.throws(
     () => new RequestScheduler<string>(createSchedulerConfig({ maxQueue: 0 })),
+    /scheduler\.maxQueue/,
+  );
+  assert.throws(
+    () => new RequestScheduler<string>(createSchedulerConfig({ maxQueue: 513 })),
     /scheduler\.maxQueue/,
   );
   assert.throws(
@@ -32,11 +40,23 @@ test("scheduler rejects invalid resource limit config", () => {
     /scheduler\.maxQueuedTokens/,
   );
   assert.throws(
+    () => new RequestScheduler<string>(createSchedulerConfig({ maxQueuedTokens: 262_145 })),
+    /scheduler\.maxQueuedTokens/,
+  );
+  assert.throws(
     () => new RequestScheduler<string>(createSchedulerConfig({ maxInflightTokens: 1.5 })),
     /scheduler\.maxInflightTokens/,
   );
   assert.throws(
+    () => new RequestScheduler<string>(createSchedulerConfig({ maxInflightTokens: 65_537 })),
+    /scheduler\.maxInflightTokens/,
+  );
+  assert.throws(
     () => new RequestScheduler<string>(createSchedulerConfig({ requestTimeoutMs: 0 })),
+    /scheduler\.requestTimeoutMs/,
+  );
+  assert.throws(
+    () => new RequestScheduler<string>(createSchedulerConfig({ requestTimeoutMs: 120_001 })),
     /scheduler\.requestTimeoutMs/,
   );
   assert.throws(
