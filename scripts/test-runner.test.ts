@@ -8,6 +8,7 @@ import {
   assertTestDiskHeadroom,
   buildTestCommandEnv,
   collectTestFiles,
+  MAX_TEST_COMMAND_TIMEOUT_MS,
   resolveMinimumTestFreeSpaceMiB,
   resolveTestCommandTimeoutMs,
   runTestCli,
@@ -290,6 +291,41 @@ test("runTestCommand times out hung child commands", async () => {
   assert.equal(code, 1);
   assert.match(stderr.join(""), /timed out after 50ms/);
   assert.ok(Date.now() - startedAt < 2_000);
+});
+
+test("runTestCommand rejects malformed direct inputs before spawning", () => {
+  assert.throws(
+    () => runTestCommand(process.execPath, [], null),
+    /test command options must be an object/,
+  );
+  assert.throws(
+    () => runTestCommand(`/${"a".repeat(4096)}`, [], {}),
+    /test command binary must be at most 4096 bytes/,
+  );
+  assert.throws(
+    () => runTestCommand(process.execPath, null, {}),
+    /test command args must be an array/,
+  );
+  assert.throws(
+    () => runTestCommand(process.execPath, ["ok\n"], {}),
+    /test command args\[0\] must not contain control characters/,
+  );
+  assert.throws(
+    () =>
+      runTestCommand(process.execPath, ["--version"], {
+        timeoutMs: MAX_TEST_COMMAND_TIMEOUT_MS + 1,
+      }),
+    /timeoutMs must be a positive safe integer no greater than 3600000/,
+  );
+  assert.throws(
+    () =>
+      runTestCommand(process.execPath, ["--version"], {
+        io: {
+          stderr: {},
+        },
+      }),
+    /test command io\.stderr\.write must be a function/,
+  );
 });
 
 test("test disk preflight reports low repository or temp space before dispatch", async (t) => {

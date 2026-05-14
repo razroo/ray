@@ -15,6 +15,8 @@ export const DEFAULT_MIN_TEST_FREE_SPACE_MIB = 1_024;
 export const MAX_TEST_FREE_SPACE_MIB = 1_048_576;
 export const DEFAULT_TEST_COMMAND_TIMEOUT_MS = 600_000;
 export const MAX_TEST_COMMAND_TIMEOUT_MS = 3_600_000;
+export const MAX_TEST_COMMAND_ARGS = 1_024;
+export const MAX_TEST_COMMAND_ARG_BYTES = 4_096;
 const BYTES_PER_MIB = 1024 * 1024;
 const TEST_COMMAND_KILL_GRACE_MS = 5_000;
 const MAX_TEST_COMMAND_DISPLAY_CHARS = 512;
@@ -43,6 +45,10 @@ export const DEFAULT_SKIP_NAMES = new Set([
   "tmp",
 ]);
 
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function resolveDiscoveryLimits(options) {
   return {
     maxDirectories: options.maxDirectories ?? MAX_TEST_DISCOVERY_DIRECTORIES,
@@ -58,6 +64,16 @@ function assertPositiveInteger(value, label) {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${label} must be a positive safe integer`);
   }
+}
+
+function assertPositiveIntegerAtMost(value, label, maximum) {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > maximum) {
+    throw new Error(`${label} must be a positive safe integer no greater than ${maximum}`);
+  }
+}
+
+function readOption(options, key, defaultValue) {
+  return Object.hasOwn(options, key) ? options[key] : defaultValue;
 }
 
 function parseNonNegativeInteger(value, label) {
@@ -111,6 +127,38 @@ function readOwnEnvValue(env, name) {
 
 function isSafeTestCommandEnvValue(value) {
   return value.length > 0 && !value.includes("\0");
+}
+
+function assertTestCommandArgs(args) {
+  if (!Array.isArray(args)) {
+    throw new Error("test command args must be an array");
+  }
+
+  if (args.length > MAX_TEST_COMMAND_ARGS) {
+    throw new Error(`test command args must contain at most ${MAX_TEST_COMMAND_ARGS} entries`);
+  }
+
+  for (const [index, arg] of args.entries()) {
+    if (typeof arg !== "string" || arg.length === 0) {
+      throw new Error(`test command args[${index}] must be a non-empty string`);
+    }
+
+    if (/[\0\r\n]/.test(arg)) {
+      throw new Error(`test command args[${index}] must not contain control characters`);
+    }
+
+    if (Buffer.byteLength(arg, "utf8") > MAX_TEST_COMMAND_ARG_BYTES) {
+      throw new Error(
+        `test command args[${index}] must be at most ${MAX_TEST_COMMAND_ARG_BYTES} bytes`,
+      );
+    }
+  }
+}
+
+function assertTestCommandIo(io) {
+  if (!isRecord(io) || !isRecord(io.stderr) || typeof io.stderr.write !== "function") {
+    throw new Error("test command io.stderr.write must be a function");
+  }
 }
 
 export function buildTestCommandEnv(env = process.env) {
@@ -345,15 +393,26 @@ export async function assertTestDiskHeadroom(options = {}) {
 }
 
 export function runTestCommand(binary, args, options = {}) {
+  assertTestPathValue(binary, "test command binary");
+  assertTestCommandArgs(args);
+  if (!isRecord(options)) {
+    throw new Error("test command options must be an object");
+  }
+
+  const timeoutMs = readOption(options, "timeoutMs", DEFAULT_TEST_COMMAND_TIMEOUT_MS);
+  assertPositiveIntegerAtMost(timeoutMs, "timeoutMs", MAX_TEST_COMMAND_TIMEOUT_MS);
+  const io = readOption(options, "io", process);
+  assertTestCommandIo(io);
+  const cwd = readOption(options, "cwd", process.cwd());
+  assertTestPathValue(cwd, "test command cwd");
+
   return new Promise((resolve) => {
-    const timeoutMs = options.timeoutMs ?? DEFAULT_TEST_COMMAND_TIMEOUT_MS;
-    const io = options.io ?? process;
     let settled = false;
     let timeout;
     let killTimer;
     const child = spawn(binary, args, {
-      cwd: options.cwd ?? process.cwd(),
-      env: buildTestCommandEnv(options.env ?? process.env),
+      cwd,
+      env: buildTestCommandEnv(readOption(options, "env", process.env)),
       stdio: "inherit",
     });
 
