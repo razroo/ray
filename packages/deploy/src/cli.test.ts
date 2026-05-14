@@ -353,6 +353,22 @@ test("parseCliArgs accepts explicit deploy domains", () => {
   assert.equal(options.domain, "ray.example.com");
 });
 
+test("parseCliArgs rejects malformed deploy domains", () => {
+  assert.throws(
+    () => parseCliArgs(["render", "--domain", "ray.example.com alt.example.com"]),
+    /Caddy site address/,
+  );
+  assert.throws(
+    () => parseCliArgs(["render", "--domain", "ray.example.com {"]),
+    /Caddy site address/,
+  );
+  assert.throws(() => parseCliArgs(["render", "--domain", "ray.example.com\0"]), /NUL bytes/);
+  assert.throws(
+    () => parseCliArgs(["render", "--domain", `${"x".repeat(513)}.example.com`]),
+    /at most 512 bytes/,
+  );
+});
+
 test("parseCliArgs accepts explicit service users", () => {
   const options = parseCliArgs(["render", "--user", "ray_gpu"]);
   const uidOptions = parseCliArgs(["render", "--user", "1001"]);
@@ -773,6 +789,60 @@ test("runCli render applies env-file deploy domain to generated Caddyfile", asyn
 
   const rendered = output.join("\n");
   assert.match(rendered, /^ray\.example\.com \{/m);
+});
+
+test("runCli rejects malformed env-file deploy domains unless explicitly overridden", async (t) => {
+  const tempDir = await mkRayDeployTempDir("ray-deploy-domain-invalid-env-");
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+  const envFile = join(tempDir, "ray.env");
+  await writeFile(
+    envFile,
+    ["RAY_API_KEYS=test-key", "RAY_DEPLOY_DOMAIN=env.example.com bad.example.com", ""].join("\n"),
+    "utf8",
+  );
+
+  await assert.rejects(
+    () =>
+      runCli([
+        "render",
+        "--cwd",
+        ".",
+        "--config",
+        "./examples/config/ray.1b.generic.public.json",
+        "--ray-env-file",
+        envFile,
+        "--memory-mib",
+        "4096",
+      ]),
+    /Caddy site address/,
+  );
+
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    output.push(values.map((value) => String(value)).join(" "));
+  };
+  t.after(() => {
+    console.log = originalLog;
+  });
+
+  await runCli([
+    "render",
+    "--cwd",
+    ".",
+    "--config",
+    "./examples/config/ray.1b.generic.public.json",
+    "--ray-env-file",
+    envFile,
+    "--memory-mib",
+    "4096",
+    "--domain",
+    "cli.example.com",
+  ]);
+
+  assert.match(output.join("\n"), /^cli\.example\.com \{/m);
 });
 
 test("runCli explicit deploy domain overrides env-file domain", async (t) => {

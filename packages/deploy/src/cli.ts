@@ -1,7 +1,11 @@
 import { mkdir, open, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { loadAndDiagnoseDeployment, renderDeploymentBundle } from "./index.js";
+import {
+  loadAndDiagnoseDeployment,
+  normalizeCaddySiteAddress,
+  renderDeploymentBundle,
+} from "./index.js";
 
 export type Command = "render" | "validate" | "doctor";
 
@@ -632,7 +636,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     }
 
     if (current === "--domain") {
-      options.domain = requireFlagValue(current, next);
+      options.domain = normalizeCaddySiteAddress(requireFlagValue(current, next));
       index += 1;
       continue;
     }
@@ -733,7 +737,8 @@ export async function runCli(argv: string[]): Promise<number> {
     resolvedOptions.user === undefined
       ? parseOptionalServiceUserEnv(env.RAY_DEPLOY_SERVICE_USER)
       : undefined;
-  const envDomain = readNonEmptyEnvValue(env.RAY_DEPLOY_DOMAIN);
+  const envDomain =
+    resolvedOptions.domain === undefined ? readNonEmptyEnvValue(env.RAY_DEPLOY_DOMAIN) : undefined;
   const envMemoryBudgetMiB =
     resolvedOptions.memoryBudgetMiB === undefined
       ? parseOptionalPositiveIntegerEnv(env.RAY_DEPLOY_MEMORY_MIB, "RAY_DEPLOY_MEMORY_MIB")
@@ -741,7 +746,10 @@ export async function runCli(argv: string[]): Promise<number> {
   const deploymentOptions: CliOptions & { domain: string; user: string } = {
     ...resolvedOptions,
     user: resolvedOptions.user ?? envServiceUser ?? "ray",
-    domain: resolvedOptions.domain ?? envDomain ?? "ray.local",
+    domain:
+      resolvedOptions.domain ??
+      (envDomain !== undefined ? normalizeCaddySiteAddress(envDomain) : undefined) ??
+      "ray.local",
     ...(resolvedOptions.memoryBudgetMiB === undefined && envMemoryBudgetMiB !== undefined
       ? { memoryBudgetMiB: envMemoryBudgetMiB }
       : {}),

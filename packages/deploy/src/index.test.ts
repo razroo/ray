@@ -522,6 +522,28 @@ test("renderCaddyfile rejects unsafe site addresses and numeric limits", () => {
   assert.throws(
     () =>
       renderCaddyfile({
+        domain: "ray.example.com\0",
+        upstreamPort: 3000,
+        requestBodyLimitBytes: 64_000,
+        upstreamTimeoutMs: 25_000,
+      }),
+    /site address/,
+  );
+
+  assert.throws(
+    () =>
+      renderCaddyfile({
+        domain: `${"x".repeat(513)}.example.com`,
+        upstreamPort: 3000,
+        requestBodyLimitBytes: 64_000,
+        upstreamTimeoutMs: 25_000,
+      }),
+    /at most 512 bytes/,
+  );
+
+  assert.throws(
+    () =>
+      renderCaddyfile({
         domain: "ray.example.com",
         upstreamPort: 70_000,
         requestBodyLimitBytes: 64_000,

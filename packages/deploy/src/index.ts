@@ -297,6 +297,7 @@ const CADDY_DIAL_TIMEOUT_MS = 5_000;
 const CADDY_WRITE_TIMEOUT_MS = 10_000;
 const MAX_CADDY_REQUEST_BODY_LIMIT_BYTES = 1_048_576;
 const MAX_CADDY_UPSTREAM_TIMEOUT_MS = 120_000 + CADDY_UPSTREAM_TIMEOUT_GRACE_MS;
+const MAX_CADDY_SITE_ADDRESS_BYTES = 512;
 const GATEWAY_MEMORY_HIGH_HEADROOM_MIB = 128;
 const GATEWAY_MEMORY_MAX_HEADROOM_MIB = 384;
 const GATEWAY_MEMORY_SWAP_MAX_MIB = 128;
@@ -907,16 +908,41 @@ function assertAbsolutePath(value: string, label: string): void {
   }
 }
 
-function formatCaddySiteAddress(value: string): string {
+export function normalizeCaddySiteAddress(value: string): string {
   assertNonEmptyString(value, "Caddy site address");
 
   const address = value.trim();
 
-  if (address.length === 0 || address !== value || /[\s{}]/.test(address)) {
-    throw new Error("Caddy site address must be non-empty and cannot contain whitespace or braces");
+  if (
+    address.length === 0 ||
+    address !== value ||
+    hasUnsafeCaddySiteAddressCharacter(address) ||
+    Buffer.byteLength(address, "utf8") > MAX_CADDY_SITE_ADDRESS_BYTES
+  ) {
+    throw new Error(
+      `Caddy site address must be non-empty, at most ${MAX_CADDY_SITE_ADDRESS_BYTES} bytes, and cannot contain control characters, whitespace, or braces`,
+    );
   }
 
   return address;
+}
+
+function hasUnsafeCaddySiteAddressCharacter(value: string): boolean {
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+
+    if (
+      code <= 0x1f ||
+      code === 0x7f ||
+      character.trim().length === 0 ||
+      character === "{" ||
+      character === "}"
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function assertPositiveInteger(value: unknown, label: string): asserts value is number {
@@ -2121,7 +2147,7 @@ WantedBy=multi-user.target
 export function renderCaddyfile(options: ReverseProxyOptions): string {
   assertOptionsObject(options, "Caddyfile options");
 
-  const domain = formatCaddySiteAddress(options.domain);
+  const domain = normalizeCaddySiteAddress(options.domain);
   assertCaddyPort(options.upstreamPort);
   assertPositiveIntegerAtMost(
     options.requestBodyLimitBytes,
