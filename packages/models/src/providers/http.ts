@@ -854,6 +854,49 @@ function parseBackendJsonResponse(body: string, contentType: string, pathname: s
   }
 }
 
+function redactJsonStackFields(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
+  if (value === null || value === undefined || typeof value !== "object") {
+    return value;
+  }
+
+  if (seen.has(value)) {
+    return "[Circular]";
+  }
+
+  seen.add(value);
+
+  try {
+    if (Array.isArray(value)) {
+      return value.map((entry) => redactJsonStackFields(entry, seen));
+    }
+
+    const output: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value)) {
+      if (key.toLowerCase() === "stack") {
+        continue;
+      }
+
+      output[key] = redactJsonStackFields(nested, seen);
+    }
+
+    return output;
+  } finally {
+    seen.delete(value);
+  }
+}
+
+function formatBackendErrorBody(body: string, contentType: string): string {
+  if (!body || !isJsonContentType(contentType)) {
+    return body;
+  }
+
+  try {
+    return JSON.stringify(redactJsonStackFields(JSON.parse(body))) ?? "null";
+  } catch {
+    return body;
+  }
+}
+
 export async function adapterRequest(
   adapter: HttpAdapterConfig,
   pathname: string,
@@ -916,12 +959,15 @@ export async function adapterRequest(
     });
 
     if (!response.ok) {
+      const contentType = response.headers.get("content-type") ?? "";
       const body = await readResponseBodyLimited(response, BACKEND_ERROR_BODY_LIMIT_BYTES);
       throw new RayError(`The backend rejected the request with ${response.status}`, {
         code: "provider_upstream_error",
         status: 502,
         details: {
           ...body,
+          body: formatBackendErrorBody(body.body, contentType),
+          contentType,
           pathname,
           upstreamStatus: response.status,
         },
