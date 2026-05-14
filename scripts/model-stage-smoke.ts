@@ -131,13 +131,17 @@ export function parseArgs(argv: string[]): ModelStageSmokeArgs {
     const current = argv[index];
 
     if (current === "--cwd") {
-      args.cwd = requireFlagValue(current, argv[index + 1]);
+      const cwd = requireFlagValue(current, argv[index + 1]);
+      assertModelStageSmokePathValue(cwd, current);
+      args.cwd = cwd;
       index += 1;
       continue;
     }
 
     if (current === "--config-dir") {
-      args.configDir = requireFlagValue(current, argv[index + 1]);
+      const configDir = requireFlagValue(current, argv[index + 1]);
+      assertModelStageSmokePathValue(configDir, current);
+      args.configDir = configDir;
       index += 1;
       continue;
     }

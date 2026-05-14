@@ -278,13 +278,17 @@ export function parseArgs(argv: string[]): GatewaySmokeArgs {
     const current = argv[index];
 
     if (current === "--cwd") {
-      args.cwd = requireFlagValue(current, argv[index + 1]);
+      const cwd = requireFlagValue(current, argv[index + 1]);
+      assertGatewaySmokePathValue(cwd, current);
+      args.cwd = cwd;
       index += 1;
       continue;
     }
 
     if (current === "--config") {
-      args.configPath = requireFlagValue(current, argv[index + 1]);
+      const configPath = requireFlagValue(current, argv[index + 1]);
+      assertGatewaySmokePathValue(configPath, current);
+      args.configPath = configPath;
       index += 1;
       continue;
     }

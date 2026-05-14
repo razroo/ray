@@ -180,7 +180,9 @@ export function parseArgs(argv: string[]): PackageRuntimeCoverageArgs {
     const current = argv[index];
 
     if (current === "--cwd") {
-      args.cwd = requireFlagValue(current, argv[index + 1]);
+      const cwd = requireFlagValue(current, argv[index + 1]);
+      assertRuntimeCoveragePathValue(cwd, current);
+      args.cwd = cwd;
       index += 1;
       continue;
     }

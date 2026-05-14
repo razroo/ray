@@ -84,6 +84,14 @@ test("parseArgs rejects malformed gateway smoke argv", () => {
     /argv\[1\] must be a string/,
   );
   assert.throws(() => parseArgs(["--cwd"]), /--cwd requires a value/);
+  assert.throws(
+    () => parseArgs(["--cwd", " /srv/ray"]),
+    /--cwd must be a path without surrounding whitespace/,
+  );
+  assert.throws(
+    () => parseArgs(["--config", "./examples/config/ray.tiny.json\n"]),
+    /--config must not contain control characters/,
+  );
   assert.throws(() => parseArgs(["--port", "0"]), /--port must be a positive integer/);
   assert.throws(
     () => parseArgs(["--timeout-ms", "120001"]),

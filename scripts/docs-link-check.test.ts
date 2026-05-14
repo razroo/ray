@@ -27,6 +27,10 @@ test("parseArgs rejects malformed docs link check argv", () => {
     /argv\[1\] must be a string/,
   );
   assert.throws(() => parseArgs(["--cwd"]), /--cwd requires a value/);
+  assert.throws(
+    () => parseArgs(["--cwd", " /srv/ray"]),
+    /--cwd must be a path without surrounding whitespace/,
+  );
   assert.throws(() => parseArgs(["--unknown"]), /Unknown option: --unknown/);
   assert.throws(() => parseArgs(["README.md"]), /Unexpected positional argument/);
 });
