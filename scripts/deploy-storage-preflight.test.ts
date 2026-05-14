@@ -13,6 +13,7 @@ import {
 
 type StatFn = typeof import("node:fs/promises").stat;
 type StatfsFn = typeof import("node:fs/promises").statfs;
+type RealpathFn = typeof import("node:fs/promises").realpath;
 
 function missingPathError(path: string): NodeJS.ErrnoException {
   const error = new Error(`missing ${path}`) as NodeJS.ErrnoException;
@@ -243,6 +244,39 @@ test("checkDeployStorageHeadroom reports nearest existing parent and Bun statfs 
   assert.equal(summary.checks[0]?.ok, false);
   assert.equal(summary.checks[1]?.ok, true);
   assert.match(formatTextSummary(summary), /LOW \/srv\/ray \(checked \/srv\): 512 MiB free/);
+});
+
+test("checkDeployStorageHeadroom reports resolved symlink storage targets", async () => {
+  const summary = await checkDeployStorageHeadroom({
+    paths: ["/srv/ray-models/local.gguf"],
+    minFreeStorageMiB: 1_024,
+    stat: (async (targetPath: string) => {
+      if (targetPath !== "/srv/ray-models") {
+        throw missingPathError(targetPath);
+      }
+
+      return {} as Awaited<ReturnType<StatFn>>;
+    }) as StatFn,
+    statfs: (async (targetPath: string) => {
+      assert.equal(targetPath, "/srv/ray-models");
+      return {
+        bsize: 1024 * 1024,
+        bavail: 4_096,
+      };
+    }) as StatfsFn,
+    realpath: (async (targetPath: string) => {
+      assert.equal(targetPath, "/srv/ray-models");
+      return "/mnt/ray-models";
+    }) as RealpathFn,
+  });
+
+  assert.equal(summary.ok, true);
+  assert.equal(summary.checks[0]?.checkPath, "/srv/ray-models");
+  assert.equal(summary.checks[0]?.checkRealPath, "/mnt/ray-models");
+  assert.match(
+    formatTextSummary(summary),
+    /OK \/srv\/ray-models\/local\.gguf \(checked \/srv\/ray-models -> \/mnt\/ray-models\): 4096 MiB free/,
+  );
 });
 
 test("runDeployStoragePreflightCli reports malformed thresholds", async () => {

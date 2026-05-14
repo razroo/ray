@@ -1,4 +1,4 @@
-import { open, stat, statfs } from "node:fs/promises";
+import { open, realpath, stat, statfs } from "node:fs/promises";
 import path from "node:path";
 
 const DEFAULT_MIN_FREE_STORAGE_MIB = 1_024;
@@ -45,6 +45,7 @@ export interface DeployStoragePreflightArgs {
 export interface DeployStorageCheck {
   path: string;
   checkPath: string;
+  checkRealPath?: string;
   minFreeStorageMiB: number;
   availableMiB: number;
   ok: boolean;
@@ -507,12 +508,25 @@ async function getAvailableStorageMiB(checkPath: string, statfsFn: typeof statfs
   return Math.floor((blockSize * availableBlocks) / BYTES_PER_MIB);
 }
 
+async function resolveCheckRealPathIfDifferent(
+  checkPath: string,
+  realpathFn: typeof realpath,
+): Promise<string | undefined> {
+  try {
+    const resolved = await realpathFn(checkPath);
+    return resolved !== checkPath ? resolved : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function checkDeployStorageHeadroom(
   options: {
     paths?: string[];
     minFreeStorageMiB?: number;
     stat?: typeof stat;
     statfs?: typeof statfs;
+    realpath?: typeof realpath;
   } = {},
 ): Promise<DeployStoragePreflightSummary> {
   const paths = options.paths ?? [...DEFAULT_STORAGE_PATHS];
@@ -526,15 +540,18 @@ export async function checkDeployStorageHeadroom(
   );
   const statFn = options.stat ?? stat;
   const statfsFn = options.statfs ?? statfs;
+  const realpathFn = options.realpath ?? realpath;
 
   const checks: DeployStorageCheck[] = [];
   for (const storagePath of paths) {
     const normalizedPath = normalizeStoragePath(storagePath);
     const checkPath = await findExistingParent(normalizedPath, statFn);
+    const checkRealPath = await resolveCheckRealPathIfDifferent(checkPath, realpathFn);
     const availableMiB = await getAvailableStorageMiB(checkPath, statfsFn);
     checks.push({
       path: normalizedPath,
       checkPath,
+      ...(checkRealPath ? { checkRealPath } : {}),
       minFreeStorageMiB,
       availableMiB,
       ok: minFreeStorageMiB === 0 || availableMiB >= minFreeStorageMiB,
@@ -548,6 +565,16 @@ export async function checkDeployStorageHeadroom(
   };
 }
 
+function formatCheckedStoragePath(check: DeployStorageCheck): string {
+  if (check.checkPath === check.path) {
+    return check.checkRealPath ? ` (resolves to ${check.checkRealPath})` : "";
+  }
+
+  return check.checkRealPath
+    ? ` (checked ${check.checkPath} -> ${check.checkRealPath})`
+    : ` (checked ${check.checkPath})`;
+}
+
 export function formatTextSummary(summary: DeployStoragePreflightSummary): string {
   const lines = [
     "Ray deploy storage preflight:",
@@ -556,7 +583,7 @@ export function formatTextSummary(summary: DeployStoragePreflightSummary): strin
 
   for (const check of summary.checks) {
     const status = check.ok ? "OK" : "LOW";
-    const via = check.checkPath === check.path ? "" : ` (checked ${check.checkPath})`;
+    const via = formatCheckedStoragePath(check);
     lines.push(`- ${status} ${check.path}${via}: ${check.availableMiB} MiB free`);
   }
 
