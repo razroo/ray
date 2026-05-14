@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { checkReleaseSource } from "./check-source.mjs";
+import { checkReleaseSource, runCheckSource } from "./check-source.mjs";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = process.cwd();
@@ -152,6 +152,15 @@ test("checkReleaseSource rejects malformed manifest inputs before reading packag
     () =>
       checkReleaseSource("1.2.3", {
         cwd: tempDir,
+        manifests: null,
+      }),
+    /manifests must be a non-empty array of paths/,
+  );
+
+  await assert.rejects(
+    () =>
+      checkReleaseSource("1.2.3", {
+        cwd: tempDir,
         manifests: [],
       }),
     /manifests must be a non-empty array of paths/,
@@ -173,6 +182,40 @@ test("checkReleaseSource rejects malformed manifest inputs before reading packag
         manifests: [path.join(path.dirname(tempDir), "outside-package.json")],
       }),
     /manifests\[0\] must stay inside cwd/,
+  );
+});
+
+test("checkReleaseSource rejects malformed direct options before reading packages", async (t) => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-release-check-source-options-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  await assert.rejects(
+    () => checkReleaseSource("1.2.3", null),
+    /release source options must be an object/,
+  );
+
+  await assert.rejects(
+    () =>
+      checkReleaseSource("1.2.3", {
+        cwd: ` ${tempDir}`,
+      }),
+    /cwd must be a path without surrounding whitespace/,
+  );
+});
+
+test("runCheckSource rejects malformed argv before reading packages", async () => {
+  await assert.rejects(() => runCheckSource(null), /release source argv must be an array/);
+
+  await assert.rejects(
+    () => runCheckSource(["1.2.3\n"]),
+    /release source argv\[0\] must not contain control characters/,
+  );
+
+  await assert.rejects(
+    () => runCheckSource(["1.2.3", "extra"]),
+    /Usage: bun \.\/scripts\/release\/check-source\.mjs <version>/,
   );
 });
 

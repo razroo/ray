@@ -5,6 +5,8 @@ import { pathToFileURL } from "node:url";
 export const MAX_PACKAGE_JSON_BYTES = 256 * 1024;
 const MAX_RELEASE_MANIFESTS = 16;
 const MAX_RELEASE_MANIFEST_PATH_BYTES = 4_096;
+const MAX_RELEASE_ARGV = 8;
+const MAX_RELEASE_ARG_BYTES = 4_096;
 export const releasePackageManifests = ["packages/core/package.json", "packages/sdk/package.json"];
 export const releasePackageNames = {
   "packages/core/package.json": "@razroo/ray-core",
@@ -22,12 +24,42 @@ function normalizeManifestPath(manifest) {
   return manifest.replaceAll("\\", "/");
 }
 
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function validateReleaseVersion(version) {
   if (typeof version !== "string" || version.trim().length === 0) {
     throw new Error(usage());
   }
   if (version !== version.trim() || !semverPattern.test(version)) {
     throw new Error(`release version must be a valid SemVer string without whitespace: ${version}`);
+  }
+}
+
+function assertReleaseArgv(argv) {
+  if (!Array.isArray(argv)) {
+    throw new Error("release source argv must be an array");
+  }
+
+  if (argv.length > MAX_RELEASE_ARGV) {
+    throw new Error(`release source argv must contain at most ${MAX_RELEASE_ARGV} entries`);
+  }
+
+  for (const [index, arg] of argv.entries()) {
+    if (typeof arg !== "string") {
+      throw new Error(`release source argv[${index}] must be a string`);
+    }
+
+    if (/[\0\r\n]/.test(arg)) {
+      throw new Error(`release source argv[${index}] must not contain control characters`);
+    }
+
+    if (Buffer.byteLength(arg, "utf8") > MAX_RELEASE_ARG_BYTES) {
+      throw new Error(
+        `release source argv[${index}] must be at most ${MAX_RELEASE_ARG_BYTES} bytes`,
+      );
+    }
   }
 }
 
@@ -113,9 +145,16 @@ function validateNoLocalOnlyDependencies(packagePath, pkg) {
 
 export async function checkReleaseSource(version, options = {}) {
   validateReleaseVersion(version);
+  if (!isRecord(options)) {
+    throw new Error("release source options must be an object");
+  }
 
-  const root = path.resolve(options.cwd ?? process.cwd());
-  const manifests = options.manifests ?? releasePackageManifests;
+  const cwd = Object.hasOwn(options, "cwd") ? options.cwd : process.cwd();
+  assertReleaseManifestPathValue(cwd, "cwd");
+  const root = path.resolve(cwd);
+  const manifests = Object.hasOwn(options, "manifests")
+    ? options.manifests
+    : releasePackageManifests;
   if (!Array.isArray(manifests) || manifests.length === 0) {
     throw new Error("manifests must be a non-empty array of paths");
   }
@@ -159,7 +198,11 @@ export async function checkReleaseSource(version, options = {}) {
 }
 
 export async function runCheckSource(argv = process.argv.slice(2), options = {}) {
+  assertReleaseArgv(argv);
   const args = argv.filter((arg) => arg !== "--");
+  if (args.length !== 1) {
+    throw new Error(usage());
+  }
   const version = args[0];
   const checked = await checkReleaseSource(version, options);
   for (const line of checked) {
