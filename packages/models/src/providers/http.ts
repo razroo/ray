@@ -62,6 +62,17 @@ const MAX_ASSISTANT_TEXT_CHARS_PER_TOKEN = 64;
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 const unsafeAdapterRecordKeys = new Set(["__proto__", "constructor", "prototype"]);
+const warmupRequestKeys = new Set([
+  "input",
+  "system",
+  "maxTokens",
+  "seed",
+  "stop",
+  "responseFormat",
+  "templateId",
+  "templateVariables",
+]);
+const warmupResponseFormatKeys = new Set(["type"]);
 const reservedAdapterHeaderNames = new Set([
   "connection",
   "content-encoding",
@@ -488,9 +499,18 @@ function assertResponseFormat(
   if (
     value === null ||
     typeof value !== "object" ||
+    Array.isArray(value) ||
     (value.type !== "text" && value.type !== "json_object")
   ) {
     throw new TypeError(`${label}.type must be 'text' or 'json_object'`);
+  }
+
+  for (const [key] of objectEntries(value, label)) {
+    assertSafeRecordKey(key, label);
+
+    if (!warmupResponseFormatKeys.has(key)) {
+      throw new TypeError(`${label} must not contain unsupported key "${key}"`);
+    }
   }
 }
 
@@ -505,6 +525,10 @@ function assertWarmupRequest(
 
   for (const [key] of objectEntries(request, label)) {
     assertSafeRecordKey(key, label);
+
+    if (!warmupRequestKeys.has(key)) {
+      throw new TypeError(`${label} must not contain unsupported key "${key}"`);
+    }
   }
 
   if (typeof request.templateId === "string" && request.templateId.trim().length > 0) {

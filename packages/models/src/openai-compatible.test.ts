@@ -712,6 +712,27 @@ test("openai-compatible provider rejects invalid direct adapter payload config",
     () =>
       new OpenAICompatibleProvider(model, {
         ...adapter,
+        warmupRequests: [{ input: "ping", extra: "not-supported" } as never],
+      }),
+    /adapter\.warmupRequests\[0\] must not contain unsupported key "extra"/,
+  );
+  assert.throws(
+    () =>
+      new OpenAICompatibleProvider(model, {
+        ...adapter,
+        warmupRequests: [
+          {
+            input: "ping",
+            responseFormat: { type: "json_object", schema: { type: "object" } } as never,
+          },
+        ],
+      }),
+    /adapter\.warmupRequests\[0\]\.responseFormat must not contain unsupported key "schema"/,
+  );
+  assert.throws(
+    () =>
+      new OpenAICompatibleProvider(model, {
+        ...adapter,
         warmupRequests: [
           {
             templateId: "email.reply_classification.v1",
@@ -723,20 +744,18 @@ test("openai-compatible provider rejects invalid direct adapter payload config",
   );
 });
 
-test("snapshotAdapterWarmupRequests keeps only warmup schema fields", () => {
+test("snapshotAdapterWarmupRequests clones warmup request fields", () => {
   const inputWarmup = {
     input: "ping",
     system: "Warm the adapter.",
     maxTokens: 2,
     seed: 7,
     stop: ["END"],
-    responseFormat: { type: "json_object", extra: "not-retained" } as never,
-    extra: "not-retained",
+    responseFormat: { type: "json_object" as const },
   };
   const templateWarmup = {
     templateId: "email.reply_classification.v1",
     templateVariables: { replyText: "Sounds useful." },
-    extra: "not-retained",
   };
 
   const snapshot = snapshotAdapterWarmupRequests([inputWarmup, templateWarmup], 128);
@@ -1553,7 +1572,7 @@ test("openai-compatible provider forwards warmup requests and per-request seed",
           maxTokens: 2,
           seed: 7,
           stop: ["\n\n"],
-          responseFormat: { type: "text", extra: "not-forwarded" } as never,
+          responseFormat: { type: "text" },
         },
       ],
     }),
@@ -1569,7 +1588,7 @@ test("openai-compatible provider forwards warmup requests and per-request seed",
           maxTokens: 2,
           seed: 7,
           stop: ["\n\n"],
-          responseFormat: { type: "text", extra: "not-forwarded" } as never,
+          responseFormat: { type: "text" },
         },
       ],
     },
