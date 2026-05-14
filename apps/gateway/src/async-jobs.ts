@@ -37,6 +37,7 @@ const CALLBACK_DNS_LOOKUP_TIMEOUT_MS = 1_000;
 const MAX_JOB_ID_CHARS = 128;
 const MAX_CALLBACK_URL_CHARS = 2_048;
 const MAX_JOB_ERROR_MESSAGE_CHARS = 8_192;
+const MAX_JOB_ERROR_CODE_CHARS = 128;
 const MAX_JOB_ERROR_DETAIL_DEPTH = 5;
 const MAX_JOB_ERROR_DETAIL_KEYS = 32;
 const MAX_JOB_ERROR_DETAIL_KEY_CHARS = 128;
@@ -124,6 +125,7 @@ const CALLBACK_STATUSES = new Set<InferenceJobCallbackState["status"]>([
   "delivered",
   "failed",
 ]);
+const JOB_ERROR_KEYS = new Set(["message", "code", "details"]);
 
 class PersistedJobValidationError extends Error {
   constructor(message: string) {
@@ -440,6 +442,159 @@ function assertOptionalTimestamp(value: unknown, label: string): void {
   }
 }
 
+function assertPersistedJobErrorDetails(
+  value: unknown,
+  budget: JobErrorDetailBudget,
+  seen: WeakSet<object>,
+  label = "error.details",
+  depth = 0,
+): void {
+  if (value === undefined || value === null) {
+    return;
+  }
+
+  if (budget.nodes <= 0) {
+    throw new PersistedJobValidationError(
+      `${label} must contain at most ${MAX_JOB_ERROR_DETAIL_NODES} values`,
+    );
+  }
+  budget.nodes -= 1;
+
+  if (typeof value === "string") {
+    if (value.length > MAX_JOB_ERROR_DETAIL_STRING_CHARS) {
+      throw new PersistedJobValidationError(
+        `${label} strings must be at most ${MAX_JOB_ERROR_DETAIL_STRING_CHARS} characters`,
+      );
+    }
+
+    budget.chars -= value.length;
+    if (budget.chars < 0) {
+      throw new PersistedJobValidationError(
+        `${label} strings must contain at most ${MAX_JOB_ERROR_DETAIL_TOTAL_CHARS} total characters`,
+      );
+    }
+    return;
+  }
+
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new PersistedJobValidationError(`${label} numbers must be finite`);
+    }
+    return;
+  }
+
+  if (typeof value === "boolean") {
+    return;
+  }
+
+  if (typeof value !== "object") {
+    throw new PersistedJobValidationError(`${label} must contain JSON-safe values`);
+  }
+
+  if (seen.has(value)) {
+    throw new PersistedJobValidationError(`${label} must not contain circular references`);
+  }
+
+  if (depth >= MAX_JOB_ERROR_DETAIL_DEPTH) {
+    throw new PersistedJobValidationError(
+      `${label} must be at most ${MAX_JOB_ERROR_DETAIL_DEPTH} levels deep`,
+    );
+  }
+
+  seen.add(value);
+
+  try {
+    if (Array.isArray(value)) {
+      if (value.length > MAX_JOB_ERROR_DETAIL_ARRAY_ITEMS) {
+        throw new PersistedJobValidationError(
+          `${label} arrays must contain at most ${MAX_JOB_ERROR_DETAIL_ARRAY_ITEMS} items`,
+        );
+      }
+
+      for (const entry of value) {
+        assertPersistedJobErrorDetails(entry, budget, seen, label, depth + 1);
+      }
+      return;
+    }
+
+    const keys = Object.keys(value);
+    if (keys.length > MAX_JOB_ERROR_DETAIL_KEYS) {
+      throw new PersistedJobValidationError(
+        `${label} objects must contain at most ${MAX_JOB_ERROR_DETAIL_KEYS} keys`,
+      );
+    }
+
+    for (const key of keys) {
+      if (key.length > MAX_JOB_ERROR_DETAIL_KEY_CHARS) {
+        throw new PersistedJobValidationError(
+          `${label} object keys must be at most ${MAX_JOB_ERROR_DETAIL_KEY_CHARS} characters`,
+        );
+      }
+
+      if (key.toLowerCase() === "stack") {
+        throw new PersistedJobValidationError(`${label} must not contain stack fields`);
+      }
+
+      assertPersistedJobErrorDetails(
+        (value as Record<string, unknown>)[key],
+        budget,
+        seen,
+        label,
+        depth + 1,
+      );
+    }
+  } finally {
+    seen.delete(value);
+  }
+}
+
+function assertPersistedJobError(value: unknown): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!isObjectRecord(value)) {
+    throw new PersistedJobValidationError("error must be an object when present");
+  }
+
+  for (const key of Object.keys(value)) {
+    if (!JOB_ERROR_KEYS.has(key)) {
+      throw new PersistedJobValidationError("error must only contain message, code, and details");
+    }
+  }
+
+  if (typeof value.message !== "string") {
+    throw new PersistedJobValidationError("error.message must be a string");
+  }
+
+  if (value.message.length > MAX_JOB_ERROR_MESSAGE_CHARS) {
+    throw new PersistedJobValidationError(
+      `error.message must be at most ${MAX_JOB_ERROR_MESSAGE_CHARS} characters`,
+    );
+  }
+
+  if (value.code !== undefined && typeof value.code !== "string") {
+    throw new PersistedJobValidationError("error.code must be a string when present");
+  }
+
+  if (typeof value.code === "string" && value.code.length > MAX_JOB_ERROR_CODE_CHARS) {
+    throw new PersistedJobValidationError(
+      `error.code must be at most ${MAX_JOB_ERROR_CODE_CHARS} characters`,
+    );
+  }
+
+  if (value.details !== undefined) {
+    assertPersistedJobErrorDetails(
+      value.details,
+      {
+        chars: MAX_JOB_ERROR_DETAIL_TOTAL_CHARS,
+        nodes: MAX_JOB_ERROR_DETAIL_NODES,
+      },
+      new WeakSet(),
+    );
+  }
+}
+
 function assertPersistedCallbackState(value: unknown): void {
   if (value === undefined) {
     return;
@@ -551,6 +706,7 @@ function validatePersistedJobRecord(value: unknown, expectedJobId?: string): Inf
 
   assertOptionalTimestamp(value.startedAt, "persisted async job startedAt");
   assertOptionalTimestamp(value.completedAt, "persisted async job completedAt");
+  assertPersistedJobError(value.error);
   assertPersistedCallbackState(value.callback);
 
   return value as unknown as InferenceJobRecord;

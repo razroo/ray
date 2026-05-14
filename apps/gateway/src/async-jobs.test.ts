@@ -1290,6 +1290,68 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
       }),
     );
     await writeFile(
+      join(jobsDir, "job_error_message_too_long.json"),
+      JSON.stringify({
+        id: "job_error_message_too_long",
+        status: "failed",
+        request: {
+          input: "oversized persisted error message",
+        },
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        attempts: 1,
+        maxAttempts: 2,
+        error: {
+          message: "x".repeat(8_193),
+          code: "gateway_error",
+        },
+      }),
+    );
+    await writeFile(
+      join(jobsDir, "job_error_extra_field.json"),
+      JSON.stringify({
+        id: "job_error_extra_field",
+        status: "failed",
+        request: {
+          input: "persisted error with extra fields",
+        },
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        attempts: 1,
+        maxAttempts: 2,
+        error: {
+          message: "backend failed",
+          code: "provider_upstream_error",
+          stack: "secret stack",
+        },
+      }),
+    );
+    await writeFile(
+      join(jobsDir, "job_error_detail_stack.json"),
+      JSON.stringify({
+        id: "job_error_detail_stack",
+        status: "failed",
+        request: {
+          input: "persisted error details with stack",
+        },
+        createdAt: now,
+        updatedAt: now,
+        completedAt: now,
+        attempts: 1,
+        maxAttempts: 2,
+        error: {
+          message: "backend failed",
+          details: {
+            cause: {
+              stack: "secret stack",
+            },
+          },
+        },
+      }),
+    );
+    await writeFile(
       join(jobsDir, "job_callback_too_long.json"),
       JSON.stringify({
         id: "job_callback_too_long",
@@ -1457,6 +1519,9 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.equal(await queue.get("job_other"), undefined);
     assert.equal(await queue.get("job_id_too_long"), undefined);
     assert.equal(await queue.get("job_attempts_too_large"), undefined);
+    assert.equal(await queue.get("job_error_message_too_long"), undefined);
+    assert.equal(await queue.get("job_error_extra_field"), undefined);
+    assert.equal(await queue.get("job_error_detail_stack"), undefined);
     assert.equal(await queue.get("job_callback_too_long"), undefined);
     assert.equal(await queue.get("job_callback_credentials"), undefined);
     assert.equal(await queue.get("job_callback_fragment"), undefined);
@@ -1478,6 +1543,9 @@ test("durable inference queue skips malformed persisted jobs during recovery", a
     assert.equal(entries.includes("job_mismatch.json"), false);
     assert.equal(entries.includes("job_id_too_long.json"), false);
     assert.equal(entries.includes("job_attempts_too_large.json"), false);
+    assert.equal(entries.includes("job_error_message_too_long.json"), false);
+    assert.equal(entries.includes("job_error_extra_field.json"), false);
+    assert.equal(entries.includes("job_error_detail_stack.json"), false);
     assert.equal(entries.includes("job_callback_too_long.json"), false);
     assert.equal(entries.includes("job_callback_credentials.json"), false);
     assert.equal(entries.includes("job_callback_fragment.json"), false);
