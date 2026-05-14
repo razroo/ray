@@ -843,6 +843,22 @@ function readNonEmptyEnvValue(value: string | undefined): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+function snapshotDeploymentEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (env === null || typeof env !== "object") {
+    throw new Error("env must be an object");
+  }
+
+  const snapshot = Object.create(null) as NodeJS.ProcessEnv;
+
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value === "string") {
+      snapshot[key] = value;
+    }
+  }
+
+  return snapshot;
+}
+
 function formatModelStageApplyHint(env: NodeJS.ProcessEnv): string {
   const hasBinarySource = readNonEmptyEnvValue(env[BINARY_SOURCE_ENV]) !== undefined;
   const hasModelSource = readNonEmptyEnvValue(env[MODEL_SOURCE_ENV]) !== undefined;
@@ -2797,12 +2813,13 @@ export function renderEnvironmentFileExample(config: RayConfig): string {
 
 export function diagnoseConfig(
   config: RayConfig,
-  env: NodeJS.ProcessEnv,
+  rawEnv: NodeJS.ProcessEnv,
   envFile?: string,
   options: DiagnoseConfigOptions = {},
 ): DeploymentDiagnostic[] {
   assertDiagnoseConfigOptions(options);
 
+  const env = snapshotDeploymentEnvironment(rawEnv);
   const diagnostics: DeploymentDiagnostic[] = [];
   const strictFilesystem = options.strictFilesystem === true;
   const preflight = options.preflight;
@@ -4654,10 +4671,11 @@ export async function loadAndDiagnoseDeployment(options: {
   assertOptionalDeploymentPathValue(options.nodeBinary, "nodeBinary");
   assertOptionalDeploymentPathValue(options.caddyBinary, "caddyBinary");
 
+  const env = snapshotDeploymentEnvironment(options.env ?? process.env);
   const loaded = await loadRayConfig({
     cwd: options.cwd,
     configPath: options.configPath,
-    ...(options.env ? { env: options.env } : {}),
+    env,
   });
   const preflight = await collectDeploymentPreflight(loaded.config, {
     cwd: options.cwd,
@@ -4681,7 +4699,7 @@ export async function loadAndDiagnoseDeployment(options: {
   return {
     config: loaded.config,
     preflight,
-    diagnostics: diagnoseConfig(loaded.config, options.env ?? process.env, options.envFile, {
+    diagnostics: diagnoseConfig(loaded.config, env, options.envFile, {
       preflight,
       ...(options.strictFilesystem !== undefined
         ? { strictFilesystem: options.strictFilesystem }

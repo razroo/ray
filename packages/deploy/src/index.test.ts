@@ -4058,6 +4058,31 @@ test("diagnoseConfig honors deploy storage reserve for working directory headroo
   assert.match(diagnostic.message, /RAY_DEPLOY_MIN_FREE_STORAGE_MIB/);
 });
 
+test("diagnoseConfig ignores inherited deploy environment overrides", () => {
+  const config = createDefaultConfig("tiny");
+  const env = Object.create({
+    RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "2048",
+  }) as NodeJS.ProcessEnv;
+  const diagnostics = diagnoseConfig(config, env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      workingDirectoryPath: "/srv/ray",
+      workingDirectoryStatus: "found",
+      workingDirectoryAvailableMiB: 1536,
+    },
+  });
+
+  assert.equal(
+    diagnostics.some((entry) => entry.code === "working_directory_storage_low"),
+    false,
+  );
+  const diagnostic = diagnostics.find((entry) => entry.code === "working_directory_storage_ok");
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "info");
+  assert.match(diagnostic.message, /1,024 MiB/);
+});
+
 test("diagnoseConfig honors deploy storage reserve for system log headroom", () => {
   const config = createDefaultConfig("tiny");
   const diagnostics = diagnoseConfig(
