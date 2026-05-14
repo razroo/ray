@@ -20,7 +20,11 @@ test("default task profile catalog covers lean email AI task shapes", () => {
   assert.equal(catalog.defaultProfileId, "draft");
   assert.equal(requireTaskProfile("extract-json", catalog).responseFormat?.type, "json_object");
 
-  profiles[0]?.metadata && (profiles[0].metadata.promptFamily = "mutated");
+  const firstProfile = profiles[0];
+  if (firstProfile) {
+    firstProfile.metadata.promptFamily = "mutated";
+  }
+
   assert.equal(listTaskProfiles(catalog)[0]?.metadata.promptFamily, "task.classify");
 });
 
