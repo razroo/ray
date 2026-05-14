@@ -1051,6 +1051,8 @@ test("durable inference queue persists bounded JSON-safe job error details", asy
       huge: "x".repeat(20_000),
       bytes: new Uint8Array(16),
       values: Array.from({ length: 40 }, (_value, index) => index),
+      stack: "internal stack trace",
+      cause: new Error("backend failed"),
     };
     const longKey = `k${"x".repeat(140)}`;
     details[longKey] = "bounded-key";
@@ -1100,6 +1102,12 @@ test("durable inference queue persists bounded JSON-safe job error details", asy
           explode?: string;
           bytes?: string;
           values?: unknown[];
+          stack?: string;
+          cause?: {
+            name?: string;
+            message?: string;
+            stack?: string;
+          };
           [key: string]: unknown;
         };
       };
@@ -1113,6 +1121,10 @@ test("durable inference queue persists bounded JSON-safe job error details", asy
     assert.equal(errorDetails?.explode, "[Thrown: getter boom]");
     assert.equal(errorDetails?.bytes, "[Uint8Array 16 bytes]");
     assert.equal(errorDetails?.values?.at(-1), "[Truncated 8 items]");
+    assert.equal(errorDetails?.stack, undefined);
+    assert.equal(errorDetails?.cause?.name, "Error");
+    assert.equal(errorDetails?.cause?.message, "backend failed");
+    assert.equal(errorDetails?.cause?.stack, undefined);
     assert.equal(errorDetails?.[`k${"x".repeat(104)}...[truncated 36 chars]`], "bounded-key");
     assert.equal(errorDetails?.[longKey], undefined);
     assert.ok(Object.keys(errorDetails ?? {}).every((key) => key.length <= 128));

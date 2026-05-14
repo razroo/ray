@@ -645,10 +645,6 @@ function sanitizeJobErrorDetail(
       message: truncateJobErrorDetailString(value.message, budget),
     };
 
-    if (value.stack) {
-      output.stack = truncateJobErrorDetailString(value.stack, budget);
-    }
-
     return output;
   }
 
@@ -688,6 +684,10 @@ function sanitizeJobErrorDetail(
     const output: Record<string, unknown> = {};
 
     for (const key of keys.slice(0, MAX_JOB_ERROR_DETAIL_KEYS)) {
+      if (key.toLowerCase() === "stack") {
+        continue;
+      }
+
       const safeKey = truncateJobErrorDetailKey(key);
 
       if (budget.nodes <= 0) {
