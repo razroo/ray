@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { constants, type Stats } from "node:fs";
-import { access, mkdtemp, open, rm, stat, statfs, writeFile } from "node:fs/promises";
+import { access, mkdtemp, open, realpath, rm, stat, statfs, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { availableParallelism, tmpdir, totalmem } from "node:os";
 import path from "node:path";
@@ -116,12 +116,14 @@ export interface DeploymentPreflight {
   modelFileAccessError?: string;
   asyncQueueStoragePath?: string;
   asyncQueueStorageCheckPath?: string;
+  asyncQueueStorageCheckRealPath?: string;
   asyncQueueStorageStatus?: AsyncQueueStorageStatus;
   asyncQueueStorageAvailableMiB?: number;
   asyncQueueStorageError?: string;
   asyncQueueStorageAccessStatus?: ServiceUserAccessStatus;
   asyncQueueStorageAccessError?: string;
   asyncQueueStorageManagedByStateDirectory?: boolean;
+  gatewayRuntimeBinaryRealPath?: string;
   gatewayRuntimeBinaryPath?: string;
   gatewayRuntimeBinaryStatus?: GatewayRuntimeBinaryStatus;
   gatewayRuntimeBinaryError?: string;
@@ -137,6 +139,7 @@ export interface DeploymentPreflight {
   caddyError?: string;
   caddyConfigStatus?: CaddyConfigStatus;
   caddyConfigError?: string;
+  gatewayEntrypointRealPath?: string;
   gatewayEntrypointPath?: string;
   gatewayEntrypointStatus?: GatewayEntrypointStatus;
   gatewayEntrypointError?: string;
@@ -144,11 +147,13 @@ export interface DeploymentPreflight {
   gatewayEntrypointAccessError?: string;
   gatewayEntrypointImportStatus?: GatewayEntrypointImportStatus;
   gatewayEntrypointImportError?: string;
+  configFileRealPath?: string;
   configFilePath?: string;
   configFileStatus?: ConfigFileStatus;
   configFileError?: string;
   configFileAccessStatus?: ServiceUserAccessStatus;
   configFileAccessError?: string;
+  workingDirectoryRealPath?: string;
   workingDirectoryPath?: string;
   workingDirectoryStatus?: WorkingDirectoryStatus;
   workingDirectoryError?: string;
@@ -157,6 +162,7 @@ export interface DeploymentPreflight {
   workingDirectoryStorageStatus?: WorkingDirectoryStorageStatus;
   workingDirectoryAvailableMiB?: number;
   workingDirectoryStorageError?: string;
+  llamaCppBinaryRealPath?: string;
   llamaCppBinaryPath?: string;
   llamaCppBinaryStatus?: LlamaCppBinaryStatus;
   llamaCppBinaryError?: string;
@@ -166,6 +172,7 @@ export interface DeploymentPreflight {
   llamaCppBinaryUnsupportedLaunchFlags?: string[];
   llamaCppBinaryAccessStatus?: ServiceUserAccessStatus;
   llamaCppBinaryAccessError?: string;
+  modelFileRealPath?: string;
   envFilePath?: string;
   envFileStatus?: EnvFileStatus;
   envFileMode?: number;
@@ -382,6 +389,20 @@ function isPathInside(parentPath: string, candidatePath: string): boolean {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+async function resolveRealPathIfDifferent(value: string): Promise<string | undefined> {
+  try {
+    const configuredPath = path.resolve(value);
+    const resolvedPath = await realpath(configuredPath);
+    return resolvedPath !== configuredPath ? resolvedPath : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function formatPathWithRealTarget(configuredPath: string, realPath: string | undefined): string {
+  return realPath ? `${configuredPath} (resolves to ${realPath})` : configuredPath;
+}
+
 function isTemporaryStoragePath(storageDir: string): boolean {
   const resolved = path.resolve(storageDir);
   return (
@@ -411,6 +432,19 @@ function isSystemdProtectHomePath(value: string): boolean {
   );
 }
 
+function isSystemdProtectHomePathOrRealPath(value: string, realPath: string | undefined): boolean {
+  return (
+    isSystemdProtectHomePath(value) ||
+    (realPath !== undefined && isSystemdProtectHomePath(realPath))
+  );
+}
+
+function isSystemdPrivateTmpPathOrRealPath(value: string, realPath: string | undefined): boolean {
+  return (
+    isSystemdPrivateTmpPath(value) || (realPath !== undefined && isSystemdPrivateTmpPath(realPath))
+  );
+}
+
 function isSystemdProtectSystemReadOnlyPath(value: string): boolean {
   if (!path.isAbsolute(value)) {
     return false;
@@ -418,6 +452,16 @@ function isSystemdProtectSystemReadOnlyPath(value: string): boolean {
 
   const resolved = path.resolve(value);
   return ["/etc", "/usr", "/boot"].some((protectedPath) => isPathInside(protectedPath, resolved));
+}
+
+function isSystemdProtectSystemReadOnlyPathOrRealPath(
+  value: string,
+  realPath: string | undefined,
+): boolean {
+  return (
+    isSystemdProtectSystemReadOnlyPath(value) ||
+    (realPath !== undefined && isSystemdProtectSystemReadOnlyPath(realPath))
+  );
 }
 
 function isRayStateDirectoryStoragePath(value: string): boolean {
@@ -2735,6 +2779,10 @@ export function diagnoseConfig(
   if (strictFilesystem && preflight?.workingDirectoryStatus !== undefined) {
     const workingDirectoryPath =
       preflight.workingDirectoryPath ?? "the configured WorkingDirectory";
+    const workingDirectoryDiagnosticPath = formatPathWithRealTarget(
+      workingDirectoryPath,
+      preflight.workingDirectoryRealPath,
+    );
 
     if (preflight.workingDirectoryStatus === "missing") {
       diagnostics.push({
@@ -2754,17 +2802,21 @@ export function diagnoseConfig(
         code: "working_directory_unreadable",
         message: `The generated systemd WorkingDirectory at ${workingDirectoryPath} could not be inspected${preflight.workingDirectoryError ? ` (${preflight.workingDirectoryError})` : ""}. Doctor cannot verify that ray-gateway.service will start in the intended repository directory.`,
       });
-    } else if (isSystemdProtectHomePath(workingDirectoryPath)) {
+    } else if (
+      isSystemdProtectHomePathOrRealPath(workingDirectoryPath, preflight.workingDirectoryRealPath)
+    ) {
       diagnostics.push({
         level: "error",
         code: "working_directory_home_protected",
-        message: `The generated systemd WorkingDirectory is under /home, /root, or /run/user at ${workingDirectoryPath}, but ray-gateway.service uses ProtectHome=true. Sync Ray to a service-readable path such as /srv/ray.`,
+        message: `The generated systemd WorkingDirectory is under /home, /root, or /run/user at ${workingDirectoryDiagnosticPath}, but ray-gateway.service uses ProtectHome=true. Sync Ray to a service-readable path such as /srv/ray.`,
       });
-    } else if (isSystemdPrivateTmpPath(workingDirectoryPath)) {
+    } else if (
+      isSystemdPrivateTmpPathOrRealPath(workingDirectoryPath, preflight.workingDirectoryRealPath)
+    ) {
       diagnostics.push({
         level: "error",
         code: "working_directory_private_tmp",
-        message: `The generated systemd WorkingDirectory is under /tmp or /var/tmp at ${workingDirectoryPath}, but ray-gateway.service uses PrivateTmp=true and temporary storage can be hidden or wiped. Sync Ray to a persistent service-readable path such as /srv/ray.`,
+        message: `The generated systemd WorkingDirectory is under /tmp or /var/tmp at ${workingDirectoryDiagnosticPath}, but ray-gateway.service uses PrivateTmp=true and temporary storage can be hidden or wiped. Sync Ray to a persistent service-readable path such as /srv/ray.`,
       });
     } else if (preflight.workingDirectoryAccessStatus === "blocked") {
       diagnostics.push({
@@ -2778,8 +2830,8 @@ export function diagnoseConfig(
         code: "working_directory_ok",
         message:
           preflight.workingDirectoryAccessStatus === "ok"
-            ? `Generated systemd WorkingDirectory exists and is accessible to "${preflight.serviceUser ?? "the configured service user"}" at ${workingDirectoryPath}.`
-            : `Generated systemd WorkingDirectory exists at ${workingDirectoryPath}.`,
+            ? `Generated systemd WorkingDirectory exists and is accessible to "${preflight.serviceUser ?? "the configured service user"}" at ${workingDirectoryDiagnosticPath}.`
+            : `Generated systemd WorkingDirectory exists at ${workingDirectoryDiagnosticPath}.`,
       });
     }
 
@@ -2863,21 +2915,25 @@ export function diagnoseConfig(
 
   if (strictFilesystem && preflight?.configFileStatus !== undefined) {
     const configFilePath = preflight.configFilePath ?? "the configured Ray config file";
+    const configFileDiagnosticPath = formatPathWithRealTarget(
+      configFilePath,
+      preflight.configFileRealPath,
+    );
     const configFileOwnershipExample = preflight.serviceUserPrimaryGroup
       ? `root:${preflight.serviceUserPrimaryGroup}`
       : "root:<service-user-primary-group>";
 
-    if (isSystemdProtectHomePath(configFilePath)) {
+    if (isSystemdProtectHomePathOrRealPath(configFilePath, preflight.configFileRealPath)) {
       diagnostics.push({
         level: "error",
         code: "config_file_home_protected",
-        message: `The generated gateway config file is under /home, /root, or /run/user at ${configFilePath}, but ray-gateway.service uses ProtectHome=true. Install the rendered config somewhere service-readable such as /etc/ray/ray.json.`,
+        message: `The generated gateway config file is under /home, /root, or /run/user at ${configFileDiagnosticPath}, but ray-gateway.service uses ProtectHome=true. Install the rendered config somewhere service-readable such as /etc/ray/ray.json.`,
       });
-    } else if (isSystemdPrivateTmpPath(configFilePath)) {
+    } else if (isSystemdPrivateTmpPathOrRealPath(configFilePath, preflight.configFileRealPath)) {
       diagnostics.push({
         level: "error",
         code: "config_file_private_tmp",
-        message: `The generated gateway config file is under /tmp or /var/tmp at ${configFilePath}, but ray-gateway.service uses PrivateTmp=true and temporary storage can be hidden or wiped. Install the rendered config somewhere persistent such as /etc/ray/ray.json.`,
+        message: `The generated gateway config file is under /tmp or /var/tmp at ${configFileDiagnosticPath}, but ray-gateway.service uses PrivateTmp=true and temporary storage can be hidden or wiped. Install the rendered config somewhere persistent such as /etc/ray/ray.json.`,
       });
     } else if (preflight.configFileStatus === "missing") {
       diagnostics.push({
@@ -2903,26 +2959,32 @@ export function diagnoseConfig(
         code: "config_file_ok",
         message:
           preflight.configFileAccessStatus === "ok"
-            ? `Generated gateway config file exists and is readable by "${preflight.serviceUser ?? "the configured service user"}" at ${configFilePath}.`
-            : `Generated gateway config file exists at ${configFilePath}.`,
+            ? `Generated gateway config file exists and is readable by "${preflight.serviceUser ?? "the configured service user"}" at ${configFileDiagnosticPath}.`
+            : `Generated gateway config file exists at ${configFileDiagnosticPath}.`,
       });
     }
   }
 
   if (strictFilesystem && preflight?.gatewayRuntimeBinaryStatus !== undefined) {
     const runtimePath = preflight.gatewayRuntimeBinaryPath ?? "the configured gateway runtime";
+    const runtimeDiagnosticPath = formatPathWithRealTarget(
+      runtimePath,
+      preflight.gatewayRuntimeBinaryRealPath,
+    );
 
-    if (isSystemdProtectHomePath(runtimePath)) {
+    if (isSystemdProtectHomePathOrRealPath(runtimePath, preflight.gatewayRuntimeBinaryRealPath)) {
       diagnostics.push({
         level: "error",
         code: "gateway_runtime_home_protected",
-        message: `The configured gateway runtime binary is under /home, /root, or /run/user at ${runtimePath}, but ray-gateway.service uses ProtectHome=true. Install Bun somewhere service-readable such as ${DEFAULT_GATEWAY_RUNTIME_BINARY} or pass --gateway-runtime-binary with that path.`,
+        message: `The configured gateway runtime binary is under /home, /root, or /run/user at ${runtimeDiagnosticPath}, but ray-gateway.service uses ProtectHome=true. Install Bun somewhere service-readable such as ${DEFAULT_GATEWAY_RUNTIME_BINARY} or pass --gateway-runtime-binary with that path.`,
       });
-    } else if (isSystemdPrivateTmpPath(runtimePath)) {
+    } else if (
+      isSystemdPrivateTmpPathOrRealPath(runtimePath, preflight.gatewayRuntimeBinaryRealPath)
+    ) {
       diagnostics.push({
         level: "error",
         code: "gateway_runtime_private_tmp",
-        message: `The configured gateway runtime binary is under /tmp or /var/tmp at ${runtimePath}, but ray-gateway.service uses PrivateTmp=true and temporary storage can be hidden or wiped. Install Bun somewhere persistent such as ${DEFAULT_GATEWAY_RUNTIME_BINARY} or pass --gateway-runtime-binary with that path.`,
+        message: `The configured gateway runtime binary is under /tmp or /var/tmp at ${runtimeDiagnosticPath}, but ray-gateway.service uses PrivateTmp=true and temporary storage can be hidden or wiped. Install Bun somewhere persistent such as ${DEFAULT_GATEWAY_RUNTIME_BINARY} or pass --gateway-runtime-binary with that path.`,
       });
     } else if (preflight.gatewayRuntimeBinaryStatus === "missing") {
       diagnostics.push({
@@ -2947,7 +3009,7 @@ export function diagnoseConfig(
         diagnostics.push({
           level: "warn",
           code: "gateway_runtime_node_fallback",
-          message: `Gateway runtime at ${runtimePath} is Node.js. Bun at ${DEFAULT_GATEWAY_RUNTIME_BINARY} is Ray's preferred small-VPS runtime; keep Node only as a compatibility fallback when Bun is unavailable.`,
+          message: `Gateway runtime at ${runtimeDiagnosticPath} is Node.js. Bun at ${DEFAULT_GATEWAY_RUNTIME_BINARY} is Ray's preferred small-VPS runtime; keep Node only as a compatibility fallback when Bun is unavailable.`,
         });
       }
 
@@ -2957,7 +3019,7 @@ export function diagnoseConfig(
         diagnostics.push({
           level: "error",
           code: "gateway_runtime_version_unsupported",
-          message: `Gateway runtime ${runtimeKind} at ${runtimePath} reports version ${
+          message: `Gateway runtime ${runtimeKind} at ${runtimeDiagnosticPath} reports version ${
             preflight.gatewayRuntimeVersion ?? "unknown"
           }, but Ray requires ${runtimeKind} >= ${minimum}. Install a compatible runtime before restarting ray-gateway.service.`,
         });
@@ -2970,7 +3032,7 @@ export function diagnoseConfig(
         diagnostics.push({
           level: "error",
           code: "gateway_runtime_version_unreadable",
-          message: `Doctor could not verify the ${runtimeKind} version from ${runtimePath}${
+          message: `Doctor could not verify the ${runtimeKind} version from ${runtimeDiagnosticPath}${
             preflight.gatewayRuntimeVersionError ? ` (${preflight.gatewayRuntimeVersionError})` : ""
           }. Ray requires ${runtimeKind} >= ${minimum} for the generated gateway service.`,
         });
@@ -2984,7 +3046,7 @@ export function diagnoseConfig(
         diagnostics.push({
           level: "info",
           code: "gateway_runtime_version_ok",
-          message: `Gateway runtime ${runtimeKind} version ${preflight.gatewayRuntimeVersion} satisfies >= ${minimum} at ${runtimePath}.`,
+          message: `Gateway runtime ${runtimeKind} version ${preflight.gatewayRuntimeVersion} satisfies >= ${minimum} at ${runtimeDiagnosticPath}.`,
         });
       }
 
@@ -2993,14 +3055,18 @@ export function diagnoseConfig(
         code: "gateway_runtime_ok",
         message:
           preflight.gatewayRuntimeBinaryAccessStatus === "ok"
-            ? `Gateway runtime binary is executable by "${preflight.serviceUser ?? "the configured service user"}" at ${runtimePath}.`
-            : `Gateway runtime binary is executable at ${runtimePath}.`,
+            ? `Gateway runtime binary is executable by "${preflight.serviceUser ?? "the configured service user"}" at ${runtimeDiagnosticPath}.`
+            : `Gateway runtime binary is executable at ${runtimeDiagnosticPath}.`,
       });
     }
   }
 
   if (strictFilesystem && preflight?.gatewayEntrypointStatus !== undefined) {
     const entrypointPath = preflight.gatewayEntrypointPath ?? GATEWAY_ENTRYPOINT_RELATIVE_PATH;
+    const entrypointDiagnosticPath = formatPathWithRealTarget(
+      entrypointPath,
+      preflight.gatewayEntrypointRealPath,
+    );
 
     if (preflight.gatewayEntrypointStatus === "missing") {
       diagnostics.push({
@@ -3014,6 +3080,22 @@ export function diagnoseConfig(
         code: "gateway_entrypoint_unreadable",
         message: `The built Ray gateway entrypoint at ${entrypointPath} could not be inspected${preflight.gatewayEntrypointError ? ` (${preflight.gatewayEntrypointError})` : ""}. Doctor cannot verify that ray-gateway.service will start.`,
       });
+    } else if (
+      isSystemdProtectHomePathOrRealPath(entrypointPath, preflight.gatewayEntrypointRealPath)
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "gateway_entrypoint_home_protected",
+        message: `The built Ray gateway entrypoint is under /home, /root, or /run/user at ${entrypointDiagnosticPath}, but ray-gateway.service uses ProtectHome=true. Sync and build Ray under a service-readable path such as /srv/ray.`,
+      });
+    } else if (
+      isSystemdPrivateTmpPathOrRealPath(entrypointPath, preflight.gatewayEntrypointRealPath)
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "gateway_entrypoint_private_tmp",
+        message: `The built Ray gateway entrypoint is under /tmp or /var/tmp at ${entrypointDiagnosticPath}, but ray-gateway.service uses PrivateTmp=true and temporary storage can be hidden or wiped. Sync and build Ray under a persistent service-readable path such as /srv/ray.`,
+      });
     } else if (preflight.gatewayEntrypointAccessStatus === "blocked") {
       diagnostics.push({
         level: "error",
@@ -3026,8 +3108,8 @@ export function diagnoseConfig(
         code: "gateway_entrypoint_ok",
         message:
           preflight.gatewayEntrypointAccessStatus === "ok"
-            ? `Built Ray gateway entrypoint exists and is readable by "${preflight.serviceUser ?? "the configured service user"}" at ${entrypointPath}.`
-            : `Built Ray gateway entrypoint exists at ${entrypointPath}.`,
+            ? `Built Ray gateway entrypoint exists and is readable by "${preflight.serviceUser ?? "the configured service user"}" at ${entrypointDiagnosticPath}.`
+            : `Built Ray gateway entrypoint exists at ${entrypointDiagnosticPath}.`,
       });
     }
   }
@@ -3169,6 +3251,15 @@ export function diagnoseConfig(
   }
 
   if (config.asyncQueue.enabled) {
+    const asyncQueueStorageCheckPath =
+      preflight?.asyncQueueStorageCheckPath ??
+      preflight?.asyncQueueStoragePath ??
+      config.asyncQueue.storageDir;
+    const asyncQueueStorageDiagnosticPath = formatPathWithRealTarget(
+      asyncQueueStorageCheckPath,
+      preflight?.asyncQueueStorageCheckRealPath,
+    );
+
     if (config.asyncQueue.callbackAllowPrivateNetwork) {
       diagnostics.push({
         level: "warn",
@@ -3221,30 +3312,41 @@ export function diagnoseConfig(
       });
     }
 
-    if (isTemporaryStoragePath(config.asyncQueue.storageDir)) {
+    if (
+      isTemporaryStoragePath(config.asyncQueue.storageDir) ||
+      (preflight?.asyncQueueStorageCheckRealPath !== undefined &&
+        isTemporaryStoragePath(preflight.asyncQueueStorageCheckRealPath))
+    ) {
       diagnostics.push({
         level: "warn",
         code: "async_queue_storage_volatile",
-        message:
-          "asyncQueue.storageDir points at temporary storage. Use persistent local storage such as /var/lib/ray/async-queue so queued work survives restarts.",
+        message: `asyncQueue.storageDir points at temporary storage at ${asyncQueueStorageDiagnosticPath}. Use persistent local storage such as /var/lib/ray/async-queue so queued work survives restarts.`,
       });
     }
 
-    if (isSystemdProtectHomePath(config.asyncQueue.storageDir)) {
+    if (
+      isSystemdProtectHomePathOrRealPath(
+        config.asyncQueue.storageDir,
+        preflight?.asyncQueueStorageCheckRealPath,
+      )
+    ) {
       diagnostics.push({
         level: "error",
         code: "async_queue_storage_home_protected",
-        message:
-          "asyncQueue.storageDir is under /home, /root, or /run/user, but the generated gateway service uses ProtectHome=true. Use a service-readable path such as /var/lib/ray/async-queue.",
+        message: `asyncQueue.storageDir is under /home, /root, or /run/user at ${asyncQueueStorageDiagnosticPath}, but the generated gateway service uses ProtectHome=true. Use a service-readable path such as /var/lib/ray/async-queue.`,
       });
     }
 
-    if (isSystemdProtectSystemReadOnlyPath(config.asyncQueue.storageDir)) {
+    if (
+      isSystemdProtectSystemReadOnlyPathOrRealPath(
+        config.asyncQueue.storageDir,
+        preflight?.asyncQueueStorageCheckRealPath,
+      )
+    ) {
       diagnostics.push({
         level: "error",
         code: "async_queue_storage_protect_system_readonly",
-        message:
-          "asyncQueue.storageDir is under /etc, /usr, or /boot, but the generated gateway service uses ProtectSystem=full and cannot write there. Use writable service state such as /var/lib/ray/async-queue.",
+        message: `asyncQueue.storageDir is under /etc, /usr, or /boot at ${asyncQueueStorageDiagnosticPath}, but the generated gateway service uses ProtectSystem=full and cannot write there. Use writable service state such as /var/lib/ray/async-queue.`,
       });
     }
 
@@ -3524,8 +3626,34 @@ export function diagnoseConfig(
 
       if (strictFilesystem && preflight?.llamaCppBinaryStatus !== undefined) {
         const binaryPath = preflight.llamaCppBinaryPath ?? launchProfile.binaryPath;
+        const binaryDiagnosticPath = formatPathWithRealTarget(
+          binaryPath,
+          preflight.llamaCppBinaryRealPath,
+        );
+        const binaryPathAlreadyHomeProtected = isSystemdProtectHomePath(binaryPath);
+        const binaryPathAlreadyPrivateTmp = isSystemdPrivateTmpPath(binaryPath);
 
-        if (preflight.llamaCppBinaryStatus === "missing") {
+        if (
+          preflight.llamaCppBinaryRealPath !== undefined &&
+          !binaryPathAlreadyHomeProtected &&
+          isSystemdProtectHomePath(preflight.llamaCppBinaryRealPath)
+        ) {
+          diagnostics.push({
+            level: "error",
+            code: "llama_binary_path_home_protected",
+            message: `model.adapter.launchProfile.binaryPath resolves under /home, /root, or /run/user at ${binaryDiagnosticPath}, but the generated llama.cpp service uses ProtectHome=true. Install llama-server somewhere service-readable such as /usr/local/bin/llama-server.`,
+          });
+        } else if (
+          preflight.llamaCppBinaryRealPath !== undefined &&
+          !binaryPathAlreadyPrivateTmp &&
+          isSystemdPrivateTmpPath(preflight.llamaCppBinaryRealPath)
+        ) {
+          diagnostics.push({
+            level: "error",
+            code: "llama_binary_path_private_tmp",
+            message: `model.adapter.launchProfile.binaryPath resolves under /tmp or /var/tmp at ${binaryDiagnosticPath}, but the generated llama.cpp service uses PrivateTmp=true and temporary storage can be hidden or wiped. Install llama-server somewhere persistent such as /usr/local/bin/llama-server.`,
+          });
+        } else if (preflight.llamaCppBinaryStatus === "missing") {
           diagnostics.push({
             level: "error",
             code: "llama_binary_missing",
@@ -3549,21 +3677,21 @@ export function diagnoseConfig(
             code: "llama_binary_ok",
             message:
               preflight.llamaCppBinaryAccessStatus === "ok"
-                ? `llama.cpp binary is executable by "${preflight.serviceUser ?? "the configured service user"}" at ${binaryPath}.`
-                : `llama.cpp binary is executable at ${binaryPath}.`,
+                ? `llama.cpp binary is executable by "${preflight.serviceUser ?? "the configured service user"}" at ${binaryDiagnosticPath}.`
+                : `llama.cpp binary is executable at ${binaryDiagnosticPath}.`,
           });
 
           if (preflight.llamaCppBinaryProbeStatus === "failed") {
             diagnostics.push({
               level: "error",
               code: "llama_binary_probe_failed",
-              message: `The configured llama.cpp binary at ${binaryPath} is executable but failed to start with --help${preflight.llamaCppBinaryProbeError ? ` (${preflight.llamaCppBinaryProbeError})` : ""}. This usually means a wrong CPU architecture or missing shared libraries; stage a compatible llama-server before restarting ray-llama-cpp.service.`,
+              message: `The configured llama.cpp binary at ${binaryDiagnosticPath} is executable but failed to start with --help${preflight.llamaCppBinaryProbeError ? ` (${preflight.llamaCppBinaryProbeError})` : ""}. This usually means a wrong CPU architecture or missing shared libraries; stage a compatible llama-server before restarting ray-llama-cpp.service.`,
             });
           } else if (preflight.llamaCppBinaryProbeStatus === "ok") {
             diagnostics.push({
               level: "info",
               code: "llama_binary_probe_ok",
-              message: `llama.cpp binary starts successfully with --help at ${binaryPath}.`,
+              message: `llama.cpp binary starts successfully with --help at ${binaryDiagnosticPath}.`,
             });
 
             if (preflight.llamaCppBinaryLaunchFlagsStatus === "unsupported") {
@@ -3571,7 +3699,7 @@ export function diagnoseConfig(
               diagnostics.push({
                 level: "error",
                 code: "llama_binary_launch_flags_unsupported",
-                message: `The configured llama.cpp binary at ${binaryPath} starts, but its --help output does not list generated launch flag(s): ${unsupportedFlags.join(", ")}. Stage a newer compatible llama-server or remove unsupported non-profile extraArgs before restarting ray-llama-cpp.service.`,
+                message: `The configured llama.cpp binary at ${binaryDiagnosticPath} starts, but its --help output does not list generated launch flag(s): ${unsupportedFlags.join(", ")}. Stage a newer compatible llama-server or remove unsupported non-profile extraArgs before restarting ray-llama-cpp.service.`,
               });
             } else if (preflight.llamaCppBinaryLaunchFlagsStatus === "ok") {
               diagnostics.push({
@@ -3747,17 +3875,49 @@ export function diagnoseConfig(
         });
       }
 
-      if (strictFilesystem && preflight?.modelFileStatus === "missing") {
+      const modelFilePath = preflight?.modelFilePath ?? launchProfile.modelPath;
+      const modelFileDiagnosticPath = formatPathWithRealTarget(
+        modelFilePath,
+        preflight?.modelFileRealPath,
+      );
+      const modelPathAlreadyHomeProtected = isSystemdProtectHomePath(modelFilePath);
+      const modelPathAlreadyPrivateTmp = isSystemdPrivateTmpPath(modelFilePath);
+
+      if (
+        strictFilesystem &&
+        preflight?.modelFileStatus === "found" &&
+        preflight.modelFileRealPath !== undefined &&
+        !modelPathAlreadyHomeProtected &&
+        isSystemdProtectHomePath(preflight.modelFileRealPath)
+      ) {
+        diagnostics.push({
+          level: "error",
+          code: "llama_model_path_home_protected",
+          message: `model.adapter.launchProfile.modelPath resolves under /home, /root, or /run/user at ${modelFileDiagnosticPath}, but the generated llama.cpp service uses ProtectHome=true. Store GGUF files somewhere service-readable such as /var/lib/ray/models.`,
+        });
+      } else if (
+        strictFilesystem &&
+        preflight?.modelFileStatus === "found" &&
+        preflight.modelFileRealPath !== undefined &&
+        !modelPathAlreadyPrivateTmp &&
+        isSystemdPrivateTmpPath(preflight.modelFileRealPath)
+      ) {
+        diagnostics.push({
+          level: "error",
+          code: "llama_model_path_private_tmp",
+          message: `model.adapter.launchProfile.modelPath resolves under /tmp or /var/tmp at ${modelFileDiagnosticPath}, but the generated llama.cpp service uses PrivateTmp=true and temporary storage can be hidden or wiped. Store GGUF files somewhere persistent such as /var/lib/ray/models.`,
+        });
+      } else if (strictFilesystem && preflight?.modelFileStatus === "missing") {
         diagnostics.push({
           level: "error",
           code: "model_file_missing",
-          message: `The configured GGUF model file was not found at ${preflight.modelFilePath}. Doctor cannot estimate memory fit without the real model file.${formatModelStageApplyHint(env)}`,
+          message: `The configured GGUF model file was not found at ${modelFilePath}. Doctor cannot estimate memory fit without the real model file.${formatModelStageApplyHint(env)}`,
         });
       } else if (strictFilesystem && preflight?.modelFileStatus === "unreadable") {
         diagnostics.push({
           level: "error",
           code: "model_file_unreadable",
-          message: `The configured GGUF model file at ${preflight.modelFilePath} could not be read${preflight.modelFileError ? ` (${preflight.modelFileError})` : ""}. Doctor cannot estimate memory fit without the real model file.`,
+          message: `The configured GGUF model file at ${modelFilePath} could not be read${preflight.modelFileError ? ` (${preflight.modelFileError})` : ""}. Doctor cannot estimate memory fit without the real model file.`,
         });
       } else if (
         strictFilesystem &&
@@ -3767,7 +3927,7 @@ export function diagnoseConfig(
         diagnostics.push({
           level: "error",
           code: "model_file_format_invalid",
-          message: `The configured GGUF model file at ${preflight.modelFilePath} does not have a valid GGUF header${preflight.modelFileFormatError ? ` (${preflight.modelFileFormatError})` : ""}. Restage the model before restarting ray-llama-cpp.service.${formatModelStageApplyHint(env)}`,
+          message: `The configured GGUF model file at ${modelFileDiagnosticPath} does not have a valid GGUF header${preflight.modelFileFormatError ? ` (${preflight.modelFileFormatError})` : ""}. Restage the model before restarting ray-llama-cpp.service.${formatModelStageApplyHint(env)}`,
         });
       } else if (
         strictFilesystem &&
@@ -3777,7 +3937,7 @@ export function diagnoseConfig(
         diagnostics.push({
           level: "error",
           code: "model_file_format_unreadable",
-          message: `Doctor could not read the GGUF header from ${preflight.modelFilePath}${preflight.modelFileFormatError ? ` (${preflight.modelFileFormatError})` : ""}. Restage the model or verify it manually before restarting ray-llama-cpp.service.`,
+          message: `Doctor could not read the GGUF header from ${modelFileDiagnosticPath}${preflight.modelFileFormatError ? ` (${preflight.modelFileFormatError})` : ""}. Restage the model or verify it manually before restarting ray-llama-cpp.service.`,
         });
       } else if (
         strictFilesystem &&
@@ -3787,7 +3947,7 @@ export function diagnoseConfig(
         diagnostics.push({
           level: "info",
           code: "model_file_format_ok",
-          message: `The configured GGUF model file at ${preflight.modelFilePath} has a valid GGUF header.`,
+          message: `The configured GGUF model file at ${modelFileDiagnosticPath} has a valid GGUF header.`,
         });
       }
 
@@ -3799,7 +3959,7 @@ export function diagnoseConfig(
         diagnostics.push({
           level: "error",
           code: "model_file_service_user_inaccessible",
-          message: `The generated systemd service user "${preflight.serviceUser ?? "the configured service user"}" cannot read the configured GGUF model file at ${preflight.modelFilePath}${preflight.modelFileAccessError ? ` (${preflight.modelFileAccessError})` : ""}. Adjust ownership or mode bits before restarting ray-llama-cpp.service.`,
+          message: `The generated systemd service user "${preflight.serviceUser ?? "the configured service user"}" cannot read the configured GGUF model file at ${modelFileDiagnosticPath}${preflight.modelFileAccessError ? ` (${preflight.modelFileAccessError})` : ""}. Adjust ownership or mode bits before restarting ray-llama-cpp.service.`,
         });
       }
 
@@ -4220,6 +4380,7 @@ async function collectAsyncQueueStoragePreflight(
       const storageStats = await statfs(checkPath);
       const availableMiB = resolveAvailableStorageMiB(storageStats);
       const storageStatus = checkPath === storagePath ? "directory" : "parent";
+      const asyncQueueStorageCheckRealPath = await resolveRealPathIfDifferent(checkPath);
       const managedByStateDirectory =
         storageStatus === "parent" && isRayStateDirectoryCreationPath(storagePath, checkPath);
       const serviceUserAccess = serviceUserIdentity
@@ -4236,6 +4397,7 @@ async function collectAsyncQueueStoragePreflight(
       return {
         asyncQueueStoragePath: storagePath,
         asyncQueueStorageCheckPath: checkPath,
+        ...(asyncQueueStorageCheckRealPath ? { asyncQueueStorageCheckRealPath } : {}),
         asyncQueueStorageStatus: storageStatus,
         ...(availableMiB !== undefined ? { asyncQueueStorageAvailableMiB: availableMiB } : {}),
         ...(managedByStateDirectory ? { asyncQueueStorageManagedByStateDirectory: true } : {}),
@@ -4700,6 +4862,7 @@ async function collectWorkingDirectoryPreflight(
       };
     }
 
+    const workingDirectoryRealPath = await resolveRealPathIfDifferent(workingDirectoryPath);
     let storagePreflight: Partial<DeploymentPreflight>;
     try {
       const storageStats = await statfs(workingDirectoryPath);
@@ -4731,6 +4894,7 @@ async function collectWorkingDirectoryPreflight(
       : undefined;
 
     return {
+      ...(workingDirectoryRealPath ? { workingDirectoryRealPath } : {}),
       workingDirectoryPath,
       workingDirectoryStatus: "found",
       ...storagePreflight,
@@ -4786,6 +4950,7 @@ async function collectGatewayRuntimePreflight(
       };
     }
 
+    const gatewayRuntimeBinaryRealPath = await resolveRealPathIfDifferent(runtimeBinary);
     await access(runtimeBinary, constants.X_OK);
     const serviceUserAccess = serviceUserIdentity
       ? await verifyServiceUserPathAccess(runtimeBinary, serviceUserIdentity, 0o1, "execute")
@@ -4802,6 +4967,7 @@ async function collectGatewayRuntimePreflight(
           : {};
 
     return {
+      ...(gatewayRuntimeBinaryRealPath ? { gatewayRuntimeBinaryRealPath } : {}),
       gatewayRuntimeBinaryPath: runtimeBinary,
       gatewayRuntimeBinaryStatus: "found",
       ...versionPreflight,
@@ -4930,11 +5096,13 @@ async function collectGatewayEntrypointPreflight(
       };
     }
 
+    const gatewayEntrypointRealPath = await resolveRealPathIfDifferent(entrypointPath);
     const serviceUserAccess = serviceUserIdentity
       ? await verifyServiceUserPathAccess(entrypointPath, serviceUserIdentity, 0o4, "read")
       : undefined;
 
     return {
+      ...(gatewayEntrypointRealPath ? { gatewayEntrypointRealPath } : {}),
       gatewayEntrypointPath: entrypointPath,
       gatewayEntrypointStatus: "found",
       ...(serviceUserAccess
@@ -5033,11 +5201,13 @@ async function collectConfigFilePreflight(
       };
     }
 
+    const configFileRealPath = await resolveRealPathIfDifferent(resolvedConfigPath);
     const serviceUserAccess = serviceUserIdentity
       ? await verifyServiceUserPathAccess(resolvedConfigPath, serviceUserIdentity, 0o4, "read")
       : undefined;
 
     return {
+      ...(configFileRealPath ? { configFileRealPath } : {}),
       configFilePath: resolvedConfigPath,
       configFileStatus: "found",
       ...(serviceUserAccess
@@ -5087,6 +5257,7 @@ async function collectLlamaCppBinaryPreflight(
       };
     }
 
+    const llamaCppBinaryRealPath = await resolveRealPathIfDifferent(binaryPath);
     await access(binaryPath, constants.X_OK);
 
     const serviceUserAccess = serviceUserIdentity
@@ -5097,6 +5268,7 @@ async function collectLlamaCppBinaryPreflight(
       : {};
 
     return {
+      ...(llamaCppBinaryRealPath ? { llamaCppBinaryRealPath } : {}),
       llamaCppBinaryPath: binaryPath,
       llamaCppBinaryStatus: "found",
       ...probePreflight,
@@ -5478,6 +5650,7 @@ async function collectDeploymentPreflight(
       };
     }
 
+    const modelFileRealPath = await resolveRealPathIfDifferent(launchProfile.modelPath);
     const serviceUserAccess = serviceUserIdentity
       ? await verifyServiceUserPathAccess(launchProfile.modelPath, serviceUserIdentity, 0o4, "read")
       : undefined;
@@ -5488,6 +5661,7 @@ async function collectDeploymentPreflight(
 
     return {
       ...preflightWithSystemdUnits,
+      ...(modelFileRealPath ? { modelFileRealPath } : {}),
       modelFileBytes: fileStat.size,
       modelFileStatus: "found",
       ...modelFileFormatPreflight,

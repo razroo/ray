@@ -3,8 +3,10 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   readdir,
   rm,
+  symlink,
   truncate,
   writeFile,
 } from "node:fs/promises";
@@ -2698,6 +2700,33 @@ test("diagnoseConfig errors when async queue storage is read-only under ProtectS
   assert.match(diagnostic.message, /\/var\/lib\/ray\/async-queue/);
 });
 
+test("diagnoseConfig errors when async queue storage symlink targets are hidden by systemd", () => {
+  const config = mergeConfig(createDefaultConfig("1b"), {
+    asyncQueue: {
+      enabled: true,
+      storageDir: "/var/lib/ray/async-queue",
+    },
+  });
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      asyncQueueStoragePath: "/var/lib/ray/async-queue",
+      asyncQueueStorageCheckPath: "/var/lib/ray/async-queue",
+      asyncQueueStorageCheckRealPath: "/home/ray/async-queue",
+      asyncQueueStorageStatus: "directory",
+      asyncQueueStorageAvailableMiB: 2_048,
+    },
+  });
+  const diagnostic = diagnostics.find(
+    (entry) => entry.code === "async_queue_storage_home_protected",
+  );
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.level, "error");
+  assert.match(diagnostic.message, /resolves to \/home\/ray\/async-queue/);
+});
+
 test("diagnoseConfig errors when generated llama.cpp service paths are relative", () => {
   const config = createDefaultConfig("1b");
 
@@ -2780,6 +2809,46 @@ test("diagnoseConfig errors when generated llama.cpp paths use temporary storage
   assert.equal(modelDiagnostic.level, "error");
   assert.match(modelDiagnostic.message, /PrivateTmp=true/);
   assert.match(modelDiagnostic.message, /\/var\/lib\/ray\/models/);
+});
+
+test("diagnoseConfig errors when generated llama.cpp symlink targets are hidden by systemd", () => {
+  const config = createDefaultConfig("1b");
+
+  if (config.model.adapter.kind !== "llama.cpp" || !config.model.adapter.launchProfile) {
+    throw new Error("Expected llama.cpp launch profile");
+  }
+
+  config.model.adapter.launchProfile.binaryPath = "/usr/local/bin/llama-server";
+  config.model.adapter.launchProfile.modelPath = "/var/lib/ray/models/local-1b.gguf";
+
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      llamaCppBinaryPath: "/usr/local/bin/llama-server",
+      llamaCppBinaryRealPath: "/home/ray/bin/llama-server",
+      llamaCppBinaryStatus: "found",
+      modelFilePath: "/var/lib/ray/models/local-1b.gguf",
+      modelFileRealPath: "/tmp/local-1b.gguf",
+      modelFileStatus: "found",
+      modelFileBytes: 512 * 1_024 * 1_024,
+      memoryBudgetMiB: 4_096,
+      memoryBudgetSource: "override",
+    },
+  });
+
+  const binaryDiagnostic = diagnostics.find(
+    (diagnostic) => diagnostic.code === "llama_binary_path_home_protected",
+  );
+  assert.ok(binaryDiagnostic);
+  assert.equal(binaryDiagnostic.level, "error");
+  assert.match(binaryDiagnostic.message, /resolves to \/home\/ray\/bin\/llama-server/);
+
+  const modelDiagnostic = diagnostics.find(
+    (diagnostic) => diagnostic.code === "llama_model_path_private_tmp",
+  );
+  assert.ok(modelDiagnostic);
+  assert.equal(modelDiagnostic.level, "error");
+  assert.match(modelDiagnostic.message, /resolves to \/tmp\/local-1b\.gguf/);
 });
 
 test("diagnoseConfig errors when generated llama.cpp service binds publicly", () => {
@@ -3548,6 +3617,53 @@ test("diagnoseConfig errors when the configured gateway runtime is hidden by Pro
   assert.equal(diagnostic.level, "error");
   assert.match(diagnostic.message, /ProtectHome=true/);
   assert.match(diagnostic.message, /\/usr\/local\/bin\/bun/);
+});
+
+test("diagnoseConfig errors when generated gateway symlink targets are hidden by systemd", () => {
+  const config = createDefaultConfig("tiny");
+  const diagnostics = diagnoseConfig(config, process.env, undefined, {
+    strictFilesystem: true,
+    preflight: {
+      workingDirectoryPath: "/srv/ray",
+      workingDirectoryRealPath: "/tmp/ray",
+      workingDirectoryStatus: "found",
+      configFilePath: "/etc/ray/ray.json",
+      configFileRealPath: "/root/ray.json",
+      configFileStatus: "found",
+      gatewayRuntimeBinaryPath: "/usr/local/bin/bun",
+      gatewayRuntimeBinaryRealPath: "/home/ray/.bun/bin/bun",
+      gatewayRuntimeBinaryStatus: "found",
+      gatewayEntrypointPath: "/srv/ray/apps/gateway/dist/index.js",
+      gatewayEntrypointRealPath: "/var/tmp/ray-gateway.js",
+      gatewayEntrypointStatus: "found",
+    },
+  });
+
+  const workingDirectoryDiagnostic = diagnostics.find(
+    (entry) => entry.code === "working_directory_private_tmp",
+  );
+  assert.ok(workingDirectoryDiagnostic);
+  assert.equal(workingDirectoryDiagnostic.level, "error");
+  assert.match(workingDirectoryDiagnostic.message, /resolves to \/tmp\/ray/);
+
+  const configDiagnostic = diagnostics.find((entry) => entry.code === "config_file_home_protected");
+  assert.ok(configDiagnostic);
+  assert.equal(configDiagnostic.level, "error");
+  assert.match(configDiagnostic.message, /resolves to \/root\/ray\.json/);
+
+  const runtimeDiagnostic = diagnostics.find(
+    (entry) => entry.code === "gateway_runtime_home_protected",
+  );
+  assert.ok(runtimeDiagnostic);
+  assert.equal(runtimeDiagnostic.level, "error");
+  assert.match(runtimeDiagnostic.message, /resolves to \/home\/ray\/\.bun\/bin\/bun/);
+
+  const entrypointDiagnostic = diagnostics.find(
+    (entry) => entry.code === "gateway_entrypoint_private_tmp",
+  );
+  assert.ok(entrypointDiagnostic);
+  assert.equal(entrypointDiagnostic.level, "error");
+  assert.match(entrypointDiagnostic.message, /resolves to \/var\/tmp\/ray-gateway\.js/);
 });
 
 test("diagnoseConfig errors when the configured Bun runtime is too old", () => {
@@ -4440,6 +4556,42 @@ test("loadAndDiagnoseDeployment reports an executable gateway runtime in strict 
   assert.ok(versionDiagnostic);
   assert.equal(versionDiagnostic.level, "info");
   assert.match(versionDiagnostic.message, /Bun version 1\.3\.9/);
+});
+
+test("loadAndDiagnoseDeployment records gateway runtime symlink targets in strict mode", async (t) => {
+  const tempDir = await mkRayDeployTempDir("ray-deploy-runtime-realpath-");
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const runtimeTargetDir = join(tempDir, "targets");
+  const runtimeLinkDir = join(tempDir, "bin");
+  await mkdir(runtimeTargetDir, { recursive: true });
+  await mkdir(runtimeLinkDir, { recursive: true });
+
+  const runtimeTarget = join(runtimeTargetDir, "bun-real");
+  const runtimeLink = join(runtimeLinkDir, "bun");
+  await writeFile(runtimeTarget, "#!/bin/sh\necho 1.3.9\n");
+  await chmod(runtimeTarget, 0o755);
+  await symlink(runtimeTarget, runtimeLink);
+
+  const config = createDefaultConfig("tiny");
+  const configPath = join(tempDir, "ray.json");
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+
+  const inspected = await loadAndDiagnoseDeployment({
+    cwd: tempDir,
+    configPath,
+    runtimeBinary: runtimeLink,
+    strictFilesystem: true,
+  });
+
+  assert.equal(inspected.preflight.gatewayRuntimeBinaryStatus, "found");
+  assert.equal(inspected.preflight.gatewayRuntimeBinaryRealPath, await realpath(runtimeTarget));
+
+  const diagnostic = inspected.diagnostics.find((entry) => entry.code === "gateway_runtime_ok");
+  assert.ok(diagnostic);
+  assert.match(diagnostic.message, /resolves to/);
 });
 
 test("loadAndDiagnoseDeployment runs gateway runtime version probe as the service user", async (t) => {
