@@ -48,7 +48,7 @@
     },
     "packages/core": {
       "name": "@razroo/ray-core",
-      "version": "0.2.0",
+      "version": "0.3.0",
     },
     "packages/deploy": {
       "name": "@ray/deploy",
@@ -95,13 +95,20 @@
     },
     "packages/sdk": {
       "name": "@razroo/ray-sdk",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "dependencies": {
         "@razroo/ray-core": "workspace:*",
       },
     },
     "packages/telemetry": {
       "name": "@ray/telemetry",
+      "version": "0.1.0",
+      "dependencies": {
+        "@razroo/ray-core": "workspace:*",
+      },
+    },
+    "packages/tuner": {
+      "name": "@ray/tuner",
       "version": "0.1.0",
       "dependencies": {
         "@razroo/ray-core": "workspace:*",
@@ -204,6 +211,8 @@
     "@ray/scheduler": ["@ray/scheduler@workspace:packages/scheduler"],
 
     "@ray/telemetry": ["@ray/telemetry@workspace:packages/telemetry"],
+
+    "@ray/tuner": ["@ray/tuner@workspace:packages/tuner"],
 
     "@razroo/ray-core": ["@razroo/ray-core@workspace:packages/core"],
 
