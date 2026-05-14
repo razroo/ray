@@ -516,6 +516,39 @@ test("RayClient redacts stack fields from JSON error responses", async (t) => {
   );
 });
 
+test("RayClient preserves unsafe JSON error keys as inert fields while redacting stacks", async (t) => {
+  const server = createServer((_request, response) => {
+    response.writeHead(500, { "content-type": "application/json; charset=utf-8" });
+    response.end(
+      '{"error":{"code":"gateway_error","details":{"__proto__":{"polluted":true},"constructor":"shadowed","stack":"secret stack"}}}',
+    );
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected a TCP server address");
+  }
+
+  const client = new RayClient({
+    baseUrl: `http://127.0.0.1:${address.port}`,
+  });
+
+  await assert.rejects(
+    () => client.health(),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /"__proto__":\{"polluted":true\}/);
+      assert.match(error.message, /"constructor":"shadowed"/);
+      assert.doesNotMatch(error.message, /secret stack/);
+      assert.equal(({} as { polluted?: boolean }).polluted, undefined);
+      return true;
+    },
+  );
+});
+
 test("RayClient rejects oversized successful responses", async (t) => {
   const server = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "application/json" });

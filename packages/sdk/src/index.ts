@@ -385,6 +385,19 @@ function parseJsonResponse<T>(text: string, pathname: string): T {
   }
 }
 
+function setRedactedJsonProperty(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
 function redactJsonErrorStacks(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
   if (value === null || value === undefined || typeof value !== "object") {
     return value;
@@ -407,7 +420,7 @@ function redactJsonErrorStacks(value: unknown, seen: WeakSet<object> = new WeakS
         continue;
       }
 
-      output[key] = redactJsonErrorStacks(nested, seen);
+      setRedactedJsonProperty(output, key, redactJsonErrorStacks(nested, seen));
     }
 
     return output;
