@@ -28,6 +28,10 @@ test("parseArgs accepts strict swap plan options", () => {
 
   assert.equal(parseArgs([], { RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "1024" }).minFreeAfterMiB, 1024);
   assert.equal(
+    parseArgs([], Object.create({ RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "1024" })).minFreeAfterMiB,
+    512,
+  );
+  assert.equal(
     parseArgs(["--min-free-after-mib", "768"], {
       RAY_DEPLOY_MIN_FREE_STORAGE_MIB: "1024",
     }).minFreeAfterMiB,

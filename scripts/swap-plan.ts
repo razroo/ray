@@ -171,10 +171,21 @@ function parseSwappiness(value: string): number {
   return parsed;
 }
 
+function readOwnEnvValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  if (!Object.prototype.hasOwnProperty.call(env, name)) {
+    return undefined;
+  }
+
+  const value = env[name];
+  return typeof value === "string" ? value : undefined;
+}
+
 export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): SwapPlanArgs {
   assertArgv(argv);
 
-  const envMinFreeAfterMiB = parseOptionalMinFreeAfterMiBEnv(env[DEPLOY_MIN_FREE_STORAGE_ENV]);
+  const envMinFreeAfterMiB = parseOptionalMinFreeAfterMiBEnv(
+    readOwnEnvValue(env, DEPLOY_MIN_FREE_STORAGE_ENV),
+  );
   const args: SwapPlanArgs = {
     path: DEFAULT_SWAP_PATH,
     sizeMiB: DEFAULT_SWAP_SIZE_MIB,
