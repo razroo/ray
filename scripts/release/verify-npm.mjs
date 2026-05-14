@@ -56,6 +56,18 @@ function isJsonContentType(value) {
   return mediaType === "application/json" || mediaType.endsWith("+json");
 }
 
+function expectedTarballPathname(pkg, version) {
+  return `/${pkg}/-/${pkg.split("/").pop()}-${version}.tgz`;
+}
+
+function decodeUrlPathname(url, pkg, version) {
+  try {
+    return decodeURIComponent(url.pathname);
+  } catch {
+    throw new Error(`${pkg} npm metadata version ${version} has invalid tarball URL path`);
+  }
+}
+
 async function readResponseTextWithinLimit(response, limitBytes, label) {
   const contentLength = parseContentLength(response.headers.get("content-length"));
   if (contentLength !== undefined && contentLength > limitBytes) {
@@ -191,6 +203,11 @@ export async function verifyPackageVersion(pkg, version, options = {}) {
 
   if (tarballUrl.protocol !== "https:" || tarballUrl.hostname !== "registry.npmjs.org") {
     throw new Error(`${pkg} npm metadata version ${version} has unexpected tarball URL origin`);
+  }
+
+  const pathname = decodeUrlPathname(tarballUrl, pkg, version);
+  if (pathname !== expectedTarballPathname(pkg, version)) {
+    throw new Error(`${pkg} npm metadata version ${version} has unexpected tarball URL path`);
   }
 
   return published;

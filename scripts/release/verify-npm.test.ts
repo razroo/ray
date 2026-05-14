@@ -170,7 +170,7 @@ test("verifyPackageVersion requires matching npm version metadata", async () => 
   );
 });
 
-test("verifyPackageVersion requires npm dist integrity and registry tarball", async () => {
+test("verifyPackageVersion requires npm dist integrity and exact registry tarball", async () => {
   const invalidIntegrity = async () =>
     new Response(
       JSON.stringify({
@@ -229,5 +229,35 @@ test("verifyPackageVersion requires npm dist integrity and registry tarball", as
         fetchImpl: invalidTarball,
       }),
     /@razroo\/ray-core npm metadata version 0\.2\.0 has unexpected tarball URL origin/,
+  );
+
+  const wrongTarballPath = async () =>
+    new Response(
+      JSON.stringify({
+        "dist-tags": { latest: "0.2.0" },
+        versions: {
+          "0.2.0": {
+            name: "@razroo/ray-core",
+            version: "0.2.0",
+            dist: {
+              integrity: "sha512-AbCdEf0123456789+/==",
+              tarball: "https://registry.npmjs.org/%40razroo%2Fray-sdk/-/ray-sdk-0.2.0.tgz",
+            },
+          },
+        },
+      }),
+      {
+        headers: {
+          "content-type": "application/json",
+        },
+      },
+    );
+
+  await assert.rejects(
+    () =>
+      verifyPackageVersion("@razroo/ray-core", "0.2.0", {
+        fetchImpl: wrongTarballPath,
+      }),
+    /@razroo\/ray-core npm metadata version 0\.2\.0 has unexpected tarball URL path/,
   );
 });
