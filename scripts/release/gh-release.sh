@@ -129,7 +129,7 @@ Usage: bash scripts/release/gh-release.sh [--dry-run | --yes]
 
   Reads versions from packages/core and packages/sdk (must match), then:
   1) creates annotated tags  core-v<ver>  and  sdk-v<ver>  on HEAD
-  2) git push origin <tags>
+  2) git push --atomic origin <tags>
   3) gh release create for each tag (triggers npm publish Actions)
 
   Prereqs: gh auth, clean working tree, main is what you intend to release.
@@ -217,7 +217,7 @@ done
 
 git tag -a "$TAG_CORE" -m "Release $TAG_CORE (@razroo/ray-core v$VER)"
 git tag -a "$TAG_SDK" -m "Release $TAG_SDK (@razroo/ray-sdk v$VER)"
-run_required_bounded "pushing release tags" 120 git push origin "$TAG_CORE" "$TAG_SDK"
+run_required_bounded "pushing release tags atomically" 120 git push --atomic origin "$TAG_CORE" "$TAG_SDK"
 run_required_bounded \
   "creating GitHub release $TAG_CORE" \
   120 \

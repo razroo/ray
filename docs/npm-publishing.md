@@ -73,12 +73,12 @@ Infrastructure-only PRs can add an empty changeset: `bunx changeset add --empty`
    ```bash
    TAG_CORE="core-v$(bun -e 'console.log(require("./packages/core/package.json").version)')"
    TAG_SDK="sdk-v$(bun -e 'console.log(require("./packages/sdk/package.json").version)')"
-   git tag "$TAG_CORE"
-   git tag "$TAG_SDK"
-   git push origin "$TAG_CORE" "$TAG_SDK"
+   git tag -a "$TAG_CORE" -m "Release $TAG_CORE (@razroo/ray-core)"
+   git tag -a "$TAG_SDK" -m "Release $TAG_SDK (@razroo/ray-sdk)"
+   git push --atomic origin "$TAG_CORE" "$TAG_SDK"
    ```
 
-   Only push the tag(s) you are releasing in this pass.
+   Push linked package tags atomically so a failed push cannot publish only one side of the release pair.
 
 3. Create GitHub Releases (fires the npm workflows):
 
@@ -101,7 +101,7 @@ After **`bun run version`** is committed on **`main`** and pushed (`git push ori
 
 ```bash
 bun run release:github -- --dry-run   # plan only
-bun run release:github -- --yes     # tag, git push tags, gh release create ×2
+bun run release:github -- --yes     # tag, git push --atomic tags, gh release create ×2
 ```
 
 Requires [**GitHub CLI**](https://cli.github.com/) (`gh`) authenticated (`gh auth login`). NPM publish still runs in Actions when each release is **published**.

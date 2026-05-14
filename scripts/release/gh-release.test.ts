@@ -105,6 +105,10 @@ async function createReleaseHelperFixture(
       'if [ "${1:-}" = "ls-remote" ]; then',
       "  exit 2",
       "fi",
+      'if [ "${1:-}" = "push" ] && [ "${2:-}" != "--atomic" ]; then',
+      '  echo "release tag push must be atomic" >&2',
+      "  exit 97",
+      "fi",
       'if [ "${1:-}" = "tag" ] || [ "${1:-}" = "push" ]; then',
       "  exit 0",
       "fi",
@@ -224,7 +228,10 @@ test("gh release helper bounds network release operations", async () => {
     contents,
     /run_required_bounded "checking GitHub CLI authentication" 60 gh auth status/,
   );
-  assert.match(contents, /run_required_bounded "pushing release tags" 120 git push origin/);
+  assert.match(
+    contents,
+    /run_required_bounded "pushing release tags atomically" 120 git push --atomic origin/,
+  );
   assert.match(contents, /"creating GitHub release \$TAG_CORE"/);
   assert.match(contents, /"creating GitHub release \$TAG_SDK"/);
 });
@@ -267,7 +274,7 @@ test("gh release helper continues when GitHub reports releases are missing", asy
   assert.match(commandLog, /^gh auth status$/m);
   assert.match(commandLog, /^git tag -a core-v1\.2\.3 /m);
   assert.match(commandLog, /^git tag -a sdk-v1\.2\.3 /m);
-  assert.match(commandLog, /^git push origin core-v1\.2\.3 sdk-v1\.2\.3$/m);
+  assert.match(commandLog, /^git push --atomic origin core-v1\.2\.3 sdk-v1\.2\.3$/m);
   assert.match(
     commandLog,
     /^gh release create core-v1\.2\.3 --generate-notes --title core-v1\.2\.3$/m,
