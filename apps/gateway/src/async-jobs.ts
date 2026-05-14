@@ -131,6 +131,28 @@ const CALLBACK_STATUSES = new Set<InferenceJobCallbackState["status"]>([
   "delivered",
   "failed",
 ]);
+const PERSISTED_JOB_KEYS = new Set([
+  "id",
+  "status",
+  "request",
+  "createdAt",
+  "updatedAt",
+  "attempts",
+  "maxAttempts",
+  "startedAt",
+  "completedAt",
+  "result",
+  "error",
+  "callback",
+]);
+const CALLBACK_STATE_KEYS = new Set([
+  "url",
+  "status",
+  "attempts",
+  "lastAttemptAt",
+  "deliveredAt",
+  "lastError",
+]);
 const JOB_ERROR_KEYS = new Set(["message", "code", "details"]);
 const INFERENCE_RESULT_KEYS = new Set([
   "id",
@@ -998,6 +1020,12 @@ function assertPersistedCallbackState(value: unknown): void {
     throw new PersistedJobValidationError("callback must be an object when present");
   }
 
+  for (const key of Object.keys(value)) {
+    if (!CALLBACK_STATE_KEYS.has(key)) {
+      throw new PersistedJobValidationError("callback contains an unknown field");
+    }
+  }
+
   if (!isNonEmptyString(value.url)) {
     throw new PersistedJobValidationError("callback.url must be a non-empty string");
   }
@@ -1060,6 +1088,12 @@ function assertPersistedCallbackState(value: unknown): void {
 function validatePersistedJobRecord(value: unknown, expectedJobId?: string): InferenceJobRecord {
   if (!isObjectRecord(value)) {
     throw new PersistedJobValidationError("persisted async job must be an object");
+  }
+
+  for (const key of Object.keys(value)) {
+    if (!PERSISTED_JOB_KEYS.has(key)) {
+      throw new PersistedJobValidationError("persisted async job contains an unknown field");
+    }
   }
 
   if (!isSafeJobId(value.id)) {
