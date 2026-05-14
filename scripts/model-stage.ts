@@ -588,6 +588,8 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
   const owner = `${plan.serviceUser}:${plan.serviceGroup}`;
   const binaryTemp = "$binary_tmp";
   const modelTemp = "$model_tmp";
+  const modelDirectoryIsDedicated =
+    path.resolve(plan.modelDirectory) !== path.resolve(plan.binaryDirectory);
   const binarySourcePreflight = `binary_source_bytes="$(timeout ${STAGE_INSPECT_TIMEOUT_SECONDS}s stat -c %s -- ${shellQuote(
     binarySourcePath,
   )})" || exit "$?"; test "\${binary_source_bytes:-0}" -le ${MAX_LLAMA_CPP_BINARY_SOURCE_BYTES} || { printf '%s\\n' ${shellQuote(
@@ -686,7 +688,9 @@ function buildStageCommands(plan: Omit<ModelStagePlan, "commands">): string[] {
   )} && trap - EXIT )`;
   const commands = [
     `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo install -d -m 0755 ${shellQuote(plan.binaryDirectory)}`,
-    `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo install -d -m 0755 ${shellQuote(plan.modelDirectory)}`,
+    modelDirectoryIsDedicated
+      ? `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo install -d -m 0750 -o ${shellQuote(plan.serviceUser)} -g ${shellQuote(plan.serviceGroup)} ${shellQuote(plan.modelDirectory)}`
+      : `timeout ${STAGE_QUICK_TIMEOUT_SECONDS}s sudo install -d -m 0755 ${shellQuote(plan.modelDirectory)}`,
     binarySourcePreflight,
     ...(binaryChecksumPreflight ? [binaryChecksumPreflight] : []),
     binarySourceLaunchFlagPreflight,
@@ -1557,8 +1561,15 @@ export async function applyModelStagePlan(
     path.resolve(binaryTargetDirectory) === path.resolve(modelTargetDirectory);
   const { uid, gid } = await resolveServiceOwnerIds(plan);
 
-  await mkdir(modelTargetDirectory, { recursive: true, mode: 0o755 });
+  await mkdir(modelTargetDirectory, {
+    recursive: true,
+    mode: targetsShareDirectory ? 0o755 : 0o750,
+  });
   await mkdir(binaryTargetDirectory, { recursive: true, mode: 0o755 });
+  if (!targetsShareDirectory) {
+    await chmod(modelTargetDirectory, 0o750);
+    await chownIfNeeded(modelTargetDirectory, uid, gid);
+  }
 
   const targetsShareFilesystem =
     shouldCopyBinary &&

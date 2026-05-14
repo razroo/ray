@@ -32,6 +32,7 @@ MemoryMax=896M
 MemorySwapMax=128M
 
 StateDirectory=ray
+StateDirectoryMode=0750
 NoNewPrivileges=true
 CapabilityBoundingSet=
 SystemCallArchitectures=native
@@ -49,7 +50,7 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
-UMask=027
+UMask=077
 LimitNOFILE=4096
 
 [Install]

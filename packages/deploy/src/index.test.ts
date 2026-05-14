@@ -90,6 +90,7 @@ test("renderSystemdService includes hardening directives", () => {
   assert.match(service, /ProtectSystem=full/);
   assert.match(service, /EnvironmentFile=\/etc\/ray\/ray.env/);
   assert.match(service, /StateDirectory=ray/);
+  assert.match(service, /StateDirectoryMode=0750/);
   assert.match(service, /StartLimitIntervalSec=60/);
   assert.match(service, /StartLimitBurst=10/);
   assert.match(service, /LogRateLimitIntervalSec=30s/);
@@ -112,6 +113,7 @@ test("renderSystemdService includes hardening directives", () => {
   assert.match(service, /RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6/);
   assert.match(service, /RestrictNamespaces=true/);
   assert.match(service, /RestrictRealtime=true/);
+  assert.match(service, /UMask=077/);
   assert.doesNotMatch(service, /MemoryDenyWriteExecute=true/);
 });
 
@@ -1388,6 +1390,7 @@ test("renderDeploymentBundle includes llama.cpp service for generic 1b profiles"
   );
   assert.match(bundle.service, /ExecStart=\/usr\/local\/bin\/bun/);
   assert.match(bundle.service, /StateDirectory=ray/);
+  assert.match(bundle.service, /StateDirectoryMode=0750/);
   assert.match(bundle.service, /Wants=ray-llama-cpp\.service/);
   assert.match(bundle.service, /After=network\.target ray-llama-cpp\.service/);
   assert.match(bundle.service, /MemoryHigh=640M/);
@@ -1728,6 +1731,7 @@ test("renderLlamaCppService emits a single-vps launch profile", () => {
   assert.match(service, /RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6/);
   assert.match(service, /RestrictNamespaces=true/);
   assert.match(service, /RestrictRealtime=true/);
+  assert.match(service, /UMask=077/);
 });
 
 test("renderLlamaCppService rejects relative binary paths", () => {

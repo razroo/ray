@@ -2225,7 +2225,10 @@ export function renderSystemdService(options: SystemdServiceOptions): string {
     ? `EnvironmentFile=${formatSystemdDirectiveValue(options.envFile, "envFile")}\n`
     : "";
   const stateDirectoryLine = options.stateDirectory
-    ? `StateDirectory=${formatSystemdDirectiveValue(options.stateDirectory, "stateDirectory")}\n`
+    ? `StateDirectory=${formatSystemdDirectiveValue(
+        options.stateDirectory,
+        "stateDirectory",
+      )}\nStateDirectoryMode=0750\n`
     : "";
   const wantsLine = formatSystemdDependencyLine("Wants", wants ?? []);
   const afterLine = formatSystemdDependencyLine("After", ["network.target", ...(after ?? [])]);
@@ -2299,7 +2302,7 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
-UMask=027
+UMask=077
 LimitNOFILE=4096
 
 [Install]
@@ -2447,7 +2450,7 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
-UMask=027
+UMask=077
 LimitNOFILE=4096
 
 [Install]

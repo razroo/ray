@@ -242,7 +242,10 @@ test("createModelStagePlan resolves config, env overrides, and install commands"
   assert.ok(plan.requiredLaunchFlags.includes("--ctx-size"));
   assert.ok(plan.requiredLaunchFlags.includes("--cache-ram"));
   assert.equal(plan.commands[0], "timeout 60s sudo install -d -m 0755 '/usr/local/bin'");
-  assert.equal(plan.commands[1], "timeout 60s sudo install -d -m 0755 '/var/lib/ray/models'");
+  assert.equal(
+    plan.commands[1],
+    "timeout 60s sudo install -d -m 0750 -o 'rayops' -g 'rayops' '/var/lib/ray/models'",
+  );
   const commandsText = plan.commands.join("\n");
   assert.match(commandsText, /timeout 30s stat -c %s -- '\.\/bin\/llama-server'/);
   assert.match(commandsText, /timeout 30s df -Pm '\/usr\/local\/bin'/);
@@ -347,6 +350,24 @@ test("createModelStagePlan reads staging sources and checksums from env", async 
   );
   assert.match(plan.commands.join("\n"), /Projected llama\.cpp backend working set would be/);
   assert.match(plan.commands.join("\n"), /timeout 30s df -Pm '\/var\/lib\/ray\/models'/);
+});
+
+test("createModelStagePlan keeps shared artifact directories traversable", async () => {
+  const plan = await createModelStagePlan({
+    cwd: repoRoot,
+    configPath: "./examples/config/ray.sub1b.public.json",
+    env: {
+      RAY_LLAMA_CPP_BINARY_PATH: "/srv/ray/artifacts/llama-server",
+      RAY_MODEL_PATH: "/srv/ray/artifacts/model.gguf",
+    },
+    serviceUser: "ray",
+    serviceGroup: "ray",
+  });
+
+  assert.equal(plan.binaryDirectory, "/srv/ray/artifacts");
+  assert.equal(plan.modelDirectory, "/srv/ray/artifacts");
+  assert.equal(plan.commands[0], "timeout 60s sudo install -d -m 0755 '/srv/ray/artifacts'");
+  assert.equal(plan.commands[1], "timeout 60s sudo install -d -m 0755 '/srv/ray/artifacts'");
 });
 
 test("createModelStagePlan rejects malformed staging source paths from env", async () => {
@@ -820,6 +841,59 @@ test("applyModelStagePlan installs verified artifacts into the resolved target p
   const binaryStats = await stat(binaryTarget);
   const modelStats = await stat(modelTarget);
   assert.equal(binaryStats.mode & 0o777, 0o755);
+  assert.equal(modelStats.mode & 0o777, 0o640);
+  assert.equal(modelStats.uid, uid);
+  assert.equal(modelStats.gid, gid);
+
+  const modelDirStats = await stat(path.dirname(modelTarget));
+  assert.equal(modelDirStats.mode & 0o777, 0o750);
+  assert.equal(modelDirStats.uid, uid);
+  assert.equal(modelDirStats.gid, gid);
+});
+
+test("applyModelStagePlan leaves shared artifact directories traversable", async (t) => {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) {
+    t.skip("process uid/gid are unavailable on this platform");
+    return;
+  }
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "ray-model-stage-shared-dir-"));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const binaryPath = path.join(tempDir, "sources", "llama-server");
+  const modelPath = path.join(tempDir, "sources", "model.gguf");
+  const targetDir = path.join(tempDir, "target", "artifacts");
+  const binaryTarget = path.join(targetDir, "llama-server");
+  const modelTarget = path.join(targetDir, "model.gguf");
+  const binaryContents = compatibleLlamaServerScript;
+  await mkdir(path.join(tempDir, "sources"), { recursive: true });
+  await writeFile(binaryPath, binaryContents, "utf8");
+  await writeFile(modelPath, "GGUF", "utf8");
+  await chmod(binaryPath, 0o755);
+  await chmod(modelPath, 0o644);
+
+  const plan = await createModelStagePlan({
+    cwd: tempDir,
+    configPath: path.join(repoRoot, "examples/config/ray.sub1b.public.json"),
+    env: {
+      RAY_LLAMA_CPP_BINARY_PATH: binaryTarget,
+      RAY_MODEL_PATH: modelTarget,
+    },
+    serviceUser: String(uid),
+    serviceGroup: String(gid),
+    binarySourcePath: "./sources/llama-server",
+    sourcePath: "./sources/model.gguf",
+  });
+
+  await applyModelStagePlan(tempDir, plan, ampleApplyStorage);
+
+  const targetDirStats = await stat(targetDir);
+  const modelStats = await stat(modelTarget);
+  assert.equal(targetDirStats.mode & 0o777, 0o755);
   assert.equal(modelStats.mode & 0o777, 0o640);
   assert.equal(modelStats.uid, uid);
   assert.equal(modelStats.gid, gid);
@@ -1389,6 +1463,10 @@ test("runModelStageCli can print commands only", async () => {
   assert.equal(stderr, "");
   assert.doesNotMatch(stdout, /Ray llama\.cpp artifact staging plan/);
   assert.match(stdout, /^timeout 60s sudo install -d -m 0755/);
+  assert.match(
+    stdout,
+    /timeout 60s sudo install -d -m 0750 -o 'ray' -g 'ray' '\/var\/lib\/ray\/models'/,
+  );
   assert.match(
     stdout,
     /sudo mktemp '\/var\/lib\/ray\/models\/\.ray-stage-local-1b-q4\.gguf\.XXXXXX'/,

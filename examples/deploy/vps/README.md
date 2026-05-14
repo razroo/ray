@@ -56,7 +56,7 @@ case "$SERVICE_USER" in
 esac
 SERVICE_GROUP="$(id -g "$SERVICE_USER")"
 timeout 60s sudo install -d -m 0755 /srv/ray /etc/ray
-timeout 60s sudo install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
+timeout 60s sudo install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
 timeout 60s sudo chown "$(id -un):$(id -gn)" /srv/ray
 timeout 60s sudo chown "$SERVICE_USER:$SERVICE_GROUP" /var/lib/ray /var/lib/ray/models /var/lib/ray/async-queue
 ```
@@ -335,8 +335,9 @@ different environment variable name.
 ### 6. Install the systemd unit
 
 Start from [ray-gateway.service](./ray-gateway.service) and [ray-llama-cpp.service](./ray-llama-cpp.service), or generate both from the deploy package.
-The example unit includes `StateDirectory=ray`, so systemd creates `/var/lib/ray`
-for the gateway user before the async queue writes to `/var/lib/ray/async-queue`.
+The example unit includes `StateDirectory=ray` with `StateDirectoryMode=0750`,
+so systemd creates `/var/lib/ray` privately for the gateway user before the
+async queue writes to `/var/lib/ray/async-queue`.
 When the deploy renderer emits a llama.cpp unit, install it as
 `/etc/systemd/system/ray-llama-cpp.service`; the generated gateway unit includes
 `Wants=` and `After=` dependencies on that local backend service.
@@ -460,10 +461,10 @@ timeout 1800s bun run benchmark:assert:cx23:1b
 - The generated systemd units also set `MemoryHigh`, `MemoryMax`, and `MemorySwapMax` cgroup ceilings from the gateway profile and llama.cpp memory budget, reserving the gateway ceiling before sizing the backend so one-node VPS hosts keep an OS cushion instead of letting both services consume the whole memory budget. Doctor errors when the generated gateway `MemoryMax` plus the system reserve cannot fit the detected host RAM, which catches overly large `RAY_DEGRADATION_MEMORY_RSS_THRESHOLD_MIB` overrides before the gateway cgroup is installed.
 - Use `RAY_DEPLOY_MEMORY_MIB` in the deploy env file, or pass `--memory-mib`, when render or doctor should size llama.cpp against an explicit VPS memory class instead of the config `model.operational.memoryClassMiB`, detected host, or launch-profile preset. The explicit flag wins when both are present; render/doctor reject targets too small to fit the system reserve, generated gateway `MemoryMax`, and the minimum backend `MemoryMax`, and doctor errors when the override is larger than the detected VPS RAM.
 - The generated systemd units also set OOM policy and OOM score adjustments so the lightweight gateway is less kill-prone than the local model backend under last-resort memory pressure.
-- The generated systemd units also drop Linux capabilities, restrict address families to local/IP sockets, deny namespace creation and realtime scheduling, and hide host identity, host devices, and kernel controls. Keep custom service overrides equally narrow unless a backend explicitly needs broader access.
+- The generated systemd units also drop Linux capabilities, restrict address families to local/IP sockets, deny namespace creation and realtime scheduling, hide host identity, host devices, and kernel controls, and use `UMask=077` so service-created files such as durable queue records are owner-only by default. Keep custom service overrides equally narrow unless a backend explicitly needs broader access.
 - The generated gateway unit intentionally does not set `MemoryDenyWriteExecute=true`; Bun and Node can need executable memory for their JavaScript runtimes. Keep that directive limited to native backend units such as the generated `ray-llama-cpp.service`.
 - Keep generated-service paths out of `/home`, `/root`, `/run/user`, `/tmp`, and `/var/tmp`; the units use `ProtectHome=true` and `PrivateTmp=true`, so put the checkout under `/srv/ray`, config under `/etc/ray`, GGUF files under `/var/lib/ray/models`, and `llama-server` plus Bun under `/usr/local/bin`.
-- Use `sudo /usr/local/bin/bun run model:stage* -- --ray-env-file /etc/ray/ray.env` after writing a root-owned `0600` `/etc/ray/ray.env` to stage `llama-server` and the GGUF at the resolved paths before restarting the generated backend unit. Printed staging commands are timeout-bounded, check generated launch-flag support, check the apparent GGUF size against the generated backend `MemoryMax` budget, check binary and GGUF target disk headroom plus combined shared-filesystem headroom with the configured deploy storage reserve before replacing either target, stage through same-directory `.ray-stage-*` temp files before replacement, and the env file can also carry optional staging source paths and checksums for concrete deploy-workflow plans.
+- Use `sudo /usr/local/bin/bun run model:stage* -- --ray-env-file /etc/ray/ray.env` after writing a root-owned `0600` `/etc/ray/ray.env` to stage `llama-server` and the GGUF at the resolved paths before restarting the generated backend unit. Printed staging commands are timeout-bounded, create the model directory as `0750` for the generated service owner, check generated launch-flag support, check the apparent GGUF size against the generated backend `MemoryMax` budget, check binary and GGUF target disk headroom plus combined shared-filesystem headroom with the configured deploy storage reserve before replacing either target, stage through same-directory `.ray-stage-*` temp files before replacement, and the env file can also carry optional staging source paths and checksums for concrete deploy-workflow plans.
 - Config loading rejects unresolved relative `model.adapter.launchProfile.binaryPath` values before render; doctor then verifies that the resolved path points at an executable `llama-server`, that the generated service user can start its `--help` probe, that its help output lists the generated launch flags, and that the generated service user can read the GGUF model before the generated backend service is restarted.
 - Keep `RAY_LLAMA_CPP_CONTINUOUS_BATCHING=true`, `RAY_LLAMA_CPP_WARMUP=true`, and `RAY_LLAMA_CPP_CONTEXT_SHIFT=true` unless the backend build cannot support them. Doctor warns when these first-class llama.cpp launch controls are disabled because batching, warmup, and context shifting keep small backends more predictable.
 - Keep `cacheRamMiB` pinned for `llama.cpp`. The upstream default is too large for a 4 GB VPS.
