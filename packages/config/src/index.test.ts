@@ -2151,6 +2151,47 @@ test("loadRayConfig rejects oversized structured config collections", async (t) 
     /override key "constructor" is not allowed at model\.adapter\.warmupRequests\.0\.constructor/,
   );
 
+  for (const testCase of [
+    {
+      name: "ray.warmup-response-format-null.invalid.json",
+      responseFormat: null,
+      expected: /model\.adapter\.warmupRequests\[0\]\.responseFormat must be an object with a type/,
+    },
+    {
+      name: "ray.warmup-response-format-extra.invalid.json",
+      responseFormat: { type: "json_object", schema: { type: "object" } },
+      expected:
+        /model\.adapter\.warmupRequests\[0\]\.responseFormat must not contain unsupported key "schema"/,
+    },
+  ]) {
+    const warmupResponseFormatConfigPath = join(tempDir, testCase.name);
+    await writeFile(
+      warmupResponseFormatConfigPath,
+      JSON.stringify({
+        profile: "vps",
+        model: {
+          adapter: {
+            warmupRequests: [
+              {
+                input: "ping",
+                responseFormat: testCase.responseFormat,
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    await assert.rejects(
+      loadRayConfig({
+        cwd: process.cwd(),
+        configPath: warmupResponseFormatConfigPath,
+        env: {},
+      }),
+      testCase.expected,
+    );
+  }
+
   const warmupsConfigPath = join(tempDir, "ray.warmups.invalid.json");
   await writeFile(
     warmupsConfigPath,

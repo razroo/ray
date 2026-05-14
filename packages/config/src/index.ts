@@ -2024,12 +2024,33 @@ function assertHttpHeaderRecord(value: Record<string, string>, label: string): v
   }
 }
 
-function assertResponseFormat(value: { type: string } | undefined, label: string): void {
+function assertResponseFormat(value: unknown, label: string): void {
   if (value === undefined) {
     return;
   }
 
-  if (value.type !== "text" && value.type !== "json_object") {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new RayError(`${label} must be an object with a type`, {
+      code: "config_validation_error",
+      status: 500,
+      details: value,
+    });
+  }
+
+  for (const [key] of Object.entries(value)) {
+    assertSafeConfigRecordKey(key, label);
+
+    if (key !== "type") {
+      throw new RayError(`${label} must not contain unsupported key "${key}"`, {
+        code: "config_validation_error",
+        status: 500,
+        details: { key },
+      });
+    }
+  }
+
+  const type = (value as { type?: unknown }).type;
+  if (type !== "text" && type !== "json_object") {
     throw new RayError(`${label}.type must be 'text' or 'json_object'`, {
       code: "config_validation_error",
       status: 500,
@@ -2132,7 +2153,7 @@ function assertWarmupRequest(
     maxTokens?: number;
     seed?: number;
     stop?: string[];
-    responseFormat?: { type: string };
+    responseFormat?: unknown;
     templateId?: string;
     templateVariables?: Record<string, unknown>;
   },
@@ -2240,7 +2261,7 @@ function assertWarmupRequests(value: unknown, label: string, maxOutputTokens: nu
         maxTokens?: number;
         seed?: number;
         stop?: string[];
-        responseFormat?: { type: string };
+        responseFormat?: unknown;
         templateId?: string;
         templateVariables?: Record<string, unknown>;
       },
